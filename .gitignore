@@ -1,0 +1,12 @@
+node_modules/
+data/
+.env
+.env.*
+!.env.example
+*.tmp
+*.log
+.claude/
+.playwright-cli/
+.tmp/
+output/
+gen_images.py

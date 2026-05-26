@@ -1,0 +1,953 @@
+const fs = require('fs');
+const path = require('path');
+const { businessDateString, daysInMonth, parseDateParts, startOfWeekMonday } = require('./business-date');
+
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'logs.json');
+const DIARY_CATEGORY = '\u65e5\u8bb0';
+const OTHER_CATEGORY = '\u5176\u4ed6';
+const PRIVATE_UPLOADS_FILE = path.join(DATA_DIR, 'private-uploads.json');
+
+// In-memory cache
+const cache = {
+  logs: null,
+  todos: null,
+  categories: null,
+  privateUploads: null,
+  maxLogId: 0,
+  maxTodoId: 0,
+};
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(DATA_FILE)) {
+    fs.writeFileSync(DATA_FILE, '[]', 'utf-8');
+  }
+}
+
+function isDiaryCategory(category) {
+  return typeof category === 'string' && (category === DIARY_CATEGORY || category.startsWith(DIARY_CATEGORY + '/'));
+}
+
+function isSafeUploadFilename(filename) {
+  return typeof filename === 'string' &&
+    filename.length > 0 &&
+    !filename.includes('..') &&
+    !filename.includes('/') &&
+    !filename.includes('\\');
+}
+
+function normalizeUploadFilename(filename) {
+  if (!isSafeUploadFilename(filename)) return null;
+  try {
+    const decoded = decodeURIComponent(filename);
+    return isSafeUploadFilename(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractLocalUploadFilenames(content) {
+  if (typeof content !== 'string' || !content) return [];
+  const names = new Set();
+  const markdownImage = /!\[[^\]]*\]\(\s*<?\/uploads\/([^)\s>"'?#]+)(?:[?#][^)\s>"']*)?>?(?:\s+["'][^)]*["'])?\s*\)/gi;
+  const htmlImage = /<img\b[^>]*\bsrc\s*=\s*["']\/uploads\/([^"'?#\s>]+)(?:[?#][^"']*)?["'][^>]*>/gi;
+  for (const pattern of [markdownImage, htmlImage]) {
+    let match;
+    while ((match = pattern.exec(content)) !== null) {
+      const filename = normalizeUploadFilename(match[1]);
+      if (filename) names.add(filename);
+    }
+  }
+  return [...names];
+}
+
+function isValidDate(str) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || '');
+  if (!match) return false;
+  const [, y, m, d] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  return date.getFullYear() === Number(y) &&
+    date.getMonth() === Number(m) - 1 &&
+    date.getDate() === Number(d);
+}
+
+function nowTimestamp() {
+  return new Date().toISOString().replace('T', ' ').substring(0, 19);
+}
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toPositiveInteger(value) {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
+
+function normalizeFiniteNumber(value, fallback, { min = -Infinity, max = Infinity } = {}) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < min || num > max) return null;
+  return num;
+}
+
+function normalizeString(value, fallback = '') {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function readLogs() {
+  if (cache.logs !== null) return cache.logs;
+  ensureDataDir();
+  try {
+    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
+    cache.logs = JSON.parse(raw);
+    cache.maxLogId = cache.logs.length > 0 ? Math.max(...cache.logs.map(l => l.id)) : 0;
+    return cache.logs;
+  } catch (err) {
+    console.error('Failed to parse logs.json:', err.message);
+    cache.logs = [];
+    cache.maxLogId = 0;
+    return [];
+  }
+}
+
+function writeLogs(logs) {
+  ensureDataDir();
+  cache.logs = logs;
+  const tmp = DATA_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(logs, null, 2), 'utf-8');
+  fs.renameSync(tmp, DATA_FILE);
+}
+
+function readPrivateUploads() {
+  if (cache.privateUploads !== null) return cache.privateUploads;
+  ensureDataDir();
+  if (!fs.existsSync(PRIVATE_UPLOADS_FILE)) {
+    cache.privateUploads = [];
+    return cache.privateUploads;
+  }
+  try {
+    const saved = JSON.parse(fs.readFileSync(PRIVATE_UPLOADS_FILE, 'utf-8'));
+    cache.privateUploads = Array.isArray(saved)
+      ? [...new Set(saved.filter(isSafeUploadFilename))]
+      : [];
+    return cache.privateUploads;
+  } catch (err) {
+    console.error('Failed to parse private-uploads.json:', err.message);
+    cache.privateUploads = [];
+    return cache.privateUploads;
+  }
+}
+
+function writePrivateUploads(filenames) {
+  ensureDataDir();
+  cache.privateUploads = [...new Set(filenames.filter(isSafeUploadFilename))];
+  const tmp = PRIVATE_UPLOADS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cache.privateUploads, null, 2), 'utf-8');
+  fs.renameSync(tmp, PRIVATE_UPLOADS_FILE);
+}
+
+function markPrivateUpload(filename) {
+  const normalized = normalizeUploadFilename(filename);
+  if (!normalized) return false;
+  const filenames = readPrivateUploads();
+  if (!filenames.includes(normalized)) {
+    writePrivateUploads([...filenames, normalized]);
+  }
+  return true;
+}
+
+function markPrivateUploadsFromContent(content) {
+  const filenames = extractLocalUploadFilenames(content);
+  filenames.forEach(markPrivateUpload);
+  return filenames;
+}
+
+function unmarkPrivateUpload(filename) {
+  const normalized = normalizeUploadFilename(filename);
+  if (!normalized) return;
+  const filenames = readPrivateUploads();
+  if (filenames.includes(normalized)) {
+    writePrivateUploads(filenames.filter(item => item !== normalized));
+  }
+}
+
+function isPrivateUpload(filename) {
+  const normalized = normalizeUploadFilename(filename);
+  if (!normalized) return false;
+  if (readPrivateUploads().includes(normalized)) return true;
+  return readLogs().some(log =>
+    isDiaryCategory(log.category) &&
+    extractLocalUploadFilenames(log.content).includes(normalized)
+  );
+}
+
+// CRUD operations
+
+function getAll(query = {}, diaryUnlocked = true) {
+  let logs = readLogs();
+
+  // Hide diary logs if locked
+  if (!diaryUnlocked) {
+    logs = logs.filter(l => !isDiaryCategory(l.category));
+  }
+
+  // Filter by date
+  if (query.date) {
+    logs = logs.filter(l => l.log_date === query.date);
+  }
+
+  // Filter by month (YYYY-MM)
+  if (query.month) {
+    logs = logs.filter(l => (l.log_date || '').startsWith(query.month));
+  }
+
+  // Filter by category — prefix match for parent (e.g. "开发" matches "开发/前端")
+  if (query.category) {
+    logs = logs.filter(l => l.category === query.category || l.category.startsWith(query.category + '/'));
+  }
+
+  // Search in title and content
+  if (query.search) {
+    const s = query.search.toLowerCase();
+    logs = logs.filter(l =>
+      l.title.toLowerCase().includes(s) ||
+      l.content.toLowerCase().includes(s)
+    );
+  }
+
+  // Sort: by date desc, sort_order asc, id desc
+  logs.sort((a, b) => {
+    const dateA = a.log_date || '';
+    const dateB = b.log_date || '';
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    if ((a.sort_order || 0) !== (b.sort_order || 0)) return (a.sort_order || 0) - (b.sort_order || 0);
+    return b.id - a.id;
+  });
+
+  // Pagination
+  const page = parseInt(query.page) || 1;
+  const limit = parseInt(query.limit) || 50;
+  const total = logs.length;
+  const totalPages = Math.ceil(total / limit);
+  const start = (page - 1) * limit;
+  const items = logs.slice(start, start + limit);
+
+  return { items, total, page, totalPages };
+}
+
+function getById(id) {
+  const logs = readLogs();
+  return logs.find(l => l.id === id) || null;
+}
+
+function create(data, referenceDate = new Date()) {
+  const logs = readLogs();
+  cache.maxLogId++;
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const entry = {
+    id: cache.maxLogId,
+    title: data.title || '',
+    content: data.content || '',
+    category: data.category || 'general',
+    hours: parseFloat(data.hours) || 0,
+    log_date: data.log_date === undefined ? businessDateString(referenceDate) : (data.log_date || ''),
+    sort_order: data.sort_order !== undefined ? data.sort_order : 0,
+    created_at: now,
+    updated_at: now,
+  };
+  logs.push(entry);
+  writeLogs(logs);
+  if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
+  return entry;
+}
+
+function update(id, data) {
+  const logs = readLogs();
+  const index = logs.findIndex(l => l.id === id);
+  if (index === -1) return null;
+
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const entry = logs[index];
+  if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
+  if (data.title !== undefined) entry.title = data.title;
+  if (data.content !== undefined) entry.content = data.content;
+  if (data.category !== undefined) entry.category = data.category;
+  if (data.hours !== undefined) entry.hours = parseFloat(data.hours) || 0;
+  if (data.log_date !== undefined) entry.log_date = data.log_date;
+  entry.updated_at = now;
+
+  writeLogs(logs);
+  if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
+  return entry;
+}
+
+function remove(id) {
+  const logs = readLogs();
+  const index = logs.findIndex(l => l.id === id);
+  if (index === -1) return false;
+  if (isDiaryCategory(logs[index].category)) markPrivateUploadsFromContent(logs[index].content);
+  logs.splice(index, 1);
+  writeLogs(logs);
+  return true;
+}
+
+function getStats(diaryUnlocked = true, referenceDate = new Date()) {
+  let logs = readLogs();
+  if (!diaryUnlocked) {
+    logs = logs.filter(l => !isDiaryCategory(l.category));
+  }
+  const today = businessDateString(referenceDate);
+  const todayParts = parseDateParts(today);
+
+  // This week (Mon-Sun)
+  const mondayStr = startOfWeekMonday(today);
+
+  // This month
+  const monthStr = today.substring(0, 7);
+
+  const weekLogs = logs.filter(l => (l.log_date || '') >= mondayStr && (l.log_date || '') <= today);
+  const monthLogs = logs.filter(l => (l.log_date || '').startsWith(monthStr));
+
+  const weekHours = weekLogs.reduce((s, l) => s + l.hours, 0);
+  const monthHours = monthLogs.reduce((s, l) => s + l.hours, 0);
+
+  // Category breakdown (all time) — grouped by parent category
+  const catMap = {};
+  logs.forEach(l => {
+    const parent = getParentCat(l.category);
+    catMap[parent] = (catMap[parent] || 0) + l.hours;
+  });
+  const categoryBreakdown = Object.entries(catMap)
+    .map(([name, hours]) => ({ name, hours: Math.round(hours * 10) / 10 }))
+    .sort((a, b) => b.hours - a.hours);
+
+  // Daily average this month
+  const monthDays = daysInMonth(today);
+  const dailyAvg = Math.round((monthHours / Math.min(todayParts.day, monthDays)) * 10) / 10;
+
+  // Dates that have logs (for calendar highlighting)
+  const datesWithLogs = [...new Set(logs.map(l => l.log_date).filter(Boolean))];
+
+  return {
+    totalLogs: logs.length,
+    weekHours: Math.round(weekHours * 10) / 10,
+    monthHours: Math.round(monthHours * 10) / 10,
+    dailyAvg,
+    categoryBreakdown,
+    datesWithLogs,
+  };
+}
+
+// Todo CRUD
+
+const TODOS_FILE = path.join(DATA_DIR, 'todos.json');
+
+function readTodos() {
+  if (cache.todos !== null) return cache.todos;
+  ensureDataDir();
+  if (!fs.existsSync(TODOS_FILE)) {
+    fs.writeFileSync(TODOS_FILE, '[]', 'utf-8');
+  }
+  try {
+    cache.todos = JSON.parse(fs.readFileSync(TODOS_FILE, 'utf-8'));
+    cache.maxTodoId = cache.todos.length > 0 ? Math.max(...cache.todos.map(t => t.id)) : 0;
+    return cache.todos;
+  } catch (err) {
+    console.error('Failed to parse todos.json:', err.message);
+    cache.todos = [];
+    cache.maxTodoId = 0;
+    return [];
+  }
+}
+
+function writeTodos(todos) {
+  ensureDataDir();
+  cache.todos = todos;
+  const tmp = TODOS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(todos, null, 2), 'utf-8');
+  fs.renameSync(tmp, TODOS_FILE);
+}
+
+function getAllTodos(query = {}) {
+  let todos = readTodos();
+
+  if (query.status === 'done') {
+    todos = todos.filter(t => t.done);
+  } else if (query.status === 'pending') {
+    todos = todos.filter(t => !t.done);
+  }
+
+  // Sort: pending first, then sort_order asc, then by id desc
+  todos.sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    if ((a.sort_order || 0) !== (b.sort_order || 0)) return (a.sort_order || 0) - (b.sort_order || 0);
+    return b.id - a.id;
+  });
+
+  return todos.map(t => ({
+    ...t,
+    notes: typeof t.notes === 'string' ? t.notes : '',
+    priority: normalizeTodoPriority(t.priority),
+    due_date: t.due_date || null,
+  }));
+}
+
+function normalizeTodoPriority(priority) {
+  const value = typeof priority === 'string' && priority ? priority : 'normal';
+  return ['low', 'normal', 'high'].includes(value) ? value : 'normal';
+}
+
+function createTodo(data) {
+  const todos = readTodos();
+  cache.maxTodoId++;
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const entry = {
+    id: cache.maxTodoId,
+    title: data.title || '',
+    done: false,
+    sort_order: data.sort_order !== undefined ? data.sort_order : 0,
+    due_date: data.due_date || null,
+    priority: normalizeTodoPriority(data.priority),
+    notes: typeof data.notes === 'string' ? data.notes : '',
+    created_at: now,
+  };
+  todos.push(entry);
+  writeTodos(todos);
+  return entry;
+}
+
+function updateTodo(id, data) {
+  const todos = readTodos();
+  const index = todos.findIndex(t => t.id === id);
+  if (index === -1) return null;
+
+  const entry = todos[index];
+  if (data.title !== undefined) entry.title = data.title;
+  if (data.done !== undefined) entry.done = !!data.done;
+  if (data.due_date !== undefined) entry.due_date = data.due_date;
+  if (data.priority !== undefined) entry.priority = normalizeTodoPriority(data.priority);
+  if (data.notes !== undefined) entry.notes = typeof data.notes === 'string' ? data.notes : '';
+
+  writeTodos(todos);
+  return {
+    ...entry,
+    notes: typeof entry.notes === 'string' ? entry.notes : '',
+    priority: normalizeTodoPriority(entry.priority),
+    due_date: entry.due_date || null,
+  };
+}
+
+function removeTodo(id) {
+  const todos = readTodos();
+  const index = todos.findIndex(t => t.id === id);
+  if (index === -1) return false;
+  todos.splice(index, 1);
+  writeTodos(todos);
+  return true;
+}
+
+function removeCompletedTodos() {
+  const todos = readTodos();
+  const remaining = todos.filter(t => !t.done);
+  const removedCount = todos.length - remaining.length;
+  if (removedCount > 0) writeTodos(remaining);
+  return removedCount;
+}
+
+function reorderLogs(orderedIds) {
+  const logs = readLogs();
+  const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
+  logs.forEach(l => { if (orderMap.has(l.id)) l.sort_order = orderMap.get(l.id); });
+  writeLogs(logs);
+}
+
+function reorderTodos(orderedIds) {
+  const todos = readTodos();
+  const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
+  todos.forEach(t => { if (orderMap.has(t.id)) t.sort_order = orderMap.get(t.id); });
+  writeTodos(todos);
+}
+
+const DEFAULT_CATEGORIES = [
+  { name: '会议', sub: [] },
+  { name: '开发', sub: [] },
+  { name: '文档', sub: [] },
+  { name: '测试', sub: [] },
+  { name: '学习', sub: [] },
+  { name: '其他', sub: [] },
+];
+const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
+
+function migrateToTree(cats) {
+  return cats.map(c => {
+    if (typeof c === 'string') return { name: c, sub: [] };
+    if (c && typeof c === 'object' && c.name) return { name: c.name, sub: Array.isArray(c.sub) ? c.sub : [] };
+    return null;
+  }).filter(Boolean);
+}
+
+function readCategories() {
+  if (cache.categories !== null) return cache.categories;
+  ensureDataDir();
+  if (!fs.existsSync(CATEGORIES_FILE)) {
+    fs.writeFileSync(CATEGORIES_FILE, JSON.stringify(DEFAULT_CATEGORIES, null, 2), 'utf-8');
+    cache.categories = DEFAULT_CATEGORIES;
+    return cache.categories;
+  }
+  try {
+    let cats = JSON.parse(fs.readFileSync(CATEGORIES_FILE, 'utf-8'));
+    if (!Array.isArray(cats)) cats = [];
+    // Auto-migrate old flat array
+    if (cats.length > 0 && typeof cats[0] === 'string') {
+      cats = migrateToTree(cats);
+      writeCategories(cats);
+    }
+    cache.categories = cats;
+    return cats;
+  } catch (err) {
+    console.error('Failed to parse categories.json:', err.message);
+    cache.categories = [...DEFAULT_CATEGORIES];
+    return cache.categories;
+  }
+}
+
+function writeCategories(cats) {
+  ensureDataDir();
+  cache.categories = cats;
+  const tmp = CATEGORIES_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cats, null, 2), 'utf-8');
+  fs.renameSync(tmp, CATEGORIES_FILE);
+}
+
+function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
+  const categories = readCategories().map(category => ({
+    name: category.name,
+    sub: !diaryUnlocked && category.name === DIARY_CATEGORY ? [] : [...(category.sub || [])],
+  }));
+  if (includeDiaryRoot && !categories.some(category => category.name === DIARY_CATEGORY)) {
+    categories.push({ name: DIARY_CATEGORY, sub: [] });
+  }
+  return categories;
+}
+
+/** Split "开发/前端" into { parent: "开发", sub: "前端" } */
+function parseCategoryPath(cat) {
+  if (!cat) return { parent: '其他', sub: null };
+  const idx = cat.indexOf('/');
+  if (idx === -1) return { parent: cat, sub: null };
+  return { parent: cat.substring(0, idx), sub: cat.substring(idx + 1) };
+}
+
+/** Get the parent category name from a log's category field */
+function getParentCat(cat) {
+  const idx = cat.indexOf('/');
+  return idx === -1 ? cat : cat.substring(0, idx);
+}
+
+function addCategory(name, parent) {
+  name = name.trim();
+  if (!name) return null;
+  const cats = readCategories();
+  if (parent) {
+    let p = cats.find(c => c.name === parent);
+    if (!p && parent === DIARY_CATEGORY) {
+      p = { name: DIARY_CATEGORY, sub: [] };
+      cats.push(p);
+    }
+    if (!p) return null;
+    if (p.sub.includes(name)) return null;
+    p.sub.push(name);
+    writeCategories(cats);
+    return { name, parent };
+  }
+  // Parent-level category
+  if (cats.some(c => c.name === name)) return null;
+  cats.push({ name, sub: [] });
+  writeCategories(cats);
+  return { name, sub: [] };
+}
+
+function renameCategory(oldName, newName) {
+  oldName = oldName.trim();
+  newName = newName.trim();
+  if (!oldName || !newName) return { error: 'Invalid names' };
+  if (oldName === DIARY_CATEGORY || newName === DIARY_CATEGORY) {
+    return { error: 'Diary root category is protected' };
+  }
+  const cats = readCategories();
+  const parsed = parseCategoryPath(oldName);
+
+  if (parsed.sub) {
+    // Renaming a subcategory: "开发/前端" → "开发/新前端"
+    const parent = cats.find(c => c.name === parsed.parent);
+    if (!parent) return { error: 'Parent category not found' };
+    const idx = parent.sub.indexOf(parsed.sub);
+    if (idx === -1) return { error: 'Subcategory not found' };
+    if (parent.sub.includes(newName)) return { error: 'New name already exists' };
+    parent.sub[idx] = newName;
+    writeCategories(cats);
+
+    // Update all logs referencing this subcategory
+    const logs = readLogs();
+    logs.forEach(l => {
+      if (l.category === oldName) l.category = parsed.parent + '/' + newName;
+    });
+    writeLogs(logs);
+    return { success: true };
+  }
+
+  // Renaming a parent category: "开发" → "研发"
+  const idx = cats.findIndex(c => c.name === oldName);
+  if (idx === -1) return { error: 'Category not found' };
+  if (cats.some(c => c.name === newName)) return { error: 'New name already exists' };
+  cats[idx].name = newName;
+  writeCategories(cats);
+
+  const logs = readLogs();
+  logs.forEach(l => {
+    const p = parseCategoryPath(l.category);
+    if (p.parent === oldName) {
+      l.category = p.sub ? newName + '/' + p.sub : newName;
+    }
+  });
+  writeLogs(logs);
+  return { success: true };
+}
+
+function deleteCategory(name) {
+  name = name.trim();
+  if (name === OTHER_CATEGORY || name === DIARY_CATEGORY) return false;
+  const cats = readCategories();
+  const parsed = parseCategoryPath(name);
+
+  if (parsed.sub) {
+    // Delete a subcategory
+    const parent = cats.find(c => c.name === parsed.parent);
+    if (!parent) return false;
+    const idx = parent.sub.indexOf(parsed.sub);
+    if (idx === -1) return false;
+    parent.sub.splice(idx, 1);
+    writeCategories(cats);
+    // Reassign logs with this subcategory to parent-only
+    const logs = readLogs();
+    logs.forEach(l => {
+      if (l.category === name) l.category = parsed.parent;
+    });
+    writeLogs(logs);
+    return true;
+  }
+
+  // Delete a parent category and all its subcategories
+  const idx = cats.findIndex(c => c.name === name);
+  if (idx === -1) return false;
+  cats.splice(idx, 1);
+  writeCategories(cats);
+
+  const logs = readLogs();
+  logs.forEach(l => {
+    if (getParentCat(l.category) === name) l.category = '其他';
+  });
+  writeLogs(logs);
+  return true;
+}
+
+function checkDataIntegrity() {
+  const issues = [];
+  const logs = readLogs();
+  const cats = readCategories();
+
+  // Check for duplicate IDs
+  const ids = new Set();
+  logs.forEach(l => {
+    if (ids.has(l.id)) issues.push(`Duplicate log ID: ${l.id}`);
+    ids.add(l.id);
+  });
+
+  // Check for orphaned categories (parent categories and subcategories)
+  const validCats = new Set();
+  cats.forEach(c => {
+    validCats.add(c.name);
+    (c.sub || []).forEach(s => validCats.add(c.name + '/' + s));
+  });
+  logs.forEach(l => {
+    if (!validCats.has(l.category)) issues.push(`Log #${l.id} has unknown category: "${l.category}"`);
+  });
+
+  if (issues.length > 0) {
+    console.warn('Data integrity issues found:');
+    issues.forEach(i => console.warn(' - ' + i));
+  }
+  return issues;
+}
+
+function backup() {
+  return {
+    logs: readLogs(),
+    todos: getAllTodos(),
+    categories: readCategories(),
+    privateUploads: readPrivateUploads(),
+    exportedAt: new Date().toISOString(),
+  };
+}
+
+function normalizePrivateUploadsForRestore(privateUploads) {
+  if (privateUploads === undefined) return { privateUploads: [] };
+  if (!Array.isArray(privateUploads)) return { error: 'Invalid privateUploads data' };
+  const normalized = [];
+  const seen = new Set();
+  for (const filename of privateUploads) {
+    const safeName = normalizeUploadFilename(filename);
+    if (!safeName) return { error: 'Invalid private upload filename' };
+    if (!seen.has(safeName)) {
+      seen.add(safeName);
+      normalized.push(safeName);
+    }
+  }
+  return { privateUploads: normalized };
+}
+
+function normalizeCategoriesForRestore(categories) {
+  const seenParents = new Set();
+  const normalized = [];
+
+  for (const cat of categories) {
+    const normalizedCat = typeof cat === 'string'
+      ? { name: cat, sub: [] }
+      : cat;
+
+    if (!normalizedCat || typeof normalizedCat.name !== 'string' || !normalizedCat.name.trim()) {
+      return { error: 'Invalid category name' };
+    }
+    if (normalizedCat.sub !== undefined && !Array.isArray(normalizedCat.sub)) {
+      return { error: `Invalid subcategories for category "${normalizedCat.name}"` };
+    }
+
+    const name = normalizedCat.name.trim();
+    if (seenParents.has(name)) return { error: `Duplicate category: ${name}` };
+    seenParents.add(name);
+
+    const seenSubs = new Set();
+    const sub = [];
+    for (const item of normalizedCat.sub || []) {
+      if (typeof item !== 'string' || !item.trim()) {
+        return { error: `Invalid subcategory under "${name}"` };
+      }
+      const subName = item.trim();
+      if (seenSubs.has(subName)) return { error: `Duplicate subcategory: ${name}/${subName}` };
+      seenSubs.add(subName);
+      sub.push(subName);
+    }
+
+    normalized.push({ name, sub });
+  }
+
+  return { categories: normalized };
+}
+
+function normalizeLogsForRestore(logs) {
+  const ids = new Set();
+  const now = nowTimestamp();
+  const normalized = [];
+
+  for (const item of logs) {
+    if (!isPlainObject(item)) return { error: 'Invalid log entry' };
+
+    const id = toPositiveInteger(item.id);
+    if (!id) return { error: 'Log id must be a positive integer' };
+    if (ids.has(id)) return { error: `Duplicate log id: ${id}` };
+    ids.add(id);
+
+    const hours = normalizeFiniteNumber(item.hours, 0, { min: 0, max: 24 });
+    if (hours === null) return { error: `Invalid hours for log id ${id}` };
+
+    let logDate = item.log_date === undefined || item.log_date === null ? '' : item.log_date;
+    if (typeof logDate !== 'string' || (logDate && !isValidDate(logDate))) {
+      return { error: `Invalid log_date for log id ${id}` };
+    }
+
+    const sortOrder = normalizeFiniteNumber(item.sort_order, 0);
+    if (sortOrder === null) return { error: `Invalid sort_order for log id ${id}` };
+
+    normalized.push({
+      id,
+      title: normalizeString(item.title, ''),
+      content: normalizeString(item.content, ''),
+      category: normalizeString(item.category, OTHER_CATEGORY) || OTHER_CATEGORY,
+      hours,
+      log_date: logDate,
+      sort_order: sortOrder,
+      created_at: normalizeString(item.created_at, now),
+      updated_at: normalizeString(item.updated_at, normalizeString(item.created_at, now)),
+    });
+  }
+
+  return { logs: normalized };
+}
+
+function normalizeTodosForRestore(todos) {
+  const ids = new Set();
+  const now = nowTimestamp();
+  const normalized = [];
+
+  for (const item of todos) {
+    if (!isPlainObject(item)) return { error: 'Invalid todo entry' };
+
+    const id = toPositiveInteger(item.id);
+    if (!id) return { error: 'Todo id must be a positive integer' };
+    if (ids.has(id)) return { error: `Duplicate todo id: ${id}` };
+    ids.add(id);
+
+    let dueDate = item.due_date === undefined ? null : item.due_date;
+    if (dueDate === '') dueDate = null;
+    if (dueDate !== null && (typeof dueDate !== 'string' || !isValidDate(dueDate))) {
+      return { error: `Invalid due_date for todo id ${id}` };
+    }
+
+    const sortOrder = normalizeFiniteNumber(item.sort_order, 0);
+    if (sortOrder === null) return { error: `Invalid sort_order for todo id ${id}` };
+
+    const priority = normalizeString(item.priority, 'normal') || 'normal';
+    if (!['low', 'normal', 'high'].includes(priority)) {
+      return { error: `Invalid priority for todo id ${id}` };
+    }
+
+    const notes = item.notes === undefined ? '' : item.notes;
+    if (typeof notes !== 'string') return { error: `Invalid notes for todo id ${id}` };
+
+    normalized.push({
+      id,
+      title: normalizeString(item.title, ''),
+      done: item.done === undefined ? false : !!item.done,
+      sort_order: sortOrder,
+      due_date: dueDate,
+      priority,
+      notes,
+      created_at: normalizeString(item.created_at, now),
+    });
+  }
+
+  return { todos: normalized };
+}
+
+function normalizeRestoreData(data) {
+  if (!data || typeof data !== 'object') return { error: 'Invalid backup data' };
+  if (!Array.isArray(data.logs)) return { error: 'Missing logs data' };
+  if (!Array.isArray(data.todos)) return { error: 'Missing todos data' };
+  if (!Array.isArray(data.categories)) return { error: 'Missing categories data' };
+
+  const logs = normalizeLogsForRestore(data.logs);
+  if (logs.error) return logs;
+
+  const todos = normalizeTodosForRestore(data.todos);
+  if (todos.error) return todos;
+
+  const categories = normalizeCategoriesForRestore(data.categories);
+  if (categories.error) return categories;
+
+  const privateUploads = normalizePrivateUploadsForRestore(data.privateUploads);
+  if (privateUploads.error) return privateUploads;
+
+  return {
+    logs: logs.logs,
+    todos: todos.todos,
+    categories: categories.categories,
+    privateUploads: privateUploads.privateUploads,
+  };
+}
+
+function restore(data, mode = 'replace') {
+  if (!data || typeof data !== 'object') return { error: '无效的数据格式' };
+  if (!Array.isArray(data.logs)) return { error: '缺少 logs 数据' };
+  if (!Array.isArray(data.todos)) return { error: '缺少 todos 数据' };
+  if (!Array.isArray(data.categories)) return { error: '缺少 categories 数据' };
+
+  const normalized = normalizeRestoreData(data);
+  if (normalized.error) return normalized;
+  data = normalized;
+  readLogs().filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
+
+  if (mode === 'merge') {
+    // Merge: upsert by ID, keeping newer data when conflicts
+    const existingLogs = readLogs();
+    const logMap = new Map(existingLogs.map(l => [l.id, l]));
+    data.logs.forEach(l => {
+      const existing = logMap.get(l.id);
+      if (!existing || new Date(l.updated_at || 0) > new Date(existing.updated_at || 0)) {
+        logMap.set(l.id, l);
+      }
+    });
+    const mergedLogs = [...logMap.values()].sort((a, b) => b.id - a.id);
+
+    const existingTodos = readTodos();
+    const todoMap = new Map(existingTodos.map(t => [t.id, t]));
+    data.todos.forEach(t => {
+      const existing = todoMap.get(t.id);
+      if (!existing || new Date(t.created_at || 0) > new Date(existing.created_at || 0)) {
+        todoMap.set(t.id, t);
+      }
+    });
+    const mergedTodos = [...todoMap.values()].sort((a, b) => b.id - a.id);
+
+    const existingCats = readCategories();
+    // Normalize restore data to tree format
+    const restoreCats = (data.categories.length > 0 && typeof data.categories[0] === 'string')
+      ? migrateToTree(data.categories)
+      : data.categories;
+    const mergedCats = mergeCategoryTrees(existingCats, restoreCats);
+    const mergedPrivateUploads = [...new Set([...readPrivateUploads(), ...data.privateUploads])];
+
+    writeLogs(mergedLogs);
+    writeTodos(mergedTodos);
+    writeCategories(mergedCats);
+    writePrivateUploads(mergedPrivateUploads);
+    mergedLogs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
+    return { success: true, logs: mergedLogs.length, todos: mergedTodos.length, categories: mergedCats.length };
+  }
+
+  writeLogs(data.logs);
+  writeTodos(data.todos);
+  writeCategories((data.categories.length > 0 && typeof data.categories[0] === 'string')
+    ? migrateToTree(data.categories)
+    : data.categories);
+  writePrivateUploads(data.privateUploads);
+  data.logs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
+  return { success: true, logs: data.logs.length, todos: data.todos.length, categories: data.categories.length };
+}
+
+function reorderCategories(orderedCats) {
+  const cats = readCategories();
+  // orderedCats is an array of parent category names
+  const orderMap = new Map(orderedCats.map((name, i) => [name, i]));
+  cats.sort((a, b) => {
+    const ai = orderMap.get(a.name);
+    const bi = orderMap.get(b.name);
+    if (ai !== undefined && bi !== undefined) return ai - bi;
+    if (ai !== undefined) return -1;
+    if (bi !== undefined) return 1;
+    return 0;
+  });
+  writeCategories(cats);
+}
+
+/** Merge two category trees, deduplicating by parent name and unioning subcategories */
+function mergeCategoryTrees(existing, incoming) {
+  const merged = existing.map(c => ({ name: c.name, sub: [...(c.sub || [])] }));
+  const existingNames = new Set(merged.map(c => c.name));
+  incoming.forEach(c => {
+    if (existingNames.has(c.name)) {
+      const target = merged.find(m => m.name === c.name);
+      (c.sub || []).forEach(s => {
+        if (!target.sub.includes(s)) target.sub.push(s);
+      });
+    } else {
+      merged.push({ name: c.name, sub: [...(c.sub || [])] });
+    }
+  });
+  return merged;
+}
+
+module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };

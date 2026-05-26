@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>工作日志</title>
+  <script src="/js/preloadTheme.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-brand">
+      <button class="btn-theme-toggle" id="btnThemeToggle" title="切换深色模式" aria-label="切换深色模式">
+        <span class="theme-icon-light">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3.5" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </span>
+        <span class="theme-icon-dark">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64 6.5 6.5 0 1013.36 10.06z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+      </button>
+      <h1 id="sidebarTitle" title="点击切换日历显示">工作日志</h1>
+      <button class="btn-sidebar-mode" id="btnSidebarMode" title="切换日志导航栏" aria-pressed="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+      <button class="btn-sidebar-mode" id="btnTodoMode" title="切换待办面板" aria-pressed="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4.5h10M3 8h10M3 11.5h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2.5 4.5l.6.6 1.1-1.2M2.5 8l.6.6 1.1-1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="btn-sidebar-toggle" id="btnToggleSidebar" title="收起侧边栏" aria-label="收起侧边栏">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+
+    <div class="calendar-widget" id="calendarWidget">
+      <div class="calendar-header">
+        <button class="btn-icon" id="prevMonth" title="上个月" aria-label="上个月">&lsaquo;</button>
+        <div class="calendar-selects">
+          <label class="sr-only" for="calendarYearSelect">日历年份</label>
+          <select id="calendarYearSelect" class="calendar-select"></select>
+          <label class="sr-only" for="calendarMonthSelect">日历月份</label>
+          <select id="calendarMonthSelect" class="calendar-select"></select>
+        </div>
+        <button class="btn-icon" id="nextMonth" title="下个月" aria-label="下个月">&rsaquo;</button>
+      </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+      </div>
+      <div class="calendar-days" id="calendarDays" role="grid" aria-label="日志日历"></div>
+    </div>
+
+    <div class="card-nav-panel" id="cardNavPanel">
+      <button class="card-nav-toggle" id="cardNavToggle" aria-expanded="true" title="展开/收起当前卡片导航">
+        <span>日志导航</span>
+        <span class="card-nav-count" id="cardNavCount">0</span>
+        <span class="card-nav-chevron">⌄</span>
+      </button>
+      <div class="card-nav-body" id="cardNavBody">
+        <div class="card-nav-list" id="cardNavList">
+          <div class="card-nav-empty">加载后显示当前卡片</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="todo-panel">
+      <div class="todo-panel-header">
+        <h3>待办事项</h3>
+        <span class="todo-count" id="todoCount">0</span>
+      </div>
+      <div class="todo-input-wrap">
+        <label class="sr-only" for="todoInput">添加待办任务</label>
+        <input type="text" id="todoInput" placeholder="添加新待办..." maxlength="200">
+        <button class="btn-todo-add" id="btnTodoAdd" aria-label="添加待办">+</button>
+      </div>
+      <div class="todo-list" id="todoList"></div>
+      <button class="btn-todo-clear" id="btnTodoClear" style="display:none">清除已完成</button>
+    </div>
+
+    <div class="todo-full-panel" id="todoFullPanel">
+      <div class="todo-full-header">
+        <div>
+          <h3>待办面板</h3>
+          <div class="todo-full-summary" id="todoFullSummary">0 项待办</div>
+        </div>
+        <button class="btn-todo-clear" id="btnTodoFullClear" style="display:none">清除已完成</button>
+      </div>
+      <div class="todo-filter-tabs" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
+        <button class="active" data-filter="pending" role="tab" aria-selected="true">待办</button>
+        <button data-filter="all" role="tab" aria-selected="false">全部</button>
+        <button data-filter="done" role="tab" aria-selected="false">已完成</button>
+      </div>
+      <div class="todo-full-form">
+        <input type="hidden" id="todoEditId">
+        <label class="sr-only" for="todoFullTitle">任务标题</label>
+        <input type="text" id="todoFullTitle" placeholder="任务标题..." maxlength="200">
+        <div class="todo-form-grid">
+          <label class="sr-only" for="todoFullDueDate">截止日期</label>
+          <input type="date" id="todoFullDueDate" title="截止日期">
+          <label class="sr-only" for="todoFullPriority">优先级</label>
+          <select id="todoFullPriority" title="优先级">
+            <option value="normal">普通</option>
+            <option value="high">高优先级</option>
+            <option value="low">低优先级</option>
+          </select>
+        </div>
+        <label class="sr-only" for="todoFullNotes">任务备注</label>
+        <textarea id="todoFullNotes" placeholder="备注..." maxlength="1000"></textarea>
+        <div class="todo-form-actions">
+          <button class="btn-secondary btn-sm" id="btnTodoFormCancel" type="button">取消</button>
+          <button class="btn-primary btn-sm" id="btnTodoFullSave" type="button">保存任务</button>
+        </div>
+      </div>
+      <div class="todo-full-list" id="todoFullList" role="tabpanel"></div>
+    </div>
+
+    <div class="stats-panel" id="statsPanel">
+      <h3>统计</h3>
+      <div class="stat-row"><span>本周工时</span><span id="statWeekHours">0h</span></div>
+      <div class="stat-row"><span>本月工时</span><span id="statMonthHours">0h</span></div>
+      <div class="stat-row"><span>日均</span><span id="statDailyAvg">0h</span></div>
+      <div class="stat-row"><span>总记录</span><span id="statTotalLogs">0</span></div>
+      <div class="category-chart" id="categoryChart"></div>
+    </div>
+
+    <div class="diary-lock-panel" id="diaryLockPanel">
+      <button class="btn-diary-unlock" id="btnDiaryUnlock" title="解锁日记分类">🔒 解锁日记</button>
+      <button class="btn-diary-lock" id="btnDiaryLock" style="display:none" title="锁定日记分类">🔓 锁定日记</button>
+    </div>
+    <div class="backup-buttons">
+      <button class="btn-export" id="btnBackup">备份数据 JSON</button>
+      <button class="btn-export btn-restore" id="btnRestore">导入恢复 JSON</button>
+      <input type="file" id="restoreFileInput" accept=".json" style="display:none">
+    </div>
+  </aside>
+
+  <button class="btn-sidebar-expand" id="btnSidebarExpand" title="展开侧边栏" aria-label="展开侧边栏">
+    <svg width="18" height="18" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+
+  <main class="main">
+
+    <!-- List View -->
+    <div class="list-view" id="listView">
+      <div class="toolbar">
+        <button class="btn-primary" id="btnNewLog">+ 新建日志</button>
+        <div class="search-box">
+          <label class="sr-only" for="searchInput">搜索日志</label>
+          <input type="text" id="searchInput" placeholder="搜索日志...">
+          <button class="btn-search-clear" id="btnSearchClear" title="清除搜索" aria-label="清除搜索">&times;</button>
+        </div>
+        <label class="sr-only" for="filterCategory">按分类筛选日志</label>
+        <select class="filter-select" id="filterCategory">
+          <option value="">全部分类</option>
+        </select>
+        <label class="sr-only" for="filterSubcategory">按子分类筛选日志</label>
+        <select class="filter-select" id="filterSubcategory" style="display:none">
+          <option value="">全部二级</option>
+        </select>
+        <label class="sr-only" for="filterMonth">按月份筛选日志</label>
+        <select class="filter-select" id="filterMonth">
+          <option value="">全部月份</option>
+        </select>
+        <button class="btn-secondary btn-sm" id="btnManageCats">管理分类</button>
+        <button class="btn-secondary btn-sm" id="btnResetCardWidth" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">🔲</button>
+      </div>
+
+      <div class="log-list-header">
+        <h2 id="listTitle">所有日志</h2>
+        <span class="log-count" id="logCount"></span>
+      </div>
+
+      <div class="log-list" id="logList">
+        <div class="empty-state">暂无日志记录，点击「+ 新建日志」开始记录</div>
+      </div>
+
+      <div class="pagination" id="pagination"></div>
+    </div>
+
+    <!-- Editor View -->
+    <div class="editor-view" id="editorView" style="display:none;">
+      <div class="editor-topbar">
+        <button class="btn-icon btn-back" id="btnBack" title="返回列表">← 返回</button>
+        <div class="editor-meta">
+          <label class="sr-only" for="editDate">日志日期</label>
+          <input type="date" id="editDate" class="edit-date">
+          <label class="sr-only" for="editCategory">日志分类</label>
+          <select id="editCategory" class="edit-cat"></select>
+          <label class="sr-only" for="editSubcategory">日志子分类</label>
+          <select id="editSubcategory" class="edit-subcat"></select>
+          <label class="sr-only" for="editHours">工时</label>
+          <input type="number" id="editHours" class="edit-hours" min="0" max="24" step="0.5" value="0" title="工时">
+          <span class="edit-hours-label">小时</span>
+        </div>
+        <div class="editor-actions">
+          <span class="save-status" id="saveStatus" role="status" aria-live="polite"></span>
+          <button class="btn-secondary btn-sm" id="btnCopyMarkdown">复制</button>
+          <button class="btn-secondary btn-sm" id="btnExportMarkdown">导出</button>
+          <button class="btn-secondary btn-sm" id="btnDeleteEditor">删除</button>
+        </div>
+      </div>
+
+      <label class="sr-only" for="editTitle">日志标题</label>
+      <input type="text" id="editTitle" class="edit-title" placeholder="日志标题...">
+
+      <div class="editor-tabs" role="tablist" aria-label="编辑器显示模式">
+        <button class="editor-tab active" id="editorTabWrite" data-tab="write" role="tab" aria-selected="true" aria-controls="editorPanel" tabindex="0">编辑</button>
+        <button class="editor-tab" id="editorTabPreview" data-tab="preview" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">预览</button>
+        <button class="editor-tab" id="editorTabSplit" data-tab="split" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">分屏</button>
+        <span class="editor-help">支持 Markdown 格式</span>
+        <select class="template-select" id="templateSelect" title="使用模板">
+          <option value="">模板</option>
+        </select>
+        <button class="btn-secondary btn-sm btn-template-manage" id="btnManageTemplates">管理模板</button>
+      </div>
+
+      <div class="editor-toolbar" id="editorToolbar" role="toolbar" aria-label="Markdown 格式工具">
+        <span class="toolbar-group">
+          <button data-action="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
+          <button data-action="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+          <button data-action="strikethrough" title="删除线"><s>S</s></button>
+        </span>
+        <span class="toolbar-group">
+          <button data-action="h1" title="一级标题">H1</button>
+          <button data-action="h2" title="二级标题">H2</button>
+          <button data-action="h3" title="三级标题">H3</button>
+        </span>
+        <span class="toolbar-group">
+          <button data-action="ul" title="无序列表">• 列表</button>
+          <button data-action="ol" title="有序列表">1. 列表</button>
+          <button data-action="checklist" title="任务列表">☑ 任务</button>
+        </span>
+        <span class="toolbar-group">
+          <button data-action="quote" title="引用">❝ 引用</button>
+          <button data-action="code" title="行内代码">&lt;/&gt;</button>
+          <button data-action="codeblock" title="代码块">{ }</button>
+          <button data-action="mathInline" title="行内公式">$f$</button>
+          <button data-action="mathBlock" title="块级公式">$$</button>
+          <button class="btn-table" id="btnTable" title="插入表格">⊞ 表格</button>
+          <div class="table-grid-popup" id="tableGridPopup" style="display:none">
+            <div class="table-grid-header">选择表格尺寸 <span id="tableGridDim"></span></div>
+            <div class="table-grid" id="tableGrid"></div>
+          </div>
+          <button data-action="link" title="链接">🔗</button>
+          <button type="button" id="btnLogLink" title="插入日志链接">日志链接</button>
+          <button data-action="hr" title="分割线">—</button>
+        </span>
+        <span class="toolbar-group">
+          <button class="btn-upload-img" id="btnUploadImg" title="插入图片">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          </button>
+          <input type="file" id="imgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" style="display:none">
+          <span class="upload-status" id="uploadStatus" role="status" aria-live="polite"></span>
+        </span>
+      </div>
+
+      <div class="editor-content-area" id="editorPanel" role="tabpanel" aria-labelledby="editorTabWrite">
+        <label class="sr-only" for="editContent">日志内容</label>
+        <textarea id="editContent" class="edit-content" placeholder="使用 Markdown 记录工作内容...&#10;&#10;## 今日完成&#10;- 项目 A 功能开发&#10;- Code Review&#10;&#10;## 明日计划&#10;- 继续开发模块 B&#10;&#10;## 遇到的问题&#10;...&#10;"></textarea>
+        <div class="edit-preview markdown-body" id="editPreview" style="display:none;"></div>
+      </div>
+    </div>
+
+    <!-- Category Management View -->
+    <div class="category-view" id="categoryView" style="display:none;">
+      <div class="category-page-header">
+        <button class="btn-icon btn-back" id="btnCategoryBack" title="返回日志列表">← 返回</button>
+        <div>
+          <h2>管理分类</h2>
+          <div class="cat-manager-summary" id="catManagerSummary">加载中...</div>
+        </div>
+      </div>
+      <div class="category-page-grid">
+        <section class="category-parent-panel">
+          <label class="sr-only" for="catSearchInput">搜索分类</label>
+          <input type="search" id="catSearchInput" class="cat-search-input" placeholder="搜索父分类或子分类...">
+          <div class="cat-add-row">
+            <label class="sr-only" for="catNewInput">新父分类名称</label>
+            <input type="text" id="catNewInput" placeholder="添加父分类..." maxlength="20">
+            <button class="btn-primary btn-sm" id="catAddBtn">添加</button>
+          </div>
+          <div class="cat-manager-hint">拖动父分类排序；搜索时暂停排序。</div>
+          <div class="cat-list" id="catList"></div>
+        </section>
+        <section class="category-detail-panel" id="catDetailPanel">
+          <div class="cat-detail-empty" id="catDetailEmpty">选择一个父分类进行管理</div>
+          <div class="cat-detail-content" id="catDetailContent" style="display:none;">
+            <div class="cat-detail-header">
+              <div class="cat-detail-heading">
+                <h3 id="catDetailName"></h3>
+                <span class="cat-default-tag" id="catDetailFallback" style="display:none;">不可删除</span>
+              </div>
+              <div class="cat-detail-actions">
+                <button class="btn-secondary btn-sm" id="btnCatRename">重命名</button>
+                <button class="btn-danger btn-sm" id="btnCatDelete">删除</button>
+              </div>
+            </div>
+            <div class="cat-rename-row" id="catRenameRow" style="display:none;">
+              <label class="sr-only" for="catRenameInput">新的分类名称</label>
+              <input type="text" id="catRenameInput" maxlength="20">
+              <button class="btn-primary btn-sm" id="btnCatRenameSave">保存</button>
+              <button class="btn-secondary btn-sm" id="btnCatRenameCancel">取消</button>
+            </div>
+            <div class="cat-subsection-header">
+              <h4>子分类</h4>
+              <span id="catDetailSubCount"></span>
+            </div>
+            <div class="subcat-add-row category-sub-add">
+              <label class="sr-only" for="catSubNewInput">新子分类名称</label>
+              <input type="text" id="catSubNewInput" placeholder="新子分类名称..." maxlength="20">
+              <button class="btn-primary btn-sm" id="catSubAddBtn">添加</button>
+            </div>
+            <div class="cat-detail-sub-list" id="catSubList"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+  </main>
+
+    <!-- FAB quick capture -->
+    <button class="fab-capture" id="fabCapture" title="快速记录 (Ctrl+Shift+N)" aria-label="快速新建日志">+</button>
+    <div id="a11yStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Log Link Picker Modal -->
+  <div class="modal-overlay" id="logLinkOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="logLinkTitle">
+    <div class="modal modal-log-link">
+      <div class="modal-header">
+        <h2 id="logLinkTitle">插入日志链接</h2>
+        <button class="btn-icon modal-close" id="logLinkClose" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body log-link-body">
+        <label class="sr-only" for="logLinkSearch">搜索要插入的日志</label>
+        <input type="search" id="logLinkSearch" class="log-link-search" placeholder="搜索标题或内容...">
+        <div class="log-link-results" id="logLinkResults"></div>
+      </div>
+      <div class="modal-footer">
+        <span class="log-link-hint">选择后会插入 [标题](#log/id)</span>
+        <button class="btn-secondary" id="logLinkDone">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Template Management Modal -->
+  <div class="modal-overlay" id="templateModalOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="templateModalTitle">
+    <div class="modal modal-template">
+      <div class="modal-header">
+        <h2 id="templateModalTitle">管理模板</h2>
+        <button class="btn-icon modal-close" id="templateModalClose" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body template-manager">
+        <div class="template-list" id="templateList"></div>
+        <div class="template-editor">
+          <label class="sr-only" for="templateNameInput">模板名称</label>
+          <input type="text" id="templateNameInput" placeholder="模板名称" maxlength="40">
+          <label class="sr-only" for="templateTitleInput">模板日志标题</label>
+          <input type="text" id="templateTitleInput" placeholder="生成日志标题，例如 日报 {{today:MM月DD日}}" maxlength="80">
+          <label class="sr-only" for="templateContentInput">模板内容</label>
+          <textarea id="templateContentInput" placeholder="模板内容，支持 Markdown，例如 {{today}}、{{tomorrow}}、{{date:+7:YYYY-MM-DD dddd}}"></textarea>
+          <div class="template-token-hint">生成日志标题和内容都可用日期占位符：{{today}}、{{tomorrow}}、{{yesterday}}、{{date:+N}}，格式可写为 {{today:MM月DD日}}。</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-left">
+          <button class="btn-secondary btn-sm" id="btnTemplateNew">新建</button>
+          <button class="btn-secondary btn-sm" id="btnTemplateReset">恢复默认</button>
+        </div>
+        <div class="modal-footer-actions">
+          <button class="btn-danger btn-sm" id="btnTemplateDelete">删除</button>
+          <button class="btn-primary btn-sm" id="btnTemplateSave">保存模板</button>
+          <button class="btn-secondary" id="templateModalDone">完成</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diary Unlock Modal -->
+  <div class="modal-overlay" id="diaryUnlockOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="diaryUnlockTitle">
+    <div class="modal modal-sm">
+      <div class="modal-header"><h2 id="diaryUnlockTitle">解锁日记</h2></div>
+      <div class="modal-body">
+        <p style="margin-bottom:12px;">日记分类已被密码保护，请输入密码查看。</p>
+        <label class="sr-only" for="diaryPasswordInput">日记密码</label>
+        <input type="password" id="diaryPasswordInput" placeholder="日记密码" autocomplete="off" style="width:100%;padding:10px 14px;border:1px solid var(--color-border);border-radius:var(--radius);font-size:0.9rem;outline:none;background:var(--color-input-bg);color:var(--color-text);box-sizing:border-box;">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btnDiaryUnlockCancel">取消</button>
+        <button class="btn-primary" id="btnDiaryUnlockSubmit">解锁</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts Manager -->
+  <div class="modal-overlay" id="shortcutHelpOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="shortcutHelpTitle">
+    <div class="modal" style="width:520px;">
+      <div class="modal-header">
+        <h2 id="shortcutHelpTitle">快捷键管理</h2>
+        <button class="btn-icon modal-close" id="shortcutHelpClose" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body" style="max-height:60vh;overflow-y:auto;">
+        <div class="shortcut-list" id="shortcutList">
+          <!-- populated by JS -->
+        </div>
+        <p class="shortcut-tip">点击快捷键列 → 按下组合键 → Enter 确认，Esc 取消。可用“恢复默认”重置全部快捷键。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary btn-sm" id="btnShortcutReset">恢复默认</button>
+        <button class="btn-secondary" id="shortcutHelpDone">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/katex/katex.min.js"></script>
+  <script src="/vendor/marked/marked.umd.js"></script>
+  <script src="/vendor/dompurify/purify.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
