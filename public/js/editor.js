@@ -9,11 +9,14 @@ import { closeCategoryManager, loadCategories, populateFilterCategory, populateE
 import { renderCalendar } from './calendar.js';
 import { AUTO_SAVE_MS, SAVE_STATUS_DURATION } from './constants.js';
 import { businessDateString, formatTemplateDate, shiftBusinessDate } from './businessDate.js';
+import { createContentEditor } from './contentEditor.js';
 
 const editorView = $('#editorView');
 const categoryView = $('#categoryView');
 const editTitle = $('#editTitle');
 const editContent = $('#editContent');
+const monacoContentEditor = $('#monacoContentEditor');
+const contentEditor = createContentEditor(editContent, monacoContentEditor);
 const editorContentArea = document.querySelector('.editor-content-area');
 const editPreview = $('#editPreview');
 const editDate = $('#editDate');
@@ -42,6 +45,7 @@ export function showListView() {
   categoryView.style.display = 'none';
   state.editingId = null;
   clearAutoSave();
+  contentEditor.setVisible(false);
   loadLogs();
   if (state.listScrollY) {
     requestAnimationFrame(() => window.scrollTo({ top: state.listScrollY, behavior: 'instant' }));
@@ -53,7 +57,6 @@ function showEditorView() {
   listView.style.display = 'none';
   categoryView.style.display = 'none';
   editorView.style.display = 'flex';
-  editContent.focus();
 }
 
 function getCategoryValue() {
@@ -64,7 +67,7 @@ function getCategoryValue() {
 
 function updateDirtyState() {
   const title = editTitle.value.trim();
-  const content = editContent.value;
+  const content = contentEditor.getValue();
   const date = editDate.value;
   const hours = editHours.value;
   const category = getCategoryValue();
@@ -99,7 +102,7 @@ export async function openEditor(id) {
     state.listScrollY = window.scrollY;
     showEditorView();
     editTitle.value = log.title;
-    editContent.value = log.content;
+    contentEditor.loadDocument(log.content, `log-${id}`);
     editDate.value = log.log_date || '';
     editHours.value = log.hours;
     lastSavedContent = log.content;
@@ -131,6 +134,7 @@ export async function openEditor(id) {
     document.title = '工作日志';
 
     switchTab(editorTab);
+    if (editorTab !== 'preview') contentEditor.focus();
     return true;
   } catch (err) {
     console.error('Load log failed:', err);
@@ -148,7 +152,7 @@ export function newLog() {
   lastSavedHours = '0';
   lastSavedCategory = '其他';
   editTitle.value = '';
-  editContent.value = '';
+  contentEditor.loadDocument('', 'new-log');
   editDate.value = state.selectedDate || '';
   editHours.value = '0';
   editCategory.value = '其他';
@@ -159,6 +163,7 @@ export function newLog() {
   document.title = '工作日志';
   showEditorView();
   switchTab(editorTab);
+  if (editorTab !== 'preview') contentEditor.focus();
 }
 
 $('#btnNewLog').addEventListener('click', newLog);
@@ -168,7 +173,7 @@ async function returnToListAfterSave() {
   if (currentSavePromise) await currentSavePromise;
   updateDirtyState();
 
-  if (state.editingId || editTitle.value.trim() || editContent.value.trim()) {
+  if (state.editingId || editTitle.value.trim() || contentEditor.getValue().trim()) {
     const saved = await doSave(false);
     if (!saved) return;
     updateDirtyState();
@@ -192,7 +197,7 @@ export async function openEditorFromNavigation(id) {
     if (currentSavePromise) await currentSavePromise;
     updateDirtyState();
 
-    if (state.editingId || editTitle.value.trim() || editContent.value.trim()) {
+    if (state.editingId || editTitle.value.trim() || contentEditor.getValue().trim()) {
       const saved = await doSave(false);
       if (!saved) return false;
       updateDirtyState();
@@ -216,7 +221,7 @@ function autoSave() {
   clearAutoSave();
   if (!isDirty) return;
   autoSaveTimer = setTimeout(() => {
-    if (state.editingId || editTitle.value.trim() || editContent.value.trim()) {
+    if (state.editingId || editTitle.value.trim() || contentEditor.getValue().trim()) {
       doSave(true);
     }
   }, AUTO_SAVE_MS);
@@ -232,7 +237,7 @@ function clearAutoSave() {
 export async function doSave(silent) {
   if (isSaving) return currentSavePromise || false;
   const title = editTitle.value.trim();
-  const content = editContent.value;
+  const content = contentEditor.getValue();
   const log_date = editDate.value;
   const hours = parseFloat(editHours.value) || 0;
   const category = getCategoryValue();
@@ -308,14 +313,15 @@ function closeAllModals() {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented) return;
   const tag = document.activeElement.tagName;
-  const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+  const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || contentEditor.hasFocus();
 
   const action = findAction(e);
   if (!action) return;
 
   const inEditor = editorView.style.display !== 'none';
-  const focusedOnContent = document.activeElement === editContent;
+  const focusedOnContent = contentEditor.hasFocus();
 
   switch (action) {
     case 'save':
@@ -334,6 +340,7 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault(); newLog();
       break;
     case 'search':
+      if (focusedOnContent && contentEditor.usesMonaco()) return;
       e.preventDefault();
       { const si = $('#searchInput'); si.focus(); si.select(); }
       break;
@@ -360,6 +367,7 @@ document.addEventListener('keydown', (e) => {
       } else if (categoryView.style.display !== 'none') {
         e.preventDefault(); closeCategoryManager();
       } else if (inEditor) {
+        if (focusedOnContent && contentEditor.hasOpenWidget()) return;
         e.preventDefault(); returnToListAfterSave();
       }
       break;
@@ -514,16 +522,11 @@ function markdownLinkText(text) {
 function insertLogLink(log) {
   const label = markdownLinkText(log.title || '未命名日志');
   const insert = `[${label}](#log/${log.id})`;
-  const ta = editContent;
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  const before = ta.value.substring(0, start);
-  const after = ta.value.substring(end);
-  ta.value = before + insert + after;
-  ta.focus();
-  ta.selectionStart = ta.selectionEnd = start + insert.length;
-  autoSave();
-  if (editorTab !== 'write') renderPreview();
+  const value = contentEditor.getValue();
+  const { start, end } = contentEditor.getSelection();
+  const nextValue = value.substring(0, start) + insert + value.substring(end);
+  contentEditor.applyValue(nextValue, start + insert.length);
+  contentEditor.focus();
 }
 
 let logLinkSearchTimer = null;
@@ -602,12 +605,14 @@ $('#logLinkResults').addEventListener('click', (e) => {
 
 // Markdown formatting toolbar
 function insertMarkdown(action) {
-  const ta = editContent;
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
-  const sel = ta.value.substring(start, end);
-  const before = ta.value.substring(0, start);
-  const after = ta.value.substring(end);
+  const value = contentEditor.getValue();
+  const { start, end } = contentEditor.getSelection();
+  const sel = value.substring(start, end);
+  const before = value.substring(0, start);
+  const after = value.substring(end);
+  let nextValue = value;
+  let selectionStart = start;
+  let selectionEnd = end;
 
   const inlineFormats = {
     bold:          { prefix: '**', suffix: '**', placeholder: '加粗文本' },
@@ -633,62 +638,54 @@ function insertMarkdown(action) {
     const fmt = inlineFormats[action];
     const text = sel || fmt.placeholder;
     const insert = fmt.prefix + text + fmt.suffix;
-    ta.value = before + insert + after;
-    if (sel) {
-      ta.selectionStart = start + fmt.prefix.length;
-      ta.selectionEnd = start + fmt.prefix.length + sel.length;
-    } else {
-      ta.selectionStart = start + fmt.prefix.length;
-      ta.selectionEnd = start + fmt.prefix.length + text.length;
-    }
+    nextValue = before + insert + after;
+    selectionStart = start + fmt.prefix.length;
+    selectionEnd = selectionStart + text.length;
   } else if (lineFormats[action]) {
     const fmt = lineFormats[action];
     if (fmt.line) {
       const text = sel || fmt.placeholder;
       const insert = fmt.prefix + text + fmt.suffix;
-      ta.value = before + insert + after;
-      ta.selectionStart = start + fmt.prefix.length;
-      ta.selectionEnd = start + fmt.prefix.length + text.length;
+      nextValue = before + insert + after;
+      selectionStart = start + fmt.prefix.length;
+      selectionEnd = selectionStart + text.length;
     } else {
       const lineStart = before.lastIndexOf('\n') + 1;
-      const lineEnd = ta.value.indexOf('\n', end);
-      const lineAfter = lineEnd === -1 ? '' : ta.value.substring(lineEnd);
+      const lineEnd = value.indexOf('\n', end);
+      const lineAfter = lineEnd === -1 ? '' : value.substring(lineEnd);
 
       if (sel && sel.includes('\n')) {
         const lines = sel.split('\n').map(l => fmt.prefix + l);
         const insert = lines.join('\n');
-        ta.value = before + insert + after;
-        ta.selectionStart = start;
-        ta.selectionEnd = start + insert.length;
+        nextValue = before + insert + after;
+        selectionEnd = start + insert.length;
       } else {
-        const lineContent = ta.value.substring(lineStart, lineEnd === -1 ? ta.value.length : lineEnd);
+        const lineContent = value.substring(lineStart, lineEnd === -1 ? value.length : lineEnd);
         const newLine = fmt.prefix + lineContent;
-        const remaining = ta.value.substring(0, lineStart) + newLine + lineAfter;
-        ta.value = remaining;
+        nextValue = value.substring(0, lineStart) + newLine + lineAfter;
         const cursorPos = lineStart + newLine.length;
-        ta.selectionStart = cursorPos;
-        ta.selectionEnd = cursorPos;
+        selectionStart = cursorPos;
+        selectionEnd = cursorPos;
       }
     }
   } else if (action === 'link') {
     const text = sel || '链接文本';
     const insert = `[${text}](url)`;
-    ta.value = before + insert + after;
+    nextValue = before + insert + after;
     const urlStart = start + text.length + 3;
-    ta.selectionStart = urlStart;
-    ta.selectionEnd = urlStart + 3;
+    selectionStart = urlStart;
+    selectionEnd = urlStart + 3;
   } else if (action === 'hr') {
     const needNewline = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
     const insert = needNewline + '---\n';
-    ta.value = before + insert + after;
+    nextValue = before + insert + after;
     const cursorPos = start + insert.length;
-    ta.selectionStart = cursorPos;
-    ta.selectionEnd = cursorPos;
+    selectionStart = cursorPos;
+    selectionEnd = cursorPos;
   }
 
-  ta.focus();
-  autoSave();
-  if (editorTab !== 'write') renderPreview();
+  contentEditor.applyValue(nextValue, selectionStart, selectionEnd);
+  contentEditor.focus();
 }
 
 $('#editorToolbar').addEventListener('click', (e) => {
@@ -763,17 +760,13 @@ function populateTemplateSelect() {
 
 function insertTemplateContent(content) {
   const renderedContent = renderTemplateContent(content);
-  const ta = editContent;
-  const hasContent = ta.value.trim().length > 0;
+  const value = contentEditor.getValue();
+  const hasContent = value.trim().length > 0;
   const prefix = hasContent ? '\n\n' : '';
-  const start = ta.selectionStart;
-  const before = ta.value.substring(0, start);
-  const after = ta.value.substring(start);
-  ta.value = before + prefix + renderedContent + after;
-  ta.focus();
-  ta.selectionStart = ta.selectionEnd = start + prefix.length + renderedContent.length;
-  autoSave();
-  if (editorTab !== 'write') renderPreview();
+  const { start } = contentEditor.getSelection();
+  const nextValue = value.substring(0, start) + prefix + renderedContent + value.substring(start);
+  contentEditor.applyValue(nextValue, start + prefix.length + renderedContent.length);
+  contentEditor.focus();
 }
 
 function applyTemplate(template) {
@@ -911,7 +904,7 @@ $('#btnTemplateReset').addEventListener('click', async () => {
 
 // Input listeners
 editTitle.addEventListener('input', autoSave);
-editContent.addEventListener('input', () => {
+contentEditor.onDidChange(() => {
   autoSave();
   if (editorTab !== 'write') renderPreview();
 });
@@ -944,20 +937,21 @@ export function switchTab(tab) {
   });
   editorContentArea.classList.toggle('split', tab === 'split');
   if (tab === 'write') {
-    editContent.style.display = 'block';
+    contentEditor.setVisible(true);
     editPreview.style.display = 'none';
     $('#editorToolbar').style.display = 'flex';
   } else if (tab === 'preview') {
     renderPreview();
-    editContent.style.display = 'none';
+    contentEditor.setVisible(false);
     editPreview.style.display = 'block';
     $('#editorToolbar').style.display = 'none';
   } else {
     renderPreview();
-    editContent.style.display = 'block';
+    contentEditor.setVisible(true);
     editPreview.style.display = 'block';
     $('#editorToolbar').style.display = 'flex';
   }
+  requestAnimationFrame(() => contentEditor.layout());
 }
 
 document.querySelector('.editor-tabs').addEventListener('click', (e) => {
@@ -1015,17 +1009,9 @@ $('#imgFileInput').addEventListener('change', () => {
   xhr.addEventListener('load', () => {
     if (xhr.status >= 200 && xhr.status < 300) {
       const data = JSON.parse(xhr.responseText);
-      const textarea = editContent;
       const imgMd = `![image](${data.url})`;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      const before = textarea.value.substring(0, start);
-      const after = textarea.value.substring(end);
-      textarea.value = before + imgMd + after;
-      textarea.selectionStart = textarea.selectionEnd = start + imgMd.length;
-      textarea.focus();
-      autoSave();
-      if (editorTab !== 'write') renderPreview();
+      contentEditor.insertAtSelection(imgMd);
+      contentEditor.focus();
       status.textContent = '已插入';
       setTimeout(() => { if (status.textContent === '已插入') status.textContent = ''; }, SAVE_STATUS_DURATION);
     } else {
@@ -1046,7 +1032,7 @@ $('#imgFileInput').addEventListener('change', () => {
 });
 
 function renderPreview() {
-  editPreview.innerHTML = renderToHtmlUncached(editContent.value);
+  editPreview.innerHTML = renderToHtmlUncached(contentEditor.getValue());
 }
 
 function copyTextFallback(text) {
@@ -1063,7 +1049,7 @@ function copyTextFallback(text) {
 }
 
 async function copyMarkdownText() {
-  const content = editContent.value;
+  const content = contentEditor.getValue();
   if (!content.trim()) {
     showToast('没有可复制的 Markdown 内容', 'error');
     return;
@@ -1084,7 +1070,7 @@ async function copyMarkdownText() {
 $('#btnCopyMarkdown').addEventListener('click', copyMarkdownText);
 
 function exportMarkdownText() {
-  const content = editContent.value;
+  const content = contentEditor.getValue();
   if (!content.trim()) {
     showToast('没有可导出的 Markdown 内容', 'error');
     return;
@@ -1160,10 +1146,10 @@ $('#btnDeleteEditor').addEventListener('click', async () => {
   }
 
   function insertTable(rows, cols) {
-    const ta = editContent;
-    const start = ta.selectionStart;
-    const before = ta.value.substring(0, start);
-    const after = ta.value.substring(start);
+    const value = contentEditor.getValue();
+    const { start } = contentEditor.getSelection();
+    const before = value.substring(0, start);
+    const after = value.substring(start);
     const needNewline = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
 
     let table = '\n|';
@@ -1176,13 +1162,10 @@ $('#btnDeleteEditor').addEventListener('click', async () => {
     }
     table += '\n';
 
-    ta.value = before + needNewline + table + after;
+    const nextValue = before + needNewline + table + after;
     const cursorPos = start + needNewline.length + 2;
-    ta.selectionStart = cursorPos;
-    ta.selectionEnd = cursorPos;
-    ta.focus();
-    autoSave();
-    if (editorTab !== 'write') renderPreview();
+    contentEditor.applyValue(nextValue, cursorPos);
+    contentEditor.focus();
   }
 
   grid.addEventListener('mouseover', (e) => {

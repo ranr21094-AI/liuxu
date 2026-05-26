@@ -1885,6 +1885,22 @@ body.resizing {
 }
 .edit-content:focus { border-color: var(--color-primary); }
 
+.monaco-content-editor {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--color-card);
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.monaco-content-editor:focus-within {
+  border-color: var(--color-primary);
+}
+
 .edit-preview {
   flex: 1;
   padding: 20px 24px;
@@ -1900,6 +1916,7 @@ body.resizing {
 }
 
 .editor-content-area.split .edit-content,
+.editor-content-area.split .monaco-content-editor,
 .editor-content-area.split .edit-preview {
   display: block;
   flex: 1 1 0;
@@ -1907,7 +1924,8 @@ body.resizing {
   min-width: 0;
 }
 
-.editor-content-area.split .edit-content {
+.editor-content-area.split .edit-content,
+.editor-content-area.split .monaco-content-editor {
   border-right: none;
   border-radius: 0 0 0 var(--radius);
 }
@@ -2621,8 +2639,10 @@ kbd {
   .editor-actions { margin-left: 0; }
   .editor-help { margin-left: 0; width: 100%; }
   .edit-content { font-size: 0.85rem; min-height: 50vh; }
+  .monaco-content-editor { display: none !important; }
   .editor-content-area.split { flex-direction: column; }
   .editor-content-area.split .edit-content,
+  .editor-content-area.split .monaco-content-editor,
   .editor-content-area.split .edit-preview {
     width: 100%;
     min-height: 40vh;

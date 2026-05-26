@@ -5,9 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 - **Install**: `npm install` (first-time setup)
-- **Start server**: `npm start` (or `node server.js`)
+- **Build editor assets**: `npm run build` (required before running `node server.js` directly)
+- **Start server**: `npm start` (builds Monaco assets, then starts Express)
+- **Tests**: `npm test` (builds Monaco assets, then runs Node tests)
 - **Port**: Set `PORT` env var (default 3000). E.g. `PORT=3001 npm start`
-- No build step, test runner, or linter. Vanilla JS frontend served as static files.
+- Vanilla JS frontend served as static files; the only build step bundles Monaco into ignored `public/generated/monaco/`.
 
 ## Architecture
 
@@ -36,7 +38,7 @@ Default categories are hardcoded in `database.js` and used when `categories.json
 - **State management**: Single global `state` object — no framework.
 - **Calendar**: Rendered in JS, year/month dropdown selects + prev/next month buttons. Highlights dates with logs, click to filter.
 - **Log list**: Cards showing title, category, markdown-rendered content, hours. Drag-and-drop reordering via HTML5 DnD API. Pagination at the bottom.
-- **Editor**: Write/preview tabs — preview renders markdown via `marked.parse()` with `breaks: true, gfm: true`. Auto-save with 1.5s debounce on any input change. Ctrl+S to save manually.
+- **Editor**: Desktop body editing uses dynamically loaded Monaco; narrow screens retain the textarea fallback. Write/preview tabs render markdown via `marked.parse()` with `breaks: true, gfm: true`. Auto-save uses a 1.5s debounce. Ctrl+S saves manually.
 - **Category management modal**: Modal overlay with list of categories. Each has inline rename (click ✎, edit, press Enter) and delete (with confirmation). Default categories (会议/开发/文档/测试/学习/其他) are marked and cannot be deleted. Custom categories typed in the editor's custom field are auto-added to the managed list on save.
 - **Todo panel**: Sidebar list with add/ toggle/ delete. Drag-and-drop reorder. "Clear completed" button.
 - **Stats panel**: Week/month hours, daily average, total logs, category breakdown chips with color dots.

@@ -17,6 +17,8 @@ npm start
 
 `copy` 适用于 Windows；macOS 或 Linux 可使用 `cp .env.example .env`。不创建 `.env` 也可以直接运行，应用默认监听 `http://localhost:3000`。
 
+`npm start` 会先构建桌面端使用的 Monaco Editor 资源，再启动服务。桌面编辑日志正文时提供 Markdown 高亮、行号、minimap 与查找替换；窄屏设备继续使用轻量 textarea 编辑面。
+
 ## Configuration
 
 复制 `.env.example` 后，可按需配置：
@@ -57,7 +59,10 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 ## Development
 
 ```bash
+npm run build
 npm test
 ```
 
-后端由 Express 提供静态页面和 REST API，前端为原生 JavaScript 单页应用，无额外构建步骤。
+`npm run build` 仅将 Monaco 资源生成到未纳入版本控制的 `public/generated/monaco/`。`npm test` 和 `npm start` 会自动执行该构建；若直接运行 `node server.js`，请先执行 `npm run build`。
+
+后端由 Express 提供静态页面和 REST API，前端仍为原生 JavaScript 单页应用；Monaco 是唯一需要打包生成的浏览器资产。

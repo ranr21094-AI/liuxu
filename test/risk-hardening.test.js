@@ -577,6 +577,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#editorTabWrite').getAttribute('role'), 'tab');
   assert.equal(document.querySelector('#editorTabWrite').getAttribute('aria-controls'), 'editorPanel');
   assert.equal(document.querySelector('#editorPanel').getAttribute('role'), 'tabpanel');
+  assert.equal(document.querySelector('#monacoContentEditor').getAttribute('aria-label'), '日志内容 Markdown 编辑器');
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
 });
 
@@ -628,4 +629,58 @@ test('markdown preview renders normal markdown and latex with local globals', as
   assert.match(html, /<h1>Title<\/h1>/);
   assert.match(html, /<strong>bold<\/strong>/);
   assert.match(html, /katex/);
+});
+
+test('Monaco editor is built as a deferred desktop asset with textarea fallback', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const adapterSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'contentEditor.js'), 'utf8');
+  const entrySource = fs.readFileSync(path.join(ROOT, 'src', 'monaco', 'editor-entry.js'), 'utf8');
+  const ignoreSource = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
+
+  assert.equal(packageJson.scripts.build, 'node scripts/build-monaco.mjs');
+  assert.match(adapterSource, /\(min-width: 769px\)/);
+  assert.match(adapterSource, /import\(MONACO_MODULE_URL\)/);
+  assert.match(entrySource, /new Worker\('\/generated\/monaco\/editor\.worker\.js', \{ type: 'module' \}\)/);
+  assert.match(ignoreSource, /public\/generated\//);
+});
+
+test('textarea fallback preserves programmatic loads and selection inserts', async (t) => {
+  const dom = new JSDOM('<!doctype html><textarea id="body"></textarea><div id="mount"></div>', {
+    pretendToBeVisual: true,
+  });
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalMutationObserver = globalThis.MutationObserver;
+  t.after(() => {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.MutationObserver = originalMutationObserver;
+    dom.window.close();
+  });
+
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.MutationObserver = dom.window.MutationObserver;
+  dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, addListener() {} });
+
+  const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'contentEditor.js')).href + `?fallback=${Date.now()}`;
+  const { createContentEditor } = await import(moduleUrl);
+  const textarea = document.querySelector('#body');
+  const mount = document.querySelector('#mount');
+  const editor = createContentEditor(textarea, mount);
+  let changes = 0;
+  editor.onDidChange(() => { changes += 1; });
+
+  editor.loadDocument('alpha', 'log-1');
+  assert.equal(changes, 0);
+  textarea.selectionStart = textarea.selectionEnd = 5;
+  editor.insertAtSelection(' beta');
+  assert.equal(editor.getValue(), 'alpha beta');
+  assert.equal(textarea.value, 'alpha beta');
+  assert.deepEqual(editor.getSelection(), { start: 10, end: 10 });
+  assert.equal(changes, 1);
+
+  editor.setVisible(true);
+  assert.equal(textarea.style.display, 'block');
+  assert.equal(mount.style.display, 'none');
 });

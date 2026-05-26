@@ -4,18 +4,21 @@
   "description": "Work log web application",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test"
+    "build": "node scripts/build-monaco.mjs",
+    "start": "npm run build && node server.js",
+    "test": "npm run build && node --test"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^4.21.0",
     "katex": "^0.16.47",
     "marked": "^18.0.3",
+    "monaco-editor": "^0.55.1",
     "multer": "^2.1.1"
   },
   "devDependencies": {
     "dompurify": "^3.4.3",
+    "esbuild": "^0.28.0",
     "jsdom": "^29.1.1"
   }
 }
