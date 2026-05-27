@@ -16,8 +16,8 @@ const editorView = $('#editorView');
 const categoryView = $('#categoryView');
 const editTitle = $('#editTitle');
 const editContent = $('#editContent');
-const monacoContentEditor = $('#monacoContentEditor');
-const contentEditor = createContentEditor(editContent, monacoContentEditor);
+const codeMirrorContentEditor = $('#codeMirrorContentEditor');
+const contentEditor = createContentEditor(editContent, codeMirrorContentEditor);
 const editorContentArea = document.querySelector('.editor-content-area');
 const editPreview = $('#editPreview');
 const editDate = $('#editDate');
@@ -25,6 +25,7 @@ const editCategory = $('#editCategory');
 const editSubcategory = $('#editSubcategory');
 const editHours = $('#editHours');
 const saveStatus = $('#saveStatus');
+const btnEditorFullscreen = $('#btnEditorFullscreen');
 
 // Editor-internal state
 const EDITOR_TAB_STORAGE_KEY = 'editorTabMode';
@@ -40,7 +41,16 @@ let isDirty = false;
 let isSaving = false;
 let currentSavePromise = null;
 
+function setEditorFullscreen(enabled) {
+  document.body.classList.toggle('editor-fullscreen', enabled);
+  btnEditorFullscreen.setAttribute('aria-pressed', String(enabled));
+  btnEditorFullscreen.textContent = enabled ? '退出全屏' : '全屏编辑';
+  btnEditorFullscreen.title = enabled ? '退出全屏编辑' : '进入全屏编辑';
+  requestAnimationFrame(() => contentEditor.layout());
+}
+
 export function showListView() {
+  setEditorFullscreen(false);
   listView.style.display = 'flex';
   editorView.style.display = 'none';
   categoryView.style.display = 'none';
@@ -64,6 +74,25 @@ function getCategoryValue() {
   const parent = editCategory.value;
   const sub = editSubcategory.value;
   return sub ? parent + '/' + sub : parent;
+}
+
+function getNewLogCategory() {
+  const [filteredParent = '', ...subParts] = (state.category || '').split('/');
+  const filteredSub = subParts.join('/');
+  const matchingCategory = state.categories.find(category => category.name === filteredParent);
+
+  if (matchingCategory && (!filteredSub || (matchingCategory.sub || []).includes(filteredSub))) {
+    return {
+      parent: filteredParent,
+      sub: filteredSub,
+      value: filteredSub ? `${filteredParent}/${filteredSub}` : filteredParent,
+    };
+  }
+
+  const fallback = state.categories.some(category => category.name === '其他')
+    ? '其他'
+    : state.categories[0]?.name || '其他';
+  return { parent: fallback, sub: '', value: fallback };
 }
 
 function updateDirtyState() {
@@ -145,20 +174,22 @@ export async function openEditor(id) {
 }
 
 export function newLog() {
+  const defaultDate = state.selectedDate || businessDateString();
+  const defaultCategory = getNewLogCategory();
   state.listScrollY = window.scrollY;
   state.editingId = null;
   lastSavedContent = '';
   lastSavedTitle = '';
-  lastSavedDate = state.selectedDate || '';
+  lastSavedDate = defaultDate;
   lastSavedHours = '0';
-  lastSavedCategory = '其他';
+  lastSavedCategory = defaultCategory.value;
   editTitle.value = '';
   contentEditor.loadDocument('', 'new-log');
-  editDate.value = state.selectedDate || '';
+  editDate.value = defaultDate;
   editHours.value = '0';
-  editCategory.value = '其他';
-  editSubcategory.value = '';
-  populateEditorSubCategory('其他');
+  editCategory.value = defaultCategory.parent;
+  populateEditorSubCategory(defaultCategory.parent);
+  editSubcategory.value = defaultCategory.sub;
   saveStatus.textContent = '';
   isDirty = false;
   document.title = '工作日志';
@@ -214,6 +245,10 @@ export async function openEditorFromNavigation(id) {
 
 $('#btnBack').addEventListener('click', () => {
   returnToListAfterSave();
+});
+
+btnEditorFullscreen.addEventListener('click', () => {
+  setEditorFullscreen(!document.body.classList.contains('editor-fullscreen'));
 });
 
 // Auto-save with dirty detection
@@ -341,7 +376,7 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault(); newLog();
       break;
     case 'search':
-      if (focusedOnContent && contentEditor.usesMonaco()) return;
+      if (focusedOnContent && contentEditor.usesRichEditor()) return;
       e.preventDefault();
       { const si = $('#searchInput'); si.focus(); si.select(); }
       break;
@@ -369,6 +404,11 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault(); closeCategoryManager();
       } else if (inEditor) {
         if (focusedOnContent && contentEditor.hasOpenWidget()) return;
+        if (document.body.classList.contains('editor-fullscreen')) {
+          e.preventDefault();
+          setEditorFullscreen(false);
+          return;
+        }
         e.preventDefault(); returnToListAfterSave();
       }
       break;

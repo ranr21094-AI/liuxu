@@ -1,56 +1,24 @@
-const DESKTOP_QUERY = '(min-width: 769px)';
-const MONACO_STYLE_ID = 'monacoEditorStyles';
-const MONACO_CSS_URL = '/generated/monaco/editor.css';
-const MONACO_MODULE_URL = '/generated/monaco/editor.js';
-
-function addMediaListener(mediaQuery, listener) {
-  if (typeof mediaQuery.addEventListener === 'function') {
-    mediaQuery.addEventListener('change', listener);
-  } else if (typeof mediaQuery.addListener === 'function') {
-    mediaQuery.addListener(listener);
-  }
-}
-
-function ensureMonacoStylesheet() {
-  if (document.getElementById(MONACO_STYLE_ID)) return;
-  const link = document.createElement('link');
-  link.id = MONACO_STYLE_ID;
-  link.rel = 'stylesheet';
-  link.href = MONACO_CSS_URL;
-  document.head.appendChild(link);
-}
+const CODEMIRROR_MODULE_URL = '/generated/editor/editor.js';
 
 export class ContentEditor {
   constructor(textarea, container) {
     this.textarea = textarea;
     this.container = container;
     this.value = textarea.value || '';
-    this.documentKey = 'draft';
     this.listeners = new Set();
     this.visible = false;
-    this.monaco = null;
     this.editor = null;
-    this.model = null;
-    this.modelSequence = 0;
+    this.module = null;
+    this.themeCompartment = null;
     this.loading = null;
     this.suppressChanges = false;
-    this.desktopQuery = typeof window.matchMedia === 'function'
-      ? window.matchMedia(DESKTOP_QUERY)
-      : { matches: false, addEventListener() {}, addListener() {} };
 
     this.textarea.addEventListener('input', () => {
-      if (this.suppressChanges) return;
+      if (this.suppressChanges || this.editor) return;
       this.value = this.textarea.value;
-      this.syncHiddenMonacoValue();
       this.emitChange();
     });
 
-    addMediaListener(this.desktopQuery, () => {
-      if (this.visible && this.desktopQuery.matches) this.ensureMonaco();
-      this.updateSurface();
-    });
-
-    window.addEventListener('resize', () => this.layout());
     new MutationObserver(() => this.syncTheme()).observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-theme'],
@@ -70,24 +38,23 @@ export class ContentEditor {
     return this.value;
   }
 
-  loadDocument(value, documentKey = 'draft') {
+  loadDocument(value) {
     this.value = value || '';
-    this.documentKey = String(documentKey || 'draft');
     this.suppressChanges = true;
     this.textarea.value = this.value;
+    if (this.editor) {
+      this.editor.dispatch({
+        changes: { from: 0, to: this.editor.state.doc.length, insert: this.value },
+        selection: { anchor: 0 },
+      });
+    }
     this.suppressChanges = false;
-    if (this.editor) this.replaceModel();
   }
 
   getSelection() {
-    if (this.usesMonaco()) {
-      const selection = this.editor.getSelection();
-      const model = this.editor.getModel();
-      if (!selection) return { start: this.value.length, end: this.value.length };
-      return {
-        start: model.getOffsetAt(selection.getStartPosition()),
-        end: model.getOffsetAt(selection.getEndPosition()),
-      };
+    if (this.editor) {
+      const selection = this.editor.state.selection.main;
+      return { start: selection.from, end: selection.to };
     }
     return {
       start: this.textarea.selectionStart,
@@ -99,21 +66,15 @@ export class ContentEditor {
     this.value = value;
     this.suppressChanges = true;
     this.textarea.value = value;
-    if (this.usesMonaco()) {
-      const model = this.editor.getModel();
-      this.editor.pushUndoStop();
-      this.editor.executeEdits('work-log', [{
-        range: model.getFullModelRange(),
-        text: value,
-        forceMoveMarkers: true,
-      }]);
-      this.editor.pushUndoStop();
+    if (this.editor) {
+      this.editor.dispatch({
+        changes: { from: 0, to: this.editor.state.doc.length, insert: value },
+        selection: { anchor: selectionStart, head: selectionEnd },
+      });
+    } else {
       this.setSelection(selectionStart, selectionEnd);
-    } else if (this.editor) {
-      this.editor.getModel().setValue(value);
     }
     this.suppressChanges = false;
-    if (!this.usesMonaco()) this.setSelection(selectionStart, selectionEnd);
     this.emitChange();
   }
 
@@ -125,17 +86,9 @@ export class ContentEditor {
   }
 
   setSelection(start, end = start) {
-    if (this.usesMonaco()) {
-      const model = this.editor.getModel();
-      const startPosition = model.getPositionAt(start);
-      const endPosition = model.getPositionAt(end);
-      this.editor.setSelection({
-        startLineNumber: startPosition.lineNumber,
-        startColumn: startPosition.column,
-        endLineNumber: endPosition.lineNumber,
-        endColumn: endPosition.column,
-      });
-      this.editor.revealPositionInCenterIfOutsideViewport(endPosition);
+    if (this.editor) {
+      this.editor.dispatch({ selection: { anchor: start, head: end } });
+      this.editor.dispatch({ effects: this.module.EditorView.scrollIntoView(end) });
       return;
     }
     this.textarea.selectionStart = start;
@@ -145,112 +98,97 @@ export class ContentEditor {
   setVisible(visible) {
     this.visible = visible;
     this.updateSurface();
-    if (visible && this.desktopQuery.matches) {
-      this.ensureMonaco().then(() => {
-        if (this.visible && this.desktopQuery.matches) {
-          this.updateSurface();
-          this.layout();
-        }
-      }).catch(err => {
-        console.error('Monaco initialization failed:', err);
+    if (!visible) return;
+    this.ensureEditor().then(() => {
+      if (this.visible) {
         this.updateSurface();
-      });
-    }
+        this.layout();
+      }
+    }).catch(err => {
+      console.error('CodeMirror initialization failed:', err);
+      this.updateSurface();
+    });
   }
 
   focus() {
-    if (this.usesMonaco()) {
+    if (this.editor) {
       this.editor.focus();
       return;
     }
     this.textarea.focus();
-    if (this.visible && this.desktopQuery.matches) {
-      this.ensureMonaco().then(() => {
-        if (this.visible && this.desktopQuery.matches) this.editor.focus();
+    if (this.visible) {
+      this.ensureEditor().then(() => {
+        if (this.visible) this.editor.focus();
       }).catch(() => {});
     }
   }
 
   hasFocus() {
-    return this.usesMonaco()
-      ? this.editor.hasTextFocus()
+    return this.editor
+      ? this.editor.hasFocus
       : document.activeElement === this.textarea;
   }
 
-  usesMonaco() {
-    return Boolean(this.editor && this.desktopQuery.matches);
+  usesRichEditor() {
+    return Boolean(this.editor);
   }
 
   hasOpenWidget() {
-    if (!this.usesMonaco()) return false;
-    return Boolean(this.container.querySelector(
-      '.find-widget.visible, .suggest-widget.visible, .parameter-hints-widget.visible, .monaco-hover:not(.hidden)',
-    ));
+    return Boolean(this.editor && this.container.querySelector('.cm-panels, .cm-tooltip'));
   }
 
   layout() {
-    if (this.usesMonaco() && this.visible) this.editor.layout();
+    if (this.editor) {
+      this.editor.requestMeasure();
+    }
   }
 
   syncTheme() {
-    if (!this.monaco) return;
-    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs';
-    this.monaco.editor.setTheme(theme);
+    if (!this.editor || !this.themeCompartment) return;
+    this.editor.dispatch({
+      effects: this.themeCompartment.reconfigure(this.themeExtensions()),
+    });
+  }
+
+  themeExtensions() {
+    const extensions = [this.module.appTheme];
+    if (document.documentElement.getAttribute('data-theme') === 'dark') {
+      extensions.unshift(this.module.oneDark);
+    }
+    return extensions;
   }
 
   updateSurface() {
-    const showMonaco = this.visible && this.usesMonaco();
-    const showTextarea = this.visible && !showMonaco;
-    this.container.style.display = showMonaco ? 'block' : 'none';
+    const showCodeMirror = this.visible && Boolean(this.editor);
+    const showTextarea = this.visible && !showCodeMirror;
+    this.container.style.display = showCodeMirror ? 'block' : 'none';
     this.textarea.style.display = showTextarea ? 'block' : 'none';
-    if (showMonaco) this.layout();
   }
 
-  syncHiddenMonacoValue() {
-    if (!this.editor || this.usesMonaco()) return;
-    this.suppressChanges = true;
-    this.editor.getModel().setValue(this.value);
-    this.suppressChanges = false;
-  }
-
-  replaceModel() {
-    const priorModel = this.model;
-    const path = encodeURIComponent(this.documentKey);
-    const uri = this.monaco.Uri.parse(`inmemory://work-log/${path}-${++this.modelSequence}.md`);
-    this.model = this.monaco.editor.createModel(this.value, 'markdown', uri);
-    if (this.editor) this.editor.setModel(this.model);
-    if (priorModel) priorModel.dispose();
-  }
-
-  async ensureMonaco() {
+  async ensureEditor() {
     if (this.editor) return this.editor;
     if (this.loading) return this.loading;
-    ensureMonacoStylesheet();
-    this.loading = import(MONACO_MODULE_URL).then(module => {
-      module.configureWorkers();
-      this.monaco = module.monaco;
-      this.replaceModel();
-      this.editor = this.monaco.editor.create(this.container, {
-        model: this.model,
-        theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'vs-dark' : 'vs',
-        lineNumbers: 'on',
-        minimap: { enabled: true },
-        wordWrap: 'on',
-        automaticLayout: false,
-        scrollBeyondLastLine: false,
-        fontFamily: '"SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace',
-        fontSize: 14,
-        lineHeight: 25,
-        padding: { top: 14, bottom: 14 },
+    this.loading = import(CODEMIRROR_MODULE_URL).then(module => {
+      this.module = module;
+      this.themeCompartment = new module.Compartment();
+      const state = module.EditorState.create({
+        doc: this.value,
+        extensions: [
+          module.basicSetup,
+          module.markdown(),
+          module.EditorView.lineWrapping,
+          this.themeCompartment.of(this.themeExtensions()),
+          module.EditorView.updateListener.of(update => {
+            if (!update.docChanged || this.suppressChanges) return;
+            this.value = update.state.doc.toString();
+            this.suppressChanges = true;
+            this.textarea.value = this.value;
+            this.suppressChanges = false;
+            this.emitChange();
+          }),
+        ],
       });
-      this.editor.onDidChangeModelContent(() => {
-        if (this.suppressChanges) return;
-        this.value = this.editor.getValue();
-        this.suppressChanges = true;
-        this.textarea.value = this.value;
-        this.suppressChanges = false;
-        this.emitChange();
-      });
+      this.editor = new module.EditorView({ state, parent: this.container });
       return this.editor;
     }).finally(() => {
       this.loading = null;

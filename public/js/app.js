@@ -37,6 +37,8 @@ $('#btnThemeToggle').addEventListener('click', toggleTheme);
 // Sidebar mode: normal tools or current-card navigation
 const SIDEBAR_NAV_MODE_KEY = 'sidebarNavMode';
 const SIDEBAR_TODO_MODE_KEY = 'sidebarTodoMode';
+const MOBILE_SIDEBAR_QUERY = '(max-width: 768px)';
+const mobileSidebarMedia = window.matchMedia(MOBILE_SIDEBAR_QUERY);
 
 function setSidebarTitle(mode) {
   if (mode === 'nav') {
@@ -45,16 +47,39 @@ function setSidebarTitle(mode) {
   } else if (mode === 'todo') {
     $('#sidebarTitle').textContent = '待办面板';
     $('#sidebarTitle').title = '当前为待办面板';
+  } else if (mode === 'tools') {
+    $('#sidebarTitle').textContent = '更多工具';
+    $('#sidebarTitle').title = '当前为统计与数据工具';
   } else {
     $('#sidebarTitle').textContent = '工作日志';
     $('#sidebarTitle').title = '点击切换日历显示';
   }
 }
 
+function resetToolsMode() {
+  document.body.classList.remove('sidebar-tools-mode');
+  $('#btnSidebarTools').classList.remove('active');
+  $('#btnSidebarTools').setAttribute('aria-pressed', 'false');
+  $('#btnSidebarTools').title = '切换更多工具';
+}
+
+function activeSidebarMode() {
+  if (document.body.classList.contains('sidebar-nav-mode')) return 'nav';
+  if (document.body.classList.contains('sidebar-todo-mode')) return 'todo';
+  if (document.body.classList.contains('sidebar-tools-mode')) return 'tools';
+  return 'normal';
+}
+
+function closeMobileCalendar() {
+  $('#calendarWidget').classList.remove('mobile-show');
+}
+
 function setSidebarNavMode(enabled) {
   document.body.classList.toggle('sidebar-nav-mode', enabled);
   if (enabled) {
     document.body.classList.remove('sidebar-todo-mode');
+    resetToolsMode();
+    closeMobileCalendar();
     $('#btnTodoMode').classList.remove('active');
     $('#btnTodoMode').setAttribute('aria-pressed', 'false');
     $('#btnTodoMode').title = '切换待办面板';
@@ -63,7 +88,7 @@ function setSidebarNavMode(enabled) {
   $('#btnSidebarMode').classList.toggle('active', enabled);
   $('#btnSidebarMode').setAttribute('aria-pressed', String(enabled));
   $('#btnSidebarMode').title = enabled ? '切换回常规侧边栏' : '切换日志导航栏';
-  setSidebarTitle(enabled ? 'nav' : (document.body.classList.contains('sidebar-todo-mode') ? 'todo' : 'normal'));
+  setSidebarTitle(activeSidebarMode());
   if (enabled) {
     $('#cardNavPanel').classList.remove('collapsed');
     $('#cardNavToggle').setAttribute('aria-expanded', 'true');
@@ -75,6 +100,8 @@ function setSidebarTodoMode(enabled) {
   document.body.classList.toggle('sidebar-todo-mode', enabled);
   if (enabled) {
     document.body.classList.remove('sidebar-nav-mode');
+    resetToolsMode();
+    closeMobileCalendar();
     $('#btnSidebarMode').classList.remove('active');
     $('#btnSidebarMode').setAttribute('aria-pressed', 'false');
     $('#btnSidebarMode').title = '切换日志导航栏';
@@ -83,7 +110,27 @@ function setSidebarTodoMode(enabled) {
   $('#btnTodoMode').classList.toggle('active', enabled);
   $('#btnTodoMode').setAttribute('aria-pressed', String(enabled));
   $('#btnTodoMode').title = enabled ? '切换回常规侧边栏' : '切换待办面板';
-  setSidebarTitle(enabled ? 'todo' : (document.body.classList.contains('sidebar-nav-mode') ? 'nav' : 'normal'));
+  setSidebarTitle(activeSidebarMode());
+}
+
+function setSidebarToolsMode(enabled) {
+  document.body.classList.toggle('sidebar-tools-mode', enabled);
+  if (enabled) {
+    document.body.classList.remove('sidebar-nav-mode', 'sidebar-todo-mode');
+    closeMobileCalendar();
+    $('#btnSidebarMode').classList.remove('active');
+    $('#btnSidebarMode').setAttribute('aria-pressed', 'false');
+    $('#btnSidebarMode').title = '切换日志导航栏';
+    $('#btnTodoMode').classList.remove('active');
+    $('#btnTodoMode').setAttribute('aria-pressed', 'false');
+    $('#btnTodoMode').title = '切换待办面板';
+    localStorage.setItem(SIDEBAR_NAV_MODE_KEY, 'false');
+    localStorage.setItem(SIDEBAR_TODO_MODE_KEY, 'false');
+  }
+  $('#btnSidebarTools').classList.toggle('active', enabled);
+  $('#btnSidebarTools').setAttribute('aria-pressed', String(enabled));
+  $('#btnSidebarTools').title = enabled ? '切换回常规侧边栏' : '切换更多工具';
+  setSidebarTitle(activeSidebarMode());
 }
 
 if (localStorage.getItem(SIDEBAR_TODO_MODE_KEY) === 'true') {
@@ -104,6 +151,17 @@ $('#btnTodoMode').addEventListener('click', () => {
   localStorage.setItem(SIDEBAR_TODO_MODE_KEY, String(enabled));
 });
 
+$('#btnSidebarTools').addEventListener('click', () => {
+  setSidebarToolsMode(!document.body.classList.contains('sidebar-tools-mode'));
+});
+
+mobileSidebarMedia.addEventListener('change', (event) => {
+  if (!event.matches && document.body.classList.contains('sidebar-tools-mode')) {
+    setSidebarToolsMode(false);
+  }
+  if (!event.matches) closeMobileCalendar();
+});
+
 // Sidebar collapse
 function collapseSidebar() {
   document.body.classList.toggle('sidebar-collapsed');
@@ -120,8 +178,12 @@ $('#fabCapture').addEventListener('click', () => {
 // Calendar toggle (mobile)
 // Calendar toggle via title click
 $('#sidebarTitle').addEventListener('click', () => {
-  if (document.body.classList.contains('sidebar-nav-mode') || document.body.classList.contains('sidebar-todo-mode')) return;
+  if (activeSidebarMode() !== 'normal') return;
   const widget = $('#calendarWidget');
+  if (mobileSidebarMedia.matches) {
+    widget.classList.toggle('mobile-show');
+    return;
+  }
   widget.style.display = widget.style.display === 'none' ? '' : 'none';
 });
 

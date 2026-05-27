@@ -188,6 +188,10 @@ body {
   color: var(--color-card);
 }
 
+.btn-sidebar-tools {
+  display: none;
+}
+
 .theme-icon-dark { display: none; }
 [data-theme="dark"] .theme-icon-light { display: none; }
 [data-theme="dark"] .theme-icon-dark { display: inline-flex; }
@@ -1680,6 +1684,13 @@ body.resizing {
   flex-wrap: wrap;
 }
 
+.editor-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .btn-back {
   color: var(--color-text);
   font-size: 0.85rem;
@@ -1689,6 +1700,12 @@ body.resizing {
   border: 1px solid var(--color-border);
 }
 .btn-back:hover { background: var(--color-bg); border-color: var(--color-primary); }
+
+.btn-editor-fullscreen[aria-pressed="true"] {
+  border-color: var(--color-primary);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  color: var(--color-primary);
+}
 
 .editor-meta {
   display: flex;
@@ -1984,7 +2001,7 @@ body.resizing {
 }
 .edit-content:focus { border-color: var(--color-primary); }
 
-.monaco-content-editor {
+.codemirror-content-editor {
   flex: 1;
   width: 100%;
   min-height: 0;
@@ -1996,8 +2013,13 @@ body.resizing {
   transition: border-color 0.2s;
 }
 
-.monaco-content-editor:focus-within {
+.codemirror-content-editor:focus-within {
   border-color: var(--color-primary);
+}
+
+.codemirror-content-editor .cm-editor,
+.codemirror-content-editor .cm-scroller {
+  height: 100%;
 }
 
 .edit-preview {
@@ -2015,7 +2037,7 @@ body.resizing {
 }
 
 .editor-content-area.split .edit-content,
-.editor-content-area.split .monaco-content-editor,
+.editor-content-area.split .codemirror-content-editor,
 .editor-content-area.split .edit-preview {
   display: block;
   flex: 1 1 0;
@@ -2024,7 +2046,7 @@ body.resizing {
 }
 
 .editor-content-area.split .edit-content,
-.editor-content-area.split .monaco-content-editor {
+.editor-content-area.split .codemirror-content-editor {
   border-right: none;
   border-radius: 0 0 0 var(--radius);
 }
@@ -2700,19 +2722,38 @@ kbd {
   html, body { overflow: auto; height: auto; }
   body { flex-direction: column; }
   .sidebar {
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 50;
     width: 100%;
     flex-direction: row;
     flex-wrap: wrap;
-    padding: 14px;
-    gap: 10px;
+    padding: 8px 12px;
+    gap: 8px;
+    box-shadow: 0 1px 8px var(--color-card-shadow);
+  }
+  body.sidebar-collapsed .sidebar {
+    display: none;
   }
   .sidebar-brand { width: 100%; margin-bottom: 0; }
   .sidebar-brand h1 { font-size: 1rem; }
+  .btn-theme-toggle,
+  .btn-sidebar-mode,
+  .btn-sidebar-toggle {
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: center;
+  }
+  .btn-sidebar-tools { display: flex; }
   .calendar-widget { width: 100%; display: none; }
   .calendar-widget.mobile-show { display: block; }
 
-  .btn-sidebar-toggle { display: none; }
+  .card-nav-panel,
+  .todo-panel,
+  .todo-full-panel,
+  .stats-panel,
+  .diary-lock-panel,
+  .backup-buttons { display: none; }
   .card-nav-panel { width: 100%; }
   .card-nav-list {
     max-height: 180px;
@@ -2725,6 +2766,9 @@ kbd {
     max-height: 70vh;
     overflow: hidden;
   }
+  body.sidebar-nav-mode .card-nav-panel {
+    display: flex;
+  }
   body.sidebar-nav-mode .card-nav-list {
     display: flex;
     max-height: none;
@@ -2736,31 +2780,152 @@ kbd {
     overflow: hidden;
   }
   body.sidebar-todo-mode .todo-full-panel {
+    display: flex;
     width: 100%;
     min-height: 0;
+  }
+  body.sidebar-tools-mode .sidebar {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    max-height: 72vh;
+    overflow-y: auto;
+  }
+  body.sidebar-tools-mode .stats-panel {
+    display: block;
+    width: 100%;
+    flex: none;
+  }
+  body.sidebar-tools-mode .diary-lock-panel {
+    display: block;
+    width: 100%;
+  }
+  body.sidebar-tools-mode .backup-buttons {
+    display: flex;
+    width: 100%;
   }
   .todo-full-panel { width: 100%; }
   .todo-form-grid { grid-template-columns: 1fr; }
   .todo-panel { width: 100%; }
   .stats-panel { width: 100%; }
-  .main { margin-left: 0 !important; max-width: 100%; padding: 16px; overflow: visible; }
+  .main {
+    margin-left: 0 !important;
+    max-width: 100%;
+    padding: 12px 12px calc(76px + env(safe-area-inset-bottom));
+    overflow: visible;
+  }
   .list-view { flex: none; }
   .log-list { flex-direction: column; flex: none; overflow-x: visible; overflow-y: visible; }
-  .log-card { min-width: 0; width: 100%; }
-  .toolbar { gap: 8px; }
-  .editor-topbar { flex-direction: column; align-items: flex-start; }
-  .editor-actions { margin-left: 0; }
-  .editor-help { margin-left: 0; width: 100%; }
-  .edit-content { font-size: 0.85rem; min-height: 50vh; }
-  .monaco-content-editor { display: none !important; }
+  .log-card {
+    min-width: 0;
+    width: 100%;
+    padding: 14px;
+    gap: 8px;
+  }
+  .log-card-top { padding-right: 48px; }
+  .card-resize-handle,
+  .log-card-drag { display: none; }
+  .toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  #btnNewLog,
+  .search-box,
+  #filterSubcategory,
+  #btnManageCats {
+    grid-column: 1 / -1;
+  }
+  #btnNewLog,
+  #btnManageCats,
+  .filter-select {
+    min-height: 44px;
+    width: 100%;
+  }
+  #btnResetCardWidth { display: none; }
+  .search-box {
+    min-width: 0;
+  }
+  .search-box input,
+  .filter-select,
+  .edit-date,
+  .edit-cat,
+  .edit-subcat,
+  .edit-hours,
+  .edit-title,
+  .edit-content {
+    font-size: 16px;
+  }
+  #filterCategory,
+  #filterSubcategory {
+    width: 100%;
+    max-width: none;
+  }
+  .editor-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .editor-nav-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .editor-nav-actions .btn-back,
+  .btn-editor-fullscreen { min-height: 40px; }
+  .editor-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+  .edit-date,
+  .edit-cat,
+  .edit-subcat,
+  .edit-hours {
+    width: 100%;
+    max-width: none;
+    min-height: 44px;
+  }
+  .edit-hours-label { display: none; }
+  .editor-actions {
+    margin-left: 0;
+    width: 100%;
+    gap: 8px;
+  }
+  .editor-actions .save-status { margin-right: auto; }
+  .editor-actions .btn-sm { min-height: 40px; }
+  .edit-title { padding: 12px; font-size: 1.05rem; }
+  .editor-tabs {
+    padding: 4px 8px;
+    gap: 2px;
+  }
+  .editor-tab { padding: 9px 12px; min-height: 42px; }
+  .editor-help { display: none; }
+  .template-select { margin-left: auto; min-height: 36px; font-size: 0.82rem; }
+  .btn-template-manage { min-height: 36px; }
+  .editor-toolbar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 6px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .editor-toolbar::-webkit-scrollbar { display: none; }
+  .editor-toolbar .toolbar-group { flex-shrink: 0; padding-inline: 3px; }
+  .editor-toolbar button { min-height: 36px; padding-inline: 9px; }
+  .edit-content { min-height: 52vh; padding: 14px 12px; line-height: 1.65; }
+  .codemirror-content-editor { min-height: 52vh; }
   .editor-content-area.split { flex-direction: column; }
   .editor-content-area.split .edit-content,
-  .editor-content-area.split .monaco-content-editor,
+  .editor-content-area.split .codemirror-content-editor,
   .editor-content-area.split .edit-preview {
     width: 100%;
     min-height: 40vh;
     border-right: 1px solid var(--color-border);
     border-radius: 0;
+  }
+  .codemirror-content-editor .cm-editor {
+    font-size: 16px;
   }
   .editor-content-area.split .edit-preview {
     border-radius: 0 0 var(--radius) var(--radius);
@@ -2775,7 +2940,7 @@ kbd {
   .cat-header-search {
     order: 3;
     width: 100%;
-    margin-left: 52px;
+    margin-left: 0;
   }
   .category-page-grid {
     display: flex;
@@ -2800,6 +2965,12 @@ kbd {
   .cat-detail-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+  .category-page-header .btn-back,
+  .cat-detail-actions .btn-sm,
+  .cat-add-row .btn-sm,
+  .category-sub-add .btn-sm {
+    min-height: 40px;
   }
   .cat-rename-row,
   .category-sub-add,
@@ -2886,6 +3057,23 @@ kbd {
     flex-direction: column;
   }
   .editor-view { height: auto; min-height: 70vh; }
+  body.editor-fullscreen .editor-view {
+    height: 100%;
+    min-height: 0;
+  }
+  .fab-capture {
+    right: 16px;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    width: 56px;
+    height: 56px;
+  }
+  #toastContainer {
+    top: auto;
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    left: 12px;
+  }
+  .toast { max-width: none; width: 100%; }
 }
 
 /* Collapsed sidebar */
@@ -2926,6 +3114,75 @@ body.sidebar-collapsed .main {
 }
 body.sidebar-collapsed .btn-sidebar-expand {
   display: flex;
+}
+
+/* Fullscreen editor */
+body.editor-fullscreen .sidebar,
+body.editor-fullscreen .btn-sidebar-expand,
+body.editor-fullscreen .fab-capture {
+  display: none !important;
+}
+
+body.editor-fullscreen .main {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  padding: 20px 24px;
+  background: var(--color-bg);
+}
+
+body.editor-fullscreen .editor-view {
+  height: 100%;
+}
+
+body.editor-fullscreen .editor-topbar {
+  margin-bottom: 10px;
+}
+
+body.editor-fullscreen .editor-nav-actions {
+  width: 100%;
+  justify-content: space-between;
+}
+
+body.editor-fullscreen .editor-meta,
+body.editor-fullscreen .editor-actions,
+body.editor-fullscreen .edit-title,
+body.editor-fullscreen .editor-help,
+body.editor-fullscreen .template-select,
+body.editor-fullscreen .btn-template-manage {
+  display: none;
+}
+
+body.editor-fullscreen .editor-tabs {
+  border-top: 1px solid var(--color-border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding-inline: 8px;
+}
+
+body.editor-fullscreen .editor-toolbar {
+  border-top: none;
+}
+
+body.editor-fullscreen .editor-content-area,
+body.editor-fullscreen .codemirror-content-editor {
+  min-height: 0;
+}
+
+@media (max-width: 768px) {
+  body.editor-fullscreen .main {
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
+  }
+
+  body.editor-fullscreen .editor-topbar {
+    margin-bottom: 6px;
+  }
+
+  body.editor-fullscreen .codemirror-content-editor {
+    min-height: 0;
+  }
 }
 
 /* Log card preview truncation */

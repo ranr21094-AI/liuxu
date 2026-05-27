@@ -4,28 +4,22 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const outputDir = path.join(rootDir, 'public', 'generated', 'monaco');
+const generatedDir = path.join(rootDir, 'public', 'generated');
+const outputDir = path.join(generatedDir, 'editor');
 
-await rm(outputDir, { recursive: true, force: true });
+await rm(generatedDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
 
 await build({
   absWorkingDir: rootDir,
   entryPoints: {
-    editor: path.join(rootDir, 'src', 'monaco', 'editor-entry.js'),
-    'editor.worker': path.join(rootDir, 'src', 'monaco', 'editor-worker.js'),
+    editor: path.join(rootDir, 'src', 'codemirror', 'editor-entry.js'),
   },
   outdir: outputDir,
   bundle: true,
-  splitting: true,
   format: 'esm',
   target: ['es2020'],
   minify: true,
   entryNames: '[name]',
-  chunkNames: 'chunks/[name]-[hash]',
-  assetNames: 'assets/[name]-[hash]',
-  loader: {
-    '.ttf': 'file',
-  },
   logLevel: 'info',
 });

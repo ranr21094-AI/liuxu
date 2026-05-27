@@ -632,7 +632,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#editorTabWrite').getAttribute('role'), 'tab');
   assert.equal(document.querySelector('#editorTabWrite').getAttribute('aria-controls'), 'editorPanel');
   assert.equal(document.querySelector('#editorPanel').getAttribute('role'), 'tabpanel');
-  assert.equal(document.querySelector('#monacoContentEditor').getAttribute('aria-label'), '日志内容 Markdown 编辑器');
+  assert.equal(document.querySelector('#codeMirrorContentEditor').getAttribute('aria-label'), '日志内容 Markdown 编辑器');
+  assert.equal(document.querySelector('#btnEditorFullscreen').textContent, '全屏编辑');
+  assert.equal(document.querySelector('#btnEditorFullscreen').getAttribute('aria-pressed'), 'false');
+  assert.equal(document.querySelector('#btnBack').closest('.editor-nav-actions') !== null, true);
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
   assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
   assert.equal(document.querySelector('.cat-detail-actions #catCalendarDayVisible') !== null, true);
@@ -690,16 +693,19 @@ test('markdown preview renders normal markdown and latex with local globals', as
   assert.match(html, /katex/);
 });
 
-test('Monaco editor is built as a deferred desktop asset with textarea fallback', () => {
+test('CodeMirror editor is bundled as a deferred Markdown editing asset', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
   const adapterSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'contentEditor.js'), 'utf8');
-  const entrySource = fs.readFileSync(path.join(ROOT, 'src', 'monaco', 'editor-entry.js'), 'utf8');
+  const entrySource = fs.readFileSync(path.join(ROOT, 'src', 'codemirror', 'editor-entry.js'), 'utf8');
   const ignoreSource = fs.readFileSync(path.join(ROOT, '.gitignore'), 'utf8');
 
-  assert.equal(packageJson.scripts.build, 'node scripts/build-monaco.mjs');
-  assert.match(adapterSource, /\(min-width: 769px\)/);
-  assert.match(adapterSource, /import\(MONACO_MODULE_URL\)/);
-  assert.match(entrySource, /new Worker\('\/generated\/monaco\/editor\.worker\.js', \{ type: 'module' \}\)/);
+  assert.equal(packageJson.scripts.build, 'node scripts/build-editor.mjs');
+  assert.equal(packageJson.dependencies['monaco-editor'], undefined);
+  assert.equal(typeof packageJson.dependencies.codemirror, 'string');
+  assert.match(adapterSource, /import\(CODEMIRROR_MODULE_URL\)/);
+  assert.match(adapterSource, /module\.markdown\(\)/);
+  assert.match(entrySource, /import \{ basicSetup \} from 'codemirror'/);
+  assert.match(entrySource, /import \{ markdown \} from '@codemirror\/lang-markdown'/);
   assert.match(ignoreSource, /public\/generated\//);
 });
 
@@ -716,7 +722,65 @@ test('editor exposes pasted image upload and common emoji insertion controls', (
   assert.match(styleSource, /#filterCategory:focus,[\s\S]*border-color: var\(--color-primary\)/);
 });
 
-test('textarea fallback preserves programmatic loads and selection inserts', async (t) => {
+test('new logs default to the selected calendar day or today and inherit the active category filter', () => {
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+
+  assert.match(editorSource, /function getNewLogCategory\(\)[\s\S]*\(state\.category \|\| ''\)\.split\('\/'\)/);
+  assert.match(editorSource, /matchingCategory && \(!filteredSub \|\| \(matchingCategory\.sub \|\| \[\]\)\.includes\(filteredSub\)\)/);
+  assert.match(editorSource, /export function newLog\(\) \{\s*const defaultDate = state\.selectedDate \|\| businessDateString\(\);\s*const defaultCategory = getNewLogCategory\(\);/);
+  assert.match(editorSource, /lastSavedDate = defaultDate;[\s\S]*lastSavedCategory = defaultCategory\.value;/);
+  assert.match(editorSource, /editDate\.value = defaultDate;[\s\S]*editCategory\.value = defaultCategory\.parent;[\s\S]*populateEditorSubCategory\(defaultCategory\.parent\);[\s\S]*editSubcategory\.value = defaultCategory\.sub;/);
+});
+
+test('editor fullscreen mode keeps navigation, preview tabs, shortcuts, and content surface visible', () => {
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+
+  assert.match(editorSource, /function setEditorFullscreen\(enabled\)[\s\S]*document\.body\.classList\.toggle\('editor-fullscreen', enabled\)/);
+  assert.doesNotMatch(editorSource, /if \(enabled && editorTab !== 'write'\)/);
+  assert.match(editorSource, /btnEditorFullscreen\.addEventListener\('click',[\s\S]*setEditorFullscreen\(!document\.body\.classList\.contains\('editor-fullscreen'\)\)/);
+  assert.match(editorSource, /case 'preview':[\s\S]*if \(inEditor\) \{ e\.preventDefault\(\); switchTab\(nextEditorTab\(\)\); \}/);
+  assert.match(editorSource, /case 'escape':[\s\S]*document\.body\.classList\.contains\('editor-fullscreen'\)[\s\S]*setEditorFullscreen\(false\);[\s\S]*return;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.sidebar,[\s\S]*body\.editor-fullscreen \.fab-capture\s*\{[\s\S]*display:\s*none !important;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.main\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-meta,[\s\S]*body\.editor-fullscreen \.btn-template-manage\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-tabs\s*\{[\s\S]*border-top:\s*1px solid var\(--color-border\)/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-nav-actions\s*\{\s*width:\s*100%;\s*justify-content:\s*space-between;/);
+});
+
+test('mobile layout uses compact on-demand sidebar panels and retains collapse controls', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const document = new JSDOM(html).window.document;
+  const mobileStyles = styleSource.slice(styleSource.indexOf('@media (max-width: 768px)'), styleSource.indexOf('/* Collapsed sidebar */'));
+
+  assert.equal(document.querySelector('#btnSidebarTools').getAttribute('aria-label'), '切换更多工具');
+  assert.doesNotMatch(mobileStyles, /\.btn-sidebar-toggle\s*\{\s*display:\s*none/);
+  assert.match(mobileStyles, /\.btn-theme-toggle,[\s\S]*\.btn-sidebar-toggle\s*\{[\s\S]*min-width:\s*36px;[\s\S]*min-height:\s*36px;/);
+  assert.match(mobileStyles, /\.btn-sidebar-tools\s*\{\s*display:\s*flex;/);
+  assert.match(mobileStyles, /\.card-nav-panel,[\s\S]*\.backup-buttons\s*\{\s*display:\s*none;/);
+  assert.match(mobileStyles, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
+  assert.match(mobileStyles, /body\.sidebar-collapsed \.sidebar\s*\{\s*display:\s*none;/);
+  assert.match(appSource, /function collapseSidebar\(\)\s*\{\s*document\.body\.classList\.toggle\('sidebar-collapsed'\);\s*\}/);
+  assert.match(appSource, /\$\('#btnToggleSidebar'\)\.addEventListener\('click', collapseSidebar\);[\s\S]*\$\('#btnSidebarExpand'\)\.addEventListener\('click', collapseSidebar\);/);
+  assert.match(appSource, /function setSidebarToolsMode\(enabled\)[\s\S]*sidebar-tools-mode/);
+  assert.match(appSource, /widget\.classList\.toggle\('mobile-show'\)/);
+  assert.doesNotMatch(appSource, /localStorage\.(?:setItem|getItem)\([^)]*sidebar-collapsed/i);
+});
+
+test('mobile layout gives filters and editor controls touch-friendly responsive treatment', () => {
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const mobileStyles = styleSource.slice(styleSource.indexOf('@media (max-width: 768px)'), styleSource.indexOf('/* Collapsed sidebar */'));
+
+  assert.match(mobileStyles, /\.toolbar\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(2,/);
+  assert.match(mobileStyles, /#btnNewLog,[\s\S]*#btnManageCats\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
+  assert.match(mobileStyles, /\.editor-meta\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
+  assert.match(mobileStyles, /\.editor-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
+  assert.match(mobileStyles, /\.codemirror-content-editor\s*\{\s*min-height:\s*52vh;/);
+});
+
+test('textarea loading fallback preserves programmatic loads and selection inserts', async (t) => {
   const dom = new JSDOM('<!doctype html><textarea id="body"></textarea><div id="mount"></div>', {
     pretendToBeVisual: true,
   });
@@ -752,7 +816,8 @@ test('textarea fallback preserves programmatic loads and selection inserts', asy
   assert.deepEqual(editor.getSelection(), { start: 10, end: 10 });
   assert.equal(changes, 1);
 
-  editor.setVisible(true);
-  assert.equal(textarea.style.display, 'block');
+  editor.setVisible(false);
+  assert.equal(textarea.style.display, 'none');
   assert.equal(mount.style.display, 'none');
+  assert.doesNotThrow(() => editor.layout());
 });
