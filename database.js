@@ -198,6 +198,14 @@ function getAll(query = {}, diaryUnlocked = true) {
   // Filter by date
   if (query.date) {
     logs = logs.filter(l => l.log_date === query.date);
+    const hiddenParents = new Set(
+      readCategories()
+        .filter(category => category.calendar_day_visible === false)
+        .map(category => category.name)
+    );
+    if (hiddenParents.size > 0) {
+      logs = logs.filter(l => !hiddenParents.has(getParentCat(l.category)));
+    }
   }
 
   // Filter by month (YYYY-MM)
@@ -329,8 +337,14 @@ function getStats(diaryUnlocked = true, referenceDate = new Date()) {
   const monthDays = daysInMonth(today);
   const dailyAvg = Math.round((monthHours / Math.min(todayParts.day, monthDays)) * 10) / 10;
 
-  // Dates that have logs (for calendar highlighting)
-  const datesWithLogs = [...new Set(logs.map(l => l.log_date).filter(Boolean))];
+  // Dates shown on the clickable calendar should match day-browsing visibility.
+  const hiddenCalendarParents = new Set(
+    readCategories()
+      .filter(category => category.calendar_day_visible === false)
+      .map(category => category.name)
+  );
+  const calendarLogs = logs.filter(log => !hiddenCalendarParents.has(getParentCat(log.category)));
+  const datesWithLogs = [...new Set(calendarLogs.map(l => l.log_date).filter(Boolean))];
 
   return {
     totalLogs: logs.length,
@@ -473,19 +487,25 @@ function reorderTodos(orderedIds) {
 }
 
 const DEFAULT_CATEGORIES = [
-  { name: '会议', sub: [] },
-  { name: '开发', sub: [] },
-  { name: '文档', sub: [] },
-  { name: '测试', sub: [] },
-  { name: '学习', sub: [] },
-  { name: '其他', sub: [] },
+  { name: '会议', sub: [], calendar_day_visible: true },
+  { name: '开发', sub: [], calendar_day_visible: true },
+  { name: '文档', sub: [], calendar_day_visible: true },
+  { name: '测试', sub: [], calendar_day_visible: true },
+  { name: '学习', sub: [], calendar_day_visible: true },
+  { name: '其他', sub: [], calendar_day_visible: true },
 ];
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 
 function migrateToTree(cats) {
   return cats.map(c => {
-    if (typeof c === 'string') return { name: c, sub: [] };
-    if (c && typeof c === 'object' && c.name) return { name: c.name, sub: Array.isArray(c.sub) ? c.sub : [] };
+    if (typeof c === 'string') return { name: c, sub: [], calendar_day_visible: true };
+    if (c && typeof c === 'object' && c.name) {
+      return {
+        name: c.name,
+        sub: Array.isArray(c.sub) ? c.sub : [],
+        calendar_day_visible: c.calendar_day_visible !== false,
+      };
+    }
     return null;
   }).filter(Boolean);
 }
@@ -501,9 +521,9 @@ function readCategories() {
   try {
     let cats = JSON.parse(fs.readFileSync(CATEGORIES_FILE, 'utf-8'));
     if (!Array.isArray(cats)) cats = [];
-    // Auto-migrate old flat array
-    if (cats.length > 0 && typeof cats[0] === 'string') {
-      cats = migrateToTree(cats);
+    const normalizedCats = migrateToTree(cats);
+    if (JSON.stringify(normalizedCats) !== JSON.stringify(cats)) {
+      cats = normalizedCats;
       writeCategories(cats);
     }
     cache.categories = cats;
@@ -527,9 +547,10 @@ function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
   const categories = readCategories().map(category => ({
     name: category.name,
     sub: !diaryUnlocked && category.name === DIARY_CATEGORY ? [] : [...(category.sub || [])],
+    calendar_day_visible: category.calendar_day_visible !== false,
   }));
   if (includeDiaryRoot && !categories.some(category => category.name === DIARY_CATEGORY)) {
-    categories.push({ name: DIARY_CATEGORY, sub: [] });
+    categories.push({ name: DIARY_CATEGORY, sub: [], calendar_day_visible: true });
   }
   return categories;
 }
@@ -555,7 +576,7 @@ function addCategory(name, parent) {
   if (parent) {
     let p = cats.find(c => c.name === parent);
     if (!p && parent === DIARY_CATEGORY) {
-      p = { name: DIARY_CATEGORY, sub: [] };
+      p = { name: DIARY_CATEGORY, sub: [], calendar_day_visible: true };
       cats.push(p);
     }
     if (!p) return null;
@@ -566,9 +587,26 @@ function addCategory(name, parent) {
   }
   // Parent-level category
   if (cats.some(c => c.name === name)) return null;
-  cats.push({ name, sub: [] });
+  cats.push({ name, sub: [], calendar_day_visible: true });
   writeCategories(cats);
-  return { name, sub: [] };
+  return { name, sub: [], calendar_day_visible: true };
+}
+
+function setCategoryCalendarDayVisible(name, visible) {
+  const cats = readCategories();
+  let category = cats.find(item => item.name === name);
+  if (!category && name === DIARY_CATEGORY) {
+    category = { name: DIARY_CATEGORY, sub: [], calendar_day_visible: true };
+    cats.push(category);
+  }
+  if (!category) return null;
+  category.calendar_day_visible = visible !== false;
+  writeCategories(cats);
+  return {
+    name: category.name,
+    sub: [...(category.sub || [])],
+    calendar_day_visible: category.calendar_day_visible,
+  };
 }
 
 function renameCategory(oldName, newName) {
@@ -725,6 +763,10 @@ function normalizeCategoriesForRestore(categories) {
     if (normalizedCat.sub !== undefined && !Array.isArray(normalizedCat.sub)) {
       return { error: `Invalid subcategories for category "${normalizedCat.name}"` };
     }
+    if (normalizedCat.calendar_day_visible !== undefined &&
+        typeof normalizedCat.calendar_day_visible !== 'boolean') {
+      return { error: `Invalid calendar day visibility for category "${normalizedCat.name}"` };
+    }
 
     const name = normalizedCat.name.trim();
     if (seenParents.has(name)) return { error: `Duplicate category: ${name}` };
@@ -742,7 +784,11 @@ function normalizeCategoriesForRestore(categories) {
       sub.push(subName);
     }
 
-    normalized.push({ name, sub });
+    normalized.push({
+      name,
+      sub,
+      calendar_day_visible: normalizedCat.calendar_day_visible !== false,
+    });
   }
 
   return { categories: normalized };
@@ -935,7 +981,11 @@ function reorderCategories(orderedCats) {
 
 /** Merge two category trees, deduplicating by parent name and unioning subcategories */
 function mergeCategoryTrees(existing, incoming) {
-  const merged = existing.map(c => ({ name: c.name, sub: [...(c.sub || [])] }));
+  const merged = existing.map(c => ({
+    name: c.name,
+    sub: [...(c.sub || [])],
+    calendar_day_visible: c.calendar_day_visible !== false,
+  }));
   const existingNames = new Set(merged.map(c => c.name));
   incoming.forEach(c => {
     if (existingNames.has(c.name)) {
@@ -944,10 +994,14 @@ function mergeCategoryTrees(existing, incoming) {
         if (!target.sub.includes(s)) target.sub.push(s);
       });
     } else {
-      merged.push({ name: c.name, sub: [...(c.sub || [])] });
+      merged.push({
+        name: c.name,
+        sub: [...(c.sub || [])],
+        calendar_day_visible: c.calendar_day_visible !== false,
+      });
     }
   });
   return merged;
 }
 
-module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };
+module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, setCategoryCalendarDayVisible, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };

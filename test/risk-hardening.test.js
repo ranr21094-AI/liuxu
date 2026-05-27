@@ -241,6 +241,7 @@ test('unlocked system diary category can receive a new subcategory without prior
   assert.deepEqual(categories.find(category => category.name === DIARY_CATEGORY), {
     name: DIARY_CATEGORY,
     sub: [],
+    calendar_day_visible: true,
   });
 
   const created = await fetch(`${baseUrl}/api/categories`, {
@@ -253,6 +254,46 @@ test('unlocked system diary category can receive a new subcategory without prior
     headers: { Cookie: cookie },
   })).json();
   assert.deepEqual(after.find(category => category.name === DIARY_CATEGORY).sub, ['notes']);
+});
+
+test('category calendar-day visibility only hides logs from date browsing', async (t) => {
+  const { db, baseUrl } = loadFreshApp(t);
+  db.addCategory('隐藏日分类', null);
+  const hidden = db.create({
+    title: 'hidden on date',
+    content: 'still accessible by month',
+    category: '隐藏日分类',
+    log_date: '2026-05-16',
+  });
+  const publicLog = db.create({
+    title: 'visible on date',
+    content: 'visible',
+    category: OTHER_CATEGORY,
+    log_date: '2026-05-17',
+  });
+
+  const updated = await fetch(`${baseUrl}/api/categories/${encodeURIComponent('隐藏日分类')}/calendar-day-visibility`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visible: false }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).calendar_day_visible, false);
+
+  const categories = await (await fetch(`${baseUrl}/api/categories`)).json();
+  assert.equal(categories.find(category => category.name === '隐藏日分类').calendar_day_visible, false);
+
+  const dateItems = (await (await fetch(`${baseUrl}/api/logs?date=2026-05-16`)).json()).items;
+  assert.deepEqual(dateItems.map(item => item.id), []);
+  const publicDateItems = (await (await fetch(`${baseUrl}/api/logs?date=2026-05-17`)).json()).items;
+  assert.deepEqual(publicDateItems.map(item => item.id), [publicLog.id]);
+
+  const monthItems = (await (await fetch(`${baseUrl}/api/logs?month=2026-05`)).json()).items;
+  assert.equal(monthItems.some(item => item.id === hidden.id), true);
+  const stats = await (await fetch(`${baseUrl}/api/stats`)).json();
+  assert.equal(stats.datesWithLogs.includes('2026-05-16'), false);
+  assert.equal(stats.datesWithLogs.includes('2026-05-17'), true);
+  assert.equal(db.backup().categories.find(category => category.name === '隐藏日分类').calendar_day_visible, false);
 });
 
 test('diary routes remain compatible when diary lock is disabled', async (t) => {
@@ -439,6 +480,7 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, todos: [{ id: 1, priority: 'urgent' }] }).error, /Invalid priority/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, notes: { text: 'bad' } }] }).error, /Invalid notes/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: 'not-array' }] }).error, /Invalid subcategories/);
+  assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: [], calendar_day_visible: 'no' }] }).error, /Invalid calendar day visibility/);
   assert.match(db.restore({ ...base, privateUploads: ['../secret.png'] }).error, /Invalid private upload filename/);
 
   assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'] }).success, true);
@@ -566,6 +608,19 @@ test('frontend business date formatting and template offsets use Hong Kong dates
   assert.equal(frontendDate.formatTemplateDate('2026-05-25', 'YYYY/MM/DD ddd'), '2026/05/25 周一');
 });
 
+test('template variables support Chinese day names and week ranges', async () => {
+  const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'templateDate.js')).href + `?template=${Date.now()}`;
+  const templateDate = await import(moduleUrl);
+  const baseDate = '2026-05-27';
+
+  assert.equal(templateDate.renderTemplateVariables('{{今天:YYYY/MM/DD ddd}}', baseDate), '2026/05/27 周三');
+  assert.equal(templateDate.renderTemplateVariables('{{日期:+7:MM月DD日}}', baseDate), '06月03日');
+  assert.equal(templateDate.renderTemplateVariables('{{today:MM-DD}}', baseDate), '05-27');
+  assert.equal(templateDate.renderTemplateVariables('{{本周:MM月DD日}}', baseDate), '05月25日 - 05月31日');
+  assert.equal(templateDate.renderTemplateVariables('{{上一周:MM月DD日}}', baseDate), '05月18日 - 05月24日');
+  assert.equal(templateDate.renderTemplateVariables('{{上一周.开始:YYYY-MM-DD}} 至 {{上一周.结束:YYYY-MM-DD}}', baseDate), '2026-05-18 至 2026-05-24');
+});
+
 test('primary controls expose accessible names and editor tab semantics', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const document = new JSDOM(html).window.document;
@@ -579,6 +634,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#editorPanel').getAttribute('role'), 'tabpanel');
   assert.equal(document.querySelector('#monacoContentEditor').getAttribute('aria-label'), '日志内容 Markdown 编辑器');
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
+  assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
+  assert.equal(document.querySelector('.cat-detail-actions #catCalendarDayVisible') !== null, true);
+  assert.match(document.querySelector('.cat-calendar-toggle').getAttribute('title'), /月份筛选仍可查看/);
+  assert.match(document.querySelector('.template-token-hint').textContent, /\{\{上一周:MM月DD日\}\}/);
 });
 
 test('application initialization waits for auth and diary selection before refreshing', () => {
@@ -642,6 +701,19 @@ test('Monaco editor is built as a deferred desktop asset with textarea fallback'
   assert.match(adapterSource, /import\(MONACO_MODULE_URL\)/);
   assert.match(entrySource, /new Worker\('\/generated\/monaco\/editor\.worker\.js', \{ type: 'module' \}\)/);
   assert.match(ignoreSource, /public\/generated\//);
+});
+
+test('editor exposes pasted image upload and common emoji insertion controls', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const document = new JSDOM(html).window.document;
+
+  assert.equal(document.querySelector('button[data-emoji="✅"]').textContent, '✅');
+  assert.match(editorSource, /editorContentArea\.addEventListener\('paste',[\s\S]*event\.stopPropagation\(\);[\s\S]*\}, true\);/);
+  assert.match(editorSource, /uploadImageFile\(file, selection\)/);
+  assert.match(styleSource, /#filterCategory,[\s\S]*field-sizing: content/);
+  assert.match(styleSource, /#filterCategory:focus,[\s\S]*border-color: var\(--color-primary\)/);
 });
 
 test('textarea fallback preserves programmatic loads and selection inserts', async (t) => {

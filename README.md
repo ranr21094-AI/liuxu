@@ -1,6 +1,16 @@
 # Work Log
 
-一个本地优先的工作日志和待办应用，支持 Markdown/LaTeX 日志编辑、分类管理、统计、图片上传、数据备份恢复以及可选的访问保护和日记锁定。
+一个本地优先的工作日志和待办应用，支持 Markdown/LaTeX 日志编辑、分类管理、日历浏览、统计、图片上传、日志模板、数据备份恢复以及可选的访问保护和日记锁定。
+
+## Features
+
+- 日志编辑：桌面端 Monaco Editor，窄屏 textarea 回退，支持 Markdown、LaTeX、预览与自动保存。
+- 编辑工具栏：支持常用 Emoji 快速插入，也可将剪贴板图片直接粘贴上传并插入 Markdown 图片链接。
+- 日历与筛选：按日期或月份查看日志，分类筛选框随内容自适应宽度。
+- 分类管理：管理父分类与子分类；每个父分类可通过“日历显示”开关决定其日志是否在按日查看时出现，月份筛选不受影响。
+- 日志模板：支持今天、昨天、明天、日期偏移和周区间占位符。
+- 工作辅助：待办事项、工时统计、CSV 导出、JSON 备份与恢复。
+- 隐私保护：支持全站访问 token 与独立的日记分类锁定。
 
 ## Requirements
 
@@ -18,6 +28,32 @@ npm start
 `copy` 适用于 Windows；macOS 或 Linux 可使用 `cp .env.example .env`。不创建 `.env` 也可以直接运行，应用默认监听 `http://localhost:3000`。
 
 `npm start` 会先构建桌面端使用的 Monaco Editor 资源，再启动服务。桌面编辑日志正文时提供 Markdown 高亮、行号、minimap 与查找替换；窄屏设备继续使用轻量 textarea 编辑面。
+
+## Editor And Templates
+
+在日志编辑器中，可以通过图片按钮上传图片，也可以在正文编辑区域直接粘贴 PNG、JPG、GIF、WebP 或 BMP 图片。上传完成后应用会在光标位置插入 Markdown 图片语法。工具栏内置 `✅`、`📌`、`💡`、`⚠️` 和 `🚀` 快速插入按钮。
+
+模板标题和正文支持以下占位符，以当前日志日期为基准进行格式化：
+
+| Syntax | Example output | Description |
+| --- | --- | --- |
+| `{{今天}}` / `{{today}}` | `2026-05-27` | 当前日期 |
+| `{{昨天}}` / `{{明天}}` | `2026-05-26` / `2026-05-28` | 相邻日期 |
+| `{{日期:+7:MM月DD日}}` | `06月03日` | 日期偏移和自定义格式 |
+| `{{本周:MM月DD日}}` | `05月25日 - 05月31日` | 本周周一至周日区间 |
+| `{{上一周:MM月DD日}}` | `05月18日 - 05月24日` | 上一周区间 |
+| `{{上一周.开始:YYYY-MM-DD}}` | `2026-05-18` | 周区间开始日期 |
+| `{{上一周.结束:YYYY-MM-DD}}` | `2026-05-24` | 周区间结束日期 |
+
+同样支持 `{{下一周:...}}`、`{{date:...}}` 等对应写法。
+
+## Calendar Category Visibility
+
+在“管理分类”页面中，选择父分类后可使用“日历显示”开关控制按日浏览行为：
+
+- 开启：点击日历中的某一天时，会显示该分类及其子分类的日志。
+- 关闭：按日查看时隐藏该父分类及其子分类日志，并且日历高亮日期会同步排除仅含隐藏分类的日期。
+- 月份筛选、分类筛选与工时汇总仍保留这些日志，已有日志不会被删除或修改。
 
 ## Configuration
 
@@ -44,7 +80,7 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 
 - `logs.json`：日志内容
 - `todos.json`：待办事项
-- `categories.json`：分类设置
+- `categories.json`：分类设置，父分类可包含 `calendar_day_visible` 日历按日可见性字段
 - `private-uploads.json`：受保护图片记录
 - `uploads/`：上传图片
 
@@ -66,3 +102,14 @@ npm test
 `npm run build` 仅将 Monaco 资源生成到未纳入版本控制的 `public/generated/monaco/`。`npm test` 和 `npm start` 会自动执行该构建；若直接运行 `node server.js`，请先执行 `npm run build`。
 
 后端由 Express 提供静态页面和 REST API，前端仍为原生 JavaScript 单页应用；Monaco 是唯一需要打包生成的浏览器资产。
+
+## Relevant API
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/logs?date=&month=&category=&search=&page=` | 查询日志；日期查询会应用分类日历显示设置 |
+| `POST` | `/api/upload` | 上传日志图片，multipart 字段名为 `image` |
+| `GET` | `/api/categories` | 获取分类树及日历显示设置 |
+| `PATCH` | `/api/categories/:name/calendar-day-visibility` | 设置父分类按日历日期查看时是否显示，body 为 `{ "visible": boolean }` |
+| `GET` | `/api/backup` | 导出 JSON 数据备份 |
+| `POST` | `/api/restore` | 恢复 JSON 数据备份 |

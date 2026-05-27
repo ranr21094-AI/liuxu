@@ -533,6 +533,21 @@ app.put('/api/categories/reorder', (req, res) => {
   }
 });
 
+app.patch('/api/categories/:name/calendar-day-visibility', (req, res) => {
+  try {
+    const name = decodeURIComponent(req.params.name);
+    if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
+    if (typeof req.body.visible !== 'boolean') {
+      return res.status(400).json({ error: 'visible boolean required' });
+    }
+    const result = db.setCategoryCalendarDayVisible(name, req.body.visible);
+    if (!result) return res.status(404).json({ error: 'Category not found' });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.put('/api/categories/:oldName', (req, res) => {
   try {
     const oldName = decodeURIComponent(req.params.oldName);

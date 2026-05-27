@@ -1107,6 +1107,24 @@ body.sidebar-nav-mode .card-nav-list {
 }
 .filter-select:focus { border-color: var(--color-primary); }
 
+#filterCategory,
+#filterSubcategory {
+  field-sizing: content;
+  width: auto;
+  min-width: 7.5em;
+  max-width: min(24em, 44vw);
+}
+
+#filterCategory:focus,
+#filterSubcategory:focus {
+  border-color: var(--color-primary);
+}
+
+#filterCategory:focus-visible,
+#filterSubcategory:focus-visible {
+  outline-color: var(--color-primary);
+}
+
 /* Log List */
 .log-list-header {
   display: flex;
@@ -1385,9 +1403,19 @@ body.resizing {
   gap: 16px;
 }
 
+.category-page-title {
+  flex-shrink: 0;
+}
+
 .category-page-header h2 {
   font-size: 1.35rem;
   margin-bottom: 3px;
+}
+
+.cat-header-search {
+  width: min(310px, 38vw);
+  max-width: none;
+  margin-left: 12px;
 }
 
 .category-page-grid {
@@ -1405,11 +1433,6 @@ body.resizing {
   gap: 12px;
   padding-right: 24px;
   border-right: 1px solid var(--color-border);
-}
-
-.category-parent-panel .cat-search-input {
-  width: 100%;
-  max-width: none;
 }
 
 .category-parent-panel .cat-list {
@@ -1509,6 +1532,63 @@ body.resizing {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.cat-calendar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 4px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.cat-calendar-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cat-calendar-toggle-track {
+  display: inline-block;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 10px;
+  background: var(--color-border);
+  transition: background 0.15s;
+}
+
+.cat-calendar-toggle-track::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-card);
+  box-shadow: 0 1px 2px var(--color-card-shadow);
+  transition: transform 0.15s;
+}
+
+.cat-calendar-toggle input:checked + .cat-calendar-toggle-track {
+  background: var(--color-primary);
+}
+
+.cat-calendar-toggle input:checked + .cat-calendar-toggle-track::after {
+  transform: translateX(16px);
+}
+
+.cat-calendar-toggle input:focus-visible + .cat-calendar-toggle-track {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.cat-calendar-toggle:hover {
+  color: var(--color-text);
 }
 
 .cat-detail-heading h3 {
@@ -1633,12 +1713,20 @@ body.resizing {
 }
 .edit-date:focus, .edit-cat:focus, .edit-subcat:focus, .edit-hours:focus { border-color: var(--color-primary); }
 .edit-date { width: 140px; }
-.edit-cat { width: 100px; }
+.edit-cat {
+  field-sizing: content;
+  width: auto;
+  min-width: 7em;
+  max-width: min(22em, 40vw);
+}
 .edit-hours { width: 70px; text-align: center; }
 .edit-hours-label { font-size: 0.78rem; color: var(--color-text-secondary); }
 
 .edit-subcat {
-  width: 100px;
+  field-sizing: content;
+  width: auto;
+  min-width: 7em;
+  max-width: min(22em, 40vw);
   padding: 6px 10px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
@@ -1649,7 +1737,13 @@ body.resizing {
   color: var(--color-text);
   transition: border-color 0.2s;
 }
+.edit-cat:focus,
 .edit-subcat:focus { border-color: var(--color-primary); }
+
+.edit-cat:focus-visible,
+.edit-subcat:focus-visible {
+  outline-color: var(--color-primary);
+}
 
 .editor-actions {
   margin-left: auto;
@@ -1806,6 +1900,11 @@ body.resizing {
   background: var(--color-primary);
   color: var(--color-card);
   border-color: var(--color-primary);
+}
+
+.editor-toolbar .emoji-tools button {
+  font-size: 0.95rem;
+  padding-inline: 6px;
 }
 
 .editor-toolbar .toolbar-divider {
@@ -2086,6 +2185,20 @@ body.resizing {
   color: var(--color-text-secondary);
   font-size: 0.75rem;
   line-height: 1.45;
+}
+
+.template-token-hint div + div {
+  margin-top: 5px;
+}
+
+.template-token-hint code {
+  display: inline-block;
+  margin: 2px 3px 0 0;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-code-bg);
+  color: var(--color-text);
+  font-size: 0.72rem;
 }
 
 .modal-log-link {
@@ -2657,6 +2770,12 @@ kbd {
   }
   .category-page-header {
     align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .cat-header-search {
+    order: 3;
+    width: 100%;
+    margin-left: 52px;
   }
   .category-page-grid {
     display: flex;
@@ -2680,6 +2799,7 @@ kbd {
   }
   .cat-detail-actions {
     width: 100%;
+    flex-wrap: wrap;
   }
   .cat-rename-row,
   .category-sub-add,

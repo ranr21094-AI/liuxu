@@ -8,7 +8,8 @@ import { findAction, getAllShortcuts, setShortcut, resetAllShortcuts, formatKeys
 import { closeCategoryManager, loadCategories, populateFilterCategory, populateEditorParentCategory, populateEditorSubCategory } from './categories.js';
 import { renderCalendar } from './calendar.js';
 import { AUTO_SAVE_MS, SAVE_STATUS_DURATION } from './constants.js';
-import { businessDateString, formatTemplateDate, shiftBusinessDate } from './businessDate.js';
+import { businessDateString } from './businessDate.js';
+import { renderTemplateVariables } from './templateDate.js';
 import { createContentEditor } from './contentEditor.js';
 
 const editorView = $('#editorView');
@@ -689,6 +690,13 @@ function insertMarkdown(action) {
 }
 
 $('#editorToolbar').addEventListener('click', (e) => {
+  const emojiButton = e.target.closest('button[data-emoji]');
+  if (emojiButton) {
+    e.preventDefault();
+    contentEditor.insertAtSelection(emojiButton.dataset.emoji);
+    contentEditor.focus();
+    return;
+  }
   const btn = e.target.closest('button[data-action]');
   if (!btn) return;
   e.preventDefault();
@@ -699,7 +707,7 @@ $('#editorToolbar').addEventListener('click', (e) => {
 const TEMPLATE_STORAGE_KEY = 'workLogTemplates';
 const defaultTemplates = [
   { id: 'daily', name: '每日站会', title: '日报 {{today:MM月DD日}}', content: `## {{today}} 今日完成\n- \n\n## {{tomorrow}} 明日计划\n- \n\n## 遇到的问题\n- ` },
-  { id: 'weekly', name: '周复盘', title: '周复盘 {{today:MM月DD日}}', content: `## 本周完成（{{today:MM-DD dddd}}）\n- \n\n## 下周计划\n- \n\n## 收获与反思\n- \n\n## 工时统计\n| 类别 | 小时 |\n|------|------|\n| 开发 | |\n| 会议 | |\n| 文档 | |\n| 其他 | |` },
+  { id: 'weekly', name: '周复盘', title: '周复盘 {{本周:MM月DD日}}', content: `## 本周回顾（{{本周:MM月DD日}}）\n- \n\n## 上周对比（{{上一周:MM月DD日}}）\n- \n\n## 下周计划（{{下一周:MM月DD日}}）\n- \n\n## 收获与反思\n- \n\n## 工时统计\n| 类别 | 小时 |\n|------|------|\n| 开发 | |\n| 会议 | |\n| 文档 | |\n| 其他 | |` },
   { id: 'meeting', name: '会议纪要', title: '会议纪要 {{today:MM月DD日}}', content: `## 会议主题\n\n- 日期：{{today}}\n\n## 参会人\n\n## 讨论内容\n- \n\n## 决议\n- \n\n## 待办事项\n- [ ] ` },
   { id: 'diary', name: '日记', title: '日记 {{today:MM月DD日}}', content: `# {{today:YYYY年MM月DD日 dddd}}\n\n## 今天的事\n\n\n## 心情/感受\n\n\n## 学到的东西\n` },
 ];
@@ -708,21 +716,7 @@ let selectedTemplateId = templates[0]?.id || null;
 
 function renderTemplateContent(content) {
   const baseDate = editDate.value || businessDateString();
-  return content.replace(/\{\{\s*([a-zA-Z]+)(?::([+-]?\d+))?(?::([^}]+))?\s*\}\}/g, (match, key, offsetText, formatText) => {
-    const normalizedKey = key.toLowerCase();
-    const namedOffsets = {
-      today: 0,
-      date: 0,
-      tomorrow: 1,
-      nextday: 1,
-      yesterday: -1,
-    };
-    if (!Object.prototype.hasOwnProperty.call(namedOffsets, normalizedKey)) return match;
-
-    const explicitOffset = offsetText === undefined ? null : Number(offsetText);
-    const offset = Number.isFinite(explicitOffset) ? explicitOffset : namedOffsets[normalizedKey];
-    return formatTemplateDate(shiftBusinessDate(baseDate, offset), (formatText || 'YYYY-MM-DD').trim());
-  });
+  return renderTemplateVariables(content, baseDate);
 }
 
 function cloneDefaultTemplates() {
@@ -980,14 +974,41 @@ $('#btnUploadImg').addEventListener('click', () => {
   $('#imgFileInput').click();
 });
 
-$('#imgFileInput').addEventListener('change', () => {
-  const fileInput = $('#imgFileInput');
-  const file = fileInput.files[0];
-  if (!file) return;
-
+function showUploadProgress() {
   const status = $('#uploadStatus');
   status.innerHTML = '<span class="upload-progress-bar"><span class="upload-progress-fill" id="uploadProgressFill"></span></span> 上传中...';
+  return status;
+}
 
+function pastedImageFile(file) {
+  if (!file) return null;
+  if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name || '')) return file;
+  const extensionByType = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+  };
+  const extension = extensionByType[file.type];
+  if (!extension) return null;
+  return new File([file], `pasted-image-${Date.now()}${extension}`, { type: file.type });
+}
+
+function insertUploadedImage(url, selection) {
+  const imgMd = `![image](${url})`;
+  if (!selection) {
+    contentEditor.insertAtSelection(imgMd);
+    return;
+  }
+  const value = contentEditor.getValue();
+  const nextValue = value.substring(0, selection.start) + imgMd + value.substring(selection.end);
+  const cursor = selection.start + imgMd.length;
+  contentEditor.applyValue(nextValue, cursor, cursor);
+}
+
+function uploadImageFile(file, selection = null) {
+  const status = showUploadProgress();
   const formData = new FormData();
   formData.append('image', file);
   formData.append('private', String(getCategoryValue() === '日记' || getCategoryValue().startsWith('日记/')));
@@ -1009,13 +1030,17 @@ $('#imgFileInput').addEventListener('change', () => {
   xhr.addEventListener('load', () => {
     if (xhr.status >= 200 && xhr.status < 300) {
       const data = JSON.parse(xhr.responseText);
-      const imgMd = `![image](${data.url})`;
-      contentEditor.insertAtSelection(imgMd);
+      insertUploadedImage(data.url, selection);
       contentEditor.focus();
       status.textContent = '已插入';
       setTimeout(() => { if (status.textContent === '已插入') status.textContent = ''; }, SAVE_STATUS_DURATION);
     } else {
-      throw new Error('上传失败: ' + xhr.status);
+      let message = '上传失败';
+      try {
+        message = JSON.parse(xhr.responseText).error || message;
+      } catch {}
+      status.textContent = '上传失败';
+      showToast(message, 'error');
     }
   });
 
@@ -1029,7 +1054,31 @@ $('#imgFileInput').addEventListener('change', () => {
   });
 
   xhr.send(formData);
+}
+
+$('#imgFileInput').addEventListener('change', () => {
+  const fileInput = $('#imgFileInput');
+  const file = fileInput.files[0];
+  if (!file) return;
+  uploadImageFile(file);
+  fileInput.value = '';
 });
+
+editorContentArea.addEventListener('paste', (event) => {
+  if (!contentEditor.hasFocus()) return;
+  const imageItem = [...(event.clipboardData?.items || [])]
+    .find(item => item.kind === 'file' && item.type.startsWith('image/'));
+  if (!imageItem) return;
+  const file = pastedImageFile(imageItem.getAsFile());
+  if (!file) {
+    showToast('仅支持粘贴 PNG、JPG、GIF、WebP 或 BMP 图片', 'error');
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  const selection = contentEditor.getSelection();
+  uploadImageFile(file, selection);
+}, true);
 
 function renderPreview() {
   editPreview.innerHTML = renderToHtmlUncached(contentEditor.getValue());

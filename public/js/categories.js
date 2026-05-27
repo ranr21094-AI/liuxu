@@ -152,6 +152,11 @@ function renderCategoryDetail() {
   $('#catDetailFallback').style.display = isProtectedRootCategory(cat.name) ? '' : 'none';
   $('#btnCatRename').style.display = cat.name === '日记' ? 'none' : '';
   $('#btnCatDelete').style.display = isProtectedRootCategory(cat.name) ? 'none' : '';
+  $('#catCalendarDayVisible').checked = cat.calendar_day_visible !== false;
+  $('#catCalendarDayVisible').setAttribute(
+    'aria-label',
+    `${cat.name}：点击日历日期时显示日志`
+  );
   $('#catDetailSubCount').textContent = `${(cat.sub || []).length} 个`;
   $('#catRenameRow').style.display = 'none';
   $('#catSubNewInput').value = '';
@@ -300,6 +305,28 @@ $('#btnCatRenameSave').addEventListener('click', async () => {
 $('#catRenameInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); $('#btnCatRenameSave').click(); }
   if (e.key === 'Escape') { e.preventDefault(); $('#btnCatRenameCancel').click(); }
+});
+
+$('#catCalendarDayVisible').addEventListener('change', async (e) => {
+  const name = selectedCategoryName;
+  const visible = e.target.checked;
+  if (!name) return;
+  try {
+    const res = await apiFetch(`/api/categories/${encodeURIComponent(name)}/calendar-day-visibility`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ visible }),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || '设置失败');
+    }
+    await refreshCategoryViews(name);
+    showToast(visible ? '日历按日查看将显示此分类日志' : '日历按日查看将隐藏此分类日志', 'success');
+  } catch (err) {
+    e.target.checked = !visible;
+    showToast('设置失败: ' + err.message, 'error');
+  }
 });
 
 $('#btnCatDelete').addEventListener('click', async () => {

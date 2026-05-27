@@ -251,6 +251,13 @@
           <input type="file" id="imgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" style="display:none">
           <span class="upload-status" id="uploadStatus" role="status" aria-live="polite"></span>
         </span>
+        <span class="toolbar-group emoji-tools" aria-label="常用 Emoji">
+          <button type="button" data-emoji="✅" title="插入完成标记">✅</button>
+          <button type="button" data-emoji="📌" title="插入重点标记">📌</button>
+          <button type="button" data-emoji="💡" title="插入想法标记">💡</button>
+          <button type="button" data-emoji="⚠️" title="插入提醒标记">⚠️</button>
+          <button type="button" data-emoji="🚀" title="插入进度标记">🚀</button>
+        </span>
       </div>
 
       <div class="editor-content-area" id="editorPanel" role="tabpanel" aria-labelledby="editorTabWrite">
@@ -265,15 +272,15 @@
     <div class="category-view" id="categoryView" style="display:none;">
       <div class="category-page-header">
         <button class="btn-icon btn-back" id="btnCategoryBack" title="返回日志列表">← 返回</button>
-        <div>
+        <div class="category-page-title">
           <h2>管理分类</h2>
           <div class="cat-manager-summary" id="catManagerSummary">加载中...</div>
         </div>
+        <label class="sr-only" for="catSearchInput">搜索分类</label>
+        <input type="search" id="catSearchInput" class="cat-search-input cat-header-search" placeholder="搜索父分类或子分类...">
       </div>
       <div class="category-page-grid">
         <section class="category-parent-panel">
-          <label class="sr-only" for="catSearchInput">搜索分类</label>
-          <input type="search" id="catSearchInput" class="cat-search-input" placeholder="搜索父分类或子分类...">
           <div class="cat-add-row">
             <label class="sr-only" for="catNewInput">新父分类名称</label>
             <input type="text" id="catNewInput" placeholder="添加父分类..." maxlength="20">
@@ -291,6 +298,11 @@
                 <span class="cat-default-tag" id="catDetailFallback" style="display:none;">不可删除</span>
               </div>
               <div class="cat-detail-actions">
+                <label class="cat-calendar-toggle" title="开启时，点击日历中的某一天可查看此分类及其子分类日志；关闭后按日隐藏，但月份筛选仍可查看。">
+                  <input type="checkbox" id="catCalendarDayVisible">
+                  <span class="cat-calendar-toggle-track" aria-hidden="true"></span>
+                  <span class="cat-calendar-toggle-label">日历显示</span>
+                </label>
                 <button class="btn-secondary btn-sm" id="btnCatRename">重命名</button>
                 <button class="btn-danger btn-sm" id="btnCatDelete">删除</button>
               </div>
@@ -354,10 +366,14 @@
           <label class="sr-only" for="templateNameInput">模板名称</label>
           <input type="text" id="templateNameInput" placeholder="模板名称" maxlength="40">
           <label class="sr-only" for="templateTitleInput">模板日志标题</label>
-          <input type="text" id="templateTitleInput" placeholder="生成日志标题，例如 日报 {{today:MM月DD日}}" maxlength="80">
+          <input type="text" id="templateTitleInput" placeholder="生成日志标题，例如 周复盘 {{本周:MM月DD日}}" maxlength="80">
           <label class="sr-only" for="templateContentInput">模板内容</label>
-          <textarea id="templateContentInput" placeholder="模板内容，支持 Markdown，例如 {{today}}、{{tomorrow}}、{{date:+7:YYYY-MM-DD dddd}}"></textarea>
-          <div class="template-token-hint">生成日志标题和内容都可用日期占位符：{{today}}、{{tomorrow}}、{{yesterday}}、{{date:+N}}，格式可写为 {{today:MM月DD日}}。</div>
+          <textarea id="templateContentInput" placeholder="模板内容，支持 Markdown，例如 {{今天}}、{{上一周:MM月DD日}}、{{日期:+7:YYYY-MM-DD dddd}}"></textarea>
+          <div class="template-token-hint">
+            <div>日期：<code>{{今天}}</code> <code>{{昨天}}</code> <code>{{明天}}</code> <code>{{日期:+7:MM月DD日}}</code></div>
+            <div>周区间：<code>{{本周:MM月DD日}}</code> <code>{{上一周:MM月DD日}}</code> <code>{{下一周:MM月DD日}}</code></div>
+            <div>周边界：<code>{{上一周.开始:YYYY-MM-DD}}</code> <code>{{上一周.结束:YYYY-MM-DD}}</code>；仍兼容 <code>{{today}}</code> 等英文写法。</div>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
