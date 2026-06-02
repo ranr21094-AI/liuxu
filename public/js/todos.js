@@ -1,5 +1,5 @@
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, setupDragAndDrop, confirmDialog, announce, $ } from './helpers.js';
+import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { businessDateString } from './businessDate.js';
 
 let allTodos = [];
@@ -15,7 +15,7 @@ function normalizeTodo(todo) {
   return {
     ...todo,
     due_date: todo.due_date || '',
-    priority: todo.priority || 'normal',
+    priority: todo.priority || 'none',
     notes: typeof todo.notes === 'string' ? todo.notes : '',
   };
 }
@@ -50,28 +50,22 @@ function dueHtml(todo) {
   return `<span class="todo-due ${cls}">${todo.due_date.substring(5)}</span>`;
 }
 
-function priorityDot(todo) {
-  return todo.priority && todo.priority !== 'normal'
-    ? `<span class="todo-priority prio-${todo.priority}" title="${todo.priority}"></span>`
+function priorityBadge(todo) {
+  const labels = { normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' };
+  const codes = { normal: 'P2', important: 'P1', urgent: 'P0' };
+  return todo.priority && todo.priority !== 'none'
+    ? `<span class="todo-priority prio-${todo.priority}" title="${labels[todo.priority] || todo.priority}">${codes[todo.priority] || ''}</span>`
     : '';
 }
 
 function todoItemHtml(todo, { full = false } = {}) {
   const selected = full && selectedTodoId === todo.id ? ' selected' : '';
-  const index = allTodos.findIndex(item => item.id === todo.id);
   const title = escHtml(todo.title);
-  const notes = full && todo.notes
-    ? `<span class="todo-notes-preview">${escHtml(todo.notes)}</span>`
-    : '';
   return `
     <div class="todo-item${selected}" data-id="${todo.id}" draggable="true">
       <div class="todo-drag" data-action="drag" title="拖动排序">⠿</div>
       <button type="button" class="todo-checkbox ${todo.done ? 'done' : ''}" data-action="toggle" role="checkbox" aria-checked="${todo.done}" aria-label="${todo.done ? '标记为未完成' : '标记为已完成'}：${title}"></button>
-      <span class="todo-text ${todo.done ? 'done' : ''}">${priorityDot(todo)}${title}${dueHtml(todo)}${notes}</span>
-      <span class="item-order-controls" aria-label="调整任务顺序">
-        <button type="button" class="btn-order" data-action="move-up" aria-label="上移任务：${title}" ${index <= 0 ? 'disabled' : ''}>↑</button>
-        <button type="button" class="btn-order" data-action="move-down" aria-label="下移任务：${title}" ${index >= allTodos.length - 1 ? 'disabled' : ''}>↓</button>
-      </span>
+      <span class="todo-text ${todo.done ? 'done' : ''}">${priorityBadge(todo)}${title}${dueHtml(todo)}</span>
       <button type="button" class="todo-delete" data-action="delete" aria-label="删除任务：${title}" title="删除">×</button>
     </div>
   `;
@@ -141,7 +135,7 @@ function resetTodoForm() {
   $('#todoEditId').value = '';
   $('#todoFullTitle').value = '';
   $('#todoFullDueDate').value = '';
-  $('#todoFullPriority').value = 'normal';
+  $('#todoFullPriority').value = 'none';
   $('#todoFullNotes').value = '';
   $('#btnTodoFullSave').textContent = '保存任务';
 }
@@ -151,7 +145,7 @@ function fillTodoForm(todo) {
   $('#todoEditId').value = todo.id;
   $('#todoFullTitle').value = todo.title || '';
   $('#todoFullDueDate').value = todo.due_date || '';
-  $('#todoFullPriority').value = todo.priority || 'normal';
+  $('#todoFullPriority').value = todo.priority || 'none';
   $('#todoFullNotes').value = todo.notes || '';
   $('#btnTodoFullSave').textContent = '更新任务';
   renderFullTodos();
@@ -169,7 +163,7 @@ async function saveTodoFromFullForm() {
   const body = {
     title,
     due_date: $('#todoFullDueDate').value || null,
-    priority: $('#todoFullPriority').value || 'normal',
+    priority: $('#todoFullPriority').value || 'none',
     notes: $('#todoFullNotes').value,
   };
   try {
@@ -206,27 +200,6 @@ async function toggleTodo(id) {
   await loadTodos();
 }
 
-async function moveTodo(id, delta, container, action) {
-  const index = allTodos.findIndex(todo => todo.id === id);
-  const targetIndex = index + delta;
-  if (index < 0 || targetIndex < 0 || targetIndex >= allTodos.length) return;
-  const reordered = [...allTodos];
-  [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
-  try {
-    await apiFetch('/api/todos/reorder', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderedIds: reordered.map(todo => todo.id) }),
-    });
-    await loadTodos();
-    container.querySelector(`.todo-item[data-id="${id}"] [data-action="${action}"]`)?.focus();
-    announce(`任务已${delta < 0 ? '上移' : '下移'}`);
-  } catch (err) {
-    showToast('排序失败: ' + err.message, 'error');
-    announce('任务排序失败');
-  }
-}
-
 async function deleteTodo(id) {
   const todo = allTodos.find(t => t.id === id);
   const confirmed = await confirmDialog({
@@ -256,7 +229,7 @@ async function clearCompletedTodos() {
   }
 }
 
-async function handleTodoListClick(e, { full = false, container } = {}) {
+async function handleTodoListClick(e, { full = false } = {}) {
   if (e.target.dataset.action === 'drag') return;
   const item = e.target.closest('.todo-item');
   if (!item) return;
@@ -272,10 +245,6 @@ async function handleTodoListClick(e, { full = false, container } = {}) {
       await deleteTodo(id);
       return;
     }
-    if (action === 'move-up' || action === 'move-down') {
-      await moveTodo(id, action === 'move-up' ? -1 : 1, container, action);
-      return;
-    }
     if (full) {
       const todo = allTodos.find(t => t.id === id);
       if (todo) fillTodoForm(todo);
@@ -285,8 +254,8 @@ async function handleTodoListClick(e, { full = false, container } = {}) {
   }
 }
 
-$('#todoList').addEventListener('click', (e) => handleTodoListClick(e, { container: $('#todoList') }));
-$('#todoFullList').addEventListener('click', (e) => handleTodoListClick(e, { full: true, container: $('#todoFullList') }));
+$('#todoList').addEventListener('click', (e) => handleTodoListClick(e));
+$('#todoFullList').addEventListener('click', (e) => handleTodoListClick(e, { full: true }));
 
 function setupTodoDrag(container) {
   setupDragAndDrop({

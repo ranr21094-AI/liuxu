@@ -411,8 +411,10 @@ function getAllTodos(query = {}) {
 }
 
 function normalizeTodoPriority(priority) {
-  const value = typeof priority === 'string' && priority ? priority : 'normal';
-  return ['low', 'normal', 'high'].includes(value) ? value : 'normal';
+  const value = typeof priority === 'string' && priority ? priority : 'none';
+  const legacy = { low: 'normal', high: 'important' };
+  const normalized = legacy[value] || value;
+  return ['none', 'normal', 'important', 'urgent'].includes(normalized) ? normalized : 'none';
 }
 
 function createTodo(data) {
@@ -543,14 +545,44 @@ function writeCategories(cats) {
   fs.renameSync(tmp, CATEGORIES_FILE);
 }
 
+function getCategoryLogCounts(diaryUnlocked = true) {
+  const counts = new Map();
+  const subCounts = new Map();
+  const logs = diaryUnlocked
+    ? readLogs()
+    : readLogs().filter(log => !isDiaryCategory(log.category));
+
+  logs.forEach(log => {
+    const parsed = parseCategoryPath(log.category);
+    counts.set(parsed.parent, (counts.get(parsed.parent) || 0) + 1);
+    if (parsed.sub) {
+      const key = `${parsed.parent}/${parsed.sub}`;
+      subCounts.set(key, (subCounts.get(key) || 0) + 1);
+    }
+  });
+
+  return { counts, subCounts };
+}
+
 function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
+  const { counts, subCounts } = getCategoryLogCounts(diaryUnlocked);
   const categories = readCategories().map(category => ({
     name: category.name,
     sub: !diaryUnlocked && category.name === DIARY_CATEGORY ? [] : [...(category.sub || [])],
+    log_count: counts.get(category.name) || 0,
+    sub_log_counts: Object.fromEntries(
+      (category.sub || []).map(sub => [sub, subCounts.get(`${category.name}/${sub}`) || 0])
+    ),
     calendar_day_visible: category.calendar_day_visible !== false,
   }));
   if (includeDiaryRoot && !categories.some(category => category.name === DIARY_CATEGORY)) {
-    categories.push({ name: DIARY_CATEGORY, sub: [], calendar_day_visible: true });
+    categories.push({
+      name: DIARY_CATEGORY,
+      sub: [],
+      log_count: counts.get(DIARY_CATEGORY) || 0,
+      sub_log_counts: {},
+      calendar_day_visible: true,
+    });
   }
   return categories;
 }
@@ -856,10 +888,11 @@ function normalizeTodosForRestore(todos) {
     const sortOrder = normalizeFiniteNumber(item.sort_order, 0);
     if (sortOrder === null) return { error: `Invalid sort_order for todo id ${id}` };
 
-    const priority = normalizeString(item.priority, 'normal') || 'normal';
-    if (!['low', 'normal', 'high'].includes(priority)) {
+    const rawPriority = normalizeString(item.priority, 'none') || 'none';
+    if (!['none', 'normal', 'important', 'urgent', 'low', 'high'].includes(rawPriority)) {
       return { error: `Invalid priority for todo id ${id}` };
     }
+    const priority = normalizeTodoPriority(rawPriority);
 
     const notes = item.notes === undefined ? '' : item.notes;
     if (typeof notes !== 'string') return { error: `Invalid notes for todo id ${id}` };

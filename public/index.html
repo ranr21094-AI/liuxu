@@ -101,9 +101,10 @@
           <input type="date" id="todoFullDueDate" title="截止日期">
           <label class="sr-only" for="todoFullPriority">优先级</label>
           <select id="todoFullPriority" title="优先级">
+            <option value="none">无</option>
             <option value="normal">普通</option>
-            <option value="high">高优先级</option>
-            <option value="low">低优先级</option>
+            <option value="important">重要</option>
+            <option value="urgent">紧急</option>
           </select>
         </div>
         <label class="sr-only" for="todoFullNotes">任务备注</label>
@@ -208,69 +209,84 @@
       <label class="sr-only" for="editTitle">日志标题</label>
       <input type="text" id="editTitle" class="edit-title" placeholder="日志标题...">
 
-      <div class="editor-tabs" role="tablist" aria-label="编辑器显示模式">
-        <button class="editor-tab active" id="editorTabWrite" data-tab="write" role="tab" aria-selected="true" aria-controls="editorPanel" tabindex="0">编辑</button>
-        <button class="editor-tab" id="editorTabPreview" data-tab="preview" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">预览</button>
-        <button class="editor-tab" id="editorTabSplit" data-tab="split" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">分屏</button>
-        <span class="editor-help">支持 Markdown 格式</span>
-        <select class="template-select" id="templateSelect" title="使用模板">
-          <option value="">模板</option>
-        </select>
-        <button class="btn-secondary btn-sm btn-template-manage" id="btnManageTemplates">管理模板</button>
-      </div>
-
-      <div class="editor-toolbar" id="editorToolbar" role="toolbar" aria-label="Markdown 格式工具">
-        <span class="toolbar-group">
-          <button data-action="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
-          <button data-action="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
-          <button data-action="strikethrough" title="删除线"><s>S</s></button>
-        </span>
-        <span class="toolbar-group">
-          <button data-action="h1" title="一级标题">H1</button>
-          <button data-action="h2" title="二级标题">H2</button>
-          <button data-action="h3" title="三级标题">H3</button>
-        </span>
-        <span class="toolbar-group">
-          <button data-action="ul" title="无序列表">• 列表</button>
-          <button data-action="ol" title="有序列表">1. 列表</button>
-          <button data-action="checklist" title="任务列表">☑ 任务</button>
-        </span>
-        <span class="toolbar-group">
-          <button data-action="quote" title="引用">❝ 引用</button>
-          <button data-action="code" title="行内代码">&lt;/&gt;</button>
-          <button data-action="codeblock" title="代码块">{ }</button>
-          <button data-action="mathInline" title="行内公式">$f$</button>
-          <button data-action="mathBlock" title="块级公式">$$</button>
-          <button class="btn-table" id="btnTable" title="插入表格">⊞ 表格</button>
-          <div class="table-grid-popup" id="tableGridPopup" style="display:none">
-            <div class="table-grid-header">选择表格尺寸 <span id="tableGridDim"></span></div>
-            <div class="table-grid" id="tableGrid"></div>
+      <div class="editor-outline-layout" id="editorOutlineLayout">
+        <aside class="editor-outline-panel" id="editorOutlinePanel" aria-hidden="true">
+          <div class="editor-outline-panel-header">
+            <span>标题大纲</span>
+            <button class="btn-icon editor-outline-close" id="btnCloseOutlinePanel" type="button" aria-label="收起标题栏">&times;</button>
           </div>
-          <button data-action="link" title="链接">🔗</button>
-          <button type="button" id="btnLogLink" title="插入日志链接">日志链接</button>
-          <button data-action="hr" title="分割线">—</button>
-        </span>
-        <span class="toolbar-group">
-          <button class="btn-upload-img" id="btnUploadImg" title="插入图片">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          </button>
-          <input type="file" id="imgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" style="display:none">
-          <span class="upload-status" id="uploadStatus" role="status" aria-live="polite"></span>
-        </span>
-        <span class="toolbar-group emoji-tools" aria-label="常用 Emoji">
-          <button type="button" data-emoji="✅" title="插入完成标记">✅</button>
-          <button type="button" data-emoji="📌" title="插入重点标记">📌</button>
-          <button type="button" data-emoji="💡" title="插入想法标记">💡</button>
-          <button type="button" data-emoji="⚠️" title="插入提醒标记">⚠️</button>
-          <button type="button" data-emoji="🚀" title="插入进度标记">🚀</button>
-        </span>
-      </div>
+          <div class="editor-outline-list" id="editorOutlineList">
+            <div class="editor-outline-empty">暂无标题</div>
+          </div>
+        </aside>
 
-      <div class="editor-content-area" id="editorPanel" role="tabpanel" aria-labelledby="editorTabWrite">
-        <label class="sr-only" for="editContent">日志内容</label>
-        <textarea id="editContent" class="edit-content" placeholder="使用 Markdown 记录工作内容...&#10;&#10;## 今日完成&#10;- 项目 A 功能开发&#10;- Code Review&#10;&#10;## 明日计划&#10;- 继续开发模块 B&#10;&#10;## 遇到的问题&#10;...&#10;"></textarea>
-        <div id="codeMirrorContentEditor" class="codemirror-content-editor" aria-label="日志内容 Markdown 编辑器" style="display:none;"></div>
-        <div class="edit-preview markdown-body" id="editPreview" style="display:none;"></div>
+        <div class="editor-workspace">
+          <div class="editor-tabs" role="tablist" aria-label="编辑器显示模式">
+            <button class="editor-outline-toggle" id="btnEditorOutlinePanel" type="button" aria-controls="editorOutlinePanel" aria-expanded="false" title="展开标题栏">标题</button>
+            <button class="editor-tab active" id="editorTabWrite" data-tab="write" role="tab" aria-selected="true" aria-controls="editorPanel" tabindex="0">编辑</button>
+            <button class="editor-tab" id="editorTabPreview" data-tab="preview" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">预览</button>
+            <button class="editor-tab" id="editorTabSplit" data-tab="split" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">分屏</button>
+            <span class="editor-help">支持 Markdown 格式</span>
+            <select class="template-select" id="templateSelect" title="使用模板">
+              <option value="">模板</option>
+            </select>
+            <button class="btn-secondary btn-sm btn-template-manage" id="btnManageTemplates">管理模板</button>
+          </div>
+
+          <div class="editor-toolbar" id="editorToolbar" role="toolbar" aria-label="Markdown 格式工具">
+            <span class="toolbar-group">
+              <button data-action="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
+              <button data-action="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+              <button data-action="strikethrough" title="删除线"><s>S</s></button>
+            </span>
+            <span class="toolbar-group">
+              <button data-action="h1" title="一级标题">H1</button>
+              <button data-action="h2" title="二级标题">H2</button>
+              <button data-action="h3" title="三级标题">H3</button>
+            </span>
+            <span class="toolbar-group">
+              <button data-action="ul" title="无序列表">• 列表</button>
+              <button data-action="ol" title="有序列表">1. 列表</button>
+              <button data-action="checklist" title="任务列表">☑ 任务</button>
+            </span>
+            <span class="toolbar-group">
+              <button data-action="quote" title="引用">❝ 引用</button>
+              <button data-action="code" title="行内代码">&lt;/&gt;</button>
+              <button data-action="codeblock" title="代码块">{ }</button>
+              <button data-action="mathInline" title="行内公式">$f$</button>
+              <button data-action="mathBlock" title="块级公式">$$</button>
+              <button class="btn-table" id="btnTable" title="插入表格">⊞ 表格</button>
+              <div class="table-grid-popup" id="tableGridPopup" style="display:none">
+                <div class="table-grid-header">选择表格尺寸 <span id="tableGridDim"></span></div>
+                <div class="table-grid" id="tableGrid"></div>
+              </div>
+              <button data-action="link" title="链接">🔗</button>
+              <button type="button" id="btnLogLink" title="插入日志链接">日志链接</button>
+              <button data-action="hr" title="分割线">—</button>
+            </span>
+            <span class="toolbar-group">
+              <button class="btn-upload-img" id="btnUploadImg" title="插入图片">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              </button>
+              <input type="file" id="imgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" style="display:none">
+              <span class="upload-status" id="uploadStatus" role="status" aria-live="polite"></span>
+            </span>
+            <span class="toolbar-group emoji-tools" aria-label="常用 Emoji">
+              <button type="button" data-emoji="✅" title="插入完成标记">✅</button>
+              <button type="button" data-emoji="📌" title="插入重点标记">📌</button>
+              <button type="button" data-emoji="💡" title="插入想法标记">💡</button>
+              <button type="button" data-emoji="⚠️" title="插入提醒标记">⚠️</button>
+              <button type="button" data-emoji="🚀" title="插入进度标记">🚀</button>
+            </span>
+          </div>
+
+          <div class="editor-content-area" id="editorPanel" role="tabpanel" aria-labelledby="editorTabWrite">
+            <label class="sr-only" for="editContent">日志内容</label>
+            <textarea id="editContent" class="edit-content" placeholder="使用 Markdown 记录工作内容...&#10;&#10;## 今日完成&#10;- 项目 A 功能开发&#10;- Code Review&#10;&#10;## 明日计划&#10;- 继续开发模块 B&#10;&#10;## 遇到的问题&#10;...&#10;"></textarea>
+            <div id="codeMirrorContentEditor" class="codemirror-content-editor" aria-label="日志内容 Markdown 编辑器" style="display:none;"></div>
+            <div class="edit-preview markdown-body" id="editPreview" style="display:none;"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -280,26 +296,31 @@
         <button class="btn-icon btn-back" id="btnCategoryBack" title="返回日志列表">← 返回</button>
         <div class="category-page-title">
           <h2>管理分类</h2>
-          <div class="cat-manager-summary" id="catManagerSummary">加载中...</div>
+          <div class="cat-manager-summary" id="catManagerSummary" title="父分类数量" aria-label="父分类数量">...</div>
+        </div>
+        <div class="cat-add-row cat-header-add">
+          <label class="sr-only" for="catNewInput">新父分类名称</label>
+          <input type="text" id="catNewInput" placeholder="添加父分类..." maxlength="20">
+          <button class="cat-icon-action primary" id="catAddBtn" type="button" aria-label="添加父分类" title="添加父分类">+</button>
         </div>
         <label class="sr-only" for="catSearchInput">搜索分类</label>
         <input type="search" id="catSearchInput" class="cat-search-input cat-header-search" placeholder="搜索父分类或子分类...">
       </div>
       <div class="category-page-grid">
         <section class="category-parent-panel">
-          <div class="cat-add-row">
-            <label class="sr-only" for="catNewInput">新父分类名称</label>
-            <input type="text" id="catNewInput" placeholder="添加父分类..." maxlength="20">
-            <button class="btn-primary btn-sm" id="catAddBtn">添加</button>
-          </div>
-          <div class="cat-manager-hint">拖动父分类排序；搜索时暂停排序。</div>
           <div class="cat-list" id="catList"></div>
+          <div class="cat-sub-browse-sidebar" id="catSubBrowseSidebar" style="display:none;">
+            <button class="btn-secondary btn-sm" id="btnSubBrowseBack" type="button">← 父分类</button>
+            <div class="cat-sub-browse-parent" id="catSubBrowseParent"></div>
+            <div class="cat-sub-browse-list" id="catSubBrowseList"></div>
+          </div>
         </section>
         <section class="category-detail-panel" id="catDetailPanel">
           <div class="cat-detail-empty" id="catDetailEmpty">选择一个父分类进行管理</div>
           <div class="cat-detail-content" id="catDetailContent" style="display:none;">
             <div class="cat-detail-header">
               <div class="cat-detail-heading">
+                <span class="cat-log-count cat-detail-log-count" id="catDetailLogCount" title="日志数量">0</span>
                 <h3 id="catDetailName"></h3>
                 <span class="cat-default-tag" id="catDetailFallback" style="display:none;">不可删除</span>
               </div>
@@ -307,10 +328,14 @@
                 <label class="cat-calendar-toggle" title="开启时，点击日历中的某一天可查看此分类及其子分类日志；关闭后按日隐藏，但月份筛选仍可查看。">
                   <input type="checkbox" id="catCalendarDayVisible">
                   <span class="cat-calendar-toggle-track" aria-hidden="true"></span>
-                  <span class="cat-calendar-toggle-label">日历显示</span>
                 </label>
-                <button class="btn-secondary btn-sm" id="btnCatRename">重命名</button>
-                <button class="btn-danger btn-sm" id="btnCatDelete">删除</button>
+                <div class="subcat-add-row category-sub-add">
+                  <label class="sr-only" for="catSubNewInput">新子分类名称</label>
+                  <input type="text" id="catSubNewInput" placeholder="新子分类..." maxlength="20">
+                  <button class="cat-icon-action primary" id="catSubAddBtn" type="button" aria-label="添加子分类" title="添加子分类">+</button>
+                </div>
+                <button class="cat-icon-action" id="btnCatRename" type="button" aria-label="重命名分类" title="重命名分类">✎</button>
+                <button class="cat-icon-action danger" id="btnCatDelete" type="button" aria-label="删除分类" title="删除分类">×</button>
               </div>
             </div>
             <div class="cat-rename-row" id="catRenameRow" style="display:none;">
@@ -323,12 +348,17 @@
               <h4>子分类</h4>
               <span id="catDetailSubCount"></span>
             </div>
-            <div class="subcat-add-row category-sub-add">
-              <label class="sr-only" for="catSubNewInput">新子分类名称</label>
-              <input type="text" id="catSubNewInput" placeholder="新子分类名称..." maxlength="20">
-              <button class="btn-primary btn-sm" id="catSubAddBtn">添加</button>
-            </div>
             <div class="cat-detail-sub-list" id="catSubList"></div>
+          </div>
+          <div class="cat-sub-browse-content" id="catSubBrowseContent" style="display:none;">
+            <div class="cat-sub-browse-header">
+              <div>
+                <div class="cat-sub-browse-parent-label" id="catSubBrowseCrumb"></div>
+                <h3 id="catSubBrowseTitle"></h3>
+              </div>
+              <span class="cat-log-count cat-detail-log-count" id="catSubBrowseLogCount" title="日志数量">0</span>
+            </div>
+            <div class="cat-sub-log-list" id="catSubLogList"></div>
           </div>
         </section>
       </div>

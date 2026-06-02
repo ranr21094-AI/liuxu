@@ -241,6 +241,8 @@ test('unlocked system diary category can receive a new subcategory without prior
   assert.deepEqual(categories.find(category => category.name === DIARY_CATEGORY), {
     name: DIARY_CATEGORY,
     sub: [],
+    log_count: 0,
+    sub_log_counts: {},
     calendar_day_visible: true,
   });
 
@@ -294,6 +296,22 @@ test('category calendar-day visibility only hides logs from date browsing', asyn
   assert.equal(stats.datesWithLogs.includes('2026-05-16'), false);
   assert.equal(stats.datesWithLogs.includes('2026-05-17'), true);
   assert.equal(db.backup().categories.find(category => category.name === '隐藏日分类').calendar_day_visible, false);
+});
+
+test('category API includes parent and subcategory log counts for manager badges', async (t) => {
+  const { db, baseUrl } = loadFreshApp(t);
+  db.addCategory('Counted', null);
+  db.addCategory('SubA', 'Counted');
+  db.addCategory('SubB', 'Counted');
+  db.create({ title: 'parent', content: 'parent', category: 'Counted', log_date: '2026-05-16' });
+  db.create({ title: 'sub a 1', content: 'sub', category: 'Counted/SubA', log_date: '2026-05-16' });
+  db.create({ title: 'sub a 2', content: 'sub', category: 'Counted/SubA', log_date: '2026-05-17' });
+
+  const categories = await (await fetch(`${baseUrl}/api/categories`)).json();
+  const counted = categories.find(category => category.name === 'Counted');
+
+  assert.equal(counted.log_count, 3);
+  assert.deepEqual(counted.sub_log_counts, { SubA: 2, SubB: 0 });
 });
 
 test('diary routes remain compatible when diary lock is disabled', async (t) => {
@@ -477,7 +495,7 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, logs: [{ id: 1, hours: 25 }] }).error, /Invalid hours/);
   assert.match(db.restore({ ...base, todos: [{ id: 1 }, { id: 1 }] }).error, /Duplicate todo id/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, due_date: '2026-02-31' }] }).error, /Invalid due_date/);
-  assert.match(db.restore({ ...base, todos: [{ id: 1, priority: 'urgent' }] }).error, /Invalid priority/);
+  assert.match(db.restore({ ...base, todos: [{ id: 1, priority: 'critical' }] }).error, /Invalid priority/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, notes: { text: 'bad' } }] }).error, /Invalid notes/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: 'not-array' }] }).error, /Invalid subcategories/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: [], calendar_day_visible: 'no' }] }).error, /Invalid calendar day visibility/);
@@ -499,34 +517,55 @@ test('todo API stores due date, priority, and notes', async (t) => {
     body: JSON.stringify({
       title: 'task',
       due_date: '2026-05-18',
-      priority: 'high',
+      priority: 'important',
       notes: 'bring context',
     }),
   });
   assert.equal(created.status, 201);
   const createdBody = await created.json();
   assert.equal(createdBody.due_date, '2026-05-18');
-  assert.equal(createdBody.priority, 'high');
+  assert.equal(createdBody.priority, 'important');
   assert.equal(createdBody.notes, 'bring context');
 
   const updated = await fetch(`${baseUrl}/api/todos/${createdBody.id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      priority: 'low',
+      priority: 'urgent',
       notes: 'updated note',
     }),
   });
   assert.equal(updated.status, 200);
   const updatedBody = await updated.json();
-  assert.equal(updatedBody.priority, 'low');
+  assert.equal(updatedBody.priority, 'urgent');
   assert.equal(updatedBody.notes, 'updated note');
 
   const listed = await fetch(`${baseUrl}/api/todos`);
   assert.equal(listed.status, 200);
   const items = await listed.json();
-  assert.equal(items[0].priority, 'low');
+  assert.equal(items[0].priority, 'urgent');
   assert.equal(items[0].notes, 'updated note');
+});
+
+test('todo priorities preserve none normal important and urgent values', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+  const priorities = ['none', 'normal', 'important', 'urgent'];
+
+  for (const priority of priorities) {
+    const created = await fetch(`${baseUrl}/api/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `task-${priority}`, priority }),
+    });
+    assert.equal(created.status, 201);
+    assert.equal((await created.json()).priority, priority);
+  }
+
+  const listed = await (await fetch(`${baseUrl}/api/todos`)).json();
+  const byTitle = new Map(listed.map(todo => [todo.title, todo.priority]));
+  for (const priority of priorities) {
+    assert.equal(byTitle.get(`task-${priority}`), priority);
+  }
 });
 
 test('undated logs are saved and searchable from all months only', async (t) => {
@@ -633,14 +672,112 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#editorTabWrite').getAttribute('aria-controls'), 'editorPanel');
   assert.equal(document.querySelector('#editorPanel').getAttribute('role'), 'tabpanel');
   assert.equal(document.querySelector('#codeMirrorContentEditor').getAttribute('aria-label'), '日志内容 Markdown 编辑器');
+  assert.equal(document.querySelector('#btnEditorOutlinePanel').textContent, '标题');
+  assert.equal(document.querySelector('#btnEditorOutlinePanel').getAttribute('aria-controls'), 'editorOutlinePanel');
+  assert.equal(document.querySelector('#btnEditorOutlinePanel').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('#editorOutlinePanel').getAttribute('aria-hidden'), 'true');
+  assert.equal(document.querySelector('#editorOutlineList .editor-outline-empty').textContent, '暂无标题');
+  assert.equal(document.querySelector('#editTitle').closest('#editorOutlinePanel'), null);
   assert.equal(document.querySelector('#btnEditorFullscreen').textContent, '全屏编辑');
   assert.equal(document.querySelector('#btnEditorFullscreen').getAttribute('aria-pressed'), 'false');
   assert.equal(document.querySelector('#btnBack').closest('.editor-nav-actions') !== null, true);
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
   assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
+  assert.equal(document.querySelector('#catNewInput').closest('.category-page-header') !== null, true);
+  assert.equal(document.querySelector('#catAddBtn').closest('.category-page-header') !== null, true);
+  assert.equal(document.querySelector('#catAddBtn').getAttribute('aria-label'), '添加父分类');
   assert.equal(document.querySelector('.cat-detail-actions #catCalendarDayVisible') !== null, true);
+  assert.equal(document.querySelector('#catSubNewInput').closest('.cat-detail-actions') !== null, true);
+  assert.equal(document.querySelector('#catSubAddBtn').closest('.cat-detail-actions') !== null, true);
+  assert.equal(document.querySelector('#catSubAddBtn').getAttribute('aria-label'), '添加子分类');
+  assert.equal(document.querySelector('#btnCatRename').getAttribute('aria-label'), '重命名分类');
+  assert.equal(document.querySelector('#btnCatDelete').getAttribute('aria-label'), '删除分类');
+  assert.equal(document.querySelector('#catDetailLogCount').closest('.cat-detail-heading') !== null, true);
+  assert.equal(document.querySelector('#catSubBrowseSidebar').closest('.category-parent-panel') !== null, true);
+  assert.equal(document.querySelector('#catSubBrowseContent').closest('.category-detail-panel') !== null, true);
+  assert.equal(document.querySelector('#btnSubBrowseBack').textContent.trim(), '← 父分类');
+  assert.deepEqual([...document.querySelectorAll('#todoFullPriority option')].map(option => [option.value, option.textContent]), [
+    ['none', '无'],
+    ['normal', '普通'],
+    ['important', '重要'],
+    ['urgent', '紧急'],
+  ]);
   assert.match(document.querySelector('.cat-calendar-toggle').getAttribute('title'), /月份筛选仍可查看/);
+  assert.equal(document.querySelector('.cat-calendar-toggle-label'), null);
+  assert.equal(document.querySelector('#catManagerSummary').getAttribute('title'), '父分类数量');
   assert.match(document.querySelector('.template-token-hint').textContent, /\{\{上一周:MM月DD日\}\}/);
+});
+
+test('category manager uses drag sorting and log count badges without move buttons', () => {
+  const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+
+  assert.doesNotMatch(categorySource, /<span class="cat-log-count" title="日志数量">\$\{c\.log_count \|\| 0\}<\/span>/);
+  assert.match(categorySource, /<span class="cat-sub-count" title="子分类数量">\$\{\(c\.sub \|\| \[\]\)\.length\}<\/span>/);
+  assert.match(categorySource, /\$\('#catDetailLogCount'\)\.textContent = cat\.log_count \|\| 0;/);
+  assert.match(categorySource, /<span class="cat-log-count" title="日志数量">\$\{cat\.sub_log_counts\?\.\[s\] \|\| 0\}<\/span>/);
+  assert.match(categorySource, /async function openSubcategoryBrowse\(subName\)/);
+  assert.match(categorySource, /syncMainCategoryFilter\(fullSubcategoryName\(parent, subName\)\)/);
+  assert.match(categorySource, /apiFetch\(`\/api\/logs\?\$\{params\}`\)/);
+  assert.match(categorySource, /const \{ openEditor \} = await import\('\.\/editor\.js'\);/);
+  assert.match(categorySource, /class="cat-sub-log-card"[\s\S]*data-id="\$\{log\.id\}"/);
+  assert.match(categorySource, /<span class="cat-sub-log-index">\$\{index \+ 1\}<\/span>/);
+  assert.match(categorySource, /<span class="cat-sub-log-date">\$\{escHtml\(formatShortDateLabel\(log\.log_date\)\)\}<\/span>/);
+  assert.match(categorySource, /<span class="cat-sub-log-arrow" aria-hidden="true">›<\/span>/);
+  assert.doesNotMatch(categorySource, /cat-sub-log-preview/);
+  assert.doesNotMatch(categorySource, /cat-sub-log-meta/);
+  assert.match(categorySource, /class="cat-icon-action subcat-edit-btn"[\s\S]*aria-label="重命名子分类：\$\{escHtml\(s\)\}"/);
+  assert.match(categorySource, /class="cat-icon-action danger subcat-del-btn"[\s\S]*aria-label="删除子分类：\$\{escHtml\(s\)\}"/);
+  assert.match(styleSource, /\.cat-icon-action\s*\{[\s\S]*width:\s*30px;[\s\S]*height:\s*30px;/);
+  assert.match(styleSource, /\.cat-icon-action\.primary\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.cat-header-add\s*\{[\s\S]*width:\s*min\(310px, 30vw\);/);
+  assert.match(styleSource, /\.cat-header-search\s*\{[\s\S]*width:\s*min\(440px, 44vw\);/);
+  assert.match(styleSource, /\.cat-manager-summary\s*\{[\s\S]*border:\s*1px solid rgba\(16, 185, 129, 0\.35\);/);
+  assert.match(styleSource, /\.cat-manager-summary::before\s*\{[\s\S]*box-shadow:/);
+  assert.match(categorySource, /summary\.textContent = total;/);
+  assert.doesNotMatch(categorySource, /个父分类，/);
+  assert.doesNotMatch(categorySource, /个子分类/);
+  assert.doesNotMatch(htmlSource, /拖动父分类排序/);
+  assert.doesNotMatch(htmlSource, /<span class="cat-calendar-toggle-label">日历显示<\/span>/);
+  assert.match(categorySource, /setupDragAndDrop\(\{[\s\S]*itemSelector: '\.cat-parent-item'/);
+  assert.doesNotMatch(categorySource, /data-cat-action/);
+  assert.doesNotMatch(categorySource, /moveCategory/);
+  assert.match(styleSource, /\.cat-log-count\s*\{[\s\S]*background:\s*var\(--color-primary\);[\s\S]*color:\s*var\(--color-card\);/);
+  assert.match(styleSource, /\.cat-detail-log-count\s*\{[\s\S]*min-width:\s*30px;/);
+  assert.match(styleSource, /\.cat-parent-select \.cat-sub-count\s*\{[\s\S]*border:\s*1px solid var\(--color-border\);/);
+  assert.match(styleSource, /\.cat-sub-browse-sidebar\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.cat-sub-log-list\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.cat-sub-log-card\s*\{[\s\S]*min-height:\s*46px;[\s\S]*border:\s*1px solid var\(--color-border\);/);
+  assert.match(styleSource, /\.cat-sub-log-index\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.12\);/);
+  assert.match(styleSource, /\.cat-sub-log-date\s*\{[\s\S]*border-radius:\s*999px;/);
+  assert.match(styleSource, /\.cat-sub-log-card:hover \.cat-sub-log-arrow/);
+  assert.match(styleSource, /\.cat-parent-item\s*\{[\s\S]*grid-template-columns:\s*24px minmax\(0, 1fr\);/);
+});
+
+test('todo UI uses drag sorting, new priorities, and hides notes previews', () => {
+  const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const priorityStyleBlock = styleSource.match(/\.todo-priority\s*\{[\s\S]*?\n\}/)?.[0] || '';
+
+  assert.match(htmlSource, /<option value="none">无<\/option>[\s\S]*<option value="normal">普通<\/option>[\s\S]*<option value="important">重要<\/option>[\s\S]*<option value="urgent">紧急<\/option>/);
+  assert.doesNotMatch(todoSource, /data-action="move-up"/);
+  assert.doesNotMatch(todoSource, /data-action="move-down"/);
+  assert.doesNotMatch(todoSource, /moveTodo/);
+  assert.doesNotMatch(todoSource, /todo-notes-preview/);
+  assert.doesNotMatch(styleSource, /todo-notes-preview/);
+  assert.match(todoSource, /priority: todo\.priority \|\| 'none'/);
+  assert.match(todoSource, /function priorityBadge\(todo\)/);
+  assert.match(todoSource, /const labels = \{ normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' \};/);
+  assert.match(todoSource, /const codes = \{ normal: 'P2', important: 'P1', urgent: 'P0' \};/);
+  assert.doesNotMatch(todoSource, /priorityDot/);
+  assert.match(priorityStyleBlock, /min-width:\s*22px;/);
+  assert.match(priorityStyleBlock, /border-radius:\s*5px;/);
+  assert.doesNotMatch(priorityStyleBlock, /border-radius:\s*50%;/);
+  assert.match(styleSource, /\.todo-priority\.prio-normal\s*\{[\s\S]*background: var\(--color-primary\);/);
+  assert.match(styleSource, /\.todo-priority\.prio-important\s*\{[\s\S]*background: var\(--color-warning\);/);
+  assert.match(styleSource, /\.todo-priority\.prio-urgent\s*\{ background: var\(--color-danger\); \}/);
 });
 
 test('application initialization waits for auth and diary selection before refreshing', () => {
@@ -739,6 +876,12 @@ test('editor fullscreen mode keeps navigation, preview tabs, shortcuts, and cont
   assert.match(editorSource, /function setEditorFullscreen\(enabled\)[\s\S]*document\.body\.classList\.toggle\('editor-fullscreen', enabled\)/);
   assert.doesNotMatch(editorSource, /if \(enabled && editorTab !== 'write'\)/);
   assert.match(editorSource, /btnEditorFullscreen\.addEventListener\('click',[\s\S]*setEditorFullscreen\(!document\.body\.classList\.contains\('editor-fullscreen'\)\)/);
+  assert.match(editorSource, /function setOutlinePanelOpen\(open[\s\S]*btnEditorOutlinePanel\.setAttribute\('aria-expanded', String\(open\)\)/);
+  assert.match(editorSource, /function extractMarkdownHeadings\(markdown\)[\s\S]*#\{1,6\}/);
+  assert.match(editorSource, /<span class="editor-outline-level">H\$\{heading\.level\}<\/span>/);
+  assert.match(editorSource, /editorOutlineList\.addEventListener\('click'[\s\S]*contentEditor\.setSelection\(pos, pos\)/);
+  assert.match(styleSource, /\.editor-outline-item::before[\s\S]*background:\s*var\(--outline-accent\)/);
+  assert.match(styleSource, /\.editor-outline-item\.level-2[\s\S]*--outline-accent:\s*var\(--color-success\)/);
   assert.match(editorSource, /case 'preview':[\s\S]*if \(inEditor\) \{ e\.preventDefault\(\); switchTab\(nextEditorTab\(\)\); \}/);
   assert.match(editorSource, /case 'escape':[\s\S]*document\.body\.classList\.contains\('editor-fullscreen'\)[\s\S]*setEditorFullscreen\(false\);[\s\S]*return;/);
   assert.match(styleSource, /body\.editor-fullscreen \.sidebar,[\s\S]*body\.editor-fullscreen \.fab-capture\s*\{[\s\S]*display:\s*none !important;/);

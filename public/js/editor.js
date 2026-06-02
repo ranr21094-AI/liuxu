@@ -26,6 +26,11 @@ const editSubcategory = $('#editSubcategory');
 const editHours = $('#editHours');
 const saveStatus = $('#saveStatus');
 const btnEditorFullscreen = $('#btnEditorFullscreen');
+const editorOutlineLayout = $('#editorOutlineLayout');
+const editorOutlinePanel = $('#editorOutlinePanel');
+const editorOutlineList = $('#editorOutlineList');
+const btnEditorOutlinePanel = $('#btnEditorOutlinePanel');
+const btnCloseOutlinePanel = $('#btnCloseOutlinePanel');
 
 // Editor-internal state
 const EDITOR_TAB_STORAGE_KEY = 'editorTabMode';
@@ -40,6 +45,64 @@ let lastSavedCategory = '';
 let isDirty = false;
 let isSaving = false;
 let currentSavePromise = null;
+
+function setOutlinePanelOpen(open) {
+  editorOutlineLayout.classList.toggle('outline-panel-open', open);
+  editorOutlinePanel.setAttribute('aria-hidden', String(!open));
+  btnEditorOutlinePanel.setAttribute('aria-expanded', String(open));
+  btnEditorOutlinePanel.title = open ? '收起标题栏' : '展开标题栏';
+  requestAnimationFrame(() => contentEditor.layout());
+}
+
+function extractMarkdownHeadings(markdown) {
+  const headings = [];
+  const lines = (markdown || '').split(/\n/);
+  let offset = 0;
+  let inFence = false;
+  let fenceMarker = '';
+
+  lines.forEach(line => {
+    const fence = /^(\s*)(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      const marker = fence[2][0];
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker;
+      } else if (marker === fenceMarker) {
+        inFence = false;
+        fenceMarker = '';
+      }
+    }
+
+    if (!inFence) {
+      const match = /^(#{1,6})[ \t]+(.+?)[ \t#]*$/.exec(line);
+      if (match) {
+        const text = match[2]
+          .replace(/\\([\\`*_[\]{}()#+\-.!>])/g, '$1')
+          .replace(/[`*_~[\]]/g, '')
+          .trim();
+        if (text) headings.push({ level: match[1].length, text, pos: offset });
+      }
+    }
+    offset += line.length + 1;
+  });
+
+  return headings;
+}
+
+function renderOutline() {
+  const headings = extractMarkdownHeadings(contentEditor.getValue());
+  if (!headings.length) {
+    editorOutlineList.innerHTML = '<div class="editor-outline-empty">暂无标题</div>';
+    return;
+  }
+  editorOutlineList.innerHTML = headings.map(heading => `
+    <button type="button" class="editor-outline-item level-${heading.level}" style="--outline-level:${heading.level}" data-pos="${heading.pos}" title="${escHtml(heading.text)}">
+      <span class="editor-outline-level">H${heading.level}</span>
+      <span class="editor-outline-text">${escHtml(heading.text)}</span>
+    </button>
+  `).join('');
+}
 
 function setEditorFullscreen(enabled) {
   document.body.classList.toggle('editor-fullscreen', enabled);
@@ -133,6 +196,7 @@ export async function openEditor(id) {
     showEditorView();
     editTitle.value = log.title;
     contentEditor.loadDocument(log.content, `log-${id}`);
+    renderOutline();
     editDate.value = log.log_date || '';
     editHours.value = log.hours;
     lastSavedContent = log.content;
@@ -185,6 +249,7 @@ export function newLog() {
   lastSavedCategory = defaultCategory.value;
   editTitle.value = '';
   contentEditor.loadDocument('', 'new-log');
+  renderOutline();
   editDate.value = defaultDate;
   editHours.value = '0';
   editCategory.value = defaultCategory.parent;
@@ -249,6 +314,26 @@ $('#btnBack').addEventListener('click', () => {
 
 btnEditorFullscreen.addEventListener('click', () => {
   setEditorFullscreen(!document.body.classList.contains('editor-fullscreen'));
+});
+
+btnEditorOutlinePanel.addEventListener('click', () => {
+  const open = btnEditorOutlinePanel.getAttribute('aria-expanded') !== 'true';
+  setOutlinePanelOpen(open);
+});
+
+btnCloseOutlinePanel.addEventListener('click', () => {
+  setOutlinePanelOpen(false);
+  btnEditorOutlinePanel.focus();
+});
+
+editorOutlineList.addEventListener('click', (e) => {
+  const item = e.target.closest('.editor-outline-item');
+  if (!item) return;
+  const pos = parseInt(item.dataset.pos, 10);
+  if (!Number.isFinite(pos)) return;
+  if (editorTab === 'preview') switchTab('write');
+  contentEditor.setSelection(pos, pos);
+  contentEditor.focus();
 });
 
 // Auto-save with dirty detection
@@ -404,6 +489,12 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault(); closeCategoryManager();
       } else if (inEditor) {
         if (focusedOnContent && contentEditor.hasOpenWidget()) return;
+        if (btnEditorOutlinePanel.getAttribute('aria-expanded') === 'true') {
+          e.preventDefault();
+          setOutlinePanelOpen(false);
+          btnEditorOutlinePanel.focus();
+          return;
+        }
         if (document.body.classList.contains('editor-fullscreen')) {
           e.preventDefault();
           setEditorFullscreen(false);
@@ -940,6 +1031,7 @@ $('#btnTemplateReset').addEventListener('click', async () => {
 editTitle.addEventListener('input', autoSave);
 contentEditor.onDidChange(() => {
   autoSave();
+  renderOutline();
   if (editorTab !== 'write') renderPreview();
 });
 editDate.addEventListener('change', autoSave);

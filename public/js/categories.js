@@ -1,8 +1,9 @@
 import { state } from './state.js';
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, setupDragAndDrop, confirmDialog, announce, $ } from './helpers.js';
+import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { loadLogs } from './logList.js';
 import { loadStats } from './stats.js';
+import { formatShortDateLabel } from './businessDate.js';
 
 export async function loadCategories() {
   try {
@@ -67,10 +68,8 @@ export function populateEditorSubCategory(parent) {
 // Category Management View
 let selectedCategoryName = null;
 let editingSubcategory = null;
-
-function getSubCount(cats) {
-  return cats.reduce((sum, c) => sum + (c.sub || []).length, 0);
-}
+let subcategoryBrowseParent = null;
+let selectedSubcategoryName = null;
 
 function parentFromFilter() {
   return (state.category || '').split('/')[0] || null;
@@ -95,24 +94,48 @@ function ensureSelectedCategory(cats) {
   }
 }
 
-function updateCategorySummary(visibleCount) {
+function updateCategorySummary() {
   const total = state.categories.length;
-  const subTotal = getSubCount(state.categories);
-  const searching = Boolean($('#catSearchInput').value.trim());
-  $('#catManagerSummary').textContent = searching
-    ? `显示 ${visibleCount} / ${total} 个父分类，全部 ${subTotal} 个子分类`
-    : `${total} 个父分类，${subTotal} 个子分类`;
+  const summary = $('#catManagerSummary');
+  summary.textContent = total;
+  summary.setAttribute('aria-label', `父分类数量：${total}`);
+  summary.setAttribute('title', `父分类数量：${total}`);
 }
 
 function isProtectedRootCategory(name) {
   return name === '其他' || name === '日记';
 }
 
+function fullSubcategoryName(parent, sub) {
+  return `${parent}/${sub}`;
+}
+
+function syncMainCategoryFilter(category) {
+  state.category = category;
+  state.selectedDate = null;
+  state.currentPage = 1;
+  const [parent = '', ...subParts] = category.split('/');
+  $('#filterCategory').value = parent;
+  populateFilterSubCategory(parent || null);
+  $('#filterSubcategory').value = subParts.join('/');
+}
+
+function setSubcategoryBrowseMode(enabled) {
+  $('#catList').style.display = enabled ? 'none' : '';
+  $('#catSubBrowseSidebar').style.display = enabled ? 'flex' : 'none';
+  $('#catDetailEmpty').style.display = enabled ? 'none' : $('#catDetailEmpty').style.display;
+  $('#catDetailContent').style.display = enabled ? 'none' : $('#catDetailContent').style.display;
+  $('#catSubBrowseContent').style.display = enabled ? 'flex' : 'none';
+}
+
 function renderParentList() {
+  subcategoryBrowseParent = null;
+  selectedSubcategoryName = null;
+  setSubcategoryBrowseMode(false);
   const cats = getVisibleCategories();
   const isSearching = Boolean($('#catSearchInput').value.trim());
   ensureSelectedCategory(cats);
-  updateCategorySummary(cats.length);
+  updateCategorySummary();
   if (!cats.length) {
     $('#catList').innerHTML = state.categories.length
       ? '<div class="cat-empty">没有匹配的分类</div>'
@@ -120,18 +143,14 @@ function renderParentList() {
     renderCategoryDetail();
     return;
   }
-  $('#catList').innerHTML = cats.map((c, index) => `
+  $('#catList').innerHTML = cats.map(c => `
     <div class="cat-parent-item ${c.name === selectedCategoryName ? 'active' : ''}" data-cat="${escHtml(c.name)}" draggable="${!isSearching}">
       <span class="cat-drag-handle ${isSearching ? 'disabled' : ''}" title="${isSearching ? '搜索时暂不排序' : '拖动排序'}">⋮⋮</span>
       <button type="button" class="cat-parent-select" data-cat="${escHtml(c.name)}">
         <span class="cat-parent-name">${escHtml(c.name)}</span>
         ${isProtectedRootCategory(c.name) ? '<span class="cat-default-tag">不可删除</span>' : ''}
-        <span class="cat-sub-count">${(c.sub || []).length}</span>
+        <span class="cat-sub-count" title="子分类数量">${(c.sub || []).length}</span>
       </button>
-      <span class="item-order-controls" aria-label="调整父分类顺序">
-        <button type="button" class="btn-order" data-cat-action="move-up" aria-label="上移分类：${escHtml(c.name)}" title="${isSearching ? '搜索时不可排序' : '上移分类'}" ${isSearching || index === 0 ? 'disabled' : ''}>↑</button>
-        <button type="button" class="btn-order" data-cat-action="move-down" aria-label="下移分类：${escHtml(c.name)}" title="${isSearching ? '搜索时不可排序' : '下移分类'}" ${isSearching || index === cats.length - 1 ? 'disabled' : ''}>↓</button>
-      </span>
     </div>
   `).join('');
   renderCategoryDetail();
@@ -149,6 +168,8 @@ function renderCategoryDetail() {
   empty.style.display = 'none';
   content.style.display = '';
   $('#catDetailName').textContent = cat.name;
+  $('#catDetailLogCount').textContent = cat.log_count || 0;
+  $('#catDetailLogCount').setAttribute('aria-label', `${cat.name} 日志数量：${cat.log_count || 0}`);
   $('#catDetailFallback').style.display = isProtectedRootCategory(cat.name) ? '' : 'none';
   $('#btnCatRename').style.display = cat.name === '日记' ? 'none' : '';
   $('#btnCatDelete').style.display = isProtectedRootCategory(cat.name) ? 'none' : '';
@@ -162,14 +183,71 @@ function renderCategoryDetail() {
   $('#catSubNewInput').value = '';
   editingSubcategory = null;
   $('#catSubList').innerHTML = (cat.sub || []).map(s => `
-    <div class="cat-detail-sub-item" data-sub="${escHtml(s)}">
+    <div class="cat-detail-sub-item" data-sub="${escHtml(s)}" tabindex="0" role="button" aria-label="浏览子分类：${escHtml(s)}">
+      <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
       <span class="cat-detail-sub-name">${escHtml(s)}</span>
       <div class="cat-detail-sub-actions">
-        <button class="btn-secondary btn-sm subcat-edit-btn" type="button">重命名</button>
-        <button class="btn-danger btn-sm subcat-del-btn" type="button">删除</button>
+        <button class="cat-icon-action subcat-edit-btn" type="button" aria-label="重命名子分类：${escHtml(s)}" title="重命名子分类">✎</button>
+        <button class="cat-icon-action danger subcat-del-btn" type="button" aria-label="删除子分类：${escHtml(s)}" title="删除子分类">×</button>
       </div>
     </div>
   `).join('');
+}
+
+async function loadSubcategoryLogs(parent, sub) {
+  const params = new URLSearchParams({
+    category: fullSubcategoryName(parent, sub),
+    page: '1',
+    limit: '100',
+  });
+  const list = $('#catSubLogList');
+  list.innerHTML = '<div class="loading-state">加载中...</div>';
+
+  try {
+    const res = await apiFetch(`/api/logs?${params}`);
+    if (!res.ok) throw new Error('日志加载失败');
+    const data = await res.json();
+    $('#catSubBrowseLogCount').textContent = data.total || 0;
+    $('#catSubBrowseLogCount').setAttribute('aria-label', `${sub} 日志数量：${data.total || 0}`);
+
+    if (!data.items.length) {
+      list.innerHTML = `<div class="cat-sub-log-empty">子分类「${escHtml(sub)}」暂无日志</div>`;
+      return;
+    }
+
+    list.innerHTML = data.items.map((log, index) => `
+      <button class="cat-sub-log-card" type="button" data-id="${log.id}" aria-label="打开日志：${escHtml(log.title || '未命名日志')}">
+        <span class="cat-sub-log-index">${index + 1}</span>
+        <span class="cat-sub-log-title">${escHtml(log.title || '未命名日志')}</span>
+        <span class="cat-sub-log-date">${escHtml(formatShortDateLabel(log.log_date))}</span>
+        <span class="cat-sub-log-arrow" aria-hidden="true">›</span>
+      </button>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state">加载失败: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function openSubcategoryBrowse(subName) {
+  const parent = selectedCategoryName;
+  const cat = state.categories.find(c => c.name === parent);
+  if (!parent || !cat || !(cat.sub || []).includes(subName)) return;
+
+  subcategoryBrowseParent = parent;
+  selectedSubcategoryName = subName;
+  syncMainCategoryFilter(fullSubcategoryName(parent, subName));
+  setSubcategoryBrowseMode(true);
+
+  $('#catSubBrowseParent').textContent = parent;
+  $('#catSubBrowseCrumb').textContent = parent;
+  $('#catSubBrowseTitle').textContent = subName;
+  $('#catSubBrowseList').innerHTML = (cat.sub || []).map(s => `
+    <button class="cat-sub-browse-item ${s === selectedSubcategoryName ? 'active' : ''}" type="button" data-sub="${escHtml(s)}">
+      <span>${escHtml(s)}</span>
+      <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
+    </button>
+  `).join('');
+  await loadSubcategoryLogs(parent, subName);
 }
 
 async function refreshCategoryViews(preferredName = selectedCategoryName) {
@@ -182,6 +260,8 @@ async function refreshCategoryViews(preferredName = selectedCategoryName) {
 export async function openCategoryManager() {
   await loadCategories();
   selectedCategoryName = parentFromFilter();
+  subcategoryBrowseParent = null;
+  selectedSubcategoryName = null;
   $('#catSearchInput').value = '';
   $('#catNewInput').value = '';
   $('#listView').style.display = 'none';
@@ -213,40 +293,19 @@ $('#btnManageCats').addEventListener('click', openCategoryManager);
 $('#btnCategoryBack').addEventListener('click', closeCategoryManager);
 $('#catSearchInput').addEventListener('input', renderParentList);
 
-async function moveCategory(name, delta, action) {
-  if ($('#catSearchInput').value.trim()) return;
-  const index = state.categories.findIndex(cat => cat.name === name);
-  const targetIndex = index + delta;
-  if (index < 0 || targetIndex < 0 || targetIndex >= state.categories.length) return;
-  const ordered = state.categories.map(cat => cat.name);
-  [ordered[index], ordered[targetIndex]] = [ordered[targetIndex], ordered[index]];
-  try {
-    const res = await apiFetch('/api/categories/reorder', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderedCats: ordered }),
-    });
-    if (!res.ok) throw new Error('服务器拒绝排序请求');
-    await loadCategories();
-    renderParentList();
-    [...$('#catList').querySelectorAll('.cat-parent-item')]
-      .find(item => item.dataset.cat === name)
-      ?.querySelector(`[data-cat-action="${action}"]`)
-      ?.focus();
-    announce(`分类「${name}」已${delta < 0 ? '上移' : '下移'}`);
-  } catch (err) {
-    showToast('分类排序失败: ' + err.message, 'error');
-    announce('分类排序失败');
-  }
-}
+$('#btnSubBrowseBack').addEventListener('click', () => {
+  const parent = subcategoryBrowseParent;
+  subcategoryBrowseParent = null;
+  selectedSubcategoryName = null;
+  selectedCategoryName = parent || selectedCategoryName;
+  state.category = selectedCategoryName || '';
+  $('#filterCategory').value = selectedCategoryName || '';
+  populateFilterSubCategory(selectedCategoryName || null);
+  $('#filterSubcategory').value = '';
+  renderParentList();
+});
 
 $('#catList').addEventListener('click', async (e) => {
-  const moveButton = e.target.closest('[data-cat-action]');
-  if (moveButton) {
-    const item = moveButton.closest('.cat-parent-item');
-    await moveCategory(item.dataset.cat, moveButton.dataset.catAction === 'move-up' ? -1 : 1, moveButton.dataset.catAction);
-    return;
-  }
   const select = e.target.closest('.cat-parent-select');
   if (!select) return;
   selectedCategoryName = select.dataset.cat;
@@ -421,14 +480,36 @@ $('#catSubList').addEventListener('click', async (e) => {
       await refreshCategoryViews(selectedCategoryName);
       showToast('子分类已删除', 'success');
     } catch (err) { showToast(err.message, 'error'); }
+    return;
   }
+  await openSubcategoryBrowse(subName);
 });
 
 $('#catSubList').addEventListener('keydown', (e) => {
   const input = e.target.closest('.cat-detail-sub-input');
-  if (!input) return;
-  if (e.key === 'Enter') { e.preventDefault(); input.closest('.cat-detail-sub-item').querySelector('.subcat-save-btn').click(); }
-  if (e.key === 'Escape') { e.preventDefault(); renderCategoryDetail(); }
+  if (input) {
+    if (e.key === 'Enter') { e.preventDefault(); input.closest('.cat-detail-sub-item').querySelector('.subcat-save-btn').click(); }
+    if (e.key === 'Escape') { e.preventDefault(); renderCategoryDetail(); }
+    return;
+  }
+  const item = e.target.closest('.cat-detail-sub-item');
+  if (item && (e.key === 'Enter' || e.key === ' ')) {
+    e.preventDefault();
+    openSubcategoryBrowse(item.dataset.sub);
+  }
+});
+
+$('#catSubBrowseList').addEventListener('click', async (e) => {
+  const item = e.target.closest('.cat-sub-browse-item');
+  if (!item || !subcategoryBrowseParent) return;
+  await openSubcategoryBrowse(item.dataset.sub);
+});
+
+$('#catSubLogList').addEventListener('click', async (e) => {
+  const card = e.target.closest('.cat-sub-log-card');
+  if (!card) return;
+  const { openEditor } = await import('./editor.js');
+  openEditor(parseInt(card.dataset.id, 10));
 });
 
 setupDragAndDrop({
