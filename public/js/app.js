@@ -5,7 +5,8 @@ import { showToast, confirmDialog, openModal, closeModal, $ } from './helpers.js
 import { clearMdCache } from './markdown.js';
 import { populateCalendarSelects, renderCalendar } from './calendar.js';
 import { loadLogs, populateMonthFilter } from './logList.js';
-import { showListView, newLog } from './editor.js';
+import { showListView } from './editor.js';
+import { initAiChat, showAiChatView } from './aiChat.js';
 import { loadStats } from './stats.js';
 import { loadCategories } from './categories.js';
 import { loadTodos } from './todos.js';
@@ -170,9 +171,9 @@ function collapseSidebar() {
 $('#btnToggleSidebar').addEventListener('click', collapseSidebar);
 $('#btnSidebarExpand').addEventListener('click', collapseSidebar);
 
-// FAB quick capture
+// FAB AI chat
 $('#fabCapture').addEventListener('click', () => {
-  if (document.getElementById('editorView').style.display === 'none') newLog();
+  if (!document.body.classList.contains('editor-fullscreen')) showAiChatView();
 });
 
 // Calendar toggle (mobile)
@@ -383,6 +384,7 @@ window.addEventListener('unhandledrejection', (e) => {
 // Init
 async function initializeApp() {
   initTheme();
+  initAiChat();
   populateMonthFilter();
   populateCalendarSelects();
   const authenticated = await checkAuth();

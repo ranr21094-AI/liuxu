@@ -290,6 +290,44 @@
       </div>
     </div>
 
+    <!-- AI Chat View -->
+    <div class="ai-chat-view" id="aiChatView" style="display:none;">
+      <div class="ai-chat-header">
+        <button class="btn-icon btn-back" id="btnAiBack" title="返回上一页">← 返回</button>
+        <div class="ai-chat-title">
+          <h2>AI 对话</h2>
+          <span>仅使用你在此页面输入的内容</span>
+        </div>
+        <div class="ai-chat-settings">
+          <button class="btn-secondary btn-sm" id="btnAiNewChat" type="button">新建对话</button>
+          <button class="btn-secondary btn-sm" id="btnAiHistory" type="button" aria-haspopup="dialog">历史记录</button>
+          <button class="btn-secondary btn-sm ai-key-button" id="btnAiApiKey" type="button" aria-haspopup="dialog">API Key</button>
+          <label class="sr-only" for="aiModelSelect">AI 模型</label>
+          <select id="aiModelSelect" class="ai-chat-select" title="AI 模型">
+            <option value="deepseek-v4-flash">DeepSeek Flash</option>
+            <option value="deepseek-v4-pro">DeepSeek Pro</option>
+          </select>
+          <label class="sr-only" for="aiReasoningEffort">思考强度</label>
+          <select id="aiReasoningEffort" class="ai-chat-select" title="思考强度">
+            <option value="high">高</option>
+            <option value="max">最高</option>
+          </select>
+          <button class="btn-secondary btn-sm" id="btnAiClear" type="button">清空</button>
+        </div>
+      </div>
+      <div class="ai-chat-body">
+        <div class="ai-chat-messages" id="aiChatMessages" aria-live="polite"></div>
+      </div>
+      <div class="ai-chat-composer">
+        <label class="sr-only" for="aiChatInput">输入 AI 对话消息</label>
+        <textarea id="aiChatInput" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
+        <div class="ai-chat-composer-actions">
+          <span class="ai-chat-sending" id="aiChatSending" style="display:none;">发送中...</span>
+          <button class="btn-primary" id="btnAiSend" type="button" disabled>发送</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Category Management View -->
     <div class="category-view" id="categoryView" style="display:none;">
       <div class="category-page-header">
@@ -366,8 +404,8 @@
 
   </main>
 
-    <!-- FAB quick capture -->
-    <button class="fab-capture" id="fabCapture" title="快速记录 (Ctrl+Shift+N)" aria-label="快速新建日志">+</button>
+    <!-- FAB AI chat -->
+    <button class="fab-capture" id="fabCapture" title="AI 对话" aria-label="打开 AI 对话">AI</button>
     <div id="a11yStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Log Link Picker Modal -->
@@ -385,6 +423,39 @@
       <div class="modal-footer">
         <span class="log-link-hint">选择后会插入 [标题](#log/id)</span>
         <button class="btn-secondary" id="logLinkDone">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI API Key Modal -->
+  <div class="modal-overlay" id="aiApiKeyOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiApiKeyTitle">
+    <div class="modal modal-ai-key">
+      <div class="modal-header">
+        <h2 id="aiApiKeyTitle">DeepSeek API Key</h2>
+        <button class="btn-icon modal-close" id="aiApiKeyClose" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body ai-key-body">
+        <label class="sr-only" for="aiApiKeyInput">DeepSeek API Key</label>
+        <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
+        <p class="ai-key-note">保存后仅存放在当前浏览器本地，不会写入日志数据。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btnAiApiKeyClear" type="button">清除</button>
+        <button class="btn-secondary" id="btnAiApiKeyCancel" type="button">取消</button>
+        <button class="btn-primary" id="btnAiApiKeySave" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Chat History Modal -->
+  <div class="modal-overlay" id="aiHistoryOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiHistoryTitle">
+    <div class="modal modal-ai-history">
+      <div class="modal-header">
+        <h2 id="aiHistoryTitle">历史记录</h2>
+        <button class="btn-icon modal-close" id="aiHistoryClose" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body ai-history-body">
+        <div class="ai-history-list" id="aiChatHistoryList"></div>
       </div>
     </div>
   </div>

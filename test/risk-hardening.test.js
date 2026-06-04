@@ -31,7 +31,7 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken } = {}) {
+function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   if (diaryPassword) {
@@ -40,6 +40,9 @@ function loadFreshApp(t, { diaryPassword, authToken } = {}) {
     process.env.DIARY_PASSWORD_HASH = '';
   }
   process.env.AUTH_TOKEN = authToken || '';
+  process.env.DEEPSEEK_API_KEY = deepseekApiKey || '';
+  process.env.DEEPSEEK_BASE_URL = deepseekBaseUrl || 'https://api.deepseek.com';
+  process.env.DEEPSEEK_DEFAULT_MODEL = deepseekDefaultModel || 'deepseek-v4-flash';
   clearAppModules();
 
   const db = require(path.join(ROOT, 'database.js'));
@@ -52,6 +55,9 @@ function loadFreshApp(t, { diaryPassword, authToken } = {}) {
     delete process.env.DATA_DIR;
     delete process.env.DIARY_PASSWORD_HASH;
     delete process.env.AUTH_TOKEN;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_BASE_URL;
+    delete process.env.DEEPSEEK_DEFAULT_MODEL;
     clearAppModules();
   });
 
@@ -354,6 +360,149 @@ test('backup accepts bearer authentication when site auth is enabled', async (t)
     authorized.headers.get('content-disposition') || '',
     /^attachment; filename=work-log-backup-\d{4}-\d{2}-\d{2}\.json$/,
   );
+});
+
+test('AI chat requires DeepSeek configuration and validates request options', async (t) => {
+  const missing = loadFreshApp(t);
+  const missingKey = await fetch(`${missing.baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] }),
+  });
+  assert.equal(missingKey.status, 503);
+
+  const { baseUrl } = loadFreshApp(t, { deepseekApiKey: 'test-key' });
+  const badModel = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'other-model',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(badModel.status, 400);
+
+  const badThinking = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      thinkingMode: 'maybe',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(badThinking.status, 400);
+
+  const badRole = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'system', content: 'hidden prompt' }],
+    }),
+  });
+  assert.equal(badRole.status, 400);
+});
+
+test('AI chat sends only explicit conversation messages to DeepSeek', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  db.create({
+    title: 'private title',
+    content: 'private diary content',
+    category: DIARY_CATEGORY,
+    log_date: '2026-05-16',
+  });
+
+  let capturedUrl = '';
+  let capturedHeaders = {};
+  let capturedPayload = null;
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    capturedUrl = target;
+    capturedHeaders = options.headers || {};
+    capturedPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'AI reply' } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      model: 'deepseek-v4-pro',
+      thinkingMode: 'enabled',
+      reasoningEffort: 'max',
+      messages: [
+        { role: 'user', content: 'only this text' },
+        { role: 'assistant', content: 'previous reply' },
+      ],
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { message: { role: 'assistant', content: 'AI reply' } });
+  assert.equal(capturedUrl, 'https://deepseek.test/chat/completions');
+  assert.equal(capturedHeaders.Authorization, 'Bearer user-provided-key');
+  assert.deepEqual(capturedPayload, {
+    model: 'deepseek-v4-pro',
+    messages: [
+      { role: 'user', content: 'only this text' },
+      { role: 'assistant', content: 'previous reply' },
+    ],
+    thinking: { type: 'enabled' },
+    stream: false,
+    reasoning_effort: 'max',
+  });
+  assert.doesNotMatch(JSON.stringify(capturedPayload), /private diary content|private title/);
+});
+
+test('AI chat reports sanitized upstream DeepSeek errors', async (t) => {
+  const originalFetch = global.fetch;
+  const { baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    return new Response(JSON.stringify({
+      error: {
+        message: 'Model unavailable for sk-secret-token',
+        code: 'model_not_found',
+      },
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.match(body.error, /^DeepSeek request failed \(400\):/);
+  assert.match(body.error, /model_not_found/);
+  assert.doesNotMatch(body.error, /sk-secret-token|user-provided-key/);
 });
 
 test('image upload rejects svg and still accepts allowed extensions', async (t) => {
@@ -681,6 +830,35 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnEditorFullscreen').textContent, '全屏编辑');
   assert.equal(document.querySelector('#btnEditorFullscreen').getAttribute('aria-pressed'), 'false');
   assert.equal(document.querySelector('#btnBack').closest('.editor-nav-actions') !== null, true);
+  assert.equal(document.querySelector('#aiChatView').style.display, 'none');
+  assert.equal(document.querySelector('#btnAiBack').textContent.trim(), '← 返回');
+  assert.equal(document.querySelector('#aiChatMessages').getAttribute('aria-live'), 'polite');
+  assert.equal(document.querySelector('#aiApiKeyInput').getAttribute('type'), 'password');
+  assert.equal(document.querySelector('#aiApiKeyInput').getAttribute('autocomplete'), 'off');
+  assert.equal(document.querySelector('label[for="aiApiKeyInput"]').textContent, 'DeepSeek API Key');
+  assert.equal(document.querySelector('#aiApiKeyOverlay').getAttribute('aria-labelledby'), 'aiApiKeyTitle');
+  assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#btnAiNewChat').textContent, '新建对话');
+  assert.equal(document.querySelector('#btnAiHistory').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#btnAiHistory').textContent, '历史记录');
+  assert.equal(document.querySelector('#aiHistoryOverlay').getAttribute('aria-labelledby'), 'aiHistoryTitle');
+  assert.equal(document.querySelector('#aiChatHistoryList').closest('.modal-ai-history') !== null, true);
+  assert.equal(document.querySelector('.ai-chat-body .ai-chat-history'), null);
+  assert.equal(document.querySelector('#btnAiApiKeySave').textContent, '保存');
+  assert.equal(document.querySelector('#btnAiApiKeyClear').textContent, '清除');
+  assert.equal(document.querySelector('#aiChatInput').getAttribute('maxlength'), '4000');
+  assert.equal(document.querySelector('#btnAiSend').disabled, true);
+  assert.deepEqual([...document.querySelectorAll('#aiModelSelect option')].map(option => option.value), [
+    'deepseek-v4-flash',
+    'deepseek-v4-pro',
+  ]);
+  assert.equal(document.querySelector('#aiThinkingMode'), null);
+  assert.deepEqual([...document.querySelectorAll('#aiReasoningEffort option')].map(option => option.value), [
+    'high',
+    'max',
+  ]);
+  assert.equal(document.querySelector('#fabCapture').textContent, 'AI');
+  assert.equal(document.querySelector('#fabCapture').getAttribute('aria-label'), '打开 AI 对话');
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
   assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
   assert.equal(document.querySelector('#catNewInput').closest('.category-page-header') !== null, true);
@@ -787,6 +965,48 @@ test('application initialization waits for auth and diary selection before refre
   assert.match(appSource, /const authenticated = await checkAuth\(\);[\s\S]*if \(!authenticated\) return;[\s\S]*const diarySelected = await initDiaryLock\(\);[\s\S]*if \(!diarySelected\) await refreshAll\(\);/);
   assert.match(appSource, /window\.addEventListener\('auth-success', async \(\) => \{[\s\S]*await initDiaryLock\(\)/);
   assert.match(authSource, /showLoginOverlay\(\);\s*return false;/);
+});
+
+test('AI chat frontend supports local history and fixed thinking mode', () => {
+  const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
+  const aiSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiChat.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+
+  assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
+  assert.match(appSource, /\$\('#fabCapture'\)\.addEventListener\('click', \(\) => \{[\s\S]*showAiChatView\(\);[\s\S]*\}\);/);
+  assert.doesNotMatch(appSource, /fabCapture[\s\S]{0,160}newLog\(\)/);
+  assert.match(appSource, /initAiChat\(\);/);
+  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages, \.\.\.settings \}\)/);
+  assert.match(aiSource, /const API_KEY_STORAGE_KEY = 'deepseekApiKey';/);
+  assert.match(aiSource, /const CHAT_STORAGE_KEY = 'aiChatConversations';/);
+  assert.match(aiSource, /const ACTIVE_CHAT_STORAGE_KEY = 'aiChatActiveConversationId';/);
+  assert.match(aiSource, /let apiKey = localStorage\.getItem\(API_KEY_STORAGE_KEY\) \|\| '';/);
+  assert.match(aiSource, /apiKey,\s*model: \$\('#aiModelSelect'\)\.value \|\| DEFAULT_MODEL/);
+  assert.match(aiSource, /thinkingMode: 'enabled'/);
+  assert.match(aiSource, /reasoningEffort: \$\('#aiReasoningEffort'\)\.value \|\| DEFAULT_REASONING/);
+  assert.match(aiSource, /localStorage\.setItem\(CHAT_STORAGE_KEY, JSON\.stringify\(conversations\)\);/);
+  assert.match(aiSource, /localStorage\.setItem\(ACTIVE_CHAT_STORAGE_KEY, activeConversationId\);/);
+  assert.match(aiSource, /function newConversation\(\)/);
+  assert.match(aiSource, /function renameConversation\(id\)/);
+  assert.match(aiSource, /function deleteConversation\(id\)/);
+  assert.match(aiSource, /\$\('#btnAiNewChat'\)\.addEventListener\('click', newConversation\);/);
+  assert.match(aiSource, /\$\('#btnAiHistory'\)\.addEventListener\('click', openHistoryModal\);/);
+  assert.match(aiSource, /\$\('#aiHistoryClose'\)\.addEventListener\('click', closeHistoryModal\);/);
+  assert.match(aiSource, /\$\('#aiChatHistoryList'\)\.addEventListener\('click'/);
+  assert.match(aiSource, /localStorage\.setItem\(API_KEY_STORAGE_KEY, apiKey\);/);
+  assert.match(aiSource, /localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
+  assert.match(aiSource, /\$\('#btnAiApiKey'\)\.addEventListener\('click', openApiKeyModal\);/);
+  assert.match(aiSource, /model: \$\('#aiModelSelect'\)\.value \|\| DEFAULT_MODEL/);
+  assert.doesNotMatch(aiSource, /aiThinkingMode/);
+  assert.match(aiSource, /send\.disabled = sending \|\| !hasText;/);
+  assert.match(aiSource, /showToast\(`AI 对话失败：\$\{err\.message\}`/);
+  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border-radius:\s*8px;/);
+  assert.match(styleSource, /\.modal-ai-history\s*\{[\s\S]*width:\s*520px;/);
+  assert.match(styleSource, /\.ai-history-body\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 30px 30px;/);
+  assert.match(styleSource, /\.modal-ai-key\s*\{[\s\S]*width:\s*440px;/);
+  assert.match(styleSource, /\.ai-key-button\.has-key\s*\{[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer\s*\{[\s\S]*position:\s*sticky;/);
 });
 
 test('modal helper traps tab navigation and restores the trigger focus', async () => {

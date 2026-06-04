@@ -12,6 +12,8 @@
 - 工作辅助：待办事项、工时统计、CSV 导出、JSON 备份与恢复。
 - 隐私保护：支持全站访问 token 与独立的日记分类锁定。
 
+- AI 对话助手：右下角 `AI` 入口进入独立对话页，支持 DeepSeek 模型切换、固定开启思考、思考强度选择、本地 API Key 保存和本地历史记录浮窗。
+
 ## Requirements
 
 - Node.js >= 20.19.0
@@ -55,6 +57,18 @@ npm start
 
 同样支持 `{{下一周:...}}`、`{{date:...}}` 等对应写法。
 
+## AI Chat
+
+点击右下角 `AI` 浮动按钮可进入 AI 对话页面。AI 对话通过后端 `/api/ai/chat` 代理访问 DeepSeek，前端不会读取服务器 `.env` 中的密钥。
+
+- `API Key`：点击按钮打开弹窗，可填写、保存或清除自己的 DeepSeek API Key。保存后仅存放在当前浏览器 `localStorage`，不会写入 `data/` 或服务端配置文件。
+- `历史记录`：点击按钮打开历史浮窗，可切换、新建、重命名、删除对话。对话历史与当前选中对话同样只保存在当前浏览器 `localStorage`。
+- `模型`：可在 `DeepSeek Flash` 与 `DeepSeek Pro` 之间切换。
+- `思考强度`：可选择 `高` 或 `最高`；思考模式固定开启，不提供关闭入口。
+- `隐私边界`：AI 第一版不会读取日志、待办、分类或编辑器内容，只会发送用户在 AI 对话框中主动输入的消息。
+
+如果浏览器本地保存了 API Key，请求会优先使用本地 Key；如果未保存，则后端会使用 `.env` 中配置的 `DEEPSEEK_API_KEY`。上游失败时，页面会显示经清洗的 DeepSeek 状态码与错误摘要，便于排查 Key、模型权限、余额或参数问题。
+
 ## Calendar Category Visibility
 
 在“管理分类”页面中，选择父分类后可使用“日历显示”开关控制按日浏览行为：
@@ -82,6 +96,9 @@ npm start
 | `DATA_DIR` | JSON 数据与上传图片保存目录 | `./data` |
 | `AUTH_TOKEN` | 可选的全站 API 访问 token；留空则不启用 | disabled |
 | `DIARY_PASSWORD_HASH` | 可选的日记分类密码 SHA-256 哈希；留空则不启用 | disabled |
+| `DEEPSEEK_API_KEY` | 可选的服务端默认 DeepSeek API Key；前端本地保存的 Key 会优先使用 | empty |
+| `DEEPSEEK_BASE_URL` | DeepSeek API 基础地址 | `https://api.deepseek.com` |
+| `DEEPSEEK_DEFAULT_MODEL` | 服务端默认 DeepSeek 模型 | `deepseek-v4-flash` |
 
 生成日记密码哈希的示例命令如下。请将 `your-password` 替换为自己的密码，并仅将生成的哈希保存在本地 `.env` 中：
 
@@ -102,6 +119,13 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 - `uploads/`：上传图片
 
 `data/` 与 `.env` 已由 `.gitignore` 排除，不会随普通 Git 提交进入仓库。分享代码前仍建议使用 `git status` 检查暂存范围，避免提交个人内容或凭据。
+
+AI 对话相关内容不保存在 `data/` 中，而是保存在当前浏览器 `localStorage`：
+- `deepseekApiKey`：当前浏览器保存的 DeepSeek API Key。
+- `aiChatConversations`：当前浏览器保存的 AI 对话历史。
+- `aiChatActiveConversationId`：当前浏览器选中的 AI 对话。
+
+这些本地值不会通过备份/恢复接口导出，也不会提交到 Git；清理浏览器站点数据会删除它们。
 
 ## Backup And Restore
 
@@ -130,3 +154,4 @@ npm test
 | `PATCH` | `/api/categories/:name/calendar-day-visibility` | 设置父分类按日历日期查看时是否显示，body 为 `{ "visible": boolean }` |
 | `GET` | `/api/backup` | 导出 JSON 数据备份 |
 | `POST` | `/api/restore` | 恢复 JSON 数据备份 |
+| `POST` | `/api/ai/chat` | DeepSeek AI 对话代理；body 包含 `{ messages, model, thinkingMode, reasoningEffort, apiKey? }`，不会读取日志内容 |

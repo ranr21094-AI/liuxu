@@ -14,6 +14,14 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 
 // Auth token (optional — set AUTH_TOKEN env var to enable)
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
+const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
+const DEEPSEEK_DEFAULT_MODEL = process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-flash';
+const AI_ALLOWED_MODELS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
+const AI_ALLOWED_THINKING = new Set(['enabled', 'disabled']);
+const AI_ALLOWED_REASONING = new Set(['high', 'max']);
+const AI_MAX_MESSAGES = 20;
+const AI_MAX_MESSAGE_CHARS = 4000;
 
 // Diary lock (optional — set DIARY_PASSWORD_HASH env var to enable)
 const DIARY_PASSWORD_HASH = process.env.DIARY_PASSWORD_HASH || null;
@@ -228,6 +236,103 @@ app.get('/api/auth/diary/status', (req, res) => {
   const token = getDiaryToken(req);
   if (!token) return res.json({ enabled: true, locked: true });
   res.json({ enabled: true, locked: !isValidDiaryToken(token) });
+});
+
+function normalizeAiMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0 || messages.length > AI_MAX_MESSAGES) {
+    throw new Error('messages must be a non-empty array with at most 20 items');
+  }
+
+  return messages.map((message) => {
+    const role = message && message.role;
+    const content = typeof message?.content === 'string' ? message.content.trim() : '';
+    if (!['user', 'assistant'].includes(role)) {
+      throw new Error('message role must be user or assistant');
+    }
+    if (!content || content.length > AI_MAX_MESSAGE_CHARS) {
+      throw new Error('message content is required and must be 4000 characters or fewer');
+    }
+    return { role, content };
+  });
+}
+
+function safeDeepSeekError(status, data) {
+  const parts = [];
+  const error = data && typeof data === 'object' ? data.error : null;
+  if (error && typeof error === 'object') {
+    if (typeof error.message === 'string') parts.push(error.message);
+    if (typeof error.code === 'string') parts.push(error.code);
+    if (typeof error.type === 'string') parts.push(error.type);
+  } else if (typeof error === 'string') {
+    parts.push(error);
+  }
+  if (typeof data?.message === 'string') parts.push(data.message);
+
+  const detail = parts
+    .join(' ')
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
+    .slice(0, 240)
+    .trim();
+  return detail
+    ? `DeepSeek request failed (${status}): ${detail}`
+    : `DeepSeek request failed (${status})`;
+}
+
+app.post('/api/ai/chat', async (req, res) => {
+  try {
+    const requestApiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    const apiKey = requestApiKey || DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({ error: 'DeepSeek API key is not configured' });
+    }
+
+    const messages = normalizeAiMessages(req.body?.messages);
+    const model = req.body?.model || DEEPSEEK_DEFAULT_MODEL;
+    const thinkingMode = req.body?.thinkingMode || 'enabled';
+    const reasoningEffort = req.body?.reasoningEffort || 'high';
+
+    if (!AI_ALLOWED_MODELS.has(model)) {
+      return res.status(400).json({ error: 'Unsupported AI model' });
+    }
+    if (!AI_ALLOWED_THINKING.has(thinkingMode)) {
+      return res.status(400).json({ error: 'Unsupported thinking mode' });
+    }
+    if (thinkingMode === 'enabled' && !AI_ALLOWED_REASONING.has(reasoningEffort)) {
+      return res.status(400).json({ error: 'Unsupported reasoning effort' });
+    }
+
+    const payload = {
+      model,
+      messages,
+      thinking: { type: thinkingMode },
+      stream: false,
+    };
+    if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
+
+    const upstream = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) {
+      return res.status(502).json({ error: safeDeepSeekError(upstream.status, data) });
+    }
+
+    const reply = data?.choices?.[0]?.message?.content;
+    if (typeof reply !== 'string') {
+      return res.status(502).json({ error: 'DeepSeek response was empty' });
+    }
+
+    res.json({ message: { role: 'assistant', content: reply } });
+  } catch (err) {
+    const status = /messages|message role|message content/.test(err.message) ? 400 : 500;
+    res.status(status).json({ error: status === 400 ? err.message : 'AI chat failed' });
+  }
 });
 
 // List logs with filters

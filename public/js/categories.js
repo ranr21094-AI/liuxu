@@ -266,6 +266,7 @@ export async function openCategoryManager() {
   $('#catNewInput').value = '';
   $('#listView').style.display = 'none';
   $('#editorView').style.display = 'none';
+  $('#aiChatView').style.display = 'none';
   $('#categoryView').style.display = 'flex';
   renderParentList();
   $('#catSearchInput').focus();
@@ -273,6 +274,7 @@ export async function openCategoryManager() {
 
 export function closeCategoryManager() {
   $('#categoryView').style.display = 'none';
+  $('#aiChatView').style.display = 'none';
   $('#listView').style.display = 'flex';
   loadLogs();
   loadStats();

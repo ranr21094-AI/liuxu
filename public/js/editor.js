@@ -14,6 +14,7 @@ import { createContentEditor } from './contentEditor.js';
 
 const editorView = $('#editorView');
 const categoryView = $('#categoryView');
+const aiChatView = $('#aiChatView');
 const editTitle = $('#editTitle');
 const editContent = $('#editContent');
 const codeMirrorContentEditor = $('#codeMirrorContentEditor');
@@ -117,6 +118,7 @@ export function showListView() {
   listView.style.display = 'flex';
   editorView.style.display = 'none';
   categoryView.style.display = 'none';
+  if (aiChatView) aiChatView.style.display = 'none';
   state.editingId = null;
   clearAutoSave();
   contentEditor.setVisible(false);
@@ -130,6 +132,7 @@ export function showListView() {
 function showEditorView() {
   listView.style.display = 'none';
   categoryView.style.display = 'none';
+  if (aiChatView) aiChatView.style.display = 'none';
   editorView.style.display = 'flex';
 }
 
