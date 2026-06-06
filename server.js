@@ -17,11 +17,25 @@ const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEEPSEEK_DEFAULT_MODEL = process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-flash';
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '';
+const TAVILY_BASE_URL = (process.env.TAVILY_BASE_URL || 'https://api.tavily.com').replace(/\/+$/, '');
+const SEEDREAM_API_KEY = process.env.SEEDREAM_API_KEY || '';
+const SEEDREAM_BASE_URL = (process.env.SEEDREAM_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
+const SEEDREAM_DEFAULT_MODEL = process.env.SEEDREAM_DEFAULT_MODEL || 'doubao-seedream-5-0-260128';
 const AI_ALLOWED_MODELS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
 const AI_ALLOWED_THINKING = new Set(['enabled', 'disabled']);
 const AI_ALLOWED_REASONING = new Set(['high', 'max']);
+const AI_ALLOWED_SEARCH_DEPTH = new Set(['basic', 'advanced']);
+const SEEDREAM_ALLOWED_MODELS = new Set(['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828']);
+const SEEDREAM_ALLOWED_SIZE_KEYWORDS = new Set(['2K', '3K', '4K']);
 const AI_MAX_MESSAGES = 20;
 const AI_MAX_MESSAGE_CHARS = 4000;
+const AI_EDITOR_MAX_TITLE_CHARS = 200;
+const AI_EDITOR_MAX_CONTENT_CHARS = 20000;
+const AI_EDITOR_MAX_SELECTION_CHARS = 4000;
+const AI_EDITOR_MAX_REPLY_CHARS = 4000;
+const AI_EDITOR_MAX_INSERT_CHARS = 8000;
+const AI_IMAGE_PROMPT_MAX_CHARS = 1200;
 
 // Diary lock (optional — set DIARY_PASSWORD_HASH env var to enable)
 const DIARY_PASSWORD_HASH = process.env.DIARY_PASSWORD_HASH || null;
@@ -256,6 +270,107 @@ function normalizeAiMessages(messages) {
   });
 }
 
+function normalizeEditorContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('editorContext must be an object');
+  }
+  if (typeof value.title !== 'string' || typeof value.content !== 'string') {
+    throw new Error('editorContext title and content must be strings');
+  }
+
+  const originalContent = value.content;
+  const title = value.title.slice(0, AI_EDITOR_MAX_TITLE_CHARS);
+  const content = originalContent.slice(0, AI_EDITOR_MAX_CONTENT_CHARS);
+  const selection = value.selection && typeof value.selection === 'object' && !Array.isArray(value.selection)
+    ? value.selection
+    : {};
+  const rawStart = Number(selection.start);
+  const rawEnd = Number(selection.end);
+  const start = Number.isFinite(rawStart)
+    ? Math.max(0, Math.min(content.length, Math.trunc(rawStart)))
+    : 0;
+  const end = Number.isFinite(rawEnd)
+    ? Math.max(start, Math.min(content.length, Math.trunc(rawEnd)))
+    : start;
+
+  return {
+    logId: typeof value.logId === 'string' || typeof value.logId === 'number' ? String(value.logId).slice(0, 80) : '',
+    title,
+    content,
+    contentTruncated: originalContent.length > content.length,
+    selection: {
+      start,
+      end,
+      text: content.slice(start, end).slice(0, AI_EDITOR_MAX_SELECTION_CHARS),
+    },
+  };
+}
+
+function buildEditorContextPrompt(editorContext, search) {
+  const searchContext = buildSearchContext(search);
+  return [
+    'You are an AI writing assistant embedded inside a Markdown work-log editor.',
+    'Use only the editor context explicitly provided below and the user messages. Do not claim to have written to the log.',
+    'Return ONLY valid JSON without Markdown fences. Schema: {"reply":"short explanation","suggestedTitle":"optional new title","suggestedContent":"optional full replacement Markdown","insertText":"optional Markdown to insert at cursor or replace selection"}.',
+    'Keep suggestions focused on title and Markdown body only. Do not change dates, hours, categories, files, or storage.',
+    searchContext ? `Optional web search context:\n${searchContext}` : '',
+    'Current editor context:',
+    `logId: ${editorContext.logId || 'draft'}`,
+    `title: ${editorContext.title}`,
+    `contentTruncated: ${editorContext.contentTruncated}`,
+    `selectionStart: ${editorContext.selection.start}`,
+    `selectionEnd: ${editorContext.selection.end}`,
+    `selectionText:\n${editorContext.selection.text}`,
+    `markdownContent:\n${editorContext.content}`,
+  ].filter(Boolean).join('\n\n');
+}
+
+function extractJsonObject(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {}
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    try {
+      return JSON.parse(raw.slice(start, end + 1));
+    } catch {}
+  }
+  return null;
+}
+
+function normalizeEditorSuggestion(rawText) {
+  const parsed = extractJsonObject(rawText);
+  const source = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { reply: rawText };
+  const reply = typeof source.reply === 'string'
+    ? source.reply.trim().slice(0, AI_EDITOR_MAX_REPLY_CHARS)
+    : String(rawText || '').trim().slice(0, AI_EDITOR_MAX_REPLY_CHARS);
+  const suggestion = {
+    reply: reply || '我整理了一些可应用到当前日志的建议。',
+  };
+  if (typeof source.suggestedTitle === 'string' && source.suggestedTitle.trim()) {
+    suggestion.suggestedTitle = source.suggestedTitle.trim().slice(0, AI_EDITOR_MAX_TITLE_CHARS);
+  }
+  if (typeof source.suggestedContent === 'string' && source.suggestedContent.trim()) {
+    suggestion.suggestedContent = source.suggestedContent.slice(0, AI_EDITOR_MAX_CONTENT_CHARS);
+  }
+  if (typeof source.insertText === 'string' && source.insertText.trim()) {
+    suggestion.insertText = source.insertText.slice(0, AI_EDITOR_MAX_INSERT_CHARS);
+  }
+  return suggestion;
+}
+
+function normalizeImagePromptSuggestion(rawText, originalPrompt) {
+  const parsed = extractJsonObject(rawText);
+  const candidate = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed.prompt
+    : rawText;
+  const prompt = typeof candidate === 'string' ? candidate.trim() : '';
+  return (prompt || originalPrompt).slice(0, AI_IMAGE_PROMPT_MAX_CHARS);
+}
+
 function safeDeepSeekError(status, data) {
   const parts = [];
   const error = data && typeof data === 'object' ? data.error : null;
@@ -278,32 +393,545 @@ function safeDeepSeekError(status, data) {
     : `DeepSeek request failed (${status})`;
 }
 
-app.post('/api/ai/chat', async (req, res) => {
+function sanitizeProviderText(value, maxLength = 240) {
+  return String(value || '')
+    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
+    .replace(/tvly-[A-Za-z0-9_-]+/g, 'tvly-***')
+    .slice(0, maxLength)
+    .trim();
+}
+
+function safeTavilyError(status, data) {
+  const detail = sanitizeProviderText(data?.error || data?.message || data?.detail || '', 240);
+  return detail
+    ? `Tavily request failed (${status}): ${detail}`
+    : `Tavily request failed (${status})`;
+}
+
+function parseAiSettingsInput(body) {
+  const model = body?.model || 'deepseek-v4-flash';
+  const reasoningEffort = body?.reasoningEffort || 'high';
+  const stream = body?.stream === undefined ? false : body.stream;
+  const webSearchEnabled = body?.webSearchEnabled === undefined ? false : body.webSearchEnabled;
+  const webSearchDepth = body?.webSearchDepth || 'basic';
+  const seedreamModel = body?.seedreamModel || SEEDREAM_DEFAULT_MODEL;
+  const seedreamSize = body?.seedreamSize || '2K';
+  const seedreamWatermark = body?.seedreamWatermark === undefined ? true : body.seedreamWatermark;
+  if (!AI_ALLOWED_MODELS.has(model)) {
+    throw new Error('Unsupported AI model');
+  }
+  if (!AI_ALLOWED_REASONING.has(reasoningEffort)) {
+    throw new Error('Unsupported reasoning effort');
+  }
+  if (typeof stream !== 'boolean') {
+    throw new Error('Unsupported stream option');
+  }
+  if (typeof webSearchEnabled !== 'boolean') {
+    throw new Error('Unsupported web search option');
+  }
+  if (!AI_ALLOWED_SEARCH_DEPTH.has(webSearchDepth)) {
+    throw new Error('Unsupported web search depth');
+  }
+  if (!SEEDREAM_ALLOWED_MODELS.has(seedreamModel)) {
+    throw new Error('Unsupported Seedream model');
+  }
+  if (!isValidSeedreamSize(seedreamSize)) {
+    throw new Error('Unsupported Seedream size');
+  }
+  if (typeof seedreamWatermark !== 'boolean') {
+    throw new Error('Unsupported Seedream watermark option');
+  }
+  return {
+    apiKey: typeof body?.apiKey === 'string' ? body.apiKey.trim() : '',
+    model,
+    reasoningEffort,
+    stream,
+    tavilyApiKey: typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '',
+    webSearchEnabled,
+    webSearchDepth,
+    seedreamApiKey: typeof body?.seedreamApiKey === 'string' ? body.seedreamApiKey.trim() : '',
+    seedreamModel,
+    seedreamSize,
+    seedreamWatermark,
+  };
+}
+
+function isValidSeedreamSize(size) {
+  if (typeof size !== 'string') return false;
+  const value = size.trim();
+  if (SEEDREAM_ALLOWED_SIZE_KEYWORDS.has(value)) return true;
+  const match = /^(\d{3,5})x(\d{3,5})$/i.exec(value);
+  if (!match) return false;
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  const pixels = width * height;
+  return width >= 512 && height >= 512 && pixels >= 921600 && pixels <= 16777216;
+}
+
+function safeSeedreamError(status, data) {
+  const detail = sanitizeProviderText(data?.error?.message || data?.error || data?.message || '', 240);
+  return detail
+    ? `Seedream request failed (${status}): ${detail}`
+    : `Seedream request failed (${status})`;
+}
+
+function resolveSeedreamOptions(body) {
+  const saved = db.getAiSettings();
+  const model = body?.model || saved.seedreamModel || SEEDREAM_DEFAULT_MODEL;
+  const size = body?.size || saved.seedreamSize || '2K';
+  const watermark = body?.watermark === undefined ? saved.seedreamWatermark !== false : body.watermark;
+  if (!SEEDREAM_ALLOWED_MODELS.has(model)) {
+    throw new Error('Unsupported Seedream model');
+  }
+  if (!isValidSeedreamSize(size)) {
+    throw new Error('Unsupported Seedream size');
+  }
+  if (typeof watermark !== 'boolean') {
+    throw new Error('Unsupported Seedream watermark option');
+  }
+  return {
+    apiKey: saved.seedreamApiKey || SEEDREAM_API_KEY,
+    model,
+    size,
+    watermark,
+  };
+}
+
+function extensionFromContentType(contentType, fallbackUrl = '') {
+  if (/image\/png/i.test(contentType)) return '.png';
+  if (/image\/jpe?g/i.test(contentType)) return '.jpg';
+  if (/image\/webp/i.test(contentType)) return '.webp';
+  if (/image\/gif/i.test(contentType)) return '.gif';
+  if (/image\/bmp/i.test(contentType)) return '.bmp';
+  const ext = path.extname(new URL(fallbackUrl, 'https://local.invalid').pathname).toLowerCase();
+  return ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'].includes(ext) ? ext : '.png';
+}
+
+async function downloadGeneratedImage(url) {
+  const imageResponse = await fetch(url);
+  if (!imageResponse.ok) {
+    throw new Error(`Generated image download failed (${imageResponse.status})`);
+  }
+  const contentType = imageResponse.headers.get('content-type') || '';
+  if (contentType && !/^image\//i.test(contentType)) {
+    throw new Error('Generated image response was not an image');
+  }
+  const buffer = Buffer.from(await imageResponse.arrayBuffer());
+  if (!buffer.length || buffer.length > 20 * 1024 * 1024) {
+    throw new Error('Generated image size is invalid');
+  }
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  const ext = extensionFromContentType(contentType, url);
+  const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
+  return { filename, url: `/uploads/${filename}` };
+}
+
+function resolveAiChatOptions(body) {
+  const saved = db.getAiSettings();
+  const model = body?.model || saved.model || DEEPSEEK_DEFAULT_MODEL;
+  const thinkingMode = body?.thinkingMode || 'enabled';
+  const reasoningEffort = body?.reasoningEffort || saved.reasoningEffort || 'high';
+  const stream = body?.stream === undefined ? Boolean(saved.stream) : body.stream;
+  const webSearchEnabled = body?.webSearchEnabled === undefined ? Boolean(saved.webSearchEnabled) : body.webSearchEnabled;
+  const webSearchDepth = body?.webSearchDepth || saved.webSearchDepth || 'basic';
+
+  if (!AI_ALLOWED_MODELS.has(model)) {
+    throw new Error('Unsupported AI model');
+  }
+  if (!AI_ALLOWED_THINKING.has(thinkingMode)) {
+    throw new Error('Unsupported thinking mode');
+  }
+  if (thinkingMode === 'enabled' && !AI_ALLOWED_REASONING.has(reasoningEffort)) {
+    throw new Error('Unsupported reasoning effort');
+  }
+  if (typeof stream !== 'boolean') {
+    throw new Error('Unsupported stream option');
+  }
+  if (typeof webSearchEnabled !== 'boolean') {
+    throw new Error('Unsupported web search option');
+  }
+  if (!AI_ALLOWED_SEARCH_DEPTH.has(webSearchDepth)) {
+    throw new Error('Unsupported web search depth');
+  }
+
+  const requestApiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : '';
+  const requestTavilyApiKey = typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '';
+  return {
+    apiKey: requestApiKey || saved.apiKey || DEEPSEEK_API_KEY,
+    model,
+    thinkingMode,
+    reasoningEffort,
+    stream,
+    tavilyApiKey: requestTavilyApiKey || saved.tavilyApiKey || TAVILY_API_KEY,
+    webSearchEnabled,
+    webSearchDepth,
+  };
+}
+
+function inferTavilyTopic(query) {
+  return /最新|最近|今天|今日|当前|新闻|current|latest|recent|today|news/i.test(query) ? 'news' : 'general';
+}
+
+function normalizeTavilySources(results) {
+  if (!Array.isArray(results)) return [];
+  return results.slice(0, 5).map((item) => ({
+    title: sanitizeProviderText(item?.title || item?.url || 'Source', 120),
+    url: typeof item?.url === 'string' ? item.url.slice(0, 800) : '',
+    content: sanitizeProviderText(item?.content || '', 700),
+    score: Number.isFinite(Number(item?.score)) ? Number(item.score) : null,
+  })).filter(item => item.url);
+}
+
+function buildSearchContext(search) {
+  if (!search) return '';
+  const lines = [
+    'Web search results from Tavily. Use them only to answer the user question, cite source URLs when relevant, and say when results are insufficient.',
+    `Search query: ${search.query}`,
+  ];
+  if (search.answer) lines.push(`Tavily answer: ${search.answer}`);
+  search.sources.forEach((source, index) => {
+    lines.push(`[${index + 1}] ${source.title}`);
+    lines.push(`URL: ${source.url}`);
+    if (source.content) lines.push(`Snippet: ${source.content}`);
+  });
+  return lines.join('\n');
+}
+
+async function runTavilySearch(query, { tavilyApiKey, webSearchDepth }) {
+  if (!tavilyApiKey) {
+    const err = new Error('Tavily API key is not configured');
+    err.status = 503;
+    throw err;
+  }
+  const payload = {
+    query,
+    search_depth: webSearchDepth,
+    topic: inferTavilyTopic(query),
+    max_results: 5,
+    include_answer: true,
+    include_raw_content: false,
+    include_images: false,
+  };
+  const upstream = await fetch(`${TAVILY_BASE_URL}/search`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${tavilyApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await upstream.json().catch(() => ({}));
+  if (!upstream.ok) {
+    const err = new Error(safeTavilyError(upstream.status, data));
+    err.status = 502;
+    throw err;
+  }
+  return {
+    query,
+    answer: sanitizeProviderText(data?.answer || '', 1200),
+    sources: normalizeTavilySources(data?.results),
+  };
+}
+
+function sseWrite(res, event, data = {}) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function parseDeepSeekStreamEvent(block) {
+  const event = { type: 'message', data: '' };
+  for (const rawLine of block.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith(':')) continue;
+    if (line.startsWith('event:')) event.type = line.slice(6).trim() || 'message';
+    if (line.startsWith('data:')) event.data += line.slice(5).trimStart();
+  }
+  return event;
+}
+
+async function pipeDeepSeekStream(upstream, res, sources = []) {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  if (!upstream.ok) {
+    const data = await upstream.json().catch(() => ({}));
+    sseWrite(res, 'error', { error: safeDeepSeekError(upstream.status, data) });
+    return res.end();
+  }
+
   try {
-    const requestApiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
-    const apiKey = requestApiKey || DEEPSEEK_API_KEY;
+    const reader = upstream.body?.getReader ? upstream.body.getReader() : null;
+    if (!reader) throw new Error('DeepSeek stream is not readable');
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let doneSent = false;
+
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() || '';
+      for (const block of blocks) {
+        const event = parseDeepSeekStreamEvent(block);
+        if (!event.data) continue;
+        if (event.data === '[DONE]') {
+          sseWrite(res, 'done', { sources });
+          doneSent = true;
+          continue;
+        }
+        const data = JSON.parse(event.data);
+        const delta = data?.choices?.[0]?.delta?.content || data?.choices?.[0]?.message?.content || '';
+        if (typeof delta === 'string' && delta) sseWrite(res, 'delta', { content: delta });
+      }
+    }
+
+    if (buffer.trim()) {
+      const event = parseDeepSeekStreamEvent(buffer);
+      if (event.data && event.data !== '[DONE]') {
+        const data = JSON.parse(event.data);
+        const delta = data?.choices?.[0]?.delta?.content || data?.choices?.[0]?.message?.content || '';
+        if (typeof delta === 'string' && delta) sseWrite(res, 'delta', { content: delta });
+      }
+    }
+    if (!doneSent) sseWrite(res, 'done', { sources });
+    res.end();
+  } catch {
+    sseWrite(res, 'error', { error: 'DeepSeek stream failed' });
+    res.end();
+  }
+}
+
+app.get('/api/ai/settings', (_req, res) => {
+  try {
+    res.json(db.getAiSettings());
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load AI settings' });
+  }
+});
+
+app.put('/api/ai/settings', (req, res) => {
+  try {
+    const saved = db.saveAiSettings(parseAiSettingsInput(req.body));
+    res.json(saved);
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Failed to save AI settings' });
+  }
+});
+
+app.post('/api/ai/image/prompt', async (req, res) => {
+  try {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const context = typeof req.body?.context === 'string' ? req.body.context.trim().slice(0, 2000) : '';
+    if (!prompt || prompt.length > AI_IMAGE_PROMPT_MAX_CHARS) {
+      return res.status(400).json({ error: 'Prompt is required and must be 1200 characters or fewer' });
+    }
+    const {
+      apiKey,
+      model,
+      thinkingMode,
+      reasoningEffort,
+    } = resolveAiChatOptions({ ...req.body, stream: false, thinkingMode: 'enabled' });
     if (!apiKey) {
       return res.status(503).json({ error: 'DeepSeek API key is not configured' });
     }
 
-    const messages = normalizeAiMessages(req.body?.messages);
-    const model = req.body?.model || DEEPSEEK_DEFAULT_MODEL;
-    const thinkingMode = req.body?.thinkingMode || 'enabled';
-    const reasoningEffort = req.body?.reasoningEffort || 'high';
+    const systemPrompt = [
+      'You refine user requests into image-generation prompts.',
+      'Return ONLY valid JSON without Markdown fences: {"prompt":"..."}',
+      'Preserve the user intent, subject, language, and important constraints.',
+      'Make the prompt visually useful by adding concise composition, style, lighting, and detail hints when appropriate.',
+      'Do not mention that you are an AI. Do not add unrelated people, brands, private data, or unsafe content.',
+    ].join('\n');
+    const userPrompt = [
+      `Original user request:\n${prompt}`,
+      context ? `Optional editor context for inspiration, provided by the user interface:\n${context}` : '',
+    ].filter(Boolean).join('\n\n');
 
-    if (!AI_ALLOWED_MODELS.has(model)) {
-      return res.status(400).json({ error: 'Unsupported AI model' });
+    const payload = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      thinking: { type: thinkingMode },
+      stream: false,
+    };
+    if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
+
+    const upstream = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) {
+      return res.status(502).json({ error: safeDeepSeekError(upstream.status, data) });
     }
-    if (!AI_ALLOWED_THINKING.has(thinkingMode)) {
-      return res.status(400).json({ error: 'Unsupported thinking mode' });
+    const reply = data?.choices?.[0]?.message?.content;
+    if (typeof reply !== 'string') {
+      return res.status(502).json({ error: 'DeepSeek response was empty' });
     }
-    if (thinkingMode === 'enabled' && !AI_ALLOWED_REASONING.has(reasoningEffort)) {
-      return res.status(400).json({ error: 'Unsupported reasoning effort' });
+    res.json({ prompt: normalizeImagePromptSuggestion(reply, prompt) });
+  } catch (err) {
+    const status = err.status || (/Prompt|Unsupported/.test(err.message) ? 400 : 500);
+    res.status(status).json({ error: status === 400 || status === 503 || status === 502 ? err.message : 'Image prompt optimization failed' });
+  }
+});
+
+app.post('/api/ai/image/generate', async (req, res) => {
+  try {
+    const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+    const image = typeof req.body?.image === 'string' ? req.body.image.trim() : '';
+    if (!prompt || prompt.length > 1200) {
+      return res.status(400).json({ error: 'Prompt is required and must be 1200 characters or fewer' });
+    }
+    if (image && image.length > 12000) {
+      return res.status(400).json({ error: 'Reference image is too large' });
+    }
+    const { apiKey, model, size, watermark } = resolveSeedreamOptions(req.body);
+    if (!apiKey) {
+      return res.status(503).json({ error: 'Seedream API key is not configured' });
     }
 
     const payload = {
       model,
-      messages,
+      prompt,
+      size,
+      response_format: 'url',
+      extra_body: {
+        watermark,
+      },
+    };
+    if (image) payload.extra_body.image = image;
+
+    const upstream = await fetch(`${SEEDREAM_BASE_URL}/images/generations`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) {
+      return res.status(502).json({ error: safeSeedreamError(upstream.status, data) });
+    }
+    const generatedUrl = data?.data?.[0]?.url;
+    if (typeof generatedUrl !== 'string' || !generatedUrl) {
+      return res.status(502).json({ error: 'Seedream response did not include an image URL' });
+    }
+
+    const saved = await downloadGeneratedImage(generatedUrl);
+    res.json({ ...saved, prompt, model, size });
+  } catch (err) {
+    const status = /Unsupported|Prompt|Reference image/.test(err.message) ? 400 : 500;
+    res.status(status).json({ error: status === 400 ? err.message : 'Seedream image generation failed' });
+  }
+});
+
+app.post('/api/ai/chat', async (req, res) => {
+  try {
+    const messages = normalizeAiMessages(req.body?.messages);
+    const {
+      apiKey,
+      model,
+      thinkingMode,
+      reasoningEffort,
+      stream,
+      tavilyApiKey,
+      webSearchEnabled,
+      webSearchDepth,
+    } = resolveAiChatOptions(req.body);
+    if (!apiKey) {
+      return res.status(503).json({ error: 'DeepSeek API key is not configured' });
+    }
+
+    let search = null;
+    let deepSeekMessages = messages;
+    if (webSearchEnabled) {
+      const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
+      search = await runTavilySearch(lastUserMessage.content, { tavilyApiKey, webSearchDepth });
+      deepSeekMessages = [
+        { role: 'system', content: buildSearchContext(search) },
+        ...messages,
+      ];
+    }
+
+    const payload = {
+      model,
+      messages: deepSeekMessages,
+      thinking: { type: thinkingMode },
+      stream,
+    };
+    if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
+
+    const upstream = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (stream) {
+      return pipeDeepSeekStream(upstream, res, search?.sources || []);
+    }
+
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok) {
+      return res.status(502).json({ error: safeDeepSeekError(upstream.status, data) });
+    }
+
+    const reply = data?.choices?.[0]?.message?.content;
+    if (typeof reply !== 'string') {
+      return res.status(502).json({ error: 'DeepSeek response was empty' });
+    }
+
+    res.json({ message: { role: 'assistant', content: reply }, sources: search?.sources || [] });
+  } catch (err) {
+    const status = err.status || (/messages|message role|message content|Unsupported/.test(err.message) ? 400 : 500);
+    res.status(status).json({ error: status === 400 || status === 503 || status === 502 ? err.message : 'AI chat failed' });
+  }
+});
+
+app.post('/api/ai/editor', async (req, res) => {
+  try {
+    const messages = normalizeAiMessages(req.body?.messages);
+    const editorContext = normalizeEditorContext(req.body?.editorContext);
+    const {
+      apiKey,
+      model,
+      thinkingMode,
+      reasoningEffort,
+      tavilyApiKey,
+      webSearchEnabled,
+      webSearchDepth,
+    } = resolveAiChatOptions({ ...req.body, stream: false, thinkingMode: 'enabled' });
+    if (!apiKey) {
+      return res.status(503).json({ error: 'DeepSeek API key is not configured' });
+    }
+
+    let search = null;
+    if (webSearchEnabled) {
+      const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
+      search = await runTavilySearch(lastUserMessage.content, { tavilyApiKey, webSearchDepth });
+    }
+
+    const payload = {
+      model,
+      messages: [
+        { role: 'system', content: buildEditorContextPrompt(editorContext, search) },
+        ...messages,
+      ],
       thinking: { type: thinkingMode },
       stream: false,
     };
@@ -328,10 +956,35 @@ app.post('/api/ai/chat', async (req, res) => {
       return res.status(502).json({ error: 'DeepSeek response was empty' });
     }
 
-    res.json({ message: { role: 'assistant', content: reply } });
+    const editorSuggestion = normalizeEditorSuggestion(reply);
+    res.json({
+      message: { role: 'assistant', content: editorSuggestion.reply },
+      editorSuggestion,
+      sources: search?.sources || [],
+    });
   } catch (err) {
-    const status = /messages|message role|message content/.test(err.message) ? 400 : 500;
-    res.status(status).json({ error: status === 400 ? err.message : 'AI chat failed' });
+    const status = err.status || (/messages|message role|message content|editorContext|Unsupported/.test(err.message) ? 400 : 500);
+    res.status(status).json({ error: status === 400 || status === 503 || status === 502 ? err.message : 'AI editor chat failed' });
+  }
+});
+
+app.get('/api/ai/conversations', (_req, res) => {
+  try {
+    res.json(db.getAiChats());
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load AI conversations' });
+  }
+});
+
+app.put('/api/ai/conversations', (req, res) => {
+  try {
+    const saved = db.saveAiChats({
+      conversations: req.body?.conversations,
+      activeConversationId: req.body?.activeConversationId,
+    });
+    res.json(saved);
+  } catch (err) {
+    res.status(400).json({ error: 'Failed to save AI conversations' });
   }
 });
 

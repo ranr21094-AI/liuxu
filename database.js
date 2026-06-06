@@ -7,6 +7,21 @@ const DATA_FILE = path.join(DATA_DIR, 'logs.json');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
 const PRIVATE_UPLOADS_FILE = path.join(DATA_DIR, 'private-uploads.json');
+const AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
+const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
+const DEFAULT_AI_SETTINGS = {
+  apiKey: '',
+  model: 'deepseek-v4-flash',
+  reasoningEffort: 'high',
+  stream: false,
+  tavilyApiKey: '',
+  webSearchEnabled: false,
+  webSearchDepth: 'basic',
+  seedreamApiKey: '',
+  seedreamModel: 'doubao-seedream-5-0-260128',
+  seedreamSize: '2K',
+  seedreamWatermark: true,
+};
 
 // In-memory cache
 const cache = {
@@ -14,6 +29,8 @@ const cache = {
   todos: null,
   categories: null,
   privateUploads: null,
+  aiChats: null,
+  aiSettings: null,
   maxLogId: 0,
   maxTodoId: 0,
 };
@@ -148,6 +165,169 @@ function writePrivateUploads(filenames) {
   const tmp = PRIVATE_UPLOADS_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(cache.privateUploads, null, 2), 'utf-8');
   fs.renameSync(tmp, PRIVATE_UPLOADS_FILE);
+}
+
+function normalizeAiChatMessage(message) {
+  const role = message && message.role;
+  const content = typeof message?.content === 'string' ? message.content.slice(0, 4000) : '';
+  if (!['user', 'assistant'].includes(role) || !content.trim()) return null;
+  const sources = Array.isArray(message.sources)
+    ? message.sources.slice(0, 5).map(source => ({
+      title: normalizeString(source?.title, '').trim().slice(0, 120),
+      url: normalizeString(source?.url, '').trim().slice(0, 800),
+    })).filter(source => source.url)
+    : [];
+  const editorSuggestion = isPlainObject(message.editorSuggestion)
+    ? {
+      reply: normalizeString(message.editorSuggestion.reply, '').trim().slice(0, 4000),
+      suggestedTitle: normalizeString(message.editorSuggestion.suggestedTitle, '').trim().slice(0, 200),
+      suggestedContent: normalizeString(message.editorSuggestion.suggestedContent, '').slice(0, 20000),
+      insertText: normalizeString(message.editorSuggestion.insertText, '').slice(0, 8000),
+    }
+    : null;
+  const normalized = sources.length ? { role, content, sources } : { role, content };
+  if (editorSuggestion) {
+    Object.keys(editorSuggestion).forEach(key => {
+      if (!editorSuggestion[key]) delete editorSuggestion[key];
+    });
+    if (Object.keys(editorSuggestion).length) normalized.editorSuggestion = editorSuggestion;
+  }
+  if (isPlainObject(message.imageGeneration)) {
+    const imageGeneration = {
+      status: ['optimizing', 'pending', 'generating', 'done', 'error', 'cancelled'].includes(message.imageGeneration.status) ? message.imageGeneration.status : 'pending',
+      originalPrompt: normalizeString(message.imageGeneration.originalPrompt, '').trim().slice(0, 1200),
+      optimizedPrompt: normalizeString(message.imageGeneration.optimizedPrompt, '').trim().slice(0, 1200),
+      selectedPrompt: normalizeString(message.imageGeneration.selectedPrompt, '').trim().slice(0, 1200),
+      promptMode: ['original', 'optimized'].includes(message.imageGeneration.promptMode) ? message.imageGeneration.promptMode : '',
+      prompt: normalizeString(message.imageGeneration.prompt, '').trim().slice(0, 800),
+      url: normalizeString(message.imageGeneration.url, '').trim().slice(0, 800),
+      filename: normalizeString(message.imageGeneration.filename, '').trim().slice(0, 160),
+      markdown: normalizeString(message.imageGeneration.markdown, '').trim().slice(0, 1000),
+      error: normalizeString(message.imageGeneration.error, '').trim().slice(0, 240),
+      model: normalizeString(message.imageGeneration.model, '').trim().slice(0, 80),
+      size: normalizeString(message.imageGeneration.size, '').trim().slice(0, 40),
+    };
+    Object.keys(imageGeneration).forEach(key => {
+      if (!imageGeneration[key]) delete imageGeneration[key];
+    });
+    normalized.imageGeneration = imageGeneration;
+  }
+  return normalized;
+}
+
+function normalizeAiConversation(item) {
+  if (!isPlainObject(item) || typeof item.id !== 'string' || !item.id) return null;
+  const messages = Array.isArray(item.messages)
+    ? item.messages.map(normalizeAiChatMessage).filter(Boolean).slice(-50)
+    : [];
+  const title = typeof item.title === 'string' && item.title.trim()
+    ? item.title.trim().slice(0, 40)
+    : '\u65b0\u5bf9\u8bdd';
+  const updatedAt = Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now();
+  const scope = item.scope === 'editor' ? 'editor' : 'global';
+  const logKey = scope === 'editor' && typeof item.logKey === 'string'
+    ? item.logKey.trim().slice(0, 120)
+    : '';
+  return {
+    id: item.id.slice(0, 80),
+    title,
+    messages,
+    updatedAt,
+    scope,
+    logKey,
+  };
+}
+
+function readAiChats() {
+  if (cache.aiChats !== null) return cache.aiChats;
+  ensureDataDir();
+  if (!fs.existsSync(AI_CHATS_FILE)) {
+    cache.aiChats = { conversations: [], activeConversationId: '' };
+    return cache.aiChats;
+  }
+  try {
+    const saved = JSON.parse(fs.readFileSync(AI_CHATS_FILE, 'utf-8'));
+    const conversations = Array.isArray(saved?.conversations)
+      ? saved.conversations.map(normalizeAiConversation).filter(Boolean)
+      : [];
+    const activeConversationId = conversations.some(item => item.id === saved?.activeConversationId)
+      ? saved.activeConversationId
+      : (conversations[0]?.id || '');
+    cache.aiChats = { conversations, activeConversationId };
+    return cache.aiChats;
+  } catch (err) {
+    console.error('Failed to parse ai-chats.json:', err.message);
+    cache.aiChats = { conversations: [], activeConversationId: '' };
+    return cache.aiChats;
+  }
+}
+
+function writeAiChats(data) {
+  ensureDataDir();
+  const conversations = Array.isArray(data?.conversations)
+    ? data.conversations.map(normalizeAiConversation).filter(Boolean).slice(0, 200)
+    : [];
+  const activeConversationId = conversations.some(item => item.id === data?.activeConversationId)
+    ? data.activeConversationId
+    : (conversations[0]?.id || '');
+  cache.aiChats = { conversations, activeConversationId };
+  const tmp = AI_CHATS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cache.aiChats, null, 2), 'utf-8');
+  fs.renameSync(tmp, AI_CHATS_FILE);
+  return cache.aiChats;
+}
+
+function normalizeAiSettings(data) {
+  const source = isPlainObject(data) ? data : {};
+  const model = ['deepseek-v4-flash', 'deepseek-v4-pro'].includes(source.model)
+    ? source.model
+    : DEFAULT_AI_SETTINGS.model;
+  const reasoningEffort = ['high', 'max'].includes(source.reasoningEffort)
+    ? source.reasoningEffort
+    : DEFAULT_AI_SETTINGS.reasoningEffort;
+  return {
+    apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
+    model,
+    reasoningEffort,
+    stream: typeof source.stream === 'boolean' ? source.stream : DEFAULT_AI_SETTINGS.stream,
+    tavilyApiKey: typeof source.tavilyApiKey === 'string' ? source.tavilyApiKey.trim().slice(0, 500) : '',
+    webSearchEnabled: typeof source.webSearchEnabled === 'boolean' ? source.webSearchEnabled : DEFAULT_AI_SETTINGS.webSearchEnabled,
+    webSearchDepth: ['basic', 'advanced'].includes(source.webSearchDepth) ? source.webSearchDepth : DEFAULT_AI_SETTINGS.webSearchDepth,
+    seedreamApiKey: typeof source.seedreamApiKey === 'string' ? source.seedreamApiKey.trim().slice(0, 500) : '',
+    seedreamModel: ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'].includes(source.seedreamModel)
+      ? source.seedreamModel
+      : DEFAULT_AI_SETTINGS.seedreamModel,
+    seedreamSize: typeof source.seedreamSize === 'string' && source.seedreamSize.trim()
+      ? source.seedreamSize.trim().slice(0, 40)
+      : DEFAULT_AI_SETTINGS.seedreamSize,
+    seedreamWatermark: typeof source.seedreamWatermark === 'boolean' ? source.seedreamWatermark : DEFAULT_AI_SETTINGS.seedreamWatermark,
+  };
+}
+
+function readAiSettings() {
+  if (cache.aiSettings !== null) return cache.aiSettings;
+  ensureDataDir();
+  if (!fs.existsSync(AI_SETTINGS_FILE)) {
+    cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
+    return cache.aiSettings;
+  }
+  try {
+    cache.aiSettings = normalizeAiSettings(JSON.parse(fs.readFileSync(AI_SETTINGS_FILE, 'utf-8')));
+    return cache.aiSettings;
+  } catch (err) {
+    console.error('Failed to parse ai-settings.json:', err.message);
+    cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
+    return cache.aiSettings;
+  }
+}
+
+function writeAiSettings(data) {
+  ensureDataDir();
+  cache.aiSettings = normalizeAiSettings(data);
+  const tmp = AI_SETTINGS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cache.aiSettings, null, 2), 'utf-8');
+  fs.renameSync(tmp, AI_SETTINGS_FILE);
+  return cache.aiSettings;
 }
 
 function markPrivateUpload(filename) {
@@ -1037,4 +1217,4 @@ function mergeCategoryTrees(existing, incoming) {
   return merged;
 }
 
-module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, setCategoryCalendarDayVisible, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };
+module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, setCategoryCalendarDayVisible, getAiChats: readAiChats, saveAiChats: writeAiChats, getAiSettings: readAiSettings, saveAiSettings: writeAiSettings, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };

@@ -6,6 +6,7 @@ let allTodos = [];
 let activeFilter = localStorage.getItem('todoFilter') || 'pending';
 if (!['pending', 'all', 'done'].includes(activeFilter)) activeFilter = 'pending';
 let selectedTodoId = null;
+let todoSearchQuery = '';
 
 function todayString() {
   return businessDateString();
@@ -72,21 +73,31 @@ function todoItemHtml(todo, { full = false } = {}) {
 }
 
 function renderCompactTodos() {
-  const { pending, done } = todoStats();
+  const { pending, done, overdue, dueToday } = todoStats();
   $('#todoCount').textContent = pending.length;
+  $('#todoSidebarPending').textContent = pending.length;
+  $('#todoSidebarToday').textContent = dueToday.length;
+  $('#todoSidebarOverdue').textContent = overdue.length;
   if (allTodos.length === 0) {
     $('#todoList').innerHTML = '<div class="todo-empty">暂无待办事项</div>';
     $('#btnTodoClear').style.display = 'none';
     return;
   }
-  $('#todoList').innerHTML = allTodos.map(t => todoItemHtml(t)).join('');
+  const compactTodos = pending.length ? pending.slice(0, 6) : done.slice(0, 4);
+  $('#todoList').innerHTML = compactTodos.map(t => todoItemHtml(t)).join('');
   $('#btnTodoClear').style.display = done.length > 0 ? 'block' : 'none';
 }
 
 function filteredTodos() {
-  if (activeFilter === 'done') return allTodos.filter(t => t.done);
-  if (activeFilter === 'pending') return allTodos.filter(t => !t.done);
-  return allTodos;
+  let items = allTodos;
+  if (activeFilter === 'done') items = items.filter(t => t.done);
+  if (activeFilter === 'pending') items = items.filter(t => !t.done);
+  const query = todoSearchQuery.trim().toLowerCase();
+  if (!query) return items;
+  return items.filter(t =>
+    String(t.title || '').toLowerCase().includes(query) ||
+    String(t.notes || '').toLowerCase().includes(query)
+  );
 }
 
 function sectionHtml(title, todos) {
@@ -97,6 +108,10 @@ function sectionHtml(title, todos) {
 function renderFullTodos() {
   const { pending, done, overdue, dueToday } = todoStats();
   $('#todoFullSummary').textContent = `${pending.length} 项待办，${done.length} 项已完成`;
+  $('#todoStatPending').textContent = pending.length;
+  $('#todoStatToday').textContent = dueToday.length;
+  $('#todoStatOverdue').textContent = overdue.length;
+  $('#todoStatDone').textContent = done.length;
   $('#btnTodoFullClear').style.display = done.length > 0 ? 'block' : 'none';
   $('#todoFilterTabs').querySelectorAll('button').forEach(btn => {
     const selected = btn.dataset.filter === activeFilter;
@@ -128,6 +143,16 @@ function renderFullTodos() {
 function renderTodos() {
   renderCompactTodos();
   renderFullTodos();
+}
+
+export function showTodoView() {
+  $('#listView').style.display = 'none';
+  $('#editorView').style.display = 'none';
+  $('#categoryView').style.display = 'none';
+  $('#aiChatView').style.display = 'none';
+  $('#todoView').style.display = 'flex';
+  renderTodos();
+  requestAnimationFrame(() => $('#todoSearchInput')?.focus());
 }
 
 function resetTodoForm() {
@@ -306,6 +331,11 @@ $('#todoFilterTabs').addEventListener('click', (e) => {
   if (!btn) return;
   activeFilter = btn.dataset.filter;
   localStorage.setItem('todoFilter', activeFilter);
+  renderFullTodos();
+});
+
+$('#todoSearchInput').addEventListener('input', (e) => {
+  todoSearchQuery = e.target.value;
   renderFullTodos();
 });
 

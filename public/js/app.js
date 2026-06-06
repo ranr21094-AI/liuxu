@@ -8,8 +8,8 @@ import { loadLogs, populateMonthFilter } from './logList.js';
 import { showListView } from './editor.js';
 import { initAiChat, showAiChatView } from './aiChat.js';
 import { loadStats } from './stats.js';
-import { loadCategories } from './categories.js';
-import { loadTodos } from './todos.js';
+import { loadCategories, openCategoryManager } from './categories.js';
+import { loadTodos, showTodoView } from './todos.js';
 import { businessDateString } from './businessDate.js';
 
 // Theme
@@ -35,26 +35,44 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 
 $('#btnThemeToggle').addEventListener('click', toggleTheme);
 
-// Sidebar mode: normal tools or current-card navigation
-const SIDEBAR_NAV_MODE_KEY = 'sidebarNavMode';
-const SIDEBAR_TODO_MODE_KEY = 'sidebarTodoMode';
+// Sidebar mode: log tools, current-card navigation, todo panel, or AI history
+const SIDEBAR_MODE_KEY = 'sidebarMode';
 const MOBILE_SIDEBAR_QUERY = '(max-width: 768px)';
 const mobileSidebarMedia = window.matchMedia(MOBILE_SIDEBAR_QUERY);
 
 function setSidebarTitle(mode) {
+  const title = $('#sidebarTitle');
   if (mode === 'nav') {
-    $('#sidebarTitle').textContent = '日志导航';
-    $('#sidebarTitle').title = '当前为日志导航栏';
+    title.textContent = '工作日志';
+    $('#sidebarModeTrigger').title = '当前为日志导航';
   } else if (mode === 'todo') {
-    $('#sidebarTitle').textContent = '待办面板';
-    $('#sidebarTitle').title = '当前为待办面板';
+    title.textContent = '待办事项';
+    $('#sidebarModeTrigger').title = '当前为待办面板';
+  } else if (mode === 'ai') {
+    title.textContent = 'AI 对话';
+    $('#sidebarModeTrigger').title = '当前为 AI 历史对话';
+  } else if (mode === 'categories') {
+    title.textContent = '管理分类';
+    $('#sidebarModeTrigger').title = '当前为分类管理';
   } else if (mode === 'tools') {
-    $('#sidebarTitle').textContent = '更多工具';
-    $('#sidebarTitle').title = '当前为统计与数据工具';
+    title.textContent = '更多工具';
+    $('#sidebarModeTrigger').title = '当前为统计与数据工具';
   } else {
-    $('#sidebarTitle').textContent = '工作日志';
-    $('#sidebarTitle').title = '点击切换日历显示';
+    title.textContent = '工作日志';
+    $('#sidebarModeTrigger').title = '切换侧边栏模式';
   }
+}
+
+function closeSidebarModeMenu() {
+  $('#sidebarModeMenu').style.display = 'none';
+  $('#sidebarModeTrigger').setAttribute('aria-expanded', 'false');
+}
+
+function toggleSidebarModeMenu() {
+  const menu = $('#sidebarModeMenu');
+  const open = menu.style.display !== 'none';
+  menu.style.display = open ? 'none' : 'block';
+  $('#sidebarModeTrigger').setAttribute('aria-expanded', String(!open));
 }
 
 function resetToolsMode() {
@@ -65,6 +83,8 @@ function resetToolsMode() {
 }
 
 function activeSidebarMode() {
+  if (document.body.classList.contains('sidebar-ai-mode')) return 'ai';
+  if (document.body.classList.contains('sidebar-category-mode')) return 'categories';
   if (document.body.classList.contains('sidebar-nav-mode')) return 'nav';
   if (document.body.classList.contains('sidebar-todo-mode')) return 'todo';
   if (document.body.classList.contains('sidebar-tools-mode')) return 'tools';
@@ -75,58 +95,47 @@ function closeMobileCalendar() {
   $('#calendarWidget').classList.remove('mobile-show');
 }
 
-function setSidebarNavMode(enabled) {
-  document.body.classList.toggle('sidebar-nav-mode', enabled);
-  if (enabled) {
-    document.body.classList.remove('sidebar-todo-mode');
-    resetToolsMode();
-    closeMobileCalendar();
-    $('#btnTodoMode').classList.remove('active');
-    $('#btnTodoMode').setAttribute('aria-pressed', 'false');
-    $('#btnTodoMode').title = '切换待办面板';
-    localStorage.setItem(SIDEBAR_TODO_MODE_KEY, 'false');
-  }
-  $('#btnSidebarMode').classList.toggle('active', enabled);
-  $('#btnSidebarMode').setAttribute('aria-pressed', String(enabled));
-  $('#btnSidebarMode').title = enabled ? '切换回常规侧边栏' : '切换日志导航栏';
-  setSidebarTitle(activeSidebarMode());
-  if (enabled) {
+function setSidebarMode(mode, { updateMain = true } = {}) {
+  if (!['normal', 'nav', 'todo', 'categories', 'ai'].includes(mode)) mode = 'normal';
+  document.body.classList.toggle('sidebar-nav-mode', mode === 'nav');
+  document.body.classList.toggle('sidebar-todo-mode', mode === 'todo');
+  document.body.classList.toggle('sidebar-category-mode', mode === 'categories');
+  document.body.classList.toggle('sidebar-ai-mode', mode === 'ai');
+  resetToolsMode();
+  closeMobileCalendar();
+  setSidebarTitle(mode);
+  $('#sidebarModeMenu').querySelectorAll('[data-mode]').forEach(button => {
+    button.classList.toggle('active', button.dataset.mode === mode);
+  });
+  closeSidebarModeMenu();
+  localStorage.setItem(SIDEBAR_MODE_KEY, mode);
+
+  if (mode === 'nav') {
     $('#cardNavPanel').classList.remove('collapsed');
     $('#cardNavToggle').setAttribute('aria-expanded', 'true');
     localStorage.setItem('cardNavCollapsed', 'false');
   }
-}
 
-function setSidebarTodoMode(enabled) {
-  document.body.classList.toggle('sidebar-todo-mode', enabled);
-  if (enabled) {
-    document.body.classList.remove('sidebar-nav-mode');
-    resetToolsMode();
-    closeMobileCalendar();
-    $('#btnSidebarMode').classList.remove('active');
-    $('#btnSidebarMode').setAttribute('aria-pressed', 'false');
-    $('#btnSidebarMode').title = '切换日志导航栏';
-    localStorage.setItem(SIDEBAR_NAV_MODE_KEY, 'false');
+  if (!updateMain) return;
+  if (mode === 'ai') {
+    showAiChatView();
+  } else if (mode === 'categories') {
+    openCategoryManager();
+  } else if (mode === 'todo') {
+    showTodoView();
+  } else {
+    showListView();
   }
-  $('#btnTodoMode').classList.toggle('active', enabled);
-  $('#btnTodoMode').setAttribute('aria-pressed', String(enabled));
-  $('#btnTodoMode').title = enabled ? '切换回常规侧边栏' : '切换待办面板';
-  setSidebarTitle(activeSidebarMode());
 }
 
 function setSidebarToolsMode(enabled) {
   document.body.classList.toggle('sidebar-tools-mode', enabled);
   if (enabled) {
-    document.body.classList.remove('sidebar-nav-mode', 'sidebar-todo-mode');
+    document.body.classList.remove('sidebar-nav-mode', 'sidebar-todo-mode', 'sidebar-ai-mode');
+    document.body.classList.remove('sidebar-category-mode');
     closeMobileCalendar();
-    $('#btnSidebarMode').classList.remove('active');
-    $('#btnSidebarMode').setAttribute('aria-pressed', 'false');
-    $('#btnSidebarMode').title = '切换日志导航栏';
-    $('#btnTodoMode').classList.remove('active');
-    $('#btnTodoMode').setAttribute('aria-pressed', 'false');
-    $('#btnTodoMode').title = '切换待办面板';
-    localStorage.setItem(SIDEBAR_NAV_MODE_KEY, 'false');
-    localStorage.setItem(SIDEBAR_TODO_MODE_KEY, 'false');
+    localStorage.setItem(SIDEBAR_MODE_KEY, 'normal');
+    showListView();
   }
   $('#btnSidebarTools').classList.toggle('active', enabled);
   $('#btnSidebarTools').setAttribute('aria-pressed', String(enabled));
@@ -134,22 +143,24 @@ function setSidebarToolsMode(enabled) {
   setSidebarTitle(activeSidebarMode());
 }
 
-if (localStorage.getItem(SIDEBAR_TODO_MODE_KEY) === 'true') {
-  setSidebarTodoMode(true);
-} else {
-  setSidebarNavMode(localStorage.getItem(SIDEBAR_NAV_MODE_KEY) === 'true');
-}
+setSidebarMode(localStorage.getItem(SIDEBAR_MODE_KEY) || 'normal', { updateMain: false });
 
-$('#btnSidebarMode').addEventListener('click', () => {
-  const enabled = !document.body.classList.contains('sidebar-nav-mode');
-  setSidebarNavMode(enabled);
-  localStorage.setItem(SIDEBAR_NAV_MODE_KEY, String(enabled));
+$('#sidebarModeTrigger').addEventListener('click', toggleSidebarModeMenu);
+$('#sidebarModeMenu').addEventListener('click', (event) => {
+  const item = event.target.closest('[data-mode]');
+  if (!item) return;
+  setSidebarMode(item.dataset.mode);
 });
 
-$('#btnTodoMode').addEventListener('click', () => {
-  const enabled = !document.body.classList.contains('sidebar-todo-mode');
-  setSidebarTodoMode(enabled);
-  localStorage.setItem(SIDEBAR_TODO_MODE_KEY, String(enabled));
+window.addEventListener('category-manager-closed', () => {
+  if (activeSidebarMode() === 'categories') setSidebarMode('normal', { updateMain: false });
+});
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.sidebar-title-menu')) closeSidebarModeMenu();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeSidebarModeMenu();
 });
 
 $('#btnSidebarTools').addEventListener('click', () => {
@@ -173,19 +184,7 @@ $('#btnSidebarExpand').addEventListener('click', collapseSidebar);
 
 // FAB AI chat
 $('#fabCapture').addEventListener('click', () => {
-  if (!document.body.classList.contains('editor-fullscreen')) showAiChatView();
-});
-
-// Calendar toggle (mobile)
-// Calendar toggle via title click
-$('#sidebarTitle').addEventListener('click', () => {
-  if (activeSidebarMode() !== 'normal') return;
-  const widget = $('#calendarWidget');
-  if (mobileSidebarMedia.matches) {
-    widget.classList.toggle('mobile-show');
-    return;
-  }
-  widget.style.display = widget.style.display === 'none' ? '' : 'none';
+  if (!document.body.classList.contains('editor-fullscreen')) setSidebarMode('ai');
 });
 
 // Diary lock
@@ -365,10 +364,24 @@ async function refreshAll() {
   await Promise.all([loadLogs(), loadStats(), loadTodos(), loadCategories()]);
 }
 
+function syncMainViewWithSidebarMode() {
+  if (activeSidebarMode() === 'ai') {
+    showAiChatView();
+  } else if (activeSidebarMode() === 'categories') {
+    openCategoryManager();
+  } else if (activeSidebarMode() === 'todo') {
+    showTodoView();
+  } else {
+    showListView();
+  }
+}
+
 // Re-login after auth success
 window.addEventListener('auth-success', async () => {
+  await initAiChat();
   const diarySelected = await initDiaryLock();
   if (!diarySelected) await refreshAll();
+  syncMainViewWithSidebarMode();
 });
 
 // Global error boundary
@@ -384,13 +397,14 @@ window.addEventListener('unhandledrejection', (e) => {
 // Init
 async function initializeApp() {
   initTheme();
-  initAiChat();
   populateMonthFilter();
   populateCalendarSelects();
   const authenticated = await checkAuth();
   if (!authenticated) return;
+  await initAiChat();
   const diarySelected = await initDiaryLock();
   if (!diarySelected) await refreshAll();
+  syncMainViewWithSidebarMode();
 }
 
 initializeApp();

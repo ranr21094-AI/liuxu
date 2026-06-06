@@ -19,13 +19,19 @@
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.36 10.06A6 6 0 015.94 2.64 6.5 6.5 0 1013.36 10.06z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </span>
       </button>
-      <h1 id="sidebarTitle" title="点击切换日历显示">工作日志</h1>
-      <button class="btn-sidebar-mode" id="btnSidebarMode" title="切换日志导航栏" aria-pressed="false">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4h10M3 8h10M3 12h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-      <button class="btn-sidebar-mode" id="btnTodoMode" title="切换待办面板" aria-pressed="false">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 4.5h10M3 8h10M3 11.5h7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M2.5 4.5l.6.6 1.1-1.2M2.5 8l.6.6 1.1-1.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
+      <div class="sidebar-title-menu">
+        <button class="sidebar-title-trigger" id="sidebarModeTrigger" type="button" aria-haspopup="menu" aria-expanded="false" title="切换侧边栏模式">
+          <span id="sidebarTitle">工作日志</span>
+          <span class="sidebar-title-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="sidebar-mode-menu" id="sidebarModeMenu" role="menu" style="display:none;">
+          <button type="button" role="menuitem" data-mode="normal">默认侧栏</button>
+          <button type="button" role="menuitem" data-mode="nav">日志导航</button>
+          <button type="button" role="menuitem" data-mode="todo">待办面板</button>
+          <button type="button" role="menuitem" data-mode="categories">管理分类</button>
+          <button type="button" role="menuitem" data-mode="ai">AI 对话</button>
+        </div>
+      </div>
       <button class="btn-sidebar-mode btn-sidebar-tools" id="btnSidebarTools" title="切换更多工具" aria-label="切换更多工具" aria-pressed="false">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="3" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="13" cy="8" r="1.2" fill="currentColor"/></svg>
       </button>
@@ -70,6 +76,11 @@
         <h3>待办事项</h3>
         <span class="todo-count" id="todoCount">0</span>
       </div>
+      <div class="todo-sidebar-stats" aria-label="待办概览">
+        <span><strong id="todoSidebarPending">0</strong> 待办</span>
+        <span><strong id="todoSidebarToday">0</strong> 今日</span>
+        <span><strong id="todoSidebarOverdue">0</strong> 逾期</span>
+      </div>
       <div class="todo-input-wrap">
         <label class="sr-only" for="todoInput">添加待办任务</label>
         <input type="text" id="todoInput" placeholder="添加新待办..." maxlength="200">
@@ -77,44 +88,6 @@
       </div>
       <div class="todo-list" id="todoList"></div>
       <button class="btn-todo-clear" id="btnTodoClear" style="display:none">清除已完成</button>
-    </div>
-
-    <div class="todo-full-panel" id="todoFullPanel">
-      <div class="todo-full-header">
-        <div>
-          <h3>待办面板</h3>
-          <div class="todo-full-summary" id="todoFullSummary">0 项待办</div>
-        </div>
-        <button class="btn-todo-clear" id="btnTodoFullClear" style="display:none">清除已完成</button>
-      </div>
-      <div class="todo-filter-tabs" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
-        <button class="active" data-filter="pending" role="tab" aria-selected="true">待办</button>
-        <button data-filter="all" role="tab" aria-selected="false">全部</button>
-        <button data-filter="done" role="tab" aria-selected="false">已完成</button>
-      </div>
-      <div class="todo-full-form">
-        <input type="hidden" id="todoEditId">
-        <label class="sr-only" for="todoFullTitle">任务标题</label>
-        <input type="text" id="todoFullTitle" placeholder="任务标题..." maxlength="200">
-        <div class="todo-form-grid">
-          <label class="sr-only" for="todoFullDueDate">截止日期</label>
-          <input type="date" id="todoFullDueDate" title="截止日期">
-          <label class="sr-only" for="todoFullPriority">优先级</label>
-          <select id="todoFullPriority" title="优先级">
-            <option value="none">无</option>
-            <option value="normal">普通</option>
-            <option value="important">重要</option>
-            <option value="urgent">紧急</option>
-          </select>
-        </div>
-        <label class="sr-only" for="todoFullNotes">任务备注</label>
-        <textarea id="todoFullNotes" placeholder="备注..." maxlength="1000"></textarea>
-        <div class="todo-form-actions">
-          <button class="btn-secondary btn-sm" id="btnTodoFormCancel" type="button">取消</button>
-          <button class="btn-primary btn-sm" id="btnTodoFullSave" type="button">保存任务</button>
-        </div>
-      </div>
-      <div class="todo-full-list" id="todoFullList" role="tabpanel"></div>
     </div>
 
     <div class="stats-panel" id="statsPanel">
@@ -134,6 +107,38 @@
       <button class="btn-export" id="btnBackup">备份数据 JSON</button>
       <button class="btn-export btn-restore" id="btnRestore">导入恢复 JSON</button>
       <input type="file" id="restoreFileInput" accept=".json" style="display:none">
+    </div>
+
+    <div class="ai-sidebar-history-panel" id="aiSidebarHistoryPanel">
+      <div class="ai-sidebar-history-header">
+        <h3>历史对话</h3>
+        <div class="ai-sidebar-actions">
+          <button class="btn-sidebar-mode ai-sidebar-settings ai-key-button" id="btnAiApiKey" type="button" title="AI 设置" aria-label="AI 设置" aria-haspopup="dialog">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" stroke="currentColor" stroke-width="2"/>
+              <path d="M19.4 15a1.8 1.8 0 0 0 .36 2l.06.06a2.1 2.1 0 0 1-2.97 2.97l-.06-.06a1.8 1.8 0 0 0-2-.36 1.8 1.8 0 0 0-1.09 1.65V21a2.1 2.1 0 0 1-4.2 0v-.08a1.8 1.8 0 0 0-1.18-1.65 1.8 1.8 0 0 0-2 .36l-.06.06a2.1 2.1 0 0 1-2.97-2.97l.06-.06a1.8 1.8 0 0 0 .36-2 1.8 1.8 0 0 0-1.65-1.09H2a2.1 2.1 0 0 1 0-4.2h.08a1.8 1.8 0 0 0 1.65-1.18 1.8 1.8 0 0 0-.36-2l-.06-.06a2.1 2.1 0 0 1 2.97-2.97l.06.06a1.8 1.8 0 0 0 2 .36H8.4A1.8 1.8 0 0 0 9.5 2V2a2.1 2.1 0 0 1 4.2 0v.08a1.8 1.8 0 0 0 1.09 1.65 1.8 1.8 0 0 0 2-.36l.06-.06a2.1 2.1 0 0 1 2.97 2.97l-.06.06a1.8 1.8 0 0 0-.36 2v.08A1.8 1.8 0 0 0 21 9.5h.08a2.1 2.1 0 0 1 0 4.2H21a1.8 1.8 0 0 0-1.6 1.3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="btn-sidebar-mode ai-sidebar-new" id="btnAiSidebarNewChat" type="button" title="新建对话" aria-label="新建对话">+</button>
+        </div>
+      </div>
+      <div class="ai-history-list" id="aiSidebarHistoryList"></div>
+    </div>
+
+    <div class="category-sidebar-panel" id="categorySidebarPanel">
+      <div class="category-sidebar-header">
+        <h3>父分类</h3>
+        <button class="cat-icon-action primary category-add-toggle" id="catAddToggle" type="button" aria-label="添加父分类" title="添加父分类" aria-expanded="false">+</button>
+      </div>
+      <div class="category-sidebar-tools">
+        <div class="cat-add-row category-sidebar-add" id="catAddPanel" hidden>
+          <label class="sr-only" for="catNewInput">新父分类名称</label>
+          <input type="text" id="catNewInput" placeholder="新父分类名称..." maxlength="20">
+          <button class="cat-icon-action primary" id="catAddBtn" type="button" aria-label="确认添加父分类" title="确认添加">✓</button>
+          <button class="cat-icon-action category-add-cancel" id="catAddCancelBtn" type="button" aria-label="取消添加父分类" title="取消">×</button>
+        </div>
+      </div>
+      <div class="cat-list" id="catList"></div>
     </div>
   </aside>
 
@@ -164,7 +169,6 @@
         <select class="filter-select" id="filterMonth">
           <option value="">全部月份</option>
         </select>
-        <button class="btn-secondary btn-sm" id="btnManageCats">管理分类</button>
         <button class="btn-secondary btn-sm" id="btnResetCardWidth" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">🔲</button>
       </div>
 
@@ -178,6 +182,61 @@
       </div>
 
       <div class="pagination" id="pagination"></div>
+    </div>
+
+    <!-- Todo View -->
+    <div class="todo-view" id="todoView" style="display:none;">
+      <div class="todo-page-header">
+        <div>
+          <h2>待办事项</h2>
+          <div class="todo-full-summary" id="todoFullSummary">0 项待办</div>
+        </div>
+        <button class="btn-todo-clear todo-page-clear" id="btnTodoFullClear" style="display:none">清除已完成</button>
+      </div>
+      <div class="todo-page-stats" aria-label="待办统计">
+        <div class="todo-stat-card"><span>待办</span><strong id="todoStatPending">0</strong></div>
+        <div class="todo-stat-card"><span>今日</span><strong id="todoStatToday">0</strong></div>
+        <div class="todo-stat-card danger"><span>逾期</span><strong id="todoStatOverdue">0</strong></div>
+        <div class="todo-stat-card"><span>已完成</span><strong id="todoStatDone">0</strong></div>
+      </div>
+      <div class="todo-page-controls">
+        <div class="todo-filter-tabs" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
+          <button class="active" data-filter="pending" role="tab" aria-selected="true">待办</button>
+          <button data-filter="all" role="tab" aria-selected="false">全部</button>
+          <button data-filter="done" role="tab" aria-selected="false">已完成</button>
+        </div>
+        <div class="todo-search-box">
+          <label class="sr-only" for="todoSearchInput">搜索待办</label>
+          <input type="search" id="todoSearchInput" placeholder="搜索标题或备注...">
+        </div>
+      </div>
+      <div class="todo-page-layout">
+        <section class="todo-full-panel" id="todoFullPanel" aria-label="待办列表">
+          <div class="todo-full-list" id="todoFullList" role="tabpanel"></div>
+        </section>
+        <aside class="todo-full-form" aria-label="编辑待办">
+          <input type="hidden" id="todoEditId">
+          <label class="sr-only" for="todoFullTitle">任务标题</label>
+          <input type="text" id="todoFullTitle" placeholder="任务标题..." maxlength="200">
+          <div class="todo-form-grid">
+            <label class="sr-only" for="todoFullDueDate">截止日期</label>
+            <input type="date" id="todoFullDueDate" title="截止日期">
+            <label class="sr-only" for="todoFullPriority">优先级</label>
+            <select id="todoFullPriority" title="优先级">
+              <option value="none">无</option>
+              <option value="normal">普通</option>
+              <option value="important">重要</option>
+              <option value="urgent">紧急</option>
+            </select>
+          </div>
+          <label class="sr-only" for="todoFullNotes">任务备注</label>
+          <textarea id="todoFullNotes" placeholder="备注..." maxlength="1000"></textarea>
+          <div class="todo-form-actions">
+            <button class="btn-secondary btn-sm" id="btnTodoFormCancel" type="button">取消</button>
+            <button class="btn-primary btn-sm" id="btnTodoFullSave" type="button">保存任务</button>
+          </div>
+        </aside>
+      </div>
     </div>
 
     <!-- Editor View -->
@@ -223,6 +282,7 @@
         <div class="editor-workspace">
           <div class="editor-tabs" role="tablist" aria-label="编辑器显示模式">
             <button class="editor-outline-toggle" id="btnEditorOutlinePanel" type="button" aria-controls="editorOutlinePanel" aria-expanded="false" title="展开标题栏">标题</button>
+            <button class="editor-ai-toggle" id="btnEditorAiPanel" type="button" aria-controls="editorAiPanel" aria-expanded="false" title="打开编辑器 AI">AI</button>
             <button class="editor-tab active" id="editorTabWrite" data-tab="write" role="tab" aria-selected="true" aria-controls="editorPanel" tabindex="0">编辑</button>
             <button class="editor-tab" id="editorTabPreview" data-tab="preview" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">预览</button>
             <button class="editor-tab" id="editorTabSplit" data-tab="split" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">分屏</button>
@@ -287,34 +347,47 @@
             <div class="edit-preview markdown-body" id="editPreview" style="display:none;"></div>
           </div>
         </div>
+
+        <aside class="editor-ai-panel" id="editorAiPanel" aria-hidden="true">
+          <div class="editor-ai-header">
+            <div>
+              <strong>AI 助手</strong>
+              <span id="editorAiScopeLabel">当前日志</span>
+            </div>
+            <div class="editor-ai-header-actions">
+              <button class="editor-ai-icon-action" id="btnEditorAiHistory" type="button" aria-expanded="false" aria-controls="editorAiHistoryPopover" title="历史对话" aria-label="历史对话">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M3 4v5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button class="editor-ai-icon-action" id="btnEditorAiSettings" type="button" title="AI 设置" aria-label="AI 设置" aria-haspopup="dialog">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.23.32.43.66.6 1H20a2 2 0 1 1 0 4h-.09c-.17.34-.37.68-.51 1Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button class="btn-secondary btn-sm" id="btnEditorAiNew" type="button">新对话</button>
+              <button class="btn-icon editor-ai-close" id="btnCloseEditorAiPanel" type="button" aria-label="收起编辑器 AI">&times;</button>
+            </div>
+          </div>
+          <div class="editor-ai-history-popover" id="editorAiHistoryPopover" hidden>
+            <div class="editor-ai-history-head">
+              <strong>历史对话</strong>
+              <button class="btn-icon editor-ai-history-close" id="btnEditorAiHistoryClose" type="button" aria-label="关闭历史对话">&times;</button>
+            </div>
+            <div class="editor-ai-history-list" id="editorAiHistoryList"></div>
+          </div>
+          <div class="editor-ai-messages" id="editorAiMessages" aria-live="polite"></div>
+          <div class="editor-ai-composer">
+            <label class="sr-only" for="editorAiInput">输入编辑器 AI 消息</label>
+            <textarea id="editorAiInput" placeholder="询问如何改写、总结、补充当前日志..." maxlength="4000"></textarea>
+            <div class="editor-ai-composer-actions">
+              <button class="btn-secondary btn-ai-image" id="btnEditorAiImage" type="button" disabled aria-label="生成图片">生图</button>
+              <button class="btn-primary" id="btnEditorAiSend" type="button" disabled>发送</button>
+            </div>
+            <span class="editor-ai-sending" id="editorAiSending" style="display:none;">正在思考...</span>
+          </div>
+        </aside>
       </div>
     </div>
 
     <!-- AI Chat View -->
     <div class="ai-chat-view" id="aiChatView" style="display:none;">
-      <div class="ai-chat-header">
-        <button class="btn-icon btn-back" id="btnAiBack" title="返回上一页">← 返回</button>
-        <div class="ai-chat-title">
-          <h2>AI 对话</h2>
-          <span>仅使用你在此页面输入的内容</span>
-        </div>
-        <div class="ai-chat-settings">
-          <button class="btn-secondary btn-sm" id="btnAiNewChat" type="button">新建对话</button>
-          <button class="btn-secondary btn-sm" id="btnAiHistory" type="button" aria-haspopup="dialog">历史记录</button>
-          <button class="btn-secondary btn-sm ai-key-button" id="btnAiApiKey" type="button" aria-haspopup="dialog">API Key</button>
-          <label class="sr-only" for="aiModelSelect">AI 模型</label>
-          <select id="aiModelSelect" class="ai-chat-select" title="AI 模型">
-            <option value="deepseek-v4-flash">DeepSeek Flash</option>
-            <option value="deepseek-v4-pro">DeepSeek Pro</option>
-          </select>
-          <label class="sr-only" for="aiReasoningEffort">思考强度</label>
-          <select id="aiReasoningEffort" class="ai-chat-select" title="思考强度">
-            <option value="high">高</option>
-            <option value="max">最高</option>
-          </select>
-          <button class="btn-secondary btn-sm" id="btnAiClear" type="button">清空</button>
-        </div>
-      </div>
       <div class="ai-chat-body">
         <div class="ai-chat-messages" id="aiChatMessages" aria-live="polite"></div>
       </div>
@@ -323,6 +396,7 @@
         <textarea id="aiChatInput" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
         <div class="ai-chat-composer-actions">
           <span class="ai-chat-sending" id="aiChatSending" style="display:none;">发送中...</span>
+          <button class="btn-secondary btn-ai-image" id="btnAiImage" type="button" disabled aria-label="生成图片">生图</button>
           <button class="btn-primary" id="btnAiSend" type="button" disabled>发送</button>
         </div>
       </div>
@@ -331,22 +405,16 @@
     <!-- Category Management View -->
     <div class="category-view" id="categoryView" style="display:none;">
       <div class="category-page-header">
-        <button class="btn-icon btn-back" id="btnCategoryBack" title="返回日志列表">← 返回</button>
+        <div class="category-page-search">
+          <label class="sr-only" for="catSearchInput">搜索分类</label>
+          <input type="search" id="catSearchInput" class="cat-search-input cat-page-search-input" placeholder="搜索父分类或子分类...">
+        </div>
         <div class="category-page-title">
-          <h2>管理分类</h2>
           <div class="cat-manager-summary" id="catManagerSummary" title="父分类数量" aria-label="父分类数量">...</div>
         </div>
-        <div class="cat-add-row cat-header-add">
-          <label class="sr-only" for="catNewInput">新父分类名称</label>
-          <input type="text" id="catNewInput" placeholder="添加父分类..." maxlength="20">
-          <button class="cat-icon-action primary" id="catAddBtn" type="button" aria-label="添加父分类" title="添加父分类">+</button>
-        </div>
-        <label class="sr-only" for="catSearchInput">搜索分类</label>
-        <input type="search" id="catSearchInput" class="cat-search-input cat-header-search" placeholder="搜索父分类或子分类...">
       </div>
       <div class="category-page-grid">
         <section class="category-parent-panel">
-          <div class="cat-list" id="catList"></div>
           <div class="cat-sub-browse-sidebar" id="catSubBrowseSidebar" style="display:none;">
             <button class="btn-secondary btn-sm" id="btnSubBrowseBack" type="button">← 父分类</button>
             <div class="cat-sub-browse-parent" id="catSubBrowseParent"></div>
@@ -427,35 +495,139 @@
     </div>
   </div>
 
-  <!-- AI API Key Modal -->
+  <!-- AI Settings Modal -->
   <div class="modal-overlay" id="aiApiKeyOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiApiKeyTitle">
     <div class="modal modal-ai-key">
       <div class="modal-header">
-        <h2 id="aiApiKeyTitle">DeepSeek API Key</h2>
+        <h2 id="aiApiKeyTitle" class="sr-only">AI 设置</h2>
+        <div class="ai-settings-tabs" role="tablist" aria-label="AI 设置类型">
+          <button class="ai-settings-tab active" id="aiSettingsTabChat" type="button" role="tab" aria-selected="true" aria-controls="aiSettingsPanelChat" data-ai-settings-tab="chat">AI 设置</button>
+          <button class="ai-settings-tab" id="aiSettingsTabImage" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelImage" data-ai-settings-tab="image">生图设置</button>
+        </div>
         <button class="btn-icon modal-close" id="aiApiKeyClose" aria-label="关闭">&times;</button>
       </div>
-      <div class="modal-body ai-key-body">
-        <label class="sr-only" for="aiApiKeyInput">DeepSeek API Key</label>
-        <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
-        <p class="ai-key-note">保存后仅存放在当前浏览器本地，不会写入日志数据。</p>
+      <div class="modal-body ai-key-body ai-settings-body">
+        <div class="ai-settings-panel active" id="aiSettingsPanelChat" role="tabpanel" aria-labelledby="aiSettingsTabChat">
+          <label class="ai-settings-field" for="aiApiKeyInput">
+            <span>DeepSeek API Key</span>
+            <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
+          </label>
+          <label class="ai-settings-field" for="aiModelSelect">
+            <span>模型</span>
+            <select id="aiModelSelect" class="ai-chat-select" title="AI 模型">
+              <option value="deepseek-v4-flash">DeepSeek Flash</option>
+              <option value="deepseek-v4-pro">DeepSeek Pro</option>
+            </select>
+          </label>
+          <label class="ai-settings-field" for="aiReasoningEffort">
+            <span>思考强度</span>
+            <select id="aiReasoningEffort" class="ai-chat-select" title="思考强度">
+              <option value="high">高</option>
+              <option value="max">最高</option>
+            </select>
+          </label>
+          <label class="ai-settings-toggle" for="aiStreamToggle">
+            <span>
+              <strong>流式输出</strong>
+              <small>开启后 AI 回复会逐字显示</small>
+            </span>
+            <input type="checkbox" id="aiStreamToggle">
+            <i aria-hidden="true"></i>
+          </label>
+          <label class="ai-settings-field" for="aiTavilyApiKeyInput">
+            <span>Tavily API Key</span>
+            <input type="password" id="aiTavilyApiKeyInput" class="ai-key-input" placeholder="tvly-..." autocomplete="off" spellcheck="false">
+          </label>
+          <label class="ai-settings-toggle" for="aiWebSearchToggle">
+            <span>
+              <strong>联网搜索</strong>
+              <small>开启后发送问题时会先用 Tavily 搜索网页</small>
+            </span>
+            <input type="checkbox" id="aiWebSearchToggle">
+            <i aria-hidden="true"></i>
+          </label>
+          <label class="ai-settings-field" for="aiWebSearchDepth">
+            <span>搜索深度</span>
+            <select id="aiWebSearchDepth" class="ai-chat-select" title="联网搜索深度">
+              <option value="basic">Basic（更快）</option>
+              <option value="advanced">Advanced（更全面）</option>
+            </select>
+          </label>
+        </div>
+        <div class="ai-settings-panel" id="aiSettingsPanelImage" role="tabpanel" aria-labelledby="aiSettingsTabImage" hidden>
+          <label class="ai-settings-field" for="aiSeedreamApiKeyInput">
+            <span>Seedream API Key</span>
+            <input type="password" id="aiSeedreamApiKeyInput" class="ai-key-input" placeholder="4b45..." autocomplete="off" spellcheck="false">
+          </label>
+          <label class="ai-settings-field" for="aiSeedreamModel">
+            <span>生图模型</span>
+            <select id="aiSeedreamModel" class="ai-chat-select" title="Seedream 生图模型">
+              <option value="doubao-seedream-5-0-260128">Seedream 5.0</option>
+              <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
+              <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
+            </select>
+          </label>
+          <label class="ai-settings-field" for="aiSeedreamSize">
+            <span>图片尺寸</span>
+            <select id="aiSeedreamSize" class="ai-chat-select" title="Seedream 图片尺寸">
+              <option value="2K">2K</option>
+              <option value="3K">3K</option>
+              <option value="4K">4K</option>
+              <option value="2048x2048">2048x2048</option>
+              <option value="2848x1600">2848x1600（16:9）</option>
+              <option value="1600x2848">1600x2848（9:16）</option>
+            </select>
+          </label>
+          <label class="ai-settings-toggle" for="aiSeedreamWatermark">
+            <span>
+              <strong>Seedream 水印</strong>
+              <small>开启后保留上游 “AI 生成” 标识</small>
+            </span>
+            <input type="checkbox" id="aiSeedreamWatermark">
+            <i aria-hidden="true"></i>
+          </label>
+        </div>
+        <p class="ai-key-note">保存后写入本机数据目录的 ai-settings.json；API Key 不会写入日志数据。</p>
       </div>
       <div class="modal-footer">
-        <button class="btn-secondary" id="btnAiApiKeyClear" type="button">清除</button>
+        <button class="btn-secondary" id="btnAiApiKeyClear" type="button">清除 Key</button>
         <button class="btn-secondary" id="btnAiApiKeyCancel" type="button">取消</button>
         <button class="btn-primary" id="btnAiApiKeySave" type="button">保存</button>
       </div>
     </div>
   </div>
 
-  <!-- AI Chat History Modal -->
-  <div class="modal-overlay" id="aiHistoryOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiHistoryTitle">
-    <div class="modal modal-ai-history">
+  <!-- AI Rename Conversation Modal -->
+  <div class="modal-overlay" id="aiRenameOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiRenameTitle">
+    <div class="modal modal-ai-rename">
       <div class="modal-header">
-        <h2 id="aiHistoryTitle">历史记录</h2>
-        <button class="btn-icon modal-close" id="aiHistoryClose" aria-label="关闭">&times;</button>
+        <h2 id="aiRenameTitle">重命名对话</h2>
+        <button class="btn-icon modal-close" id="aiRenameClose" aria-label="关闭">&times;</button>
       </div>
-      <div class="modal-body ai-history-body">
-        <div class="ai-history-list" id="aiChatHistoryList"></div>
+      <div class="modal-body ai-rename-body">
+        <label class="sr-only" for="aiRenameInput">新的对话名称</label>
+        <input type="text" id="aiRenameInput" class="ai-rename-input" maxlength="40">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btnAiRenameCancel" type="button">取消</button>
+        <button class="btn-primary" id="btnAiRenameSave" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="editorAiRenameOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="editorAiRenameTitle">
+    <div class="modal modal-ai-rename">
+      <div class="modal-header">
+        <h2 id="editorAiRenameTitle">重命名日志内对话</h2>
+        <button class="btn-icon modal-close" id="editorAiRenameClose" aria-label="关闭">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label class="sr-only" for="editorAiRenameInput">新的对话名称</label>
+        <input type="text" id="editorAiRenameInput" class="ai-rename-input" maxlength="40">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btnEditorAiRenameCancel">取消</button>
+        <button class="btn-primary" id="btnEditorAiRenameSave">保存</button>
       </div>
     </div>
   </div>

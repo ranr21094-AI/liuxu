@@ -15,6 +15,7 @@ import { createContentEditor } from './contentEditor.js';
 const editorView = $('#editorView');
 const categoryView = $('#categoryView');
 const aiChatView = $('#aiChatView');
+const todoView = $('#todoView');
 const editTitle = $('#editTitle');
 const editContent = $('#editContent');
 const codeMirrorContentEditor = $('#codeMirrorContentEditor');
@@ -32,9 +33,30 @@ const editorOutlinePanel = $('#editorOutlinePanel');
 const editorOutlineList = $('#editorOutlineList');
 const btnEditorOutlinePanel = $('#btnEditorOutlinePanel');
 const btnCloseOutlinePanel = $('#btnCloseOutlinePanel');
+const btnEditorAiPanel = $('#btnEditorAiPanel');
+const editorAiPanel = $('#editorAiPanel');
+const editorAiMessages = $('#editorAiMessages');
+const editorAiInput = $('#editorAiInput');
+const btnEditorAiSend = $('#btnEditorAiSend');
+const btnEditorAiImage = $('#btnEditorAiImage');
+const btnEditorAiNew = $('#btnEditorAiNew');
+const btnEditorAiHistory = $('#btnEditorAiHistory');
+const btnEditorAiSettings = $('#btnEditorAiSettings');
+const btnEditorAiHistoryClose = $('#btnEditorAiHistoryClose');
+const editorAiHistoryPopover = $('#editorAiHistoryPopover');
+const editorAiHistoryList = $('#editorAiHistoryList');
+const btnCloseEditorAiPanel = $('#btnCloseEditorAiPanel');
+const editorAiSending = $('#editorAiSending');
+const editorAiScopeLabel = $('#editorAiScopeLabel');
+const editorAiRenameOverlay = $('#editorAiRenameOverlay');
+const editorAiRenameInput = $('#editorAiRenameInput');
 
 // Editor-internal state
 const EDITOR_TAB_STORAGE_KEY = 'editorTabMode';
+const AI_CONVERSATIONS_ENDPOINT = '/api/ai/conversations';
+const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';
+const DEFAULT_SEEDREAM_SIZE = '2K';
+const EDITOR_AI_MAX_MESSAGES = 20;
 let editorTab = localStorage.getItem(EDITOR_TAB_STORAGE_KEY) || 'write';
 if (!['write', 'preview', 'split'].includes(editorTab)) editorTab = 'write';
 let autoSaveTimer = null;
@@ -46,6 +68,11 @@ let lastSavedCategory = '';
 let isDirty = false;
 let isSaving = false;
 let currentSavePromise = null;
+let editorAiAllConversations = [];
+let editorAiActiveConversationId = '';
+let editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+let editorAiIsSending = false;
+let editorAiRenameConversationId = '';
 
 function setOutlinePanelOpen(open) {
   editorOutlineLayout.classList.toggle('outline-panel-open', open);
@@ -53,6 +80,705 @@ function setOutlinePanelOpen(open) {
   btnEditorOutlinePanel.setAttribute('aria-expanded', String(open));
   btnEditorOutlinePanel.title = open ? '收起标题栏' : '展开标题栏';
   requestAnimationFrame(() => contentEditor.layout());
+}
+
+function normalizeEditorAiConversations(items) {
+  return Array.isArray(items)
+    ? items
+      .filter(item => item && typeof item.id === 'string' && Array.isArray(item.messages))
+      .map(item => ({
+        ...item,
+        scope: item.scope === 'editor' ? 'editor' : 'global',
+        logKey: typeof item.logKey === 'string' ? item.logKey : '',
+      }))
+    : [];
+}
+
+function currentEditorLogKey() {
+  return state.editingId ? `log:${state.editingId}` : `draft:${editorAiDraftSessionId}`;
+}
+
+function createEditorAiConversation(logKey = currentEditorLogKey()) {
+  const label = editTitle.value.trim() || '当前日志';
+  return {
+    id: `editor-chat-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    title: label.slice(0, 40) || '日志对话',
+    scope: 'editor',
+    logKey,
+    messages: [],
+    updatedAt: Date.now(),
+  };
+}
+
+function activeEditorAiConversation() {
+  const logKey = currentEditorLogKey();
+  let chat = editorAiAllConversations.find(item => item.scope === 'editor' && item.logKey === logKey && item.id === editorAiActiveConversationId);
+  if (!chat) {
+    chat = editorAiAllConversations
+      .filter(item => item.scope === 'editor' && item.logKey === logKey)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  }
+  if (!chat) {
+    chat = createEditorAiConversation(logKey);
+    editorAiAllConversations.push(chat);
+  }
+  editorAiActiveConversationId = chat.id;
+  return chat;
+}
+
+async function loadEditorAiConversations() {
+  try {
+    const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT);
+    if (!res.ok) return;
+    const data = await res.json();
+    editorAiAllConversations = normalizeEditorAiConversations(data.conversations);
+  } catch (err) {
+    console.warn('Failed to load editor AI conversations:', err);
+  }
+}
+
+async function saveEditorAiConversations() {
+  try {
+    await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversations: editorAiAllConversations,
+        activeConversationId: editorAiActiveConversationId,
+      }),
+    });
+  } catch (err) {
+    console.warn('Failed to save editor AI conversations:', err);
+    showToast('AI 历史保存失败：' + err.message, 'error');
+  }
+}
+
+async function migrateEditorAiDraftConversation(savedId) {
+  const draftKey = `draft:${editorAiDraftSessionId}`;
+  const logKey = `log:${savedId}`;
+  let migrated = false;
+  editorAiAllConversations.forEach(item => {
+    if (item.scope === 'editor' && item.logKey === draftKey) {
+      item.logKey = logKey;
+      migrated = true;
+    }
+  });
+  if (migrated) await saveEditorAiConversations();
+  if (migrated) renderEditorAiHistory();
+}
+
+function conversationTitleFrom(text) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, 40) : '日志对话';
+}
+
+function editorImagePromptFrom(text) {
+  return String(text || '').trim().slice(0, 800);
+}
+
+function markdownForEditorGeneratedImage(imageGeneration) {
+  return imageGeneration?.markdown || (imageGeneration?.url ? `![image](${imageGeneration.url})` : '');
+}
+
+function selectedEditorImagePrompt(imageGeneration) {
+  if (!imageGeneration) return '';
+  if (imageGeneration.promptMode === 'original') {
+    return imageGeneration.originalPrompt || imageGeneration.prompt || '';
+  }
+  return imageGeneration.optimizedPrompt || imageGeneration.selectedPrompt || imageGeneration.prompt || imageGeneration.originalPrompt || '';
+}
+
+function editorImagePromptContext() {
+  const content = contentEditor.getValue();
+  const selection = contentEditor.getSelection();
+  const selectedText = content.slice(selection.start, selection.end).trim();
+  return [
+    editTitle.value.trim() ? `标题：${editTitle.value.trim()}` : '',
+    selectedText ? `选区：${selectedText.slice(0, 800)}` : '',
+    content.trim() ? `正文摘要：${content.trim().slice(0, 1200)}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+async function optimizeEditorImagePrompt(prompt) {
+  const res = await apiFetch('/api/ai/image/prompt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt,
+      context: editorImagePromptContext(),
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Prompt 优化失败');
+  return String(data.prompt || '').trim().slice(0, 1200);
+}
+
+async function copyEditorText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand('copy');
+  textarea.remove();
+  if (!ok) throw new Error('复制失败');
+}
+
+function formatEditorAiChatTime(timestamp) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function editorAiConversationsForCurrentLog() {
+  const logKey = currentEditorLogKey();
+  return editorAiAllConversations
+    .filter(item => item.scope === 'editor' && item.logKey === logKey)
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+function renderEditorAiHistory() {
+  if (!editorAiHistoryList) return;
+  const chats = editorAiConversationsForCurrentLog();
+  if (!chats.length) {
+    editorAiHistoryList.innerHTML = '<div class="editor-ai-history-empty">暂无历史对话</div>';
+    return;
+  }
+  editorAiHistoryList.innerHTML = chats.map(chat => `
+    <div class="editor-ai-history-item${chat.id === editorAiActiveConversationId ? ' active' : ''}" data-id="${escHtml(chat.id)}">
+      <button type="button" class="editor-ai-history-open" title="${escHtml(chat.title || '日志对话')}">
+        <span class="editor-ai-history-title">${escHtml(chat.title || '日志对话')}</span>
+        <span class="editor-ai-history-meta">${chat.messages.length} 条 · ${escHtml(formatEditorAiChatTime(chat.updatedAt))}</span>
+      </button>
+      <button type="button" class="editor-ai-history-action" data-action="rename" aria-label="重命名对话" title="重命名">✎</button>
+      <button type="button" class="editor-ai-history-action danger" data-action="delete" aria-label="删除对话" title="删除">×</button>
+    </div>
+  `).join('');
+}
+
+function setEditorAiHistoryOpen(open) {
+  if (!editorAiHistoryPopover || !btnEditorAiHistory) return;
+  editorAiHistoryPopover.hidden = !open;
+  btnEditorAiHistory.setAttribute('aria-expanded', String(open));
+  if (open) renderEditorAiHistory();
+}
+
+function openEditorAiSettings() {
+  const settingsButton = $('#btnAiApiKey');
+  if (settingsButton) {
+    settingsButton.click();
+    return;
+  }
+  openModal($('#aiApiKeyOverlay'), '#aiApiKeyInput');
+}
+
+async function switchEditorAiConversation(id) {
+  if (!editorAiConversationsForCurrentLog().some(chat => chat.id === id)) return;
+  editorAiActiveConversationId = id;
+  await saveEditorAiConversations();
+  setEditorAiHistoryOpen(false);
+  renderEditorAiMessages();
+  editorAiInput.focus();
+}
+
+function openEditorAiRenameModal(id) {
+  const chat = editorAiConversationsForCurrentLog().find(item => item.id === id);
+  if (!chat) return;
+  editorAiRenameConversationId = id;
+  editorAiRenameInput.value = chat.title || '日志对话';
+  openModal(editorAiRenameOverlay, '#editorAiRenameInput');
+}
+
+function closeEditorAiRenameModal() {
+  editorAiRenameConversationId = '';
+  closeModal(editorAiRenameOverlay);
+}
+
+async function saveEditorAiRename() {
+  const chat = editorAiConversationsForCurrentLog().find(item => item.id === editorAiRenameConversationId);
+  if (!chat) return;
+  const title = editorAiRenameInput.value.trim();
+  if (!title) return;
+  chat.title = title.slice(0, 40);
+  chat.updatedAt = Date.now();
+  await saveEditorAiConversations();
+  renderEditorAiHistory();
+  renderEditorAiMessages();
+  closeEditorAiRenameModal();
+}
+
+async function deleteEditorAiConversation(id) {
+  const chat = editorAiConversationsForCurrentLog().find(item => item.id === id);
+  if (!chat) return;
+  const confirmed = await confirmDialog({
+    title: '删除日志内对话',
+    message: `删除对话“${chat.title || '日志对话'}”？此操作只会删除当前日志的本地 AI 历史。`,
+    confirmText: '删除',
+    cancelText: '取消',
+    danger: true,
+  });
+  if (!confirmed) return;
+  editorAiAllConversations = editorAiAllConversations.filter(item => item.id !== id);
+  if (editorAiActiveConversationId === id) editorAiActiveConversationId = '';
+  activeEditorAiConversation();
+  await saveEditorAiConversations();
+  renderEditorAiHistory();
+  renderEditorAiMessages();
+}
+
+function getEditorAiSuggestion(message) {
+  const suggestion = message?.editorSuggestion && typeof message.editorSuggestion === 'object'
+    ? message.editorSuggestion
+    : {};
+  return {
+    reply: typeof suggestion.reply === 'string' ? suggestion.reply : message?.content || '',
+    suggestedTitle: typeof suggestion.suggestedTitle === 'string' ? suggestion.suggestedTitle : '',
+    suggestedContent: typeof suggestion.suggestedContent === 'string' ? suggestion.suggestedContent : '',
+    insertText: typeof suggestion.insertText === 'string' ? suggestion.insertText : '',
+  };
+}
+
+function renderEditorAiSuggestionPreview(message, index) {
+  const suggestion = getEditorAiSuggestion(message);
+  const rows = [];
+  if (suggestion.suggestedTitle) {
+    rows.push(`
+      <div class="editor-ai-suggestion-preview-row title">
+        <span class="editor-ai-suggestion-label">标题建议</span>
+        <div class="editor-ai-suggestion-title">${escHtml(suggestion.suggestedTitle)}</div>
+      </div>
+    `);
+  }
+  if (suggestion.insertText) {
+    rows.push(`
+      <div class="editor-ai-suggestion-preview-row">
+        <span class="editor-ai-suggestion-label">插入/替换建议</span>
+        <div class="editor-ai-suggestion-content markdown-body">${renderToHtmlUncached(suggestion.insertText)}</div>
+      </div>
+    `);
+  }
+  if (suggestion.suggestedContent) {
+    rows.push(`
+      <div class="editor-ai-suggestion-preview-row">
+        <span class="editor-ai-suggestion-label">全文建议</span>
+        <div class="editor-ai-suggestion-content markdown-body">${renderToHtmlUncached(suggestion.suggestedContent)}</div>
+      </div>
+    `);
+  }
+  if (!rows.length) return '';
+  const rawLength = suggestion.suggestedContent.length + suggestion.insertText.length + suggestion.suggestedTitle.length;
+  const expandable = rawLength > 420;
+  return `
+    <div class="editor-ai-suggestion-card${expandable ? ' collapsed' : ' expanded'}" data-suggestion-index="${index}">
+      <div class="editor-ai-suggestion-head">
+        <strong>可应用建议</strong>
+        ${expandable ? `<button type="button" class="editor-ai-suggestion-toggle" data-editor-ai-toggle-suggestion="${index}" aria-expanded="false">展开</button>` : ''}
+      </div>
+      <div class="editor-ai-suggestion-preview">
+        ${rows.join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderEditorAiActions(message, index) {
+  const suggestion = getEditorAiSuggestion(message);
+  const actions = [];
+  if (suggestion.suggestedTitle) actions.push(['title', '改标题']);
+  if (suggestion.insertText || suggestion.suggestedContent) actions.push(['insert', '插入到光标']);
+  if (suggestion.insertText || suggestion.suggestedContent) actions.push(['replace-selection', '替换选区']);
+  if (suggestion.suggestedContent) actions.push(['replace-body', '替换全文']);
+  if (!actions.length) return '';
+  return `
+    <div class="editor-ai-actions" aria-label="应用 AI 建议">
+      ${actions.map(([action, label]) => `<button type="button" class="editor-ai-action" data-editor-ai-apply="${action}" data-message-index="${index}">${label}</button>`).join('')}
+    </div>
+  `;
+}
+
+function renderEditorAiAssistantBubble(message, index) {
+  return `
+    <div class="editor-ai-bubble editor-ai-assistant-bubble">
+      <div class="editor-ai-answer markdown-body">
+        ${renderToHtmlUncached(message.content)}
+      </div>
+      ${message.imageGeneration ? renderEditorImageGenerationCard(message.imageGeneration, index) : ''}
+      ${renderEditorAiSuggestionPreview(message, index)}
+      ${renderEditorAiActions(message, index)}
+    </div>
+  `;
+}
+
+function renderEditorImageGenerationCard(imageGeneration, index) {
+  const status = imageGeneration.status || 'pending';
+  const markdown = markdownForEditorGeneratedImage(imageGeneration);
+  const originalPrompt = imageGeneration.originalPrompt || imageGeneration.prompt || '';
+  const optimizedPrompt = imageGeneration.optimizedPrompt || '';
+  const promptMode = imageGeneration.promptMode === 'original' || !optimizedPrompt ? 'original' : 'optimized';
+  const currentPrompt = selectedEditorImagePrompt(imageGeneration);
+  const promptOptions = status === 'pending' || status === 'error' ? `
+    <div class="ai-image-prompt-options" role="group" aria-label="选择生图 prompt">
+      <button type="button" class="ai-image-prompt-choice${promptMode === 'original' ? ' active' : ''}" data-action="choose-editor-image-prompt" data-prompt-mode="original">原始 prompt</button>
+      <button type="button" class="ai-image-prompt-choice${promptMode === 'optimized' ? ' active' : ''}" data-action="choose-editor-image-prompt" data-prompt-mode="optimized"${optimizedPrompt ? '' : ' disabled'}>优化 prompt</button>
+    </div>
+    <div class="ai-image-prompt-list">
+      <div class="ai-image-prompt-block${promptMode === 'original' ? ' active' : ''}">
+        <span class="ai-image-prompt-label">原始</span>
+        <div class="ai-image-prompt-text">${escHtml(originalPrompt)}</div>
+      </div>
+      ${optimizedPrompt ? `
+        <div class="ai-image-prompt-block${promptMode === 'optimized' ? ' active' : ''}">
+          <span class="ai-image-prompt-label">AI 优化</span>
+          <div class="ai-image-prompt-text">${escHtml(optimizedPrompt)}</div>
+        </div>
+      ` : ''}
+    </div>
+  ` : `<div class="ai-image-prompt">${escHtml(currentPrompt)}</div>`;
+  return `
+    <div class="ai-image-card editor-ai-image-card ${status}" data-image-generation-index="${index}">
+      <div class="ai-image-card-head">
+        <strong>生图确认</strong>
+        <span>${escHtml(imageGeneration.size || DEFAULT_SEEDREAM_SIZE)} · ${escHtml(imageGeneration.model || DEFAULT_SEEDREAM_MODEL)}</span>
+      </div>
+      ${status === 'optimizing' ? `
+        <div class="ai-image-optimizing">
+          <span>正在优化 prompt</span>
+          <span class="ai-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <div class="ai-image-prompt">${escHtml(originalPrompt)}</div>
+      ` : promptOptions}
+      ${status === 'done' && imageGeneration.url ? `
+        <img class="ai-image-preview" src="${escHtml(imageGeneration.url)}" alt="AI 生成图片">
+        <code class="ai-image-markdown">${escHtml(markdown)}</code>
+      ` : ''}
+      ${status === 'error' ? `<div class="ai-image-error">${escHtml(imageGeneration.error || '生图失败')}</div>` : ''}
+      <div class="ai-image-actions">
+        ${status === 'pending' ? `<button type="button" class="btn-primary btn-sm" data-action="generate-editor-image">生成图片</button><button type="button" class="btn-secondary btn-sm" data-action="cancel-editor-image">取消</button>` : ''}
+        ${status === 'done' ? `<button type="button" class="btn-secondary btn-sm" data-action="copy-editor-image-markdown">复制 Markdown</button><button type="button" class="btn-primary btn-sm" data-action="insert-editor-image-markdown">插入到光标</button>` : ''}
+        ${status === 'error' ? `<button type="button" class="btn-secondary btn-sm" data-action="generate-editor-image">重试</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+async function chooseEditorImagePrompt(index, mode) {
+  const chat = activeEditorAiConversation();
+  const imageGeneration = chat.messages[index]?.imageGeneration;
+  if (!imageGeneration || !['original', 'optimized'].includes(mode)) return;
+  if (mode === 'optimized' && !imageGeneration.optimizedPrompt) return;
+  imageGeneration.promptMode = mode;
+  imageGeneration.selectedPrompt = selectedEditorImagePrompt(imageGeneration);
+  imageGeneration.prompt = imageGeneration.selectedPrompt;
+  chat.updatedAt = Date.now();
+  await saveEditorAiConversations();
+  renderEditorAiMessages();
+}
+
+async function generateEditorImageForMessage(index) {
+  const chat = activeEditorAiConversation();
+  const message = chat.messages[index];
+  const imageGeneration = message?.imageGeneration;
+  const prompt = selectedEditorImagePrompt(imageGeneration);
+  if (!prompt || editorAiIsSending) return;
+  imageGeneration.status = 'generating';
+  imageGeneration.selectedPrompt = prompt;
+  imageGeneration.prompt = prompt;
+  message.content = '正在生成图片...';
+  chat.updatedAt = Date.now();
+  await saveEditorAiConversations();
+  renderEditorAiMessages();
+  try {
+    const res = await apiFetch('/api/ai/image/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        model: imageGeneration.model || DEFAULT_SEEDREAM_MODEL,
+        size: imageGeneration.size || DEFAULT_SEEDREAM_SIZE,
+        watermark: imageGeneration.watermark !== false,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '生图请求失败');
+    imageGeneration.status = 'done';
+    imageGeneration.url = data.url;
+    imageGeneration.filename = data.filename;
+    imageGeneration.model = data.model;
+    imageGeneration.size = data.size;
+    imageGeneration.markdown = `![image](${data.url})`;
+    message.content = `图片已生成：\n\n![image](${data.url})`;
+    chat.updatedAt = Date.now();
+    await saveEditorAiConversations();
+    renderEditorAiMessages();
+    renderEditorAiHistory();
+  } catch (err) {
+    imageGeneration.status = 'error';
+    imageGeneration.error = err.message;
+    message.content = `生图失败：${err.message}`;
+    chat.updatedAt = Date.now();
+    await saveEditorAiConversations();
+    renderEditorAiMessages();
+    renderEditorAiHistory();
+    showToast('生图失败：' + err.message, 'error');
+  }
+}
+
+async function cancelEditorImageGeneration(index) {
+  const chat = activeEditorAiConversation();
+  const message = chat.messages[index];
+  if (!message?.imageGeneration) return;
+  message.imageGeneration.status = 'cancelled';
+  message.content = '已取消生图。';
+  chat.updatedAt = Date.now();
+  await saveEditorAiConversations();
+  renderEditorAiMessages();
+}
+
+async function copyEditorImageMarkdown(index) {
+  const markdown = markdownForEditorGeneratedImage(activeEditorAiConversation().messages[index]?.imageGeneration);
+  if (!markdown) return;
+  try {
+    await copyEditorText(markdown);
+    showToast('图片 Markdown 已复制', 'success');
+  } catch (err) {
+    showToast('复制失败: ' + err.message, 'error');
+  }
+}
+
+function insertEditorGeneratedImage(index) {
+  const markdown = markdownForEditorGeneratedImage(activeEditorAiConversation().messages[index]?.imageGeneration);
+  if (!markdown) return;
+  contentEditor.insertAtSelection(markdown);
+  contentEditor.focus();
+  autoSave();
+  showToast('图片已插入日志', 'success');
+}
+
+function renderEditorAiMessages() {
+  if (!editorAiMessages) return;
+  const chat = activeEditorAiConversation();
+  editorAiScopeLabel.textContent = state.editingId ? `日志 #${state.editingId}` : '未保存草稿';
+  if (!chat.messages.length) {
+    editorAiMessages.innerHTML = '<div class="editor-ai-empty">AI 会读取当前标题、正文和选区。它只给建议，点击应用后才会写入日志。</div>';
+    return;
+  }
+  editorAiMessages.innerHTML = chat.messages.map((message, index) => `
+    <div class="editor-ai-message ${message.role}" data-message-index="${index}">
+      <div class="editor-ai-role">${message.role === 'user' ? '你' : 'AI'}</div>
+      ${message.role === 'assistant' ? renderEditorAiAssistantBubble(message, index) : `<div class="editor-ai-bubble">${escHtml(message.content)}</div>`}
+      ${message.role === 'assistant' && Array.isArray(message.sources) && message.sources.length ? `
+        <div class="editor-ai-sources" aria-label="联网搜索来源">
+          ${message.sources.map((source, sourceIndex) => `<a href="${escHtml(source.url)}" target="_blank" rel="noopener noreferrer">${sourceIndex + 1}. ${escHtml(source.title || source.url)}</a>`).join('')}
+        </div>
+      ` : ''}
+    </div>
+  `).join('') + (editorAiIsSending ? `
+    <div class="editor-ai-message assistant editor-ai-thinking">
+      <div class="editor-ai-role">AI</div>
+      <div class="editor-ai-bubble">正在思考<span class="ai-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+    </div>
+  ` : '');
+  editorAiMessages.scrollTop = editorAiMessages.scrollHeight;
+}
+
+function updateEditorAiSendState() {
+  if (!btnEditorAiSend || !editorAiInput) return;
+  const disabled = editorAiIsSending || !editorAiInput.value.trim();
+  btnEditorAiSend.disabled = disabled;
+  if (btnEditorAiImage) btnEditorAiImage.disabled = disabled;
+  editorAiSending.style.display = editorAiIsSending ? '' : 'none';
+}
+
+async function setEditorAiPanelOpen(open) {
+  editorOutlineLayout.classList.toggle('editor-ai-open', open);
+  editorAiPanel.setAttribute('aria-hidden', String(!open));
+  btnEditorAiPanel.setAttribute('aria-expanded', String(open));
+  btnEditorAiPanel.title = open ? '收起编辑器 AI' : '打开编辑器 AI';
+  if (open && !editorAiAllConversations.length) await loadEditorAiConversations();
+  if (open) {
+    renderEditorAiMessages();
+    renderEditorAiHistory();
+    updateEditorAiSendState();
+    requestAnimationFrame(() => {
+      contentEditor.layout();
+      editorAiInput.focus();
+    });
+  } else {
+    setEditorAiHistoryOpen(false);
+    requestAnimationFrame(() => contentEditor.layout());
+  }
+}
+
+function getEditorAiContext() {
+  const content = contentEditor.getValue();
+  const selection = contentEditor.getSelection();
+  return {
+    logId: state.editingId || '',
+    title: editTitle.value,
+    content,
+    selection: {
+      start: selection.start,
+      end: selection.end,
+      text: content.slice(selection.start, selection.end),
+    },
+  };
+}
+
+async function sendEditorAiMessage({ forceImage = false } = {}) {
+  if (editorAiIsSending || !editorAiInput) return;
+  const content = editorAiInput.value.trim();
+  if (!content) return;
+  const chat = activeEditorAiConversation();
+  chat.messages.push({ role: 'user', content });
+  if (!chat.title || chat.title === '日志对话' || chat.title === '当前日志') chat.title = conversationTitleFrom(content);
+  if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
+  chat.updatedAt = Date.now();
+  editorAiInput.value = '';
+  if (forceImage) {
+    const prompt = editorImagePromptFrom(content);
+    const assistantMessage = {
+      role: 'assistant',
+      content: '正在优化生图 prompt，请稍等...',
+      imageGeneration: {
+        status: 'optimizing',
+        originalPrompt: prompt,
+        selectedPrompt: prompt,
+        promptMode: 'original',
+        prompt,
+        model: DEFAULT_SEEDREAM_MODEL,
+        size: DEFAULT_SEEDREAM_SIZE,
+        watermark: true,
+      },
+    };
+    chat.messages.push(assistantMessage);
+    chat.updatedAt = Date.now();
+    await saveEditorAiConversations();
+    renderEditorAiMessages();
+    renderEditorAiHistory();
+    updateEditorAiSendState();
+    try {
+      const optimizedPrompt = await optimizeEditorImagePrompt(prompt);
+      assistantMessage.imageGeneration.optimizedPrompt = optimizedPrompt;
+      assistantMessage.imageGeneration.promptMode = optimizedPrompt ? 'optimized' : 'original';
+      assistantMessage.imageGeneration.selectedPrompt = selectedEditorImagePrompt(assistantMessage.imageGeneration);
+      assistantMessage.imageGeneration.prompt = assistantMessage.imageGeneration.selectedPrompt;
+      assistantMessage.imageGeneration.status = 'pending';
+      assistantMessage.content = optimizedPrompt
+        ? '我已经优化了生图 prompt，你可以选择原始提问或优化版本后生成。'
+        : '我保留了原始 prompt，请确认后生成图片。';
+    } catch (err) {
+      assistantMessage.imageGeneration.status = 'pending';
+      assistantMessage.imageGeneration.promptMode = 'original';
+      assistantMessage.imageGeneration.selectedPrompt = prompt;
+      assistantMessage.imageGeneration.prompt = prompt;
+      assistantMessage.content = `Prompt 优化失败，已保留原始提问，可直接生成图片。\n\n${err.message}`;
+    }
+    chat.updatedAt = Date.now();
+    await saveEditorAiConversations();
+    renderEditorAiMessages();
+    renderEditorAiHistory();
+    editorAiInput.focus();
+    return;
+  }
+  await saveEditorAiConversations();
+  renderEditorAiMessages();
+  renderEditorAiHistory();
+  updateEditorAiSendState();
+
+  editorAiIsSending = true;
+  updateEditorAiSendState();
+  renderEditorAiMessages();
+  try {
+    const res = await apiFetch('/api/ai/editor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: chat.messages,
+        editorContext: getEditorAiContext(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'AI 请求失败');
+    if (!data.message?.content) throw new Error('AI 没有返回内容');
+    chat.messages.push({
+      role: 'assistant',
+      content: data.message.content,
+      editorSuggestion: data.editorSuggestion || {},
+      sources: Array.isArray(data.sources) ? data.sources : [],
+    });
+    if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
+    chat.updatedAt = Date.now();
+    await saveEditorAiConversations();
+    renderEditorAiHistory();
+  } catch (err) {
+    showToast('编辑器 AI 请求失败：' + err.message, 'error');
+    chat.messages.push({ role: 'assistant', content: `请求失败：${err.message}` });
+    chat.updatedAt = Date.now();
+    await saveEditorAiConversations();
+    renderEditorAiHistory();
+  } finally {
+    editorAiIsSending = false;
+    renderEditorAiMessages();
+    updateEditorAiSendState();
+    editorAiInput.focus();
+  }
+}
+
+async function newEditorAiConversation() {
+  const chat = createEditorAiConversation();
+  editorAiAllConversations.push(chat);
+  editorAiActiveConversationId = chat.id;
+  await saveEditorAiConversations();
+  renderEditorAiMessages();
+  renderEditorAiHistory();
+  editorAiInput.focus();
+}
+
+function applyEditorAiSuggestion(index, action) {
+  const chat = activeEditorAiConversation();
+  const message = chat.messages[index];
+  const suggestion = getEditorAiSuggestion(message);
+  const content = contentEditor.getValue();
+  const selection = contentEditor.getSelection();
+  const insertText = suggestion.insertText || suggestion.suggestedContent || suggestion.reply || '';
+  if (action === 'title' && suggestion.suggestedTitle) {
+    editTitle.value = suggestion.suggestedTitle;
+    autoSave();
+    showToast('已应用标题建议', 'success');
+    return;
+  }
+  if (action === 'insert' && insertText) {
+    contentEditor.insertAtSelection(insertText);
+    contentEditor.focus();
+    autoSave();
+    showToast('已插入 AI 建议', 'success');
+    return;
+  }
+  if (action === 'replace-selection' && insertText) {
+    if (selection.start === selection.end) {
+      showToast('请先选择要替换的正文', 'error');
+      return;
+    }
+    const nextValue = content.slice(0, selection.start) + insertText + content.slice(selection.end);
+    const cursor = selection.start + insertText.length;
+    contentEditor.applyValue(nextValue, cursor, cursor);
+    contentEditor.focus();
+    autoSave();
+    showToast('已替换选区', 'success');
+    return;
+  }
+  if (action === 'replace-body' && suggestion.suggestedContent) {
+    contentEditor.applyValue(suggestion.suggestedContent, suggestion.suggestedContent.length, suggestion.suggestedContent.length);
+    contentEditor.focus();
+    autoSave();
+    showToast('已替换正文', 'success');
+  }
 }
 
 function extractMarkdownHeadings(markdown) {
@@ -119,6 +845,7 @@ export function showListView() {
   editorView.style.display = 'none';
   categoryView.style.display = 'none';
   if (aiChatView) aiChatView.style.display = 'none';
+  if (todoView) todoView.style.display = 'none';
   state.editingId = null;
   clearAutoSave();
   contentEditor.setVisible(false);
@@ -133,6 +860,7 @@ function showEditorView() {
   listView.style.display = 'none';
   categoryView.style.display = 'none';
   if (aiChatView) aiChatView.style.display = 'none';
+  if (todoView) todoView.style.display = 'none';
   editorView.style.display = 'flex';
 }
 
@@ -231,6 +959,8 @@ export async function openEditor(id) {
     document.title = '工作日志';
 
     switchTab(editorTab);
+    editorAiActiveConversationId = '';
+    if (editorOutlineLayout.classList.contains('editor-ai-open')) renderEditorAiMessages();
     if (editorTab !== 'preview') contentEditor.focus();
     return true;
   } catch (err) {
@@ -243,6 +973,8 @@ export async function openEditor(id) {
 export function newLog() {
   const defaultDate = state.selectedDate || businessDateString();
   const defaultCategory = getNewLogCategory();
+  editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  editorAiActiveConversationId = '';
   state.listScrollY = window.scrollY;
   state.editingId = null;
   lastSavedContent = '';
@@ -263,6 +995,7 @@ export function newLog() {
   document.title = '工作日志';
   showEditorView();
   switchTab(editorTab);
+  if (editorOutlineLayout.classList.contains('editor-ai-open')) renderEditorAiMessages();
   if (editorTab !== 'preview') contentEditor.focus();
 }
 
@@ -329,6 +1062,77 @@ btnCloseOutlinePanel.addEventListener('click', () => {
   btnEditorOutlinePanel.focus();
 });
 
+btnEditorAiPanel.addEventListener('click', () => {
+  const open = btnEditorAiPanel.getAttribute('aria-expanded') !== 'true';
+  setEditorAiPanelOpen(open);
+});
+
+btnCloseEditorAiPanel.addEventListener('click', () => {
+  setEditorAiPanelOpen(false);
+  btnEditorAiPanel.focus();
+});
+
+btnEditorAiNew.addEventListener('click', newEditorAiConversation);
+btnEditorAiHistory.addEventListener('click', () => {
+  setEditorAiHistoryOpen(btnEditorAiHistory.getAttribute('aria-expanded') !== 'true');
+});
+btnEditorAiSettings.addEventListener('click', openEditorAiSettings);
+btnEditorAiHistoryClose.addEventListener('click', () => setEditorAiHistoryOpen(false));
+btnEditorAiSend.addEventListener('click', sendEditorAiMessage);
+btnEditorAiImage?.addEventListener('click', () => sendEditorAiMessage({ forceImage: true }));
+editorAiInput.addEventListener('input', updateEditorAiSendState);
+editorAiInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    sendEditorAiMessage();
+  }
+});
+editorAiMessages.addEventListener('click', (event) => {
+  const imageAction = event.target.closest('.ai-image-card [data-action]');
+  if (imageAction) {
+    const item = imageAction.closest('.editor-ai-message');
+    const index = Number(item?.dataset.messageIndex);
+    if (!Number.isInteger(index)) return;
+    const action = imageAction.dataset.action;
+    if (action === 'choose-editor-image-prompt') return chooseEditorImagePrompt(index, imageAction.dataset.promptMode);
+    if (action === 'generate-editor-image') return generateEditorImageForMessage(index);
+    if (action === 'cancel-editor-image') return cancelEditorImageGeneration(index);
+    if (action === 'copy-editor-image-markdown') return copyEditorImageMarkdown(index);
+    if (action === 'insert-editor-image-markdown') return insertEditorGeneratedImage(index);
+  }
+  const toggleButton = event.target.closest('[data-editor-ai-toggle-suggestion]');
+  if (toggleButton) {
+    const card = toggleButton.closest('.editor-ai-suggestion-card');
+    const expanded = card?.classList.toggle('expanded');
+    card?.classList.toggle('collapsed', !expanded);
+    toggleButton.setAttribute('aria-expanded', String(Boolean(expanded)));
+    toggleButton.textContent = expanded ? '收起' : '展开';
+    return;
+  }
+  const button = event.target.closest('[data-editor-ai-apply]');
+  if (!button) return;
+  const index = Number(button.dataset.messageIndex);
+  if (!Number.isInteger(index)) return;
+  applyEditorAiSuggestion(index, button.dataset.editorAiApply);
+});
+editorAiHistoryList.addEventListener('click', (event) => {
+  const item = event.target.closest('.editor-ai-history-item');
+  if (!item) return;
+  const action = event.target.closest('[data-action]')?.dataset.action;
+  if (action === 'rename') return openEditorAiRenameModal(item.dataset.id);
+  if (action === 'delete') return deleteEditorAiConversation(item.dataset.id);
+  switchEditorAiConversation(item.dataset.id);
+});
+editorAiRenameOverlay.addEventListener('click', (event) => {
+  if (event.target === editorAiRenameOverlay) closeEditorAiRenameModal();
+});
+$('#editorAiRenameClose').addEventListener('click', closeEditorAiRenameModal);
+$('#btnEditorAiRenameCancel').addEventListener('click', closeEditorAiRenameModal);
+$('#btnEditorAiRenameSave').addEventListener('click', saveEditorAiRename);
+editorAiRenameInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') saveEditorAiRename();
+});
+
 editorOutlineList.addEventListener('click', (e) => {
   const item = e.target.closest('.editor-outline-item');
   if (!item) return;
@@ -389,7 +1193,8 @@ export async function doSave(silent) {
       if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
 
       const saved = await res.json();
-      if (!state.editingId) {
+      const wasNewLog = !state.editingId;
+      if (wasNewLog) {
         state.editingId = saved.id;
       }
       lastSavedContent = content;
@@ -411,6 +1216,7 @@ export async function doSave(silent) {
         saveStatus.textContent = '已保存';
         setTimeout(() => { if (saveStatus.textContent === '已保存') { saveStatus.textContent = ''; } }, SAVE_STATUS_DURATION);
       }
+      if (wasNewLog) await migrateEditorAiDraftConversation(saved.id);
       return true;
     } catch (err) {
       saveStatus.textContent = '保存失败';

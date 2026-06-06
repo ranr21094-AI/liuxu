@@ -31,7 +31,7 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel } = {}) {
+function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   if (diaryPassword) {
@@ -43,6 +43,11 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   process.env.DEEPSEEK_API_KEY = deepseekApiKey || '';
   process.env.DEEPSEEK_BASE_URL = deepseekBaseUrl || 'https://api.deepseek.com';
   process.env.DEEPSEEK_DEFAULT_MODEL = deepseekDefaultModel || 'deepseek-v4-flash';
+  process.env.TAVILY_API_KEY = tavilyApiKey || '';
+  process.env.TAVILY_BASE_URL = tavilyBaseUrl || 'https://api.tavily.com';
+  process.env.SEEDREAM_API_KEY = seedreamApiKey || '';
+  process.env.SEEDREAM_BASE_URL = seedreamBaseUrl || 'https://ark.cn-beijing.volces.com/api/v3';
+  process.env.SEEDREAM_DEFAULT_MODEL = seedreamDefaultModel || 'doubao-seedream-5-0-260128';
   clearAppModules();
 
   const db = require(path.join(ROOT, 'database.js'));
@@ -58,6 +63,11 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.DEEPSEEK_BASE_URL;
     delete process.env.DEEPSEEK_DEFAULT_MODEL;
+    delete process.env.TAVILY_API_KEY;
+    delete process.env.TAVILY_BASE_URL;
+    delete process.env.SEEDREAM_API_KEY;
+    delete process.env.SEEDREAM_BASE_URL;
+    delete process.env.SEEDREAM_DEFAULT_MODEL;
     clearAppModules();
   });
 
@@ -392,6 +402,37 @@ test('AI chat requires DeepSeek configuration and validates request options', as
   });
   assert.equal(badThinking.status, 400);
 
+  const badStream = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      stream: 'yes',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(badStream.status, 400);
+
+  const badSearchDepth = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      webSearchDepth: 'deep',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(badSearchDepth.status, 400);
+
+  const missingTavilyKey = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      webSearchEnabled: true,
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(missingTavilyKey.status, 503);
+
   const badRole = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -400,6 +441,80 @@ test('AI chat requires DeepSeek configuration and validates request options', as
     }),
   });
   assert.equal(badRole.status, 400);
+});
+
+test('AI settings persist to local data storage and validate options', async (t) => {
+  const { baseUrl, dataDir } = loadFreshApp(t);
+
+  const defaults = await fetch(`${baseUrl}/api/ai/settings`);
+  assert.equal(defaults.status, 200);
+  assert.deepEqual(await defaults.json(), {
+    apiKey: '',
+    model: 'deepseek-v4-flash',
+    reasoningEffort: 'high',
+    stream: false,
+    tavilyApiKey: '',
+    webSearchEnabled: false,
+    webSearchDepth: 'basic',
+    seedreamApiKey: '',
+    seedreamModel: 'doubao-seedream-5-0-260128',
+    seedreamSize: '2K',
+    seedreamWatermark: true,
+  });
+
+  const saved = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'sk-local-settings',
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+      stream: true,
+      tavilyApiKey: 'tvly-local-settings',
+      webSearchEnabled: true,
+      webSearchDepth: 'advanced',
+      seedreamApiKey: 'seedream-local-settings',
+      seedreamModel: 'doubao-seedream-4-5-251128',
+      seedreamSize: '2848x1600',
+      seedreamWatermark: false,
+    }),
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), {
+    apiKey: 'sk-local-settings',
+    model: 'deepseek-v4-pro',
+    reasoningEffort: 'max',
+    stream: true,
+    tavilyApiKey: 'tvly-local-settings',
+    webSearchEnabled: true,
+    webSearchDepth: 'advanced',
+    seedreamApiKey: 'seedream-local-settings',
+    seedreamModel: 'doubao-seedream-4-5-251128',
+    seedreamSize: '2848x1600',
+    seedreamWatermark: false,
+  });
+  assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
+  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings/);
+  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /tvly-local-settings/);
+  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /seedream-local-settings/);
+
+  for (const body of [
+    { model: 'bad-model' },
+    { reasoningEffort: 'low' },
+    { stream: 'true' },
+    { webSearchEnabled: 'true' },
+    { webSearchDepth: 'deep' },
+    { seedreamModel: 'bad-seedream' },
+    { seedreamSize: 'bad-size' },
+    { seedreamWatermark: 'true' },
+  ]) {
+    const invalid = await fetch(`${baseUrl}/api/ai/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal(invalid.status, 400);
+  }
 });
 
 test('AI chat sends only explicit conversation messages to DeepSeek', async (t) => {
@@ -450,7 +565,7 @@ test('AI chat sends only explicit conversation messages to DeepSeek', async (t) 
   });
 
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { message: { role: 'assistant', content: 'AI reply' } });
+  assert.deepEqual(await res.json(), { message: { role: 'assistant', content: 'AI reply' }, sources: [] });
   assert.equal(capturedUrl, 'https://deepseek.test/chat/completions');
   assert.equal(capturedHeaders.Authorization, 'Bearer user-provided-key');
   assert.deepEqual(capturedPayload, {
@@ -464,6 +579,461 @@ test('AI chat sends only explicit conversation messages to DeepSeek', async (t) 
     reasoning_effort: 'max',
   });
   assert.doesNotMatch(JSON.stringify(capturedPayload), /private diary content|private title/);
+});
+
+test('AI chat can augment DeepSeek with Tavily search using only user input', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+    tavilyBaseUrl: 'https://tavily.test',
+  });
+  db.create({
+    title: 'private title',
+    content: 'private diary content',
+    category: DIARY_CATEGORY,
+    log_date: '2026-05-16',
+  });
+
+  let tavilyPayload = null;
+  let tavilyHeaders = {};
+  let deepSeekPayload = null;
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    if (target === 'https://tavily.test/search') {
+      tavilyHeaders = options.headers || {};
+      tavilyPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        answer: 'Search says hello.',
+        results: [{
+          title: 'Trusted result',
+          url: 'https://example.com/trusted',
+          content: 'Fresh public snippet',
+          score: 0.9,
+          raw_content: 'should not be forwarded',
+        }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    deepSeekPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'AI searched reply' } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      tavilyApiKey: 'tvly-user-provided-key',
+      webSearchEnabled: true,
+      webSearchDepth: 'advanced',
+      messages: [
+        { role: 'user', content: 'old question' },
+        { role: 'assistant', content: 'old answer' },
+        { role: 'user', content: 'latest public fact?' },
+      ],
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    message: { role: 'assistant', content: 'AI searched reply' },
+    sources: [{ title: 'Trusted result', url: 'https://example.com/trusted', content: 'Fresh public snippet', score: 0.9 }],
+  });
+  assert.equal(tavilyHeaders.Authorization, 'Bearer tvly-user-provided-key');
+  assert.deepEqual(tavilyPayload, {
+    query: 'latest public fact?',
+    search_depth: 'advanced',
+    topic: 'news',
+    max_results: 5,
+    include_answer: true,
+    include_raw_content: false,
+    include_images: false,
+  });
+  assert.equal(deepSeekPayload.messages[0].role, 'system');
+  assert.match(deepSeekPayload.messages[0].content, /Search says hello\./);
+  assert.match(deepSeekPayload.messages[0].content, /https:\/\/example\.com\/trusted/);
+  assert.doesNotMatch(JSON.stringify(deepSeekPayload), /private diary content|private title|should not be forwarded|tvly-user-provided-key/);
+});
+
+test('AI editor endpoint uses provided editor context without reading log storage', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  db.create({
+    title: 'private stored title',
+    content: 'private stored diary content',
+    category: DIARY_CATEGORY,
+    log_date: '2026-05-16',
+  });
+
+  let capturedPayload = null;
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    capturedPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            reply: '可以改得更清楚。',
+            suggestedTitle: '清晰标题',
+            insertText: '- 新增行动项',
+            suggestedContent: '# 完整正文',
+          }),
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/editor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      model: 'deepseek-v4-flash',
+      reasoningEffort: 'high',
+      messages: [{ role: 'user', content: '帮我润色当前日志' }],
+      editorContext: {
+        logId: 12,
+        title: 'front title',
+        content: 'front markdown body',
+        selection: { start: 0, end: 5 },
+      },
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), {
+    message: { role: 'assistant', content: '可以改得更清楚。' },
+    editorSuggestion: {
+      reply: '可以改得更清楚。',
+      suggestedTitle: '清晰标题',
+      suggestedContent: '# 完整正文',
+      insertText: '- 新增行动项',
+    },
+    sources: [],
+  });
+  assert.equal(capturedPayload.model, 'deepseek-v4-flash');
+  assert.equal(capturedPayload.stream, false);
+  assert.deepEqual(capturedPayload.thinking, { type: 'enabled' });
+  assert.equal(capturedPayload.reasoning_effort, 'high');
+  assert.equal(capturedPayload.messages[0].role, 'system');
+  assert.match(capturedPayload.messages[0].content, /front title/);
+  assert.match(capturedPayload.messages[0].content, /front markdown body/);
+  assert.match(capturedPayload.messages[0].content, /selectionText:\nfront/);
+  assert.deepEqual(capturedPayload.messages.slice(1), [{ role: 'user', content: '帮我润色当前日志' }]);
+  assert.doesNotMatch(JSON.stringify(capturedPayload), /private stored diary content|private stored title|user-provided-key/);
+});
+
+test('AI editor validates input and keeps Tavily search limited to the user message', async (t) => {
+  const originalFetch = global.fetch;
+  const { baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+    tavilyBaseUrl: 'https://tavily.test',
+  });
+
+  const invalidContext = await fetch(`${baseUrl}/api/ai/editor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      messages: [{ role: 'user', content: 'hello' }],
+      editorContext: { title: 'missing content' },
+    }),
+  });
+  assert.equal(invalidContext.status, 400);
+
+  const invalidModel = await fetch(`${baseUrl}/api/ai/editor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      model: 'bad-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      editorContext: { title: '', content: '', selection: { start: 0, end: 0 } },
+    }),
+  });
+  assert.equal(invalidModel.status, 400);
+
+  let tavilyPayload = null;
+  let deepSeekPayload = null;
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    if (target === 'https://tavily.test/search') {
+      tavilyPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        answer: 'Search answer',
+        results: [{ title: 'Search source', url: 'https://example.com/source', content: 'public only' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    deepSeekPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: '{"reply":"searched","insertText":"ok"}' } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/editor`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      tavilyApiKey: 'tvly-user-provided-key',
+      webSearchEnabled: true,
+      webSearchDepth: 'basic',
+      messages: [{ role: 'user', content: 'search public facts' }],
+      editorContext: {
+        title: 'log title',
+        content: 'sensitive editor markdown should not be searched',
+        selection: { start: 0, end: 0 },
+      },
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.deepEqual(tavilyPayload, {
+    query: 'search public facts',
+    search_depth: 'basic',
+    topic: 'general',
+    max_results: 5,
+    include_answer: true,
+    include_raw_content: false,
+    include_images: false,
+  });
+  assert.match(deepSeekPayload.messages[0].content, /sensitive editor markdown/);
+  assert.match(deepSeekPayload.messages[0].content, /https:\/\/example\.com\/source/);
+  assert.doesNotMatch(JSON.stringify(tavilyPayload), /sensitive editor markdown|log title|tvly-user-provided-key/);
+});
+
+test('AI image generation validates options and stores Seedream output locally', async (t) => {
+  const originalFetch = global.fetch;
+  const missing = loadFreshApp(t);
+  const missingKey = await fetch(`${missing.baseUrl}/api/ai/image/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: '生成一张项目封面' }),
+  });
+  assert.equal(missingKey.status, 503);
+
+  const { baseUrl, dataDir } = loadFreshApp(t, {
+    seedreamApiKey: 'seedream-env-key',
+    seedreamBaseUrl: 'https://seedream.test/api/v3',
+  });
+
+  for (const body of [
+    { prompt: '' },
+    { prompt: 'hello', model: 'bad-model' },
+    { prompt: 'hello', size: 'tiny' },
+    { prompt: 'hello', watermark: 'true' },
+  ]) {
+    const invalid = await fetch(`${baseUrl}/api/ai/image/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal(invalid.status, 400);
+  }
+
+  let seedreamPayload = null;
+  let seedreamHeaders = {};
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    if (target === 'https://seedream.test/api/v3/images/generations') {
+      seedreamHeaders = options.headers || {};
+      seedreamPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        data: [{ url: 'https://seedream.test/generated/output.png' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (target === 'https://seedream.test/generated/output.png') {
+      return new Response(new Uint8Array([137, 80, 78, 71, 1, 2, 3]), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      });
+    }
+    throw new Error(`Unexpected fetch: ${target}`);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/image/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: '生成一张蓝色工作日志封面',
+      image: 'https://example.com/reference.png',
+      model: 'doubao-seedream-4-5-251128',
+      size: '2848x1600',
+      watermark: false,
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.match(body.url, /^\/uploads\/.+\.png$/);
+  assert.match(body.filename, /\.png$/);
+  assert.equal(body.prompt, '生成一张蓝色工作日志封面');
+  assert.equal(body.model, 'doubao-seedream-4-5-251128');
+  assert.equal(body.size, '2848x1600');
+  assert.equal(seedreamHeaders.Authorization, 'Bearer seedream-env-key');
+  assert.deepEqual(seedreamPayload, {
+    model: 'doubao-seedream-4-5-251128',
+    prompt: '生成一张蓝色工作日志封面',
+    size: '2848x1600',
+    response_format: 'url',
+    extra_body: {
+      watermark: false,
+      image: 'https://example.com/reference.png',
+    },
+  });
+  assert.equal(fs.existsSync(path.join(dataDir, 'uploads', body.filename)), true);
+  assert.doesNotMatch(JSON.stringify(seedreamPayload), /private diary content|seedream-env-key/);
+});
+
+test('AI image prompt optimization uses only user-provided prompt and context', async (t) => {
+  const originalFetch = global.fetch;
+  const missing = loadFreshApp(t);
+  const missingKey = await fetch(`${missing.baseUrl}/api/ai/image/prompt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: '生成图片：保留触发词的项目封面' }),
+  });
+  assert.equal(missingKey.status, 503);
+
+  const { baseUrl, dataDir } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-image-prompt-key',
+    deepseekBaseUrl: 'https://deepseek.prompt.test',
+  });
+
+  const invalid = await fetch(`${baseUrl}/api/ai/image/prompt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: '' }),
+  });
+  assert.equal(invalid.status, 400);
+
+  let deepSeekPayload = null;
+  let deepSeekHeaders = {};
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    assert.equal(target, 'https://deepseek.prompt.test/chat/completions');
+    deepSeekHeaders = options.headers || {};
+    deepSeekPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: '{"prompt":"优化后的视觉提示词，电影感光线，清晰构图"}' } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/image/prompt`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      prompt: '生成图片：保留触发词的项目封面',
+      context: '标题：周报\n选区：盈利图表',
+      model: 'deepseek-v4-pro',
+      reasoningEffort: 'max',
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.prompt, '优化后的视觉提示词，电影感光线，清晰构图');
+  assert.equal(deepSeekHeaders.Authorization, 'Bearer sk-image-prompt-key');
+  assert.equal(deepSeekPayload.model, 'deepseek-v4-pro');
+  assert.equal(deepSeekPayload.stream, false);
+  assert.equal(deepSeekPayload.reasoning_effort, 'max');
+  assert.match(deepSeekPayload.messages[0].content, /Return ONLY valid JSON/);
+  assert.match(deepSeekPayload.messages[1].content, /生成图片：保留触发词的项目封面/);
+  assert.match(deepSeekPayload.messages[1].content, /标题：周报/);
+  assert.doesNotMatch(JSON.stringify(deepSeekPayload), /sk-image-prompt-key|private diary content|logs\.json/);
+  assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), false);
+});
+
+test('AI chat streams sanitized DeepSeek SSE deltas', async (t) => {
+  const originalFetch = global.fetch;
+  const { baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+
+  let capturedPayload = null;
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    capturedPayload = JSON.parse(options.body);
+    const stream = [
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}',
+      '',
+      'data: {"choices":[{"delta":{"content":"lo"}}]}',
+      '',
+      'data: [DONE]',
+      '',
+      '',
+    ].join('\n');
+    return new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      stream: true,
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') || '', /text\/event-stream/);
+  const text = await res.text();
+  assert.match(text, /event: delta\s+data: \{"content":"Hel"\}/);
+  assert.match(text, /event: delta\s+data: \{"content":"lo"\}/);
+  assert.match(text, /event: done/);
+  assert.equal(capturedPayload.stream, true);
+  assert.deepEqual(capturedPayload.messages, [{ role: 'user', content: 'hello' }]);
+  assert.doesNotMatch(text, /user-provided-key|sk-/);
 });
 
 test('AI chat reports sanitized upstream DeepSeek errors', async (t) => {
@@ -503,6 +1073,70 @@ test('AI chat reports sanitized upstream DeepSeek errors', async (t) => {
   assert.match(body.error, /^DeepSeek request failed \(400\):/);
   assert.match(body.error, /model_not_found/);
   assert.doesNotMatch(body.error, /sk-secret-token|user-provided-key/);
+});
+
+test('AI conversations persist to local data storage separate from logs', async (t) => {
+  const { baseUrl, dataDir } = loadFreshApp(t);
+
+  const saved = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      activeConversationId: 'chat-local-1',
+      conversations: [{
+        id: 'chat-local-1',
+        title: 'local AI',
+        updatedAt: 1780628000000,
+        scope: 'global',
+        logKey: '',
+        messages: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: 'hi' },
+        ],
+      }, {
+        id: 'editor-chat-local-1',
+        title: 'editor AI',
+        updatedAt: 1780628000100,
+        scope: 'editor',
+        logKey: 'log:7',
+        messages: [
+          { role: 'user', content: 'edit this' },
+          { role: 'assistant', content: 'ok', editorSuggestion: { suggestedTitle: 'new title', insertText: 'insert me' } },
+        ],
+      }],
+    }),
+  });
+  assert.equal(saved.status, 200);
+
+  const loaded = await fetch(`${baseUrl}/api/ai/conversations`);
+  assert.equal(loaded.status, 200);
+  assert.deepEqual(await loaded.json(), {
+    activeConversationId: 'chat-local-1',
+    conversations: [{
+      id: 'chat-local-1',
+      title: 'local AI',
+      updatedAt: 1780628000000,
+      scope: 'global',
+      logKey: '',
+      messages: [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'hi' },
+      ],
+    }, {
+      id: 'editor-chat-local-1',
+      title: 'editor AI',
+      updatedAt: 1780628000100,
+      scope: 'editor',
+      logKey: 'log:7',
+      messages: [
+        { role: 'user', content: 'edit this' },
+        { role: 'assistant', content: 'ok', editorSuggestion: { suggestedTitle: 'new title', insertText: 'insert me' } },
+      ],
+    }],
+  });
+
+  assert.equal(fs.existsSync(path.join(dataDir, 'ai-chats.json')), true);
+  assert.equal(fs.readFileSync(path.join(dataDir, 'logs.json'), 'utf8'), '[]');
 });
 
 test('image upload rejects svg and still accepts allowed extensions', async (t) => {
@@ -827,27 +1461,110 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#editorOutlinePanel').getAttribute('aria-hidden'), 'true');
   assert.equal(document.querySelector('#editorOutlineList .editor-outline-empty').textContent, '暂无标题');
   assert.equal(document.querySelector('#editTitle').closest('#editorOutlinePanel'), null);
+  assert.equal(document.querySelector('#btnEditorAiPanel').textContent, 'AI');
+  assert.equal(document.querySelector('#btnEditorAiPanel').getAttribute('aria-controls'), 'editorAiPanel');
+  assert.equal(document.querySelector('#btnEditorAiPanel').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('#editorAiPanel').getAttribute('aria-hidden'), 'true');
+  assert.equal(document.querySelector('#editorAiMessages').getAttribute('aria-live'), 'polite');
+  assert.equal(document.querySelector('#editorAiInput').getAttribute('maxlength'), '4000');
+  assert.equal(document.querySelector('#btnEditorAiSend').disabled, true);
+  assert.equal(document.querySelector('#btnEditorAiNew').textContent, '新对话');
+  assert.equal(document.querySelector('#btnEditorAiHistory').getAttribute('aria-controls'), 'editorAiHistoryPopover');
+  assert.equal(document.querySelector('#btnEditorAiHistory').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('#btnEditorAiSettings').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#editorAiHistoryPopover').hasAttribute('hidden'), true);
+  assert.equal(document.querySelector('#editorAiHistoryList') !== null, true);
+  assert.equal(document.querySelector('#editorAiRenameOverlay').getAttribute('aria-labelledby'), 'editorAiRenameTitle');
+  assert.equal(document.querySelector('#editorAiRenameInput').getAttribute('maxlength'), '40');
   assert.equal(document.querySelector('#btnEditorFullscreen').textContent, '全屏编辑');
   assert.equal(document.querySelector('#btnEditorFullscreen').getAttribute('aria-pressed'), 'false');
   assert.equal(document.querySelector('#btnBack').closest('.editor-nav-actions') !== null, true);
   assert.equal(document.querySelector('#aiChatView').style.display, 'none');
-  assert.equal(document.querySelector('#btnAiBack').textContent.trim(), '← 返回');
+  assert.equal(document.querySelector('#btnAiBack'), null);
+  assert.equal(document.querySelector('#aiChatView .ai-chat-header'), null);
   assert.equal(document.querySelector('#aiChatMessages').getAttribute('aria-live'), 'polite');
+  assert.equal(document.querySelector('#sidebarModeTrigger').getAttribute('aria-haspopup'), 'menu');
+  assert.equal(document.querySelector('#sidebarModeTrigger').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('#sidebarModeMenu').getAttribute('role'), 'menu');
+  assert.equal(document.querySelector('#sidebarModeMenu').style.display, 'none');
+  assert.deepEqual([...document.querySelectorAll('#sidebarModeMenu [data-mode]')].map(button => button.dataset.mode), [
+    'normal',
+    'nav',
+    'todo',
+    'categories',
+    'ai',
+  ]);
+  assert.equal(document.querySelector('#sidebarModeMenu [data-mode="todo"]').textContent, '待办面板');
+  assert.doesNotMatch(document.querySelector('#sidebarModeMenu').textContent, /代办/);
+  assert.equal(document.querySelector('#todoView') !== null, true);
+  assert.equal(document.querySelector('#todoView').style.display, 'none');
+  assert.equal(document.querySelector('#todoSearchInput') !== null, true);
+  assert.equal(document.querySelector('#todoStatPending') !== null, true);
+  assert.equal(document.querySelector('#todoStatToday') !== null, true);
+  assert.equal(document.querySelector('#todoStatOverdue') !== null, true);
+  assert.equal(document.querySelector('#todoStatDone') !== null, true);
+  assert.equal(document.querySelector('#todoFullPanel').closest('#todoView') !== null, true);
+  assert.equal(document.querySelector('#todoFullTitle').closest('#todoView') !== null, true);
+  assert.equal(document.querySelector('#todoSidebarPending').closest('.todo-panel') !== null, true);
+  assert.equal(document.querySelector('#todoSidebarToday').closest('.todo-panel') !== null, true);
+  assert.equal(document.querySelector('#todoSidebarOverdue').closest('.todo-panel') !== null, true);
+  assert.equal(document.querySelector('#todoFullTitle').closest('.sidebar'), null);
+  assert.equal(document.querySelector('#sidebarModeSelect'), null);
+  assert.equal(document.querySelector('#btnSidebarMode'), null);
+  assert.equal(document.querySelector('#btnTodoMode'), null);
+  assert.equal(document.querySelector('#btnManageCats'), null);
   assert.equal(document.querySelector('#aiApiKeyInput').getAttribute('type'), 'password');
   assert.equal(document.querySelector('#aiApiKeyInput').getAttribute('autocomplete'), 'off');
-  assert.equal(document.querySelector('label[for="aiApiKeyInput"]').textContent, 'DeepSeek API Key');
+  assert.equal(document.querySelector('#aiApiKeyTitle').textContent, 'AI 设置');
+  assert.equal(document.querySelector('#aiSettingsTabChat').textContent, 'AI 设置');
+  assert.equal(document.querySelector('#aiSettingsTabChat').getAttribute('aria-selected'), 'true');
+  assert.equal(document.querySelector('#aiSettingsTabImage').textContent, '生图设置');
+  assert.equal(document.querySelector('#aiSettingsTabImage').getAttribute('aria-controls'), 'aiSettingsPanelImage');
+  assert.equal(document.querySelector('#aiSettingsPanelImage').hasAttribute('hidden'), true);
+  assert.equal(document.querySelector('label[for="aiApiKeyInput"] span').textContent, 'DeepSeek API Key');
   assert.equal(document.querySelector('#aiApiKeyOverlay').getAttribute('aria-labelledby'), 'aiApiKeyTitle');
   assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-haspopup'), 'dialog');
-  assert.equal(document.querySelector('#btnAiNewChat').textContent, '新建对话');
-  assert.equal(document.querySelector('#btnAiHistory').getAttribute('aria-haspopup'), 'dialog');
-  assert.equal(document.querySelector('#btnAiHistory').textContent, '历史记录');
-  assert.equal(document.querySelector('#aiHistoryOverlay').getAttribute('aria-labelledby'), 'aiHistoryTitle');
-  assert.equal(document.querySelector('#aiChatHistoryList').closest('.modal-ai-history') !== null, true);
-  assert.equal(document.querySelector('.ai-chat-body .ai-chat-history'), null);
+  assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-label'), 'AI 设置');
+  assert.equal(document.querySelector('#btnAiNewChat'), null);
+  assert.equal(document.querySelector('#btnAiClear'), null);
+  assert.equal(document.querySelector('#btnAiApiKey').closest('.ai-sidebar-actions') !== null, true);
+  assert.equal(document.querySelector('#btnAiApiKey').classList.contains('ai-sidebar-settings'), true);
+  assert.equal(document.querySelector('#btnAiApiKey svg') !== null, true);
+  assert.equal(document.querySelector('#aiModelSelect').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiReasoningEffort').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiStreamToggle').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiTavilyApiKeyInput').getAttribute('placeholder'), 'tvly-...');
+  assert.equal(document.querySelector('#aiWebSearchToggle').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiWebSearchDepth').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiSeedreamApiKeyInput').closest('#aiSettingsPanelImage') !== null, true);
+  assert.equal(document.querySelector('#aiSeedreamModel').closest('#aiSettingsPanelImage') !== null, true);
+  assert.equal(document.querySelector('#aiSeedreamSize').closest('#aiSettingsPanelImage') !== null, true);
+  assert.equal(document.querySelector('#aiSeedreamWatermark').closest('#aiSettingsPanelImage') !== null, true);
+  assert.deepEqual([...document.querySelectorAll('#aiSeedreamModel option')].map(option => option.value), [
+    'doubao-seedream-5-0-260128',
+    'doubao-seedream-4-5-251128',
+    'doubao-seedream-4-0-250828',
+  ]);
+  assert.deepEqual([...document.querySelectorAll('#aiWebSearchDepth option')].map(option => option.value), [
+    'basic',
+    'advanced',
+  ]);
+  assert.equal(document.querySelector('.ai-chat-composer-actions #aiModelSelect'), null);
+  assert.equal(document.querySelector('.ai-chat-composer-actions #aiReasoningEffort'), null);
+  assert.equal(document.querySelector('#btnAiHistory'), null);
+  assert.equal(document.querySelector('#aiHistoryOverlay'), null);
+  assert.equal(document.querySelector('#aiSidebarHistoryList').closest('#aiSidebarHistoryPanel') !== null, true);
+  assert.equal(document.querySelector('#btnAiSidebarNewChat').classList.contains('btn-sidebar-mode'), true);
+  assert.equal(document.querySelector('#btnAiSidebarNewChat').classList.contains('ai-sidebar-new'), true);
+  assert.equal(document.querySelector('#btnAiSidebarNewChat').getAttribute('aria-label'), '新建对话');
   assert.equal(document.querySelector('#btnAiApiKeySave').textContent, '保存');
-  assert.equal(document.querySelector('#btnAiApiKeyClear').textContent, '清除');
+  assert.equal(document.querySelector('#btnAiApiKeyClear').textContent, '清除 Key');
+  assert.equal(document.querySelector('#aiRenameOverlay').getAttribute('aria-labelledby'), 'aiRenameTitle');
+  assert.equal(document.querySelector('#aiRenameInput').getAttribute('maxlength'), '40');
   assert.equal(document.querySelector('#aiChatInput').getAttribute('maxlength'), '4000');
   assert.equal(document.querySelector('#btnAiSend').disabled, true);
+  assert.equal(document.querySelector('#btnAiImage').disabled, true);
   assert.deepEqual([...document.querySelectorAll('#aiModelSelect option')].map(option => option.value), [
     'deepseek-v4-flash',
     'deepseek-v4-pro',
@@ -860,10 +1577,20 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#fabCapture').textContent, 'AI');
   assert.equal(document.querySelector('#fabCapture').getAttribute('aria-label'), '打开 AI 对话');
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
+  assert.equal(document.querySelector('#btnCategoryBack'), null);
+  assert.equal(document.querySelector('#categoryView .category-page-title h2'), null);
+  assert.equal(document.querySelector('#catManagerSummary').closest('.category-page-header') !== null, true);
   assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
-  assert.equal(document.querySelector('#catNewInput').closest('.category-page-header') !== null, true);
-  assert.equal(document.querySelector('#catAddBtn').closest('.category-page-header') !== null, true);
-  assert.equal(document.querySelector('#catAddBtn').getAttribute('aria-label'), '添加父分类');
+  assert.equal(document.querySelector('#catSearchInput').closest('#categorySidebarPanel'), null);
+  assert.equal(document.querySelector('#catNewInput').closest('#categorySidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#catAddBtn').closest('#categorySidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#catAddToggle').closest('.category-sidebar-header') !== null, true);
+  assert.equal(document.querySelector('#catAddPanel').hasAttribute('hidden'), true);
+  assert.equal(document.querySelector('#catList').closest('#categorySidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#catAddToggle').getAttribute('aria-label'), '添加父分类');
+  assert.equal(document.querySelector('#catAddToggle').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('#catAddBtn').getAttribute('aria-label'), '确认添加父分类');
+  assert.equal(document.querySelector('#catAddCancelBtn').getAttribute('aria-label'), '取消添加父分类');
   assert.equal(document.querySelector('.cat-detail-actions #catCalendarDayVisible') !== null, true);
   assert.equal(document.querySelector('#catSubNewInput').closest('.cat-detail-actions') !== null, true);
   assert.equal(document.querySelector('#catSubAddBtn').closest('.cat-detail-actions') !== null, true);
@@ -909,8 +1636,18 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.match(categorySource, /class="cat-icon-action danger subcat-del-btn"[\s\S]*aria-label="删除子分类：\$\{escHtml\(s\)\}"/);
   assert.match(styleSource, /\.cat-icon-action\s*\{[\s\S]*width:\s*30px;[\s\S]*height:\s*30px;/);
   assert.match(styleSource, /\.cat-icon-action\.primary\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
-  assert.match(styleSource, /\.cat-header-add\s*\{[\s\S]*width:\s*min\(310px, 30vw\);/);
-  assert.match(styleSource, /\.cat-header-search\s*\{[\s\S]*width:\s*min\(440px, 44vw\);/);
+  assert.match(styleSource, /\.category-sidebar-panel\s*\{[\s\S]*display:\s*none;[\s\S]*background:\s*var\(--sidebar-bg-subtle\);/);
+  assert.match(styleSource, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1;/);
+  assert.doesNotMatch(styleSource, /category-sidebar-search|category-sidebar-toolbar/);
+  assert.match(styleSource, /\.category-page-search\s*\{[\s\S]*justify-content:\s*flex-end;/);
+  assert.match(styleSource, /\.cat-page-search-input\s*\{[\s\S]*width:\s*min\(460px, 44vw\);/);
+  assert.match(styleSource, /\.category-sidebar-add\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 30px 30px;/);
+  assert.match(styleSource, /\.category-sidebar-add\[hidden\]\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.category-sidebar-panel \.cat-list\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /\.category-page-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(360px, 1fr\);/);
+  assert.match(styleSource, /\.category-view\.sub-browse-mode \.category-page-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(280px, 340px\) minmax\(360px, 1fr\);/);
+  assert.match(styleSource, /\.category-parent-panel\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.category-view\.sub-browse-mode \.category-parent-panel\s*\{[\s\S]*display:\s*flex;/);
   assert.match(styleSource, /\.cat-manager-summary\s*\{[\s\S]*border:\s*1px solid rgba\(16, 185, 129, 0\.35\);/);
   assert.match(styleSource, /\.cat-manager-summary::before\s*\{[\s\S]*box-shadow:/);
   assert.match(categorySource, /summary\.textContent = total;/);
@@ -949,6 +1686,14 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(todoSource, /function priorityBadge\(todo\)/);
   assert.match(todoSource, /const labels = \{ normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' \};/);
   assert.match(todoSource, /const codes = \{ normal: 'P2', important: 'P1', urgent: 'P0' \};/);
+  assert.match(todoSource, /export function showTodoView\(\)/);
+  assert.match(todoSource, /\$\('#todoView'\)\.style\.display = 'flex';/);
+  assert.match(todoSource, /let todoSearchQuery = '';/);
+  assert.match(todoSource, /\$\('#todoSearchInput'\)\.addEventListener\('input'/);
+  assert.match(todoSource, /String\(t\.notes \|\| ''\)\.toLowerCase\(\)\.includes\(query\)/);
+  assert.match(todoSource, /pending\.slice\(0, 6\)/);
+  assert.match(todoSource, /\$\('#todoSidebarPending'\)\.textContent = pending\.length;/);
+  assert.match(todoSource, /\$\('#todoStatOverdue'\)\.textContent = overdue\.length;/);
   assert.doesNotMatch(todoSource, /priorityDot/);
   assert.match(priorityStyleBlock, /min-width:\s*22px;/);
   assert.match(priorityStyleBlock, /border-radius:\s*5px;/);
@@ -956,6 +1701,11 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-priority\.prio-normal\s*\{[\s\S]*background: var\(--color-primary\);/);
   assert.match(styleSource, /\.todo-priority\.prio-important\s*\{[\s\S]*background: var\(--color-warning\);/);
   assert.match(styleSource, /\.todo-priority\.prio-urgent\s*\{ background: var\(--color-danger\); \}/);
+  assert.match(styleSource, /\.todo-view\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.todo-page-stats\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(styleSource, /\.todo-page-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(300px, 360px\);/);
+  assert.match(styleSource, /\.todo-sidebar-stats\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, 1fr\);/);
+  assert.match(styleSource, /body\.sidebar-todo-mode \.todo-panel\s*\{[\s\S]*display:\s*flex;/);
 });
 
 test('application initialization waits for auth and diary selection before refreshing', () => {
@@ -973,39 +1723,165 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 
   assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
-  assert.match(appSource, /\$\('#fabCapture'\)\.addEventListener\('click', \(\) => \{[\s\S]*showAiChatView\(\);[\s\S]*\}\);/);
+  assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
+  assert.match(appSource, /function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
+  assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-ai-mode', mode === 'ai'\);/);
+  assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-category-mode', mode === 'categories'\);/);
+  assert.match(appSource, /import \{ loadCategories, openCategoryManager \} from '\.\/categories\.js';/);
+  assert.match(appSource, /import \{ loadTodos, showTodoView \} from '\.\/todos\.js';/);
+  assert.match(appSource, /\$\('#sidebarModeTrigger'\)\.addEventListener\('click', toggleSidebarModeMenu\)/);
+  assert.match(appSource, /\$\('#sidebarModeMenu'\)\.addEventListener\('click'/);
+  assert.match(appSource, /function closeSidebarModeMenu\(\)/);
+  assert.match(appSource, /function toggleSidebarModeMenu\(\)/);
+  assert.match(appSource, /title\.textContent = '待办事项';[\s\S]*当前为待办面板/);
+  assert.match(appSource, /mode === 'todo'[\s\S]*showTodoView\(\)/);
+  assert.match(appSource, /function syncMainViewWithSidebarMode\(\)[\s\S]*activeSidebarMode\(\) === 'ai'[\s\S]*showAiChatView\(\)[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*openCategoryManager\(\)[\s\S]*activeSidebarMode\(\) === 'todo'[\s\S]*showTodoView\(\)/);
+  assert.match(appSource, /window\.addEventListener\('category-manager-closed'/);
+  assert.doesNotMatch(appSource, /btnCategoryBack/);
+  assert.match(aiSource, /for \(const id of \['editorView', 'categoryView', 'todoView', 'listView'\]\)/);
+  assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8'), /btnManageCats/);
+  assert.match(appSource, /if \(!diarySelected\) await refreshAll\(\);[\s\S]*syncMainViewWithSidebarMode\(\);/);
+  assert.match(appSource, /\$\('#fabCapture'\)\.addEventListener\('click', \(\) => \{[\s\S]*setSidebarMode\('ai'\);[\s\S]*\}\);/);
   assert.doesNotMatch(appSource, /fabCapture[\s\S]{0,160}newLog\(\)/);
   assert.match(appSource, /initAiChat\(\);/);
-  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages, \.\.\.settings \}\)/);
+  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages, \.\.\.requestSettings \}\)/);
+  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages\.filter\(message => !message\.streaming\), \.\.\.requestSettings \}\)/);
+  assert.match(aiSource, /import \{ renderToHtml \} from '\.\/markdown\.js';/);
+  assert.match(aiSource, /confirmDialog/);
   assert.match(aiSource, /const API_KEY_STORAGE_KEY = 'deepseekApiKey';/);
   assert.match(aiSource, /const CHAT_STORAGE_KEY = 'aiChatConversations';/);
   assert.match(aiSource, /const ACTIVE_CHAT_STORAGE_KEY = 'aiChatActiveConversationId';/);
-  assert.match(aiSource, /let apiKey = localStorage\.getItem\(API_KEY_STORAGE_KEY\) \|\| '';/);
-  assert.match(aiSource, /apiKey,\s*model: \$\('#aiModelSelect'\)\.value \|\| DEFAULT_MODEL/);
+  assert.match(aiSource, /const AI_CONVERSATIONS_ENDPOINT = '\/api\/ai\/conversations';/);
+  assert.match(aiSource, /const AI_SETTINGS_ENDPOINT = '\/api\/ai\/settings';/);
+  assert.match(aiSource, /async function loadSettings\(\)/);
+  assert.match(aiSource, /await saveSettings\(\{ quiet: true \}\);[\s\S]*localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
+  assert.match(aiSource, /const submitted = \{ \.\.\.settings \};/);
+  assert.match(aiSource, /服务端未保存 AI 设置，请重启应用后再试/);
+  assert.match(aiSource, /apiKey: settings\.apiKey/);
+  assert.match(aiSource, /model: settings\.model \|\| DEFAULT_MODEL/);
   assert.match(aiSource, /thinkingMode: 'enabled'/);
-  assert.match(aiSource, /reasoningEffort: \$\('#aiReasoningEffort'\)\.value \|\| DEFAULT_REASONING/);
-  assert.match(aiSource, /localStorage\.setItem\(CHAT_STORAGE_KEY, JSON\.stringify\(conversations\)\);/);
-  assert.match(aiSource, /localStorage\.setItem\(ACTIVE_CHAT_STORAGE_KEY, activeConversationId\);/);
-  assert.match(aiSource, /function newConversation\(\)/);
-  assert.match(aiSource, /function renameConversation\(id\)/);
+  assert.match(aiSource, /reasoningEffort: settings\.reasoningEffort \|\| DEFAULT_REASONING/);
+  assert.match(aiSource, /stream: Boolean\(settings\.stream\)/);
+  assert.match(aiSource, /tavilyApiKey: settings\.tavilyApiKey/);
+  assert.match(aiSource, /webSearchEnabled: Boolean\(settings\.webSearchEnabled\)/);
+  assert.match(aiSource, /webSearchDepth: settings\.webSearchDepth \|\| 'basic'/);
+  assert.match(aiSource, /const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';/);
+  assert.match(aiSource, /seedreamApiKey: typeof value\?\.seedreamApiKey === 'string'/);
+  assert.match(aiSource, /seedreamModel: \['doubao-seedream-5-0-260128'/);
+  assert.match(aiSource, /\$\('#aiSeedreamApiKeyInput'\)\.value = settings\.seedreamApiKey;/);
+  assert.match(aiSource, /function setSettingsTab\(tab\)/);
+  assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-settings-tab\]'\)/);
+  assert.doesNotMatch(aiSource, /function isImageGenerationRequest\(text\)/);
+  assert.doesNotMatch(aiSource, /isImageGenerationRequest\(content\)/);
+  assert.match(aiSource, /function renderImageGenerationCard\(imageGeneration, index/);
+  assert.match(aiSource, /async function generateImageForMessage\(index\)/);
+  assert.match(aiSource, /apiFetch\('\/api\/ai\/image\/generate'/);
+  assert.match(aiSource, /apiFetch\('\/api\/ai\/image\/prompt'/);
+  assert.match(aiSource, /function selectedImagePrompt\(imageGeneration\)/);
+  assert.match(aiSource, /function chooseImagePrompt\(index, mode\)/);
+  assert.match(aiSource, /data-action="choose-image-prompt"/);
+  assert.match(aiSource, /async function sendMessage\(\{ forceImage = false \} = \{\}\)/);
+  assert.match(aiSource, /if \(forceImage\) \{/);
+  assert.match(aiSource, /\$\('#btnAiImage'\)\?\.addEventListener\('click', \(\) => sendMessage\(\{ forceImage: true \}\)\);/);
+  assert.match(aiSource, /originalPrompt: prompt/);
+  assert.match(aiSource, /optimizedPrompt/);
+  assert.match(aiSource, /promptMode: 'original'/);
+  assert.match(aiSource, /data-action="generate-image"/);
+  assert.match(aiSource, /data-action="copy-image-markdown"/);
+  assert.match(aiSource, /function imagePromptFrom\(text\)\s*\{\s*return String\(text \|\| ''\)\.trim\(\)\.slice\(0, 800\);/);
+  assert.match(aiSource, /if \(forceImage\) \{[\s\S]*imageGeneration: \{[\s\S]*status: 'optimizing'/);
+  assert.match(aiSource, /await apiFetch\(AI_CONVERSATIONS_ENDPOINT,[\s\S]*method: 'PUT'/);
+  assert.match(aiSource, /let allConversations = \[\];/);
+  assert.match(aiSource, /const nonGlobalConversations = allConversations\.filter\(item => item\.scope === 'editor'\);/);
+  assert.match(aiSource, /allConversations = \[\.\.\.nonGlobalConversations, \.\.\.conversations\.map\(item => \(\{ \.\.\.item, scope: 'global', logKey: '' \}\)\)\];/);
+  assert.doesNotMatch(aiSource, /localStorage\.setItem\(CHAT_STORAGE_KEY|localStorage\.setItem\(ACTIVE_CHAT_STORAGE_KEY/);
+  assert.match(aiSource, /async function newConversation\(\)/);
+  assert.match(aiSource, /function openRenameModal\(id\)/);
+  assert.match(aiSource, /function saveRenameConversation\(\)/);
   assert.match(aiSource, /function deleteConversation\(id\)/);
-  assert.match(aiSource, /\$\('#btnAiNewChat'\)\.addEventListener\('click', newConversation\);/);
-  assert.match(aiSource, /\$\('#btnAiHistory'\)\.addEventListener\('click', openHistoryModal\);/);
-  assert.match(aiSource, /\$\('#aiHistoryClose'\)\.addEventListener\('click', closeHistoryModal\);/);
-  assert.match(aiSource, /\$\('#aiChatHistoryList'\)\.addEventListener\('click'/);
-  assert.match(aiSource, /localStorage\.setItem\(API_KEY_STORAGE_KEY, apiKey\);/);
+  assert.match(aiSource, /\$\('#btnAiSidebarNewChat'\)\.addEventListener\('click', newConversation\);/);
+  assert.match(aiSource, /const list = \$\('#aiSidebarHistoryList'\);/);
+  assert.match(aiSource, /\$\('#aiSidebarHistoryList'\)\.addEventListener\('click'/);
+  assert.doesNotMatch(aiSource, /btnAiBack|btnAiHistory|aiHistoryOverlay|aiChatHistoryList/);
+  assert.doesNotMatch(aiSource, /localStorage\.setItem\(API_KEY_STORAGE_KEY/);
   assert.match(aiSource, /localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
-  assert.match(aiSource, /\$\('#btnAiApiKey'\)\.addEventListener\('click', openApiKeyModal\);/);
-  assert.match(aiSource, /model: \$\('#aiModelSelect'\)\.value \|\| DEFAULT_MODEL/);
+  assert.match(aiSource, /\$\('#btnAiApiKey'\)\.addEventListener\('click', openSettingsModal\);/);
+  assert.match(aiSource, /\$\('#btnAiApiKeySave'\)\.addEventListener\('click', saveSettingsFromModal\);/);
+  assert.match(aiSource, /\$\('#aiRenameClose'\)\.addEventListener\('click', closeRenameModal\);/);
+  assert.match(aiSource, /\$\('#btnAiRenameSave'\)\.addEventListener\('click', saveRenameConversation\);/);
+  assert.match(aiSource, /message\.role === 'assistant' \? renderToHtml\(message\.content\) : escHtml\(message\.content\)/);
+  assert.match(aiSource, /function copyTextFallback\(text\)/);
+  assert.match(aiSource, /navigator\.clipboard\?\.writeText/);
+  assert.match(aiSource, /data-action="copy-message"/);
+  assert.match(aiSource, /copyMessageByIndex\(index\)/);
+  assert.match(aiSource, /\$\('#aiChatMessages'\)\.addEventListener\('click'/);
+  assert.match(aiSource, /问题已复制/);
+  assert.match(aiSource, /回答已复制/);
+  assert.match(aiSource, /ai-message-sources/);
+  assert.match(aiSource, /rel="noopener noreferrer"/);
+  assert.match(aiSource, /ai-message-thinking/);
+  assert.match(aiSource, /正在思考/);
+  assert.doesNotMatch(aiSource, /window\.(prompt|confirm)/);
   assert.doesNotMatch(aiSource, /aiThinkingMode/);
   assert.match(aiSource, /send\.disabled = sending \|\| !hasText;/);
   assert.match(aiSource, /showToast\(`AI 对话失败：\$\{err\.message\}`/);
+  assert.match(aiSource, /async function readStreamingReply\(res, assistantMessage\)/);
+  assert.match(aiSource, /const decoder = new TextDecoder\(\);/);
+  assert.match(aiSource, /event\.type === 'delta'/);
+  assert.match(aiSource, /renderToHtml\(message\.content\)/);
   assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border-radius:\s*8px;/);
-  assert.match(styleSource, /\.modal-ai-history\s*\{[\s\S]*width:\s*520px;/);
-  assert.match(styleSource, /\.ai-history-body\s*\{[\s\S]*overflow-y:\s*auto;/);
-  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 30px 30px;/);
-  assert.match(styleSource, /\.modal-ai-key\s*\{[\s\S]*width:\s*440px;/);
-  assert.match(styleSource, /\.ai-key-button\.has-key\s*\{[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.sidebar-title-trigger\s*\{[\s\S]*color:\s*var\(--color-sidebar-heading\);[\s\S]*font-size:\s*1\.25rem;/);
+  assert.match(styleSource, /\.sidebar-mode-menu\s*\{[\s\S]*position:\s*absolute;/);
+  assert.match(styleSource, /\.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /body\.sidebar-ai-mode \.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.ai-sidebar-new,[\s\S]*\.ai-sidebar-settings\s*\{[\s\S]*width:\s*30px;[\s\S]*height:\s*30px;/);
+  assert.match(styleSource, /\.ai-sidebar-actions\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /\.ai-sidebar-settings\s*\{[\s\S]*border-color:\s*transparent;[\s\S]*background:\s*transparent;[\s\S]*color:\s*#111;/);
+  assert.match(styleSource, /\.ai-sidebar-settings\.has-key\s*\{[\s\S]*color:\s*#000;[\s\S]*background:\s*transparent;/);
+  assert.match(styleSource, /\.ai-history-list\s*\{[\s\S]*gap:\s*0;[\s\S]*align-content:\s*start;/);
+  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 28px 28px;[\s\S]*height:\s*78px;/);
+  assert.match(styleSource, /\.ai-history-action\s*\{[\s\S]*width:\s*24px;[\s\S]*height:\s*24px;/);
+  assert.match(styleSource, /\.ai-chat-composer-actions\s*\{[\s\S]*flex-wrap:\s*wrap;/);
+  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*position:\s*fixed;/);
+  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*padding:\s*8px 150px 42px 10px;/);
+  assert.match(styleSource, /\.ai-chat-composer-actions\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*20px;[\s\S]*bottom:\s*20px;/);
+  assert.match(styleSource, /\.ai-chat-composer-actions \.btn-secondary\s*\{[\s\S]*pointer-events:\s*auto;/);
+  assert.doesNotMatch(styleSource, /\.ai-chat-composer-actions\s*\{[^}]*border-top:\s*1px solid var\(--color-border\);/);
+  assert.match(styleSource, /body\.sidebar-collapsed \.ai-chat-messages,[\s\S]*body\.sidebar-collapsed \.ai-chat-composer\s*\{[\s\S]*width:\s*min\(1080px, calc\(100% - 56px\)\);/);
+  assert.match(styleSource, /body\.sidebar-collapsed:not\(\.editor-fullscreen\) \.main\s*\{[\s\S]*padding-left:\s*72px;/);
+  assert.match(styleSource, /body\.sidebar-ai-mode \.main\s*\{[\s\S]*overflow:\s*hidden;/);
+  assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-body\s*\{[\s\S]*position:\s*fixed;[\s\S]*right:\s*0;[\s\S]*bottom:\s*156px;[\s\S]*left:\s*var\(--sidebar-width\);/);
+  assert.match(styleSource, /body\.sidebar-collapsed \.ai-chat-body\s*\{[\s\S]*left:\s*0;/);
+  assert.match(styleSource, /\.ai-chat-view::after\s*\{[\s\S]*position:\s*fixed;[\s\S]*left:\s*var\(--sidebar-width\);[\s\S]*height:\s*156px;[\s\S]*z-index:\s*80;/);
+  assert.match(styleSource, /body\.sidebar-collapsed \.ai-chat-view::after\s*\{[\s\S]*left:\s*0;/);
+  assert.match(styleSource, /\.ai-chat-body\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;[\s\S]*padding-bottom:\s*0;/);
+  assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*overflow:\s*visible;/);
+  assert.match(styleSource, /\.ai-message-content\.markdown-body\s*\{[\s\S]*line-height:\s*1\.65;/);
+  assert.match(styleSource, /\.ai-message-bubble\s*\{[\s\S]*position:\s*relative;/);
+  assert.match(styleSource, /\.ai-message-copy\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*8px;/);
+  assert.match(styleSource, /\.ai-message:hover \.ai-message-copy,[\s\S]*\.ai-message-copy:focus-visible\s*\{[\s\S]*opacity:\s*1;/);
+  assert.match(styleSource, /\.ai-message-sources\s*\{[\s\S]*grid-column:\s*2;/);
+  assert.match(styleSource, /\.ai-message-sources a\s*\{[\s\S]*border-radius:\s*999px;/);
+  assert.match(styleSource, /\.ai-message-thinking \.ai-message-content\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /@keyframes ai-thinking-pulse/);
+  assert.doesNotMatch(styleSource, /\.ai-chat-header\s*\{/);
+  assert.match(styleSource, /\.ai-settings-toggle\s*\{[\s\S]*justify-content:\s*space-between;/);
+  assert.match(styleSource, /\.ai-settings-tabs\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /\.ai-settings-panel\.active\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(styleSource, /\.ai-image-card\s*\{[\s\S]*border:\s*1px solid rgba\(var\(--color-primary-rgb\), 0\.18\);/);
+  assert.match(styleSource, /\.ai-image-optimizing\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /\.ai-image-prompt-options\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /\.ai-image-prompt-choice\.active\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.ai-image-prompt-text\s*\{[\s\S]*max-height:\s*120px;[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /\.ai-image-preview\s*\{[\s\S]*max-height:\s*360px;/);
+  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*margin:\s*0 auto 12px;/);
+  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*72px;[\s\S]*max-height:\s*120px;[\s\S]*resize:\s*none;/);
+  assert.match(styleSource, /\.modal-ai-key,[\s\S]*\.modal-ai-rename\s*\{[\s\S]*width:\s*440px;/);
+  assert.match(styleSource, /\.modal-ai-key\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*max-height:\s*min\(760px, calc\(100vh - 48px\)\);/);
+  assert.match(styleSource, /\.ai-settings-body\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.modal-ai-key\s*\{[\s\S]*max-height:\s*calc\(100dvh - 24px\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-view::after\s*\{[\s\S]*left:\s*0;[\s\S]*height:\s*calc\(132px \+ env\(safe-area-inset-bottom\)\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-messages\s*\{[\s\S]*padding:\s*16px 12px 210px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer\s*\{[\s\S]*position:\s*sticky;/);
 });
 
@@ -1111,6 +1987,98 @@ test('editor fullscreen mode keeps navigation, preview tabs, shortcuts, and cont
   assert.match(styleSource, /body\.editor-fullscreen \.editor-nav-actions\s*\{\s*width:\s*100%;\s*justify-content:\s*space-between;/);
 });
 
+test('editor AI panel sends current log context and applies suggestions explicitly', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const document = new JSDOM(html).window.document;
+
+  assert.equal(document.querySelector('#btnEditorAiPanel') !== null, true);
+  assert.equal(document.querySelector('#editorAiPanel') !== null, true);
+  assert.equal(document.querySelector('#editorAiMessages') !== null, true);
+  assert.equal(document.querySelector('#editorAiInput') !== null, true);
+  assert.equal(document.querySelector('#btnEditorAiSend') !== null, true);
+  assert.equal(document.querySelector('#btnEditorAiImage') !== null, true);
+  assert.equal(document.querySelector('#btnEditorAiHistory') !== null, true);
+  assert.equal(document.querySelector('#btnEditorAiSettings') !== null, true);
+  assert.equal(document.querySelector('#editorAiHistoryPopover') !== null, true);
+  assert.equal(document.querySelector('#editorAiRenameOverlay') !== null, true);
+  assert.match(editorSource, /const AI_CONVERSATIONS_ENDPOINT = '\/api\/ai\/conversations';/);
+  assert.match(editorSource, /function currentEditorLogKey\(\)[\s\S]*`log:\$\{state\.editingId\}`[\s\S]*`draft:\$\{editorAiDraftSessionId\}`/);
+  assert.match(editorSource, /async function migrateEditorAiDraftConversation\(savedId\)/);
+  assert.match(editorSource, /scope: 'editor'/);
+  assert.match(editorSource, /logKey/);
+  assert.match(editorSource, /const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';/);
+  assert.doesNotMatch(editorSource, /function isEditorImageGenerationRequest\(text\)/);
+  assert.doesNotMatch(editorSource, /isEditorImageGenerationRequest\(content\)/);
+  assert.match(editorSource, /function renderEditorImageGenerationCard\(imageGeneration, index\)/);
+  assert.match(editorSource, /async function generateEditorImageForMessage\(index\)/);
+  assert.match(editorSource, /apiFetch\('\/api\/ai\/image\/generate'/);
+  assert.match(editorSource, /apiFetch\('\/api\/ai\/image\/prompt'/);
+  assert.match(editorSource, /function selectedEditorImagePrompt\(imageGeneration\)/);
+  assert.match(editorSource, /function chooseEditorImagePrompt\(index, mode\)/);
+  assert.match(editorSource, /function editorImagePromptContext\(\)/);
+  assert.match(editorSource, /function editorImagePromptFrom\(text\)\s*\{\s*return String\(text \|\| ''\)\.trim\(\)\.slice\(0, 800\);/);
+  assert.match(editorSource, /const btnEditorAiImage = \$\('#btnEditorAiImage'\);/);
+  assert.match(editorSource, /async function sendEditorAiMessage\(\{ forceImage = false \} = \{\}\)/);
+  assert.match(editorSource, /if \(forceImage\) \{/);
+  assert.match(editorSource, /btnEditorAiImage\?\.addEventListener\('click', \(\) => sendEditorAiMessage\(\{ forceImage: true \}\)\);/);
+  assert.match(editorSource, /data-action="choose-editor-image-prompt"/);
+  assert.match(editorSource, /originalPrompt: prompt/);
+  assert.match(editorSource, /optimizedPrompt/);
+  assert.match(editorSource, /promptMode: 'original'/);
+  assert.match(editorSource, /data-action="generate-editor-image"/);
+  assert.match(editorSource, /data-action="insert-editor-image-markdown"/);
+  assert.match(editorSource, /if \(forceImage\) \{[\s\S]*imageGeneration: \{[\s\S]*status: 'optimizing'/);
+  assert.match(editorSource, /function editorAiConversationsForCurrentLog\(\)[\s\S]*const logKey = currentEditorLogKey\(\);[\s\S]*item\.scope === 'editor' && item\.logKey === logKey/);
+  assert.match(editorSource, /function renderEditorAiHistory\(\)/);
+  assert.match(editorSource, /function setEditorAiHistoryOpen\(open\)/);
+  assert.match(editorSource, /function openEditorAiSettings\(\)[\s\S]*\$\('#btnAiApiKey'\)[\s\S]*settingsButton\.click\(\)/);
+  assert.match(editorSource, /async function switchEditorAiConversation\(id\)[\s\S]*editorAiActiveConversationId = id;[\s\S]*renderEditorAiMessages\(\);/);
+  assert.match(editorSource, /function openEditorAiRenameModal\(id\)/);
+  assert.match(editorSource, /async function saveEditorAiRename\(\)[\s\S]*chat\.title = title\.slice\(0, 40\);/);
+  assert.match(editorSource, /async function deleteEditorAiConversation\(id\)[\s\S]*confirmDialog\(\{[\s\S]*删除日志内对话/);
+  assert.match(editorSource, /function getEditorAiContext\(\)[\s\S]*title: editTitle\.value,[\s\S]*content,[\s\S]*selection:/);
+  assert.match(editorSource, /contentEditor\.getSelection\(\)/);
+  assert.match(editorSource, /apiFetch\('\/api\/ai\/editor'/);
+  assert.match(editorSource, /body: JSON\.stringify\(\{[\s\S]*messages: chat\.messages,[\s\S]*editorContext: getEditorAiContext\(\),[\s\S]*\}\)/);
+  assert.match(editorSource, /function renderEditorAiSuggestionPreview\(message, index\)/);
+  assert.match(editorSource, /class="editor-ai-answer markdown-body"/);
+  assert.match(editorSource, /class="editor-ai-suggestion-card\$\{expandable \? ' collapsed' : ' expanded'\}"/);
+  assert.match(editorSource, /class="editor-ai-suggestion-preview"/);
+  assert.match(editorSource, /suggestion\.suggestedTitle/);
+  assert.match(editorSource, /renderToHtmlUncached\(suggestion\.insertText\)/);
+  assert.match(editorSource, /renderToHtmlUncached\(suggestion\.suggestedContent\)/);
+  assert.match(editorSource, /data-editor-ai-toggle-suggestion="\$\{index\}"/);
+  assert.match(editorSource, /data-editor-ai-apply="\$\{action\}"/);
+  assert.match(editorSource, /action === 'title'[\s\S]*editTitle\.value = suggestion\.suggestedTitle;[\s\S]*autoSave\(\);/);
+  assert.match(editorSource, /action === 'insert'[\s\S]*contentEditor\.insertAtSelection\(insertText\);[\s\S]*autoSave\(\);/);
+  assert.match(editorSource, /action === 'replace-selection'[\s\S]*contentEditor\.applyValue\(nextValue, cursor, cursor\);[\s\S]*autoSave\(\);/);
+  assert.match(editorSource, /action === 'replace-body'[\s\S]*contentEditor\.applyValue\(suggestion\.suggestedContent, suggestion\.suggestedContent\.length, suggestion\.suggestedContent\.length\);[\s\S]*autoSave\(\);/);
+  assert.match(editorSource, /function insertEditorGeneratedImage\(index\)[\s\S]*contentEditor\.insertAtSelection\(markdown\);[\s\S]*autoSave\(\);/);
+  assert.match(editorSource, /btnEditorAiPanel\.addEventListener\('click'/);
+  assert.match(editorSource, /btnEditorAiHistory\.addEventListener\('click'/);
+  assert.match(editorSource, /btnEditorAiSettings\.addEventListener\('click', openEditorAiSettings\);/);
+  assert.match(editorSource, /editorAiMessages\.addEventListener\('click'/);
+  assert.match(editorSource, /const toggleButton = event\.target\.closest\('\[data-editor-ai-toggle-suggestion\]'\);[\s\S]*toggleButton\.textContent = expanded \? '收起' : '展开';[\s\S]*return;/);
+  assert.match(editorSource, /editorAiHistoryList\.addEventListener\('click'/);
+  assert.doesNotMatch(editorSource, /window\.(prompt|confirm)/);
+  assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.editor-ai-panel\s*\{[\s\S]*flex:\s*0 0 380px;/);
+  assert.match(styleSource, /\.editor-ai-history-popover\s*\{[\s\S]*position:\s*absolute;/);
+  assert.match(styleSource, /\.editor-ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 28px 28px;[\s\S]*height:\s*58px;/);
+  assert.match(styleSource, /\.ai-image-card\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(styleSource, /\.editor-ai-assistant-bubble\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*280px;[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /\.editor-ai-suggestion-card\.collapsed \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*132px;/);
+  assert.match(styleSource, /\.editor-ai-suggestion-card\.expanded \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*360px;/);
+  assert.match(styleSource, /\.editor-ai-composer textarea\s*\{[\s\S]*min-height:\s*84px;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-outline-layout\.editor-ai-open \.editor-tabs/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-outline-layout\.editor-ai-open\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-history-popover\s*\{[\s\S]*position:\s*fixed;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-suggestion-card\.expanded \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*260px;/);
+});
+
 test('mobile layout uses compact on-demand sidebar panels and retains collapse controls', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
@@ -1119,16 +2087,20 @@ test('mobile layout uses compact on-demand sidebar panels and retains collapse c
   const mobileStyles = styleSource.slice(styleSource.indexOf('@media (max-width: 768px)'), styleSource.indexOf('/* Collapsed sidebar */'));
 
   assert.equal(document.querySelector('#btnSidebarTools').getAttribute('aria-label'), '切换更多工具');
+  assert.equal(document.querySelector('#sidebarModeTrigger') !== null, true);
+  assert.equal(document.querySelector('#sidebarModeMenu') !== null, true);
   assert.doesNotMatch(mobileStyles, /\.btn-sidebar-toggle\s*\{\s*display:\s*none/);
   assert.match(mobileStyles, /\.btn-theme-toggle,[\s\S]*\.btn-sidebar-toggle\s*\{[\s\S]*min-width:\s*36px;[\s\S]*min-height:\s*36px;/);
   assert.match(mobileStyles, /\.btn-sidebar-tools\s*\{\s*display:\s*flex;/);
-  assert.match(mobileStyles, /\.card-nav-panel,[\s\S]*\.backup-buttons\s*\{\s*display:\s*none;/);
+  assert.match(mobileStyles, /\.card-nav-panel,[\s\S]*\.category-sidebar-panel\s*\{\s*display:\s*none;/);
+  assert.match(mobileStyles, /body\.sidebar-ai-mode \.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(mobileStyles, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;/);
   assert.match(mobileStyles, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
   assert.match(mobileStyles, /body\.sidebar-collapsed \.sidebar\s*\{\s*display:\s*none;/);
   assert.match(appSource, /function collapseSidebar\(\)\s*\{\s*document\.body\.classList\.toggle\('sidebar-collapsed'\);\s*\}/);
   assert.match(appSource, /\$\('#btnToggleSidebar'\)\.addEventListener\('click', collapseSidebar\);[\s\S]*\$\('#btnSidebarExpand'\)\.addEventListener\('click', collapseSidebar\);/);
   assert.match(appSource, /function setSidebarToolsMode\(enabled\)[\s\S]*sidebar-tools-mode/);
-  assert.match(appSource, /widget\.classList\.toggle\('mobile-show'\)/);
+  assert.match(appSource, /\$\('#sidebarModeTrigger'\)\.addEventListener\('click', toggleSidebarModeMenu\)/);
   assert.doesNotMatch(appSource, /localStorage\.(?:setItem|getItem)\([^)]*sidebar-collapsed/i);
 });
 
@@ -1137,7 +2109,7 @@ test('mobile layout gives filters and editor controls touch-friendly responsive 
   const mobileStyles = styleSource.slice(styleSource.indexOf('@media (max-width: 768px)'), styleSource.indexOf('/* Collapsed sidebar */'));
 
   assert.match(mobileStyles, /\.toolbar\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(2,/);
-  assert.match(mobileStyles, /#btnNewLog,[\s\S]*#btnManageCats\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
+  assert.match(mobileStyles, /#btnNewLog,[\s\S]*#filterSubcategory\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(mobileStyles, /\.editor-meta\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.match(mobileStyles, /\.editor-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
   assert.match(mobileStyles, /\.codemirror-content-editor\s*\{\s*min-height:\s*52vh;/);

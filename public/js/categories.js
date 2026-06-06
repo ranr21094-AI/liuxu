@@ -121,11 +121,25 @@ function syncMainCategoryFilter(category) {
 }
 
 function setSubcategoryBrowseMode(enabled) {
-  $('#catList').style.display = enabled ? 'none' : '';
+  $('#categoryView').classList.toggle('sub-browse-mode', enabled);
+  $('#catList').style.display = '';
   $('#catSubBrowseSidebar').style.display = enabled ? 'flex' : 'none';
   $('#catDetailEmpty').style.display = enabled ? 'none' : $('#catDetailEmpty').style.display;
   $('#catDetailContent').style.display = enabled ? 'none' : $('#catDetailContent').style.display;
   $('#catSubBrowseContent').style.display = enabled ? 'flex' : 'none';
+}
+
+function setCategoryAddPanel(open) {
+  const panel = $('#catAddPanel');
+  panel.hidden = !open;
+  $('#catAddToggle').classList.toggle('active', open);
+  $('#catAddToggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) {
+    $('#catNewInput').focus();
+    $('#catNewInput').select();
+  } else {
+    $('#catNewInput').value = '';
+  }
 }
 
 function renderParentList() {
@@ -263,10 +277,11 @@ export async function openCategoryManager() {
   subcategoryBrowseParent = null;
   selectedSubcategoryName = null;
   $('#catSearchInput').value = '';
-  $('#catNewInput').value = '';
+  setCategoryAddPanel(false);
   $('#listView').style.display = 'none';
   $('#editorView').style.display = 'none';
   $('#aiChatView').style.display = 'none';
+  $('#todoView').style.display = 'none';
   $('#categoryView').style.display = 'flex';
   renderParentList();
   $('#catSearchInput').focus();
@@ -275,9 +290,11 @@ export async function openCategoryManager() {
 export function closeCategoryManager() {
   $('#categoryView').style.display = 'none';
   $('#aiChatView').style.display = 'none';
+  $('#todoView').style.display = 'none';
   $('#listView').style.display = 'flex';
   loadLogs();
   loadStats();
+  window.dispatchEvent(new CustomEvent('category-manager-closed'));
 }
 
 function updateFilterOnRename(oldName, newName) {
@@ -291,9 +308,15 @@ function clearFilterOnDelete(name) {
   }
 }
 
-$('#btnManageCats').addEventListener('click', openCategoryManager);
-$('#btnCategoryBack').addEventListener('click', closeCategoryManager);
 $('#catSearchInput').addEventListener('input', renderParentList);
+
+$('#catAddToggle').addEventListener('click', () => {
+  setCategoryAddPanel($('#catAddPanel').hidden);
+});
+
+$('#catAddCancelBtn').addEventListener('click', () => {
+  setCategoryAddPanel(false);
+});
 
 $('#btnSubBrowseBack').addEventListener('click', () => {
   const parent = subcategoryBrowseParent;
@@ -325,7 +348,7 @@ $('#catAddBtn').addEventListener('click', async () => {
       body: JSON.stringify({ name }),
     });
     if (!res.ok) { const err = await res.json(); showToast(err.error, 'error'); return; }
-    input.value = '';
+    setCategoryAddPanel(false);
     $('#catSearchInput').value = '';
     await refreshCategoryViews(name);
     showToast('分类已添加', 'success');
@@ -333,6 +356,7 @@ $('#catAddBtn').addEventListener('click', async () => {
 });
 $('#catNewInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); $('#catAddBtn').click(); }
+  if (e.key === 'Escape') { e.preventDefault(); setCategoryAddPanel(false); }
 });
 
 $('#btnCatRename').addEventListener('click', () => {
