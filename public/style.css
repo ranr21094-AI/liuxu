@@ -5006,6 +5006,19 @@ body.editor-fullscreen .codemirror-content-editor {
   font: inherit;
 }
 
+.ai-settings-textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-input-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
 .ai-settings-toggle {
   display: flex;
   align-items: center;
@@ -5450,6 +5463,186 @@ body.editor-fullscreen .codemirror-content-editor {
   gap: 8px;
 }
 
+.ai-skill-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 0;
+  margin-bottom: 6px;
+}
+
+.ai-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.28);
+  border-radius: 999px;
+  background: rgba(var(--color-primary-rgb), 0.09);
+  color: var(--color-text);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.ai-skill-chip-icon,
+.ai-skill-option-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.ai-skill-chip button {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.ai-skill-picker {
+  position: absolute;
+  right: 18px;
+  bottom: 58px;
+  width: min(320px, calc(100% - 36px));
+  z-index: 3;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card);
+  box-shadow: 0 12px 30px var(--color-card-shadow);
+}
+
+.ai-skill-picker[hidden] {
+  display: none;
+}
+
+.ai-skill-picker-title {
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.ai-skill-picker-list {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-skill-option {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: left;
+  padding: 8px;
+}
+
+.ai-skill-option:hover,
+.ai-skill-option.active {
+  border-color: rgba(var(--color-primary-rgb), 0.28);
+  background: rgba(var(--color-primary-rgb), 0.08);
+}
+
+.ai-skill-option strong,
+.ai-skill-option small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-skill-option strong {
+  font-size: 0.84rem;
+}
+
+.ai-skill-option small,
+.ai-skill-empty {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+}
+
+.ai-tool-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.18);
+  border-radius: 8px;
+  background: rgba(var(--color-primary-rgb), 0.045);
+}
+
+.ai-tool-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 0.82rem;
+}
+
+.ai-tool-card-head span {
+  color: var(--color-text-secondary);
+  font-size: 0.72rem;
+}
+
+.ai-tool-args {
+  max-height: 130px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--color-code-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.ai-tool-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.ai-tool-error {
+  color: var(--color-danger);
+  font-size: 0.82rem;
+}
+
+.ai-tool-result {
+  max-height: 420px;
+  overflow: auto;
+  padding: 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-card);
+  font-size: 0.84rem;
+}
+
+.ai-tool-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (max-width: 768px) {
   .ai-image-prompt-options {
     width: 100%;
@@ -5586,7 +5779,8 @@ body.editor-fullscreen .codemirror-content-editor {
   pointer-events: auto;
 }
 
-.btn-ai-image {
+.btn-ai-image,
+.btn-ai-skill {
   font-weight: 750;
 }
 

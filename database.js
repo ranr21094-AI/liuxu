@@ -14,6 +14,9 @@ const DEFAULT_AI_SETTINGS = {
   model: 'deepseek-v4-flash',
   reasoningEffort: 'high',
   stream: false,
+  userProfile: '',
+  logContextEnabled: false,
+  diaryContextEnabled: false,
   tavilyApiKey: '',
   webSearchEnabled: false,
   webSearchDepth: 'basic',
@@ -21,6 +24,9 @@ const DEFAULT_AI_SETTINGS = {
   seedreamModel: 'doubao-seedream-5-0-260128',
   seedreamSize: '2K',
   seedreamWatermark: true,
+  skills: {
+    westock: { enabled: true },
+  },
 };
 
 // In-memory cache
@@ -212,6 +218,25 @@ function normalizeAiChatMessage(message) {
     });
     normalized.imageGeneration = imageGeneration;
   }
+  if (isPlainObject(message.toolCall)) {
+    const toolCall = {
+      skillId: normalizeString(message.toolCall.skillId, '').trim().slice(0, 40),
+      tool: normalizeString(message.toolCall.tool, '').trim().slice(0, 40),
+      args: isPlainObject(message.toolCall.args) ? message.toolCall.args : {},
+      requiresConfirmation: message.toolCall.requiresConfirmation !== false,
+      status: ['pending', 'running', 'done', 'error'].includes(message.toolCall.status) ? message.toolCall.status : 'pending',
+      error: normalizeString(message.toolCall.error, '').trim().slice(0, 240),
+    };
+    if (toolCall.skillId && toolCall.tool) normalized.toolCall = toolCall;
+  }
+  if (isPlainObject(message.toolResult)) {
+    const toolResult = {
+      skillId: normalizeString(message.toolResult.skillId, '').trim().slice(0, 40),
+      tool: normalizeString(message.toolResult.tool, '').trim().slice(0, 40),
+      content: normalizeString(message.toolResult.content, '').slice(0, 60000),
+    };
+    if (toolResult.skillId && toolResult.tool && toolResult.content) normalized.toolResult = toolResult;
+  }
   return normalized;
 }
 
@@ -285,11 +310,16 @@ function normalizeAiSettings(data) {
   const reasoningEffort = ['high', 'max'].includes(source.reasoningEffort)
     ? source.reasoningEffort
     : DEFAULT_AI_SETTINGS.reasoningEffort;
+  const skillsSource = isPlainObject(source.skills) ? source.skills : {};
+  const westockSource = isPlainObject(skillsSource.westock) ? skillsSource.westock : {};
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
     model,
     reasoningEffort,
     stream: typeof source.stream === 'boolean' ? source.stream : DEFAULT_AI_SETTINGS.stream,
+    userProfile: typeof source.userProfile === 'string' ? source.userProfile.trim().slice(0, 2000) : DEFAULT_AI_SETTINGS.userProfile,
+    logContextEnabled: typeof source.logContextEnabled === 'boolean' ? source.logContextEnabled : DEFAULT_AI_SETTINGS.logContextEnabled,
+    diaryContextEnabled: typeof source.diaryContextEnabled === 'boolean' ? source.diaryContextEnabled : DEFAULT_AI_SETTINGS.diaryContextEnabled,
     tavilyApiKey: typeof source.tavilyApiKey === 'string' ? source.tavilyApiKey.trim().slice(0, 500) : '',
     webSearchEnabled: typeof source.webSearchEnabled === 'boolean' ? source.webSearchEnabled : DEFAULT_AI_SETTINGS.webSearchEnabled,
     webSearchDepth: ['basic', 'advanced'].includes(source.webSearchDepth) ? source.webSearchDepth : DEFAULT_AI_SETTINGS.webSearchDepth,
@@ -301,6 +331,11 @@ function normalizeAiSettings(data) {
       ? source.seedreamSize.trim().slice(0, 40)
       : DEFAULT_AI_SETTINGS.seedreamSize,
     seedreamWatermark: typeof source.seedreamWatermark === 'boolean' ? source.seedreamWatermark : DEFAULT_AI_SETTINGS.seedreamWatermark,
+    skills: {
+      westock: {
+        enabled: typeof westockSource.enabled === 'boolean' ? westockSource.enabled : true,
+      },
+    },
   };
 }
 

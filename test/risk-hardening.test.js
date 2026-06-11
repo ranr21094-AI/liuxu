@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -31,7 +32,7 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel } = {}) {
+function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   if (diaryPassword) {
@@ -48,6 +49,7 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   process.env.SEEDREAM_API_KEY = seedreamApiKey || '';
   process.env.SEEDREAM_BASE_URL = seedreamBaseUrl || 'https://ark.cn-beijing.volces.com/api/v3';
   process.env.SEEDREAM_DEFAULT_MODEL = seedreamDefaultModel || 'doubao-seedream-5-0-260128';
+  process.env.WESTOCK_NPX_COMMAND = westockNpxCommand || 'npx -y westock-data-clawhub@1.0.4';
   clearAppModules();
 
   const db = require(path.join(ROOT, 'database.js'));
@@ -68,6 +70,7 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
     delete process.env.SEEDREAM_API_KEY;
     delete process.env.SEEDREAM_BASE_URL;
     delete process.env.SEEDREAM_DEFAULT_MODEL;
+    delete process.env.WESTOCK_NPX_COMMAND;
     clearAppModules();
   });
 
@@ -453,6 +456,9 @@ test('AI settings persist to local data storage and validate options', async (t)
     model: 'deepseek-v4-flash',
     reasoningEffort: 'high',
     stream: false,
+    userProfile: '',
+    logContextEnabled: false,
+    diaryContextEnabled: false,
     tavilyApiKey: '',
     webSearchEnabled: false,
     webSearchDepth: 'basic',
@@ -460,6 +466,9 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamModel: 'doubao-seedream-5-0-260128',
     seedreamSize: '2K',
     seedreamWatermark: true,
+    skills: {
+      westock: { enabled: true },
+    },
   });
 
   const saved = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -470,6 +479,9 @@ test('AI settings persist to local data storage and validate options', async (t)
       model: 'deepseek-v4-pro',
       reasoningEffort: 'max',
       stream: true,
+      userProfile: 'I prefer concise Chinese replies.',
+      logContextEnabled: true,
+      diaryContextEnabled: true,
       tavilyApiKey: 'tvly-local-settings',
       webSearchEnabled: true,
       webSearchDepth: 'advanced',
@@ -477,6 +489,9 @@ test('AI settings persist to local data storage and validate options', async (t)
       seedreamModel: 'doubao-seedream-4-5-251128',
       seedreamSize: '2848x1600',
       seedreamWatermark: false,
+      skills: {
+        westock: { enabled: false },
+      },
     }),
   });
   assert.equal(saved.status, 200);
@@ -485,6 +500,9 @@ test('AI settings persist to local data storage and validate options', async (t)
     model: 'deepseek-v4-pro',
     reasoningEffort: 'max',
     stream: true,
+    userProfile: 'I prefer concise Chinese replies.',
+    logContextEnabled: true,
+    diaryContextEnabled: true,
     tavilyApiKey: 'tvly-local-settings',
     webSearchEnabled: true,
     webSearchDepth: 'advanced',
@@ -492,6 +510,9 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamModel: 'doubao-seedream-4-5-251128',
     seedreamSize: '2848x1600',
     seedreamWatermark: false,
+    skills: {
+      westock: { enabled: false },
+    },
   });
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings/);
@@ -502,11 +523,15 @@ test('AI settings persist to local data storage and validate options', async (t)
     { model: 'bad-model' },
     { reasoningEffort: 'low' },
     { stream: 'true' },
+    { userProfile: 123 },
+    { logContextEnabled: 'true' },
+    { diaryContextEnabled: 'true' },
     { webSearchEnabled: 'true' },
     { webSearchDepth: 'deep' },
     { seedreamModel: 'bad-seedream' },
     { seedreamSize: 'bad-size' },
     { seedreamWatermark: 'true' },
+    { skills: { westock: { enabled: 'true' } } },
   ]) {
     const invalid = await fetch(`${baseUrl}/api/ai/settings`, {
       method: 'PUT',
@@ -515,6 +540,151 @@ test('AI settings persist to local data storage and validate options', async (t)
     });
     assert.equal(invalid.status, 400);
   }
+});
+
+test('WeStock skill metadata, settings, and confirmed CLI execution are guarded', async (t) => {
+  const childProcess = require('node:child_process');
+  const originalSpawn = childProcess.spawn;
+  const calls = [];
+  childProcess.spawn = (command, args, options) => {
+    calls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    process.nextTick(() => {
+      child.stdout.emit('data', Buffer.from('| code | last |\n|---|---:|\n| sh600000 | 10.20 |\n'));
+      child.emit('close', 0);
+    });
+    return child;
+  };
+  t.after(() => {
+    childProcess.spawn = originalSpawn;
+  });
+
+  const { baseUrl } = loadFreshApp(t, { westockNpxCommand: 'westock-cli --fixed' });
+  const skills = await fetch(`${baseUrl}/api/ai/skills`);
+  assert.equal(skills.status, 200);
+  const skillsBody = await skills.json();
+  assert.equal(skillsBody.skills.length, 1);
+  assert.equal(skillsBody.skills[0].id, 'westock');
+  assert.equal(skillsBody.skills[0].enabled, true);
+  assert.ok(skillsBody.skills[0].tools.includes('kline'));
+
+  const noConfirm = await fetch(`${baseUrl}/api/ai/skills/westock/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'kline', args: { symbol: 'sh600000' } }),
+  });
+  assert.equal(noConfirm.status, 400);
+
+  const badTool = await fetch(`${baseUrl}/api/ai/skills/westock/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'shell', args: {}, confirmed: true }),
+  });
+  assert.equal(badTool.status, 400);
+
+  const badArg = await fetch(`${baseUrl}/api/ai/skills/westock/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'kline', args: { symbol: 'sh600000;rm' }, confirmed: true }),
+  });
+  assert.equal(badArg.status, 400);
+
+  const ok = await fetch(`${baseUrl}/api/ai/skills/westock/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'kline', args: { symbol: 'sh600000' }, confirmed: true }),
+  });
+  assert.equal(ok.status, 200);
+  assert.match((await ok.json()).content, /sh600000/);
+  assert.equal(calls[0].command, 'westock-cli');
+  assert.deepEqual(calls[0].args, ['--fixed', 'kline', 'sh600000']);
+  assert.equal(calls[0].options.shell, true);
+
+  const disabled = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skills: { westock: { enabled: false } } }),
+  });
+  assert.equal(disabled.status, 200);
+  const forbidden = await fetch(`${baseUrl}/api/ai/skills/westock/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'kline', args: { symbol: 'sh600000' }, confirmed: true }),
+  });
+  assert.equal(forbidden.status, 403);
+});
+
+test('AI chat injects WeStock prompt only when selected and returns tool cards', async (t) => {
+  const originalFetch = global.fetch;
+  const { baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const payloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (target === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      payloads.push(payload);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: payload.messages.some(message => /WeStock Data skill/.test(message.content || ''))
+              ? JSON.stringify({
+                reply: '需要查询浦发银行行情。',
+                toolCall: {
+                  skillId: 'westock',
+                  tool: 'kline',
+                  args: { symbol: 'sh600000' },
+                  requiresConfirmation: true,
+                },
+              })
+              : '普通回答',
+          },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const normal = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: '你好' }] }),
+  });
+  assert.equal(normal.status, 200);
+  assert.equal((await normal.json()).toolCall, undefined);
+
+  const withSkill = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: '查浦发银行行情' }], skill: { id: 'westock' } }),
+  });
+  assert.equal(withSkill.status, 200);
+  const body = await withSkill.json();
+  assert.equal(body.message.content, '需要查询浦发银行行情。');
+  assert.deepEqual(body.toolCall, {
+    skillId: 'westock',
+    tool: 'kline',
+    args: { symbol: 'sh600000' },
+    requiresConfirmation: true,
+    status: 'pending',
+  });
+  assert.equal(payloads[0].messages.some(message => /WeStock Data skill/.test(message.content || '')), false);
+  assert.equal(payloads[1].messages[0].role, 'system');
+  assert.match(payloads[1].messages[0].content, /WeStock Data skill/);
+
+  const badSkill = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'test' }], skill: { id: 'unknown' } }),
+  });
+  assert.equal(badSkill.status, 400);
 });
 
 test('AI chat sends only explicit conversation messages to DeepSeek', async (t) => {
@@ -581,6 +751,79 @@ test('AI chat sends only explicit conversation messages to DeepSeek', async (t) 
   assert.doesNotMatch(JSON.stringify(capturedPayload), /private diary content|private title/);
 });
 
+test('AI chat can include user profile and permitted logs without leaking locked diary entries', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    diaryPassword: 'secret',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  db.create({
+    title: 'public planning',
+    content: 'normal work log body',
+    category: '开发',
+    hours: 2,
+    log_date: '2026-05-17',
+  });
+  db.create({
+    title: 'private title',
+    content: 'private diary content',
+    category: DIARY_CATEGORY,
+    log_date: '2026-05-16',
+  });
+
+  const capturedPayloads = [];
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    capturedPayloads.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'AI reply' } }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const lockedRes = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      userProfile: 'I prefer concise Chinese replies.',
+      logContextEnabled: true,
+      diaryContextEnabled: true,
+      messages: [{ role: 'user', content: 'summarize my recent work' }],
+    }),
+  });
+  assert.equal(lockedRes.status, 200);
+  assert.equal(capturedPayloads[0].messages[0].role, 'system');
+  assert.match(capturedPayloads[0].messages[0].content, /I prefer concise Chinese replies\./);
+  assert.match(capturedPayloads[0].messages[0].content, /public planning/);
+  assert.match(capturedPayloads[0].messages[0].content, /normal work log body/);
+  assert.match(capturedPayloads[0].messages[0].content, /Diary logs included: no/);
+  assert.doesNotMatch(JSON.stringify(capturedPayloads[0]), /private diary content|private title|user-provided-key/);
+
+  const cookie = await unlockDiary(baseUrl, 'secret');
+  const unlockedRes = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', cookie },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      logContextEnabled: true,
+      diaryContextEnabled: true,
+      messages: [{ role: 'user', content: 'include diary too' }],
+    }),
+  });
+  assert.equal(unlockedRes.status, 200);
+  assert.match(capturedPayloads[1].messages[0].content, /Diary logs included: yes/);
+  assert.match(capturedPayloads[1].messages[0].content, /private diary content/);
+  assert.match(capturedPayloads[1].messages[0].content, /private title/);
+  assert.doesNotMatch(JSON.stringify(capturedPayloads[1]), /user-provided-key/);
+});
+
 test('AI chat can augment DeepSeek with Tavily search using only user input', async (t) => {
   const originalFetch = global.fetch;
   const { db, baseUrl } = loadFreshApp(t, {
@@ -635,6 +878,7 @@ test('AI chat can augment DeepSeek with Tavily search using only user input', as
     body: JSON.stringify({
       apiKey: 'user-provided-key',
       tavilyApiKey: 'tvly-user-provided-key',
+      userProfile: 'I prefer concise Chinese replies.',
       webSearchEnabled: true,
       webSearchDepth: 'advanced',
       messages: [
@@ -663,6 +907,8 @@ test('AI chat can augment DeepSeek with Tavily search using only user input', as
   assert.equal(deepSeekPayload.messages[0].role, 'system');
   assert.match(deepSeekPayload.messages[0].content, /Search says hello\./);
   assert.match(deepSeekPayload.messages[0].content, /https:\/\/example\.com\/trusted/);
+  assert.equal(deepSeekPayload.messages[1].role, 'system');
+  assert.match(deepSeekPayload.messages[1].content, /I prefer concise Chinese replies\./);
   assert.doesNotMatch(JSON.stringify(deepSeekPayload), /private diary content|private title|should not be forwarded|tvly-user-provided-key/);
 });
 
@@ -1520,7 +1766,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiSettingsTabChat').getAttribute('aria-selected'), 'true');
   assert.equal(document.querySelector('#aiSettingsTabImage').textContent, '生图设置');
   assert.equal(document.querySelector('#aiSettingsTabImage').getAttribute('aria-controls'), 'aiSettingsPanelImage');
+  assert.equal(document.querySelector('#aiSettingsTabSkills').getAttribute('aria-controls'), 'aiSettingsPanelSkills');
+  assert.equal(document.querySelector('#aiSettingsTabSkills').textContent, '技能设置');
   assert.equal(document.querySelector('#aiSettingsPanelImage').hasAttribute('hidden'), true);
+  assert.equal(document.querySelector('#aiSettingsPanelSkills').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('label[for="aiApiKeyInput"] span').textContent, 'DeepSeek API Key');
   assert.equal(document.querySelector('#aiApiKeyOverlay').getAttribute('aria-labelledby'), 'aiApiKeyTitle');
   assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-haspopup'), 'dialog');
@@ -1533,6 +1782,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiModelSelect').closest('#aiApiKeyOverlay') !== null, true);
   assert.equal(document.querySelector('#aiReasoningEffort').closest('#aiApiKeyOverlay') !== null, true);
   assert.equal(document.querySelector('#aiStreamToggle').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiUserProfileInput').closest('#aiSettingsPanelChat') !== null, true);
+  assert.equal(document.querySelector('#aiUserProfileInput').getAttribute('maxlength'), '2000');
+  assert.equal(document.querySelector('#aiLogContextToggle').closest('#aiSettingsPanelChat') !== null, true);
+  assert.equal(document.querySelector('#aiDiaryContextToggle').closest('#aiSettingsPanelChat') !== null, true);
   assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiApiKeyOverlay') !== null, true);
   assert.equal(document.querySelector('#aiTavilyApiKeyInput').getAttribute('placeholder'), 'tvly-...');
   assert.equal(document.querySelector('#aiWebSearchToggle').closest('#aiApiKeyOverlay') !== null, true);
@@ -1541,6 +1794,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiSeedreamModel').closest('#aiSettingsPanelImage') !== null, true);
   assert.equal(document.querySelector('#aiSeedreamSize').closest('#aiSettingsPanelImage') !== null, true);
   assert.equal(document.querySelector('#aiSeedreamWatermark').closest('#aiSettingsPanelImage') !== null, true);
+  assert.equal(document.querySelector('#aiSkillWestockToggle').closest('#aiSettingsPanelSkills') !== null, true);
   assert.deepEqual([...document.querySelectorAll('#aiSeedreamModel option')].map(option => option.value), [
     'doubao-seedream-5-0-260128',
     'doubao-seedream-4-5-251128',
@@ -1563,6 +1817,9 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiRenameOverlay').getAttribute('aria-labelledby'), 'aiRenameTitle');
   assert.equal(document.querySelector('#aiRenameInput').getAttribute('maxlength'), '40');
   assert.equal(document.querySelector('#aiChatInput').getAttribute('maxlength'), '4000');
+  assert.equal(document.querySelector('#btnAiSkill').closest('.ai-chat-composer-actions') !== null, true);
+  assert.equal(document.querySelector('#aiSkillPicker') !== null, true);
+  assert.equal(document.querySelector('#aiSkillChipRow') !== null, true);
   assert.equal(document.querySelector('#btnAiSend').disabled, true);
   assert.equal(document.querySelector('#btnAiImage').disabled, true);
   assert.deepEqual([...document.querySelectorAll('#aiModelSelect option')].map(option => option.value), [
@@ -1755,13 +2012,16 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /const AI_SETTINGS_ENDPOINT = '\/api\/ai\/settings';/);
   assert.match(aiSource, /async function loadSettings\(\)/);
   assert.match(aiSource, /await saveSettings\(\{ quiet: true \}\);[\s\S]*localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
-  assert.match(aiSource, /const submitted = \{ \.\.\.settings \};/);
+  assert.match(aiSource, /const submitted = \{ \.\.\.settings, skills: \{ \.\.\.settings\.skills, westock: \{ \.\.\.settings\.skills\?\.westock \} \} \};/);
   assert.match(aiSource, /服务端未保存 AI 设置，请重启应用后再试/);
   assert.match(aiSource, /apiKey: settings\.apiKey/);
   assert.match(aiSource, /model: settings\.model \|\| DEFAULT_MODEL/);
   assert.match(aiSource, /thinkingMode: 'enabled'/);
   assert.match(aiSource, /reasoningEffort: settings\.reasoningEffort \|\| DEFAULT_REASONING/);
-  assert.match(aiSource, /stream: Boolean\(settings\.stream\)/);
+  assert.match(aiSource, /stream: skill \? false : Boolean\(settings\.stream\)/);
+  assert.match(aiSource, /userProfile: settings\.userProfile \|\| ''/);
+  assert.match(aiSource, /logContextEnabled: Boolean\(settings\.logContextEnabled\)/);
+  assert.match(aiSource, /diaryContextEnabled: Boolean\(settings\.diaryContextEnabled\)/);
   assert.match(aiSource, /tavilyApiKey: settings\.tavilyApiKey/);
   assert.match(aiSource, /webSearchEnabled: Boolean\(settings\.webSearchEnabled\)/);
   assert.match(aiSource, /webSearchDepth: settings\.webSearchDepth \|\| 'basic'/);
@@ -1771,6 +2031,15 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /\$\('#aiSeedreamApiKeyInput'\)\.value = settings\.seedreamApiKey;/);
   assert.match(aiSource, /function setSettingsTab\(tab\)/);
   assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-settings-tab\]'\)/);
+  assert.match(aiSource, /const AI_SKILLS_ENDPOINT = '\/api\/ai\/skills';/);
+  assert.match(aiSource, /async function loadSkills\(\)/);
+  assert.match(aiSource, /function renderSkillPicker\(\)/);
+  assert.match(aiSource, /function renderSelectedSkillChip\(\)/);
+  assert.match(aiSource, /function renderToolCallCard\(toolCall, toolResult, index\)/);
+  assert.match(aiSource, /async function executeSkillTool\(index\)/);
+  assert.match(aiSource, /request\.skill = \{ id: skill\.id \};/);
+  assert.match(aiSource, /\$\('#btnAiSkill'\)\?\.addEventListener\('click', toggleSkillPicker\);/);
+  assert.match(aiSource, /apiFetch\('\/api\/ai\/skills\/westock\/run'/);
   assert.doesNotMatch(aiSource, /function isImageGenerationRequest\(text\)/);
   assert.doesNotMatch(aiSource, /isImageGenerationRequest\(content\)/);
   assert.match(aiSource, /function renderImageGenerationCard\(imageGeneration, index/);
@@ -2191,7 +2460,7 @@ test('content editor defers textarea changes until IME composition ends', async 
   });
 
   textarea.dispatchEvent(new dom.window.CompositionEvent('compositionstart', { bubbles: true }));
-  textarea.value = '\u4e2d\u6587\uff0c2';
+  textarea.value = '中文，2';
   textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   assert.equal(editor.isComposing(), true);
   assert.equal(changes, 0);
@@ -2199,8 +2468,8 @@ test('content editor defers textarea changes until IME composition ends', async 
   textarea.dispatchEvent(new dom.window.CompositionEvent('compositionend', { bubbles: true }));
   assert.equal(editor.isComposing(), false);
   assert.equal(changes, 1);
-  assert.equal(latest, '\u4e2d\u6587\uff0c2');
-  assert.equal(editor.getValue(), '\u4e2d\u6587\uff0c2');
+  assert.equal(latest, '中文，2');
+  assert.equal(editor.getValue(), '中文，2');
 });
 
 test('shortcut matching ignores IME composition keyboard events', async () => {

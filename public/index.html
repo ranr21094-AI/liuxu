@@ -393,9 +393,12 @@
       </div>
       <div class="ai-chat-composer">
         <label class="sr-only" for="aiChatInput">输入 AI 对话消息</label>
+        <div class="ai-skill-chip-row" id="aiSkillChipRow"></div>
         <textarea id="aiChatInput" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
+        <div class="ai-skill-picker" id="aiSkillPicker" hidden></div>
         <div class="ai-chat-composer-actions">
           <span class="ai-chat-sending" id="aiChatSending" style="display:none;">发送中...</span>
+          <button class="btn-secondary btn-ai-skill" id="btnAiSkill" type="button" aria-haspopup="listbox" aria-expanded="false">技能</button>
           <button class="btn-secondary btn-ai-image" id="btnAiImage" type="button" disabled aria-label="生成图片">生图</button>
           <button class="btn-primary" id="btnAiSend" type="button" disabled>发送</button>
         </div>
@@ -503,6 +506,7 @@
         <div class="ai-settings-tabs" role="tablist" aria-label="AI 设置类型">
           <button class="ai-settings-tab active" id="aiSettingsTabChat" type="button" role="tab" aria-selected="true" aria-controls="aiSettingsPanelChat" data-ai-settings-tab="chat">AI 设置</button>
           <button class="ai-settings-tab" id="aiSettingsTabImage" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelImage" data-ai-settings-tab="image">生图设置</button>
+          <button class="ai-settings-tab" id="aiSettingsTabSkills" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelSkills" data-ai-settings-tab="skills">技能设置</button>
         </div>
         <button class="btn-icon modal-close" id="aiApiKeyClose" aria-label="关闭">&times;</button>
       </div>
@@ -532,6 +536,26 @@
               <small>开启后 AI 回复会逐字显示</small>
             </span>
             <input type="checkbox" id="aiStreamToggle">
+            <i aria-hidden="true"></i>
+          </label>
+          <label class="ai-settings-field" for="aiUserProfileInput">
+            <span>用户画像</span>
+            <textarea id="aiUserProfileInput" class="ai-settings-textarea" rows="4" maxlength="2000" placeholder="例如：我的职业、关注领域、偏好的回答风格、常用语言等"></textarea>
+          </label>
+          <label class="ai-settings-toggle" for="aiLogContextToggle">
+            <span>
+              <strong>允许 AI 访问日志内容</strong>
+              <small>开启后提问时会附带最近日志作为只读上下文</small>
+            </span>
+            <input type="checkbox" id="aiLogContextToggle">
+            <i aria-hidden="true"></i>
+          </label>
+          <label class="ai-settings-toggle" for="aiDiaryContextToggle">
+            <span>
+              <strong>允许 AI 访问日记内容</strong>
+              <small>需同时开启日志访问；日记锁定时不会发送日记</small>
+            </span>
+            <input type="checkbox" id="aiDiaryContextToggle">
             <i aria-hidden="true"></i>
           </label>
           <label class="ai-settings-field" for="aiTavilyApiKeyInput">
@@ -584,6 +608,16 @@
               <small>开启后保留上游 “AI 生成” 标识</small>
             </span>
             <input type="checkbox" id="aiSeedreamWatermark">
+            <i aria-hidden="true"></i>
+          </label>
+        </div>
+        <div class="ai-settings-panel" id="aiSettingsPanelSkills" role="tabpanel" aria-labelledby="aiSettingsTabSkills" hidden>
+          <label class="ai-settings-toggle" for="aiSkillWestockToggle">
+            <span>
+              <strong>WeStock Data</strong>
+              <small>A股、港股、美股行情与财务数据查询</small>
+            </span>
+            <input type="checkbox" id="aiSkillWestockToggle">
             <i aria-hidden="true"></i>
           </label>
         </div>
