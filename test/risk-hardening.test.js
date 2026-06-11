@@ -2144,6 +2144,10 @@ test('textarea loading fallback preserves programmatic loads and selection inser
 
   editor.loadDocument('alpha', 'log-1');
   assert.equal(changes, 0);
+  editor.setVisible(true);
+  assert.equal(editor.usesRichEditor(), false);
+  assert.equal(textarea.style.display, 'block');
+  assert.equal(mount.style.display, 'none');
   textarea.selectionStart = textarea.selectionEnd = 5;
   editor.insertAtSelection(' beta');
   assert.equal(editor.getValue(), 'alpha beta');
@@ -2155,4 +2159,55 @@ test('textarea loading fallback preserves programmatic loads and selection inser
   assert.equal(textarea.style.display, 'none');
   assert.equal(mount.style.display, 'none');
   assert.doesNotThrow(() => editor.layout());
+});
+
+test('content editor defers textarea changes until IME composition ends', async (t) => {
+  const dom = new JSDOM('<!doctype html><textarea id="body"></textarea><div id="mount"></div>', {
+    pretendToBeVisual: true,
+  });
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalMutationObserver = globalThis.MutationObserver;
+  t.after(() => {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.MutationObserver = originalMutationObserver;
+    dom.window.close();
+  });
+
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.MutationObserver = dom.window.MutationObserver;
+
+  const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'contentEditor.js')).href + `?ime=${Date.now()}`;
+  const { createContentEditor } = await import(moduleUrl);
+  const textarea = document.querySelector('#body');
+  const editor = createContentEditor(textarea, document.querySelector('#mount'));
+  let changes = 0;
+  let latest = '';
+  editor.onDidChange(value => {
+    changes += 1;
+    latest = value;
+  });
+
+  textarea.dispatchEvent(new dom.window.CompositionEvent('compositionstart', { bubbles: true }));
+  textarea.value = '\u4e2d\u6587\uff0c2';
+  textarea.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+  assert.equal(editor.isComposing(), true);
+  assert.equal(changes, 0);
+
+  textarea.dispatchEvent(new dom.window.CompositionEvent('compositionend', { bubbles: true }));
+  assert.equal(editor.isComposing(), false);
+  assert.equal(changes, 1);
+  assert.equal(latest, '\u4e2d\u6587\uff0c2');
+  assert.equal(editor.getValue(), '\u4e2d\u6587\uff0c2');
+});
+
+test('shortcut matching ignores IME composition keyboard events', async () => {
+  const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'shortcuts.js')).href + `?ime=${Date.now()}`;
+  const { findAction, isImeComposingEvent } = await import(moduleUrl);
+
+  assert.equal(isImeComposingEvent({ key: 'Process', keyCode: 229 }), true);
+  assert.equal(findAction({ key: 'Process', keyCode: 229, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), null);
+  assert.equal(findAction({ key: 's', isComposing: true, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), null);
 });

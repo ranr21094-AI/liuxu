@@ -4,7 +4,7 @@ import { showToast, escHtml, confirmDialog, openModal, closeModal, $, $$ } from 
 import { renderToHtmlUncached } from './markdown.js';
 import { loadLogs, listView } from './logList.js';
 import { loadStats } from './stats.js';
-import { findAction, getAllShortcuts, setShortcut, resetAllShortcuts, formatKeys, isComboUsed } from './shortcuts.js';
+import { findAction, getAllShortcuts, setShortcut, resetAllShortcuts, formatKeys, isComboUsed, isImeComposingEvent } from './shortcuts.js';
 import { closeCategoryManager, loadCategories, populateFilterCategory, populateEditorParentCategory, populateEditorSubCategory } from './categories.js';
 import { renderCalendar } from './calendar.js';
 import { AUTO_SAVE_MS, SAVE_STATUS_DURATION } from './constants.js';
@@ -1244,11 +1244,13 @@ function closeAllModals() {
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
   if (e.defaultPrevented) return;
+  if (isImeComposingEvent(e) || contentEditor.isComposing()) return;
   const tag = document.activeElement.tagName;
   const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || contentEditor.hasFocus();
 
   const action = findAction(e);
   if (!action) return;
+  if (isInput && action !== 'escape' && !e.ctrlKey && !e.metaKey && !e.altKey) return;
 
   const inEditor = editorView.style.display !== 'none';
   const focusedOnContent = contentEditor.hasFocus();

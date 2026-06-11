@@ -80,8 +80,13 @@ export function eventMatches(e, combo) {
   return ctrlOk && shiftOk && altOk && keyOk;
 }
 
+export function isImeComposingEvent(e) {
+  return Boolean(e.isComposing || e.key === 'Process' || e.keyCode === 229 || e.which === 229);
+}
+
 // Find which action a key event triggers (returns action id or null)
 export function findAction(e) {
+  if (isImeComposingEvent(e)) return null;
   const shortcuts = getAllShortcuts();
   for (const [action, def] of Object.entries(shortcuts)) {
     if (!def.enabled && def.enabled !== undefined) continue;
