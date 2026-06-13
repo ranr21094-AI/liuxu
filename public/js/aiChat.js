@@ -31,6 +31,7 @@ let settings = {
   logContextEnabled: false,
   diaryContextEnabled: false,
   tavilyApiKey: '',
+  perplexityApiKey: '',
   webSearchEnabled: false,
   webSearchDepth: 'basic',
   seedreamApiKey: '',
@@ -39,6 +40,7 @@ let settings = {
   seedreamWatermark: true,
   skills: {
     westock: { enabled: true },
+    perplexity: { enabled: true },
   },
 };
 
@@ -68,6 +70,7 @@ function normalizeConversations(items) {
 function normalizeSettings(value) {
   const skills = value?.skills && typeof value.skills === 'object' ? value.skills : {};
   const westock = skills.westock && typeof skills.westock === 'object' ? skills.westock : {};
+  const perplexity = skills.perplexity && typeof skills.perplexity === 'object' ? skills.perplexity : {};
   return {
     apiKey: typeof value?.apiKey === 'string' ? value.apiKey : '',
     model: ['deepseek-v4-flash', 'deepseek-v4-pro'].includes(value?.model) ? value.model : DEFAULT_MODEL,
@@ -77,6 +80,7 @@ function normalizeSettings(value) {
     logContextEnabled: typeof value?.logContextEnabled === 'boolean' ? value.logContextEnabled : false,
     diaryContextEnabled: typeof value?.diaryContextEnabled === 'boolean' ? value.diaryContextEnabled : false,
     tavilyApiKey: typeof value?.tavilyApiKey === 'string' ? value.tavilyApiKey : '',
+    perplexityApiKey: typeof value?.perplexityApiKey === 'string' ? value.perplexityApiKey : '',
     webSearchEnabled: typeof value?.webSearchEnabled === 'boolean' ? value.webSearchEnabled : false,
     webSearchDepth: ['basic', 'advanced'].includes(value?.webSearchDepth) ? value.webSearchDepth : 'basic',
     seedreamApiKey: typeof value?.seedreamApiKey === 'string' ? value.seedreamApiKey : '',
@@ -85,6 +89,7 @@ function normalizeSettings(value) {
     seedreamWatermark: typeof value?.seedreamWatermark === 'boolean' ? value.seedreamWatermark : true,
     skills: {
       westock: { enabled: typeof westock.enabled === 'boolean' ? westock.enabled : true },
+      perplexity: { enabled: typeof perplexity.enabled === 'boolean' ? perplexity.enabled : true },
     },
   };
 }
@@ -177,7 +182,14 @@ async function loadSkills() {
 }
 
 async function saveSettings({ quiet = false } = {}) {
-  const submitted = { ...settings, skills: { ...settings.skills, westock: { ...settings.skills?.westock } } };
+  const submitted = {
+    ...settings,
+    skills: {
+      ...settings.skills,
+      westock: { ...settings.skills?.westock },
+      perplexity: { ...settings.skills?.perplexity },
+    },
+  };
   const res = await apiFetch(AI_SETTINGS_ENDPOINT, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -187,6 +199,7 @@ async function saveSettings({ quiet = false } = {}) {
   if (!res.ok) throw new Error(data.error || 'AI 设置保存失败');
   if (
     data.tavilyApiKey !== submitted.tavilyApiKey ||
+    data.perplexityApiKey !== submitted.perplexityApiKey ||
     data.userProfile !== submitted.userProfile ||
     data.logContextEnabled !== submitted.logContextEnabled ||
     data.diaryContextEnabled !== submitted.diaryContextEnabled ||
@@ -196,7 +209,8 @@ async function saveSettings({ quiet = false } = {}) {
     data.seedreamModel !== submitted.seedreamModel ||
     data.seedreamSize !== submitted.seedreamSize ||
     data.seedreamWatermark !== submitted.seedreamWatermark ||
-    data.skills?.westock?.enabled !== submitted.skills?.westock?.enabled
+    data.skills?.westock?.enabled !== submitted.skills?.westock?.enabled ||
+    data.skills?.perplexity?.enabled !== submitted.skills?.perplexity?.enabled
   ) {
     throw new Error('服务端未保存 AI 设置，请重启应用后再试');
   }
@@ -215,7 +229,7 @@ function activeMessages() {
 }
 
 function visibleMainViewId() {
-  for (const id of ['editorView', 'categoryView', 'todoView', 'listView']) {
+  for (const id of ['aiSettingsView', 'aiChatView', 'editorView', 'categoryView', 'todoView', 'listView']) {
     const el = document.getElementById(id);
     if (el && el.style.display !== 'none') return id;
   }
@@ -223,10 +237,29 @@ function visibleMainViewId() {
 }
 
 function setMainView(id) {
-  for (const viewId of ['listView', 'editorView', 'categoryView', 'todoView', 'aiChatView']) {
+  for (const viewId of ['listView', 'editorView', 'categoryView', 'todoView', 'aiChatView', 'aiSettingsView']) {
     const el = document.getElementById(viewId);
     if (!el) continue;
     el.style.display = viewId === id ? 'flex' : 'none';
+  }
+}
+
+function syncAiSidebarChrome() {
+  document.body.classList.remove('sidebar-todo-mode', 'sidebar-category-mode', 'sidebar-tools-mode');
+  document.body.classList.add('sidebar-ai-mode');
+  localStorage.setItem('sidebarMode', 'ai');
+  const title = $('#sidebarTitle');
+  const trigger = $('#sidebarModeTrigger');
+  if (title) title.textContent = 'AI 对话';
+  if (trigger) trigger.title = '当前为 AI 历史对话';
+  $('#sidebarModeMenu')?.querySelectorAll('[data-mode]').forEach(button => {
+    button.classList.toggle('active', button.dataset.mode === 'ai');
+  });
+  const tools = $('#btnSidebarTools');
+  if (tools) {
+    tools.classList.remove('active');
+    tools.setAttribute('aria-pressed', 'false');
+    tools.title = '切换更多工具';
   }
 }
 
@@ -341,7 +374,10 @@ function renderMessages() {
       ${message.role === 'assistant' && Array.isArray(message.sources) && message.sources.length ? `
         <div class="ai-message-sources" aria-label="联网搜索来源">
           <span>来源</span>
-          ${message.sources.map((source, index) => `<a href="${escHtml(source.url)}" target="_blank" rel="noopener noreferrer">${index + 1}. ${escHtml(source.title || source.url)}</a>`).join('')}
+          ${message.sources.map((source, index) => {
+            const provider = source.provider ? `${source.provider}: ` : '';
+            return `<a href="${escHtml(source.url)}" target="_blank" rel="noopener noreferrer">${index + 1}. ${escHtml(provider + (source.title || source.url))}</a>`;
+          }).join('')}
         </div>
       ` : ''}
     </div>
@@ -418,14 +454,30 @@ function selectedSkill() {
   return enabledSkills().find(skill => skill.id === selectedSkillId) || null;
 }
 
+function skillMeta(skillId) {
+  const skill = availableSkills.find(item => item.id === skillId) || {};
+  const fallback = {
+    westock: { name: 'WeStock Data', label: 'WeStock', icon: 'W', runningText: '正在查询市场数据', errorText: 'WeStock 查询失败' },
+    perplexity: { name: 'Perplexity Search', label: 'Perplexity', icon: 'P', runningText: '正在搜索网页', errorText: 'Perplexity 搜索失败' },
+  }[skillId] || { name: 'AI Skill', label: 'Skill', icon: 'S', runningText: '正在执行技能', errorText: '技能执行失败' };
+  return {
+    ...fallback,
+    ...skill,
+    icon: skill.icon || fallback.icon,
+    label: skill.label || fallback.label,
+    name: skill.name || fallback.name,
+  };
+}
+
 function renderSelectedSkillChip() {
   const row = $('#aiSkillChipRow');
   if (!row) return;
   const skill = selectedSkill();
+  const meta = skill ? skillMeta(skill.id) : null;
   row.innerHTML = skill ? `
     <span class="ai-skill-chip" data-skill-id="${escHtml(skill.id)}">
-      <span class="ai-skill-chip-icon">W</span>
-      <span>${escHtml(skill.label || skill.name || 'WeStock')}</span>
+      <span class="ai-skill-chip-icon">${escHtml(meta.icon)}</span>
+      <span>${escHtml(meta.label || meta.name)}</span>
       <button type="button" id="btnAiSkillClear" aria-label="移除技能">&times;</button>
     </span>
   ` : '';
@@ -443,15 +495,18 @@ function renderSkillPicker() {
   picker.innerHTML = skills.length ? `
     <div class="ai-skill-picker-title">选择技能</div>
     <div class="ai-skill-picker-list" role="listbox">
-      ${skills.map(skill => `
+      ${skills.map((skill) => {
+        const meta = skillMeta(skill.id);
+        return `
         <button type="button" class="ai-skill-option${skill.id === selectedSkillId ? ' active' : ''}" data-skill-id="${escHtml(skill.id)}" role="option" aria-selected="${skill.id === selectedSkillId ? 'true' : 'false'}">
-          <span class="ai-skill-option-icon">W</span>
+          <span class="ai-skill-option-icon">${escHtml(meta.icon)}</span>
           <span>
-            <strong>${escHtml(skill.name || 'WeStock Data')}</strong>
-            <small>${escHtml(skill.description || '股票市场数据查询')}</small>
+            <strong>${escHtml(meta.name)}</strong>
+            <small>${escHtml(meta.description || 'AI 技能')}</small>
           </span>
         </button>
-      `).join('')}
+      `;
+      }).join('')}
     </div>
   ` : '<div class="ai-skill-empty">暂无已启用技能，请到设置中开启</div>';
 }
@@ -483,23 +538,24 @@ function chooseSkill(id) {
 }
 
 function renderToolCallCard(toolCall, toolResult, index) {
-  if (!toolCall || toolCall.skillId !== 'westock') return '';
+  if (!toolCall || !['westock', 'perplexity'].includes(toolCall.skillId)) return '';
   const status = toolCall.status || 'pending';
   const argsJson = JSON.stringify(toolCall.args || {}, null, 2);
+  const meta = skillMeta(toolCall.skillId);
   return `
     <div class="ai-tool-card ${escHtml(status)}" data-tool-message-index="${index}">
       <div class="ai-tool-card-head">
-        <strong>WeStock Data</strong>
+        <strong>${escHtml(meta.name)}</strong>
         <span>${escHtml(toolCall.tool)}</span>
       </div>
       <pre class="ai-tool-args"><code>${escHtml(argsJson)}</code></pre>
       ${status === 'running' ? `
         <div class="ai-tool-running">
-          <span>正在查询市场数据</span>
+          <span>${escHtml(meta.runningText)}</span>
           <span class="ai-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
         </div>
       ` : ''}
-      ${status === 'error' ? `<div class="ai-tool-error">${escHtml(toolCall.error || 'WeStock 查询失败')}</div>` : ''}
+      ${status === 'error' ? `<div class="ai-tool-error">${escHtml(toolCall.error || meta.errorText)}</div>` : ''}
       ${toolResult?.content ? `<div class="ai-tool-result markdown-body">${renderToHtml(toolResult.content)}</div>` : ''}
       <div class="ai-tool-actions">
         ${status === 'pending' || status === 'error' ? `<button type="button" class="btn-primary btn-sm" data-action="execute-skill-tool">确认执行</button>` : ''}
@@ -623,6 +679,7 @@ function currentSettings() {
     logContextEnabled: Boolean(settings.logContextEnabled),
     diaryContextEnabled: Boolean(settings.diaryContextEnabled),
     tavilyApiKey: settings.tavilyApiKey,
+    perplexityApiKey: settings.perplexityApiKey,
     webSearchEnabled: Boolean(settings.webSearchEnabled),
     webSearchDepth: settings.webSearchDepth || 'basic',
   };
@@ -647,6 +704,7 @@ function fillSettingsModal() {
   $('#aiLogContextToggle').checked = Boolean(settings.logContextEnabled);
   $('#aiDiaryContextToggle').checked = Boolean(settings.diaryContextEnabled);
   $('#aiTavilyApiKeyInput').value = settings.tavilyApiKey;
+  $('#aiPerplexityApiKeyInput').value = settings.perplexityApiKey;
   $('#aiWebSearchToggle').checked = Boolean(settings.webSearchEnabled);
   $('#aiWebSearchDepth').value = settings.webSearchDepth || 'basic';
   $('#aiSeedreamApiKeyInput').value = settings.seedreamApiKey;
@@ -654,15 +712,23 @@ function fillSettingsModal() {
   $('#aiSeedreamSize').value = settings.seedreamSize || DEFAULT_SEEDREAM_SIZE;
   $('#aiSeedreamWatermark').checked = settings.seedreamWatermark !== false;
   $('#aiSkillWestockToggle').checked = settings.skills?.westock?.enabled !== false;
+  $('#aiSkillPerplexityToggle').checked = settings.skills?.perplexity?.enabled !== false;
 }
 
 function setSettingsTab(tab) {
   const activeTab = ['image', 'skills'].includes(tab) ? tab : 'chat';
+  const titles = {
+    chat: '基础设置',
+    image: '生图设置',
+    skills: '技能设置',
+  };
   document.querySelectorAll('[data-ai-settings-tab]').forEach(button => {
     const selected = button.dataset.aiSettingsTab === activeTab;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-selected', String(selected));
   });
+  const title = $('#aiSettingsSectionTitle');
+  if (title) title.textContent = titles[activeTab] || titles.chat;
   $('#aiSettingsPanelChat').hidden = activeTab !== 'chat';
   $('#aiSettingsPanelChat').classList.toggle('active', activeTab === 'chat');
   $('#aiSettingsPanelImage').hidden = activeTab !== 'image';
@@ -671,17 +737,30 @@ function setSettingsTab(tab) {
   $('#aiSettingsPanelSkills').classList.toggle('active', activeTab === 'skills');
 }
 
-function openSettingsModal() {
+function openSettingsPage(tab = 'chat') {
   fillSettingsModal();
-  setSettingsTab('chat');
-  openModal($('#aiApiKeyOverlay'), '#aiApiKeyInput');
+  resetSkillConfigPanels();
+  setSettingsTab(tab);
+  document.body.classList.remove('editor-fullscreen');
+  const fullscreenButton = $('#btnEditorFullscreen');
+  if (fullscreenButton) {
+    fullscreenButton.setAttribute('aria-pressed', 'false');
+    fullscreenButton.textContent = '全屏编辑';
+    fullscreenButton.title = '进入全屏编辑';
+  }
+  setMainView('aiSettingsView');
+  requestAnimationFrame(() => $('#aiApiKeyInput')?.focus());
 }
 
-function closeSettingsModal() {
-  closeModal($('#aiApiKeyOverlay'));
+function closeSettingsPage() {
+  syncAiSidebarChrome();
+  setMainView('aiChatView');
+  renderMessages();
+  updateSendState();
+  requestAnimationFrame(() => $('#aiChatInput')?.focus());
 }
 
-async function saveSettingsFromModal() {
+async function saveSettingsFromPage() {
   settings = normalizeSettings({
     apiKey: $('#aiApiKeyInput').value.trim(),
     model: $('#aiModelSelect').value,
@@ -691,6 +770,7 @@ async function saveSettingsFromModal() {
     logContextEnabled: $('#aiLogContextToggle').checked,
     diaryContextEnabled: $('#aiDiaryContextToggle').checked,
     tavilyApiKey: $('#aiTavilyApiKeyInput').value.trim(),
+    perplexityApiKey: $('#aiPerplexityApiKeyInput').value.trim(),
     webSearchEnabled: $('#aiWebSearchToggle').checked,
     webSearchDepth: $('#aiWebSearchDepth').value,
     seedreamApiKey: $('#aiSeedreamApiKeyInput').value.trim(),
@@ -699,22 +779,44 @@ async function saveSettingsFromModal() {
     seedreamWatermark: $('#aiSeedreamWatermark').checked,
     skills: {
       westock: { enabled: $('#aiSkillWestockToggle').checked },
+      perplexity: { enabled: $('#aiSkillPerplexityToggle').checked },
     },
   });
   try {
     await saveSettings();
-    closeSettingsModal();
+    closeSettingsPage();
   } catch (err) {
     showToast('AI 设置保存失败：' + err.message, 'error');
   }
 }
 
+function setSkillConfigExpanded(card, expanded) {
+  const trigger = card?.querySelector('[data-skill-config-toggle]');
+  const panel = trigger ? document.getElementById(trigger.getAttribute('aria-controls')) : null;
+  if (!trigger || !panel) return;
+  trigger.setAttribute('aria-expanded', String(expanded));
+  panel.hidden = !expanded;
+  card.classList.toggle('expanded', expanded);
+}
+
+function resetSkillConfigPanels() {
+  document.querySelectorAll('.ai-skill-config-card').forEach(card => setSkillConfigExpanded(card, false));
+}
+
+function toggleSkillConfigFromHeader(event) {
+  const trigger = event.currentTarget;
+  const card = trigger.closest('.ai-skill-config-card');
+  setSkillConfigExpanded(card, trigger.getAttribute('aria-expanded') !== 'true');
+}
+
 async function clearApiKey() {
   settings.apiKey = '';
   settings.tavilyApiKey = '';
+  settings.perplexityApiKey = '';
   settings.seedreamApiKey = '';
   $('#aiApiKeyInput').value = '';
   $('#aiTavilyApiKeyInput').value = '';
+  $('#aiPerplexityApiKeyInput').value = '';
   $('#aiSeedreamApiKeyInput').value = '';
   try {
     await saveSettings({ quiet: true });
@@ -856,14 +958,15 @@ async function executeSkillTool(index) {
   const chat = activeConversation();
   const message = chat?.messages[index];
   const toolCall = message?.toolCall;
-  if (!chat || !toolCall || toolCall.skillId !== 'westock' || sending) return;
+  if (!chat || !toolCall || !['westock', 'perplexity'].includes(toolCall.skillId) || sending) return;
+  const meta = skillMeta(toolCall.skillId);
   toolCall.status = 'running';
   toolCall.error = '';
   chat.updatedAt = Date.now();
   await saveConversations();
   renderMessages();
   try {
-    const res = await apiFetch('/api/ai/skills/westock/run', {
+    const res = await apiFetch(`/api/ai/skills/${encodeURIComponent(toolCall.skillId)}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -873,12 +976,12 @@ async function executeSkillTool(index) {
       }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'WeStock 查询失败');
+    if (!res.ok) throw new Error(data.error || meta.errorText);
     toolCall.status = 'done';
     message.toolResult = {
-      skillId: 'westock',
+      skillId: toolCall.skillId,
       tool: toolCall.tool,
-      content: data.content || 'WeStock 没有返回内容',
+      content: data.content || `${meta.name} 没有返回内容`,
     };
     chat.updatedAt = Date.now();
     await saveConversations();
@@ -889,7 +992,7 @@ async function executeSkillTool(index) {
     chat.updatedAt = Date.now();
     await saveConversations();
     renderMessages();
-    showToast('WeStock 查询失败：' + err.message, 'error');
+    showToast(`${meta.errorText}：${err.message}`, 'error');
   }
 }
 
@@ -1026,10 +1129,10 @@ export async function initAiChat() {
   updateSendState();
 
   $('#btnAiSidebarNewChat').addEventListener('click', newConversation);
-  $('#btnAiApiKey').addEventListener('click', openSettingsModal);
-  $('#aiApiKeyClose').addEventListener('click', closeSettingsModal);
-  $('#btnAiApiKeyCancel').addEventListener('click', closeSettingsModal);
-  $('#btnAiApiKeySave').addEventListener('click', saveSettingsFromModal);
+  $('#btnAiApiKey').addEventListener('click', () => openSettingsPage('chat'));
+  $('#btnAiSettingsBack').addEventListener('click', closeSettingsPage);
+  $('#btnAiApiKeyCancel').addEventListener('click', closeSettingsPage);
+  $('#btnAiApiKeySave').addEventListener('click', saveSettingsFromPage);
   $('#btnAiApiKeyClear').addEventListener('click', clearApiKey);
   $('#aiRenameClose').addEventListener('click', closeRenameModal);
   $('#btnAiRenameCancel').addEventListener('click', closeRenameModal);
@@ -1040,14 +1143,14 @@ export async function initAiChat() {
   $('#aiRenameInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') saveRenameConversation();
   });
-  $('#aiApiKeyOverlay').addEventListener('click', (event) => {
-    if (event.target === $('#aiApiKeyOverlay')) closeSettingsModal();
-  });
   document.querySelectorAll('[data-ai-settings-tab]').forEach(button => {
     button.addEventListener('click', () => setSettingsTab(button.dataset.aiSettingsTab));
   });
   $('#aiApiKeyInput').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) saveSettingsFromModal();
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) saveSettingsFromPage();
+  });
+  document.querySelectorAll('[data-skill-config-toggle]').forEach(button => {
+    button.addEventListener('click', toggleSkillConfigFromHeader);
   });
   $('#aiSidebarHistoryList').addEventListener('click', (event) => {
     const item = event.target.closest('.ai-history-item');

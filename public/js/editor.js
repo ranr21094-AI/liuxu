@@ -275,7 +275,7 @@ function openEditorAiSettings() {
     settingsButton.click();
     return;
   }
-  openModal($('#aiApiKeyOverlay'), '#aiApiKeyInput');
+  showToast('AI 设置入口暂不可用', 'error');
 }
 
 async function switchEditorAiConversation(id) {

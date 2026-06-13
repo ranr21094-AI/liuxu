@@ -35,17 +35,14 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)
 
 $('#btnThemeToggle').addEventListener('click', toggleTheme);
 
-// Sidebar mode: log tools, current-card navigation, todo panel, or AI history
+// Sidebar mode: default log tools, todo panel, category manager, or AI history
 const SIDEBAR_MODE_KEY = 'sidebarMode';
 const MOBILE_SIDEBAR_QUERY = '(max-width: 768px)';
 const mobileSidebarMedia = window.matchMedia(MOBILE_SIDEBAR_QUERY);
 
 function setSidebarTitle(mode) {
   const title = $('#sidebarTitle');
-  if (mode === 'nav') {
-    title.textContent = '工作日志';
-    $('#sidebarModeTrigger').title = '当前为日志导航';
-  } else if (mode === 'todo') {
+  if (mode === 'todo') {
     title.textContent = '待办事项';
     $('#sidebarModeTrigger').title = '当前为待办面板';
   } else if (mode === 'ai') {
@@ -85,7 +82,6 @@ function resetToolsMode() {
 function activeSidebarMode() {
   if (document.body.classList.contains('sidebar-ai-mode')) return 'ai';
   if (document.body.classList.contains('sidebar-category-mode')) return 'categories';
-  if (document.body.classList.contains('sidebar-nav-mode')) return 'nav';
   if (document.body.classList.contains('sidebar-todo-mode')) return 'todo';
   if (document.body.classList.contains('sidebar-tools-mode')) return 'tools';
   return 'normal';
@@ -96,8 +92,7 @@ function closeMobileCalendar() {
 }
 
 function setSidebarMode(mode, { updateMain = true } = {}) {
-  if (!['normal', 'nav', 'todo', 'categories', 'ai'].includes(mode)) mode = 'normal';
-  document.body.classList.toggle('sidebar-nav-mode', mode === 'nav');
+  if (!['normal', 'todo', 'categories', 'ai'].includes(mode)) mode = 'normal';
   document.body.classList.toggle('sidebar-todo-mode', mode === 'todo');
   document.body.classList.toggle('sidebar-category-mode', mode === 'categories');
   document.body.classList.toggle('sidebar-ai-mode', mode === 'ai');
@@ -109,12 +104,6 @@ function setSidebarMode(mode, { updateMain = true } = {}) {
   });
   closeSidebarModeMenu();
   localStorage.setItem(SIDEBAR_MODE_KEY, mode);
-
-  if (mode === 'nav') {
-    $('#cardNavPanel').classList.remove('collapsed');
-    $('#cardNavToggle').setAttribute('aria-expanded', 'true');
-    localStorage.setItem('cardNavCollapsed', 'false');
-  }
 
   if (!updateMain) return;
   if (mode === 'ai') {
@@ -131,7 +120,7 @@ function setSidebarMode(mode, { updateMain = true } = {}) {
 function setSidebarToolsMode(enabled) {
   document.body.classList.toggle('sidebar-tools-mode', enabled);
   if (enabled) {
-    document.body.classList.remove('sidebar-nav-mode', 'sidebar-todo-mode', 'sidebar-ai-mode');
+    document.body.classList.remove('sidebar-todo-mode', 'sidebar-ai-mode');
     document.body.classList.remove('sidebar-category-mode');
     closeMobileCalendar();
     localStorage.setItem(SIDEBAR_MODE_KEY, 'normal');

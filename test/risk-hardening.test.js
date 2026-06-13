@@ -32,7 +32,7 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand } = {}) {
+function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   if (diaryPassword) {
@@ -46,6 +46,8 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   process.env.DEEPSEEK_DEFAULT_MODEL = deepseekDefaultModel || 'deepseek-v4-flash';
   process.env.TAVILY_API_KEY = tavilyApiKey || '';
   process.env.TAVILY_BASE_URL = tavilyBaseUrl || 'https://api.tavily.com';
+  process.env.PERPLEXITY_API_KEY = perplexityApiKey || '';
+  process.env.PERPLEXITY_BASE_URL = perplexityBaseUrl || 'https://api.perplexity.ai';
   process.env.SEEDREAM_API_KEY = seedreamApiKey || '';
   process.env.SEEDREAM_BASE_URL = seedreamBaseUrl || 'https://ark.cn-beijing.volces.com/api/v3';
   process.env.SEEDREAM_DEFAULT_MODEL = seedreamDefaultModel || 'doubao-seedream-5-0-260128';
@@ -67,6 +69,8 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
     delete process.env.DEEPSEEK_DEFAULT_MODEL;
     delete process.env.TAVILY_API_KEY;
     delete process.env.TAVILY_BASE_URL;
+    delete process.env.PERPLEXITY_API_KEY;
+    delete process.env.PERPLEXITY_BASE_URL;
     delete process.env.SEEDREAM_API_KEY;
     delete process.env.SEEDREAM_BASE_URL;
     delete process.env.SEEDREAM_DEFAULT_MODEL;
@@ -333,6 +337,39 @@ test('category API includes parent and subcategory log counts for manager badges
   assert.deepEqual(counted.sub_log_counts, { SubA: 2, SubB: 0 });
 });
 
+test('category API reorders subcategories while preserving omitted items', async (t) => {
+  const { db, baseUrl } = loadFreshApp(t);
+  db.addCategory('Ordered', null);
+  db.addCategory('Alpha', 'Ordered');
+  db.addCategory('Beta', 'Ordered');
+  db.addCategory('Gamma', 'Ordered');
+
+  const invalid = await fetch(`${baseUrl}/api/categories/${encodeURIComponent('Ordered')}/subcategories/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedSubs: 'Gamma' }),
+  });
+  assert.equal(invalid.status, 400);
+
+  const missing = await fetch(`${baseUrl}/api/categories/${encodeURIComponent('Missing')}/subcategories/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedSubs: ['Gamma'] }),
+  });
+  assert.equal(missing.status, 404);
+
+  const reordered = await fetch(`${baseUrl}/api/categories/${encodeURIComponent('Ordered')}/subcategories/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedSubs: ['Gamma', 'Alpha'] }),
+  });
+  assert.equal(reordered.status, 200);
+  assert.deepEqual((await reordered.json()).sub, ['Gamma', 'Alpha', 'Beta']);
+
+  const categories = await (await fetch(`${baseUrl}/api/categories`)).json();
+  assert.deepEqual(categories.find(category => category.name === 'Ordered').sub, ['Gamma', 'Alpha', 'Beta']);
+});
+
 test('diary routes remain compatible when diary lock is disabled', async (t) => {
   const { db, baseUrl } = loadFreshApp(t);
   const diary = db.create({
@@ -384,7 +421,19 @@ test('AI chat requires DeepSeek configuration and validates request options', as
   });
   assert.equal(missingKey.status, 503);
 
-  const { baseUrl } = loadFreshApp(t, { deepseekApiKey: 'test-key' });
+  const originalFetch = global.fetch;
+  const { baseUrl } = loadFreshApp(t, { deepseekApiKey: 'test-key', deepseekBaseUrl: 'https://deepseek.test' });
+  global.fetch = async (url, options = {}) => {
+    if (String(url) === 'https://deepseek.test/chat/completions') {
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: 'AI reply without search' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(url, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
   const badModel = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -434,7 +483,11 @@ test('AI chat requires DeepSeek configuration and validates request options', as
       messages: [{ role: 'user', content: 'hello' }],
     }),
   });
-  assert.equal(missingTavilyKey.status, 503);
+  assert.equal(missingTavilyKey.status, 200);
+  assert.deepEqual(await missingTavilyKey.json(), {
+    message: { role: 'assistant', content: 'AI reply without search' },
+    sources: [],
+  });
 
   const badRole = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
@@ -460,6 +513,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     logContextEnabled: false,
     diaryContextEnabled: false,
     tavilyApiKey: '',
+    perplexityApiKey: '',
     webSearchEnabled: false,
     webSearchDepth: 'basic',
     seedreamApiKey: '',
@@ -468,6 +522,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamWatermark: true,
     skills: {
       westock: { enabled: true },
+      perplexity: { enabled: true },
     },
   });
 
@@ -483,6 +538,7 @@ test('AI settings persist to local data storage and validate options', async (t)
       logContextEnabled: true,
       diaryContextEnabled: true,
       tavilyApiKey: 'tvly-local-settings',
+      perplexityApiKey: 'pplx-local-settings',
       webSearchEnabled: true,
       webSearchDepth: 'advanced',
       seedreamApiKey: 'seedream-local-settings',
@@ -491,6 +547,7 @@ test('AI settings persist to local data storage and validate options', async (t)
       seedreamWatermark: false,
       skills: {
         westock: { enabled: false },
+        perplexity: { enabled: false },
       },
     }),
   });
@@ -504,6 +561,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     logContextEnabled: true,
     diaryContextEnabled: true,
     tavilyApiKey: 'tvly-local-settings',
+    perplexityApiKey: 'pplx-local-settings',
     webSearchEnabled: true,
     webSearchDepth: 'advanced',
     seedreamApiKey: 'seedream-local-settings',
@@ -512,11 +570,13 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamWatermark: false,
     skills: {
       westock: { enabled: false },
+      perplexity: { enabled: false },
     },
   });
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings/);
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /tvly-local-settings/);
+  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /pplx-local-settings/);
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /seedream-local-settings/);
 
   for (const body of [
@@ -532,6 +592,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     { seedreamSize: 'bad-size' },
     { seedreamWatermark: 'true' },
     { skills: { westock: { enabled: 'true' } } },
+    { skills: { perplexity: { enabled: 'true' } } },
   ]) {
     const invalid = await fetch(`${baseUrl}/api/ai/settings`, {
       method: 'PUT',
@@ -617,7 +678,97 @@ test('WeStock skill metadata, settings, and confirmed CLI execution are guarded'
   assert.equal(forbidden.status, 403);
 });
 
-test('AI chat injects WeStock prompt only when selected and returns tool cards', async (t) => {
+test('Perplexity skill settings and confirmed search execution are guarded', async (t) => {
+  const originalFetch = global.fetch;
+  const requests = [];
+  const { baseUrl } = loadFreshApp(t, {
+    perplexityApiKey: 'pplx-env-key',
+    perplexityBaseUrl: 'https://perplexity.test',
+  });
+  global.fetch = async (target, options = {}) => {
+    if (target === 'https://perplexity.test/search') {
+      requests.push({ target, options, payload: JSON.parse(options.body) });
+      return new Response(JSON.stringify({
+        results: [
+          { title: 'Perplexity Docs', url: 'https://docs.perplexity.ai', snippet: 'Grounded search result.' },
+        ],
+        citations: ['https://docs.perplexity.ai'],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const noConfirm = await fetch(`${baseUrl}/api/ai/skills/perplexity/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'search', args: { query: 'latest ai news' } }),
+  });
+  assert.equal(noConfirm.status, 400);
+
+  const badTool = await fetch(`${baseUrl}/api/ai/skills/perplexity/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'shell', args: { query: 'latest ai news' }, confirmed: true }),
+  });
+  assert.equal(badTool.status, 400);
+
+  const badArg = await fetch(`${baseUrl}/api/ai/skills/perplexity/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'search', args: { queries: ['1', '2', '3', '4'] }, confirmed: true }),
+  });
+  assert.equal(badArg.status, 400);
+
+  const ok = await fetch(`${baseUrl}/api/ai/skills/perplexity/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'search', args: { query: 'latest ai news' }, confirmed: true }),
+  });
+  assert.equal(ok.status, 200);
+  const okBody = await ok.json();
+  assert.equal(okBody.skillId, 'perplexity');
+  assert.equal(okBody.tool, 'search');
+  assert.match(okBody.content, /Perplexity Docs/);
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer pplx-env-key');
+  assert.deepEqual(requests[0].payload, { query: ['latest ai news'] });
+
+  const saved = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      perplexityApiKey: 'pplx-saved-key',
+      skills: { perplexity: { enabled: true } },
+    }),
+  });
+  assert.equal(saved.status, 200);
+
+  const withSavedKey = await fetch(`${baseUrl}/api/ai/skills/perplexity/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'search', args: { queries: ['query one', 'query two'] }, confirmed: true }),
+  });
+  assert.equal(withSavedKey.status, 200);
+  assert.equal(requests[1].options.headers.Authorization, 'Bearer pplx-saved-key');
+  assert.deepEqual(requests[1].payload, { query: ['query one', 'query two'] });
+
+  const disabled = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ skills: { perplexity: { enabled: false } } }),
+  });
+  assert.equal(disabled.status, 200);
+  const forbidden = await fetch(`${baseUrl}/api/ai/skills/perplexity/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tool: 'search', args: { query: 'latest ai news' }, confirmed: true }),
+  });
+  assert.equal(forbidden.status, 403);
+});
+
+test('AI chat injects selected skill prompts only when selected and returns tool cards', async (t) => {
   const originalFetch = global.fetch;
   const { baseUrl } = loadFreshApp(t, {
     deepseekApiKey: 'sk-env-key',
@@ -678,6 +829,13 @@ test('AI chat injects WeStock prompt only when selected and returns tool cards',
   assert.equal(payloads[0].messages.some(message => /WeStock Data skill/.test(message.content || '')), false);
   assert.equal(payloads[1].messages[0].role, 'system');
   assert.match(payloads[1].messages[0].content, /WeStock Data skill/);
+
+  const withPerplexity = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: '查一下最新 AI 新闻' }], skill: { id: 'perplexity' } }),
+  });
+  assert.equal(withPerplexity.status, 400);
 
   const badSkill = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
@@ -892,7 +1050,7 @@ test('AI chat can augment DeepSeek with Tavily search using only user input', as
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), {
     message: { role: 'assistant', content: 'AI searched reply' },
-    sources: [{ title: 'Trusted result', url: 'https://example.com/trusted', content: 'Fresh public snippet', score: 0.9 }],
+    sources: [{ provider: 'tavily', title: 'Trusted result', url: 'https://example.com/trusted', content: 'Fresh public snippet', score: 0.9 }],
   });
   assert.equal(tavilyHeaders.Authorization, 'Bearer tvly-user-provided-key');
   assert.deepEqual(tavilyPayload, {
@@ -910,6 +1068,84 @@ test('AI chat can augment DeepSeek with Tavily search using only user input', as
   assert.equal(deepSeekPayload.messages[1].role, 'system');
   assert.match(deepSeekPayload.messages[1].content, /I prefer concise Chinese replies\./);
   assert.doesNotMatch(JSON.stringify(deepSeekPayload), /private diary content|private title|should not be forwarded|tvly-user-provided-key/);
+});
+
+test('AI chat can combine Tavily and Perplexity automatic web search sources', async (t) => {
+  const originalFetch = global.fetch;
+  const { baseUrl } = loadFreshApp(t, {
+    deepseekBaseUrl: 'https://deepseek.test',
+    tavilyBaseUrl: 'https://tavily.test',
+    perplexityBaseUrl: 'https://perplexity.test',
+  });
+
+  let tavilyPayload = null;
+  let perplexityPayload = null;
+  let perplexityHeaders = {};
+  let deepSeekPayload = null;
+  global.fetch = async (url, options = {}) => {
+    const target = String(url);
+    if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
+    if (target === 'https://tavily.test/search') {
+      tavilyPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        answer: 'Tavily answer',
+        results: [{ title: 'Tavily source', url: 'https://example.com/tavily', content: 'Tavily snippet', score: 0.8 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (target === 'https://perplexity.test/search') {
+      perplexityHeaders = options.headers || {};
+      perplexityPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        answer: 'Perplexity answer',
+        results: [{ title: 'Perplexity source', url: 'https://example.com/perplexity', snippet: 'Perplexity snippet' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    deepSeekPayload = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'AI searched both' } }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      apiKey: 'user-provided-key',
+      tavilyApiKey: 'tvly-user-provided-key',
+      perplexityApiKey: 'pplx-user-provided-key',
+      webSearchEnabled: true,
+      webSearchDepth: 'basic',
+      messages: [{ role: 'user', content: 'latest public fact?' }],
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.message.content, 'AI searched both');
+  assert.equal(body.toolCall, undefined);
+  assert.deepEqual(body.sources, [
+    { provider: 'tavily', title: 'Tavily source', url: 'https://example.com/tavily', content: 'Tavily snippet', score: 0.8 },
+    { provider: 'perplexity', title: 'Perplexity source', url: 'https://example.com/perplexity', content: 'Perplexity snippet', score: null },
+  ]);
+  assert.deepEqual(tavilyPayload, {
+    query: 'latest public fact?',
+    search_depth: 'basic',
+    topic: 'news',
+    max_results: 5,
+    include_answer: true,
+    include_raw_content: false,
+    include_images: false,
+  });
+  assert.equal(perplexityHeaders.Authorization, 'Bearer pplx-user-provided-key');
+  assert.deepEqual(perplexityPayload, { query: ['latest public fact?'] });
+  assert.match(deepSeekPayload.messages[0].content, /Provider: Tavily/);
+  assert.match(deepSeekPayload.messages[0].content, /Provider: Perplexity/);
+  assert.match(deepSeekPayload.messages[0].content, /https:\/\/example\.com\/tavily/);
+  assert.match(deepSeekPayload.messages[0].content, /https:\/\/example\.com\/perplexity/);
+  assert.doesNotMatch(JSON.stringify(deepSeekPayload), /tvly-user-provided-key|pplx-user-provided-key/);
 });
 
 test('AI editor endpoint uses provided editor context without reading log storage', async (t) => {
@@ -1717,7 +1953,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnEditorAiNew').textContent, '新对话');
   assert.equal(document.querySelector('#btnEditorAiHistory').getAttribute('aria-controls'), 'editorAiHistoryPopover');
   assert.equal(document.querySelector('#btnEditorAiHistory').getAttribute('aria-expanded'), 'false');
-  assert.equal(document.querySelector('#btnEditorAiSettings').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#btnEditorAiSettings').getAttribute('aria-haspopup'), null);
   assert.equal(document.querySelector('#editorAiHistoryPopover').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('#editorAiHistoryList') !== null, true);
   assert.equal(document.querySelector('#editorAiRenameOverlay').getAttribute('aria-labelledby'), 'editorAiRenameTitle');
@@ -1726,6 +1962,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnEditorFullscreen').getAttribute('aria-pressed'), 'false');
   assert.equal(document.querySelector('#btnBack').closest('.editor-nav-actions') !== null, true);
   assert.equal(document.querySelector('#aiChatView').style.display, 'none');
+  assert.equal(document.querySelector('#aiSettingsView').style.display, 'none');
   assert.equal(document.querySelector('#btnAiBack'), null);
   assert.equal(document.querySelector('#aiChatView .ai-chat-header'), null);
   assert.equal(document.querySelector('#aiChatMessages').getAttribute('aria-live'), 'polite');
@@ -1735,13 +1972,23 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#sidebarModeMenu').style.display, 'none');
   assert.deepEqual([...document.querySelectorAll('#sidebarModeMenu [data-mode]')].map(button => button.dataset.mode), [
     'normal',
-    'nav',
     'todo',
     'categories',
     'ai',
   ]);
+  assert.equal(document.querySelector('#sidebarModeMenu [data-mode="nav"]'), null);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="todo"]').textContent, '待办面板');
   assert.doesNotMatch(document.querySelector('#sidebarModeMenu').textContent, /代办/);
+  assert.equal(document.querySelector('#cardNavPanel').closest('.sidebar') !== null, true);
+  assert.equal(document.querySelector('#calendarCollapseToggle').getAttribute('aria-expanded'), 'true');
+  assert.equal(document.querySelector('#calendarCollapseToggle').getAttribute('aria-controls'), 'calendarBody');
+  assert.equal(document.querySelector('#calendarMiniToday').closest('#calendarCollapseToggle') !== null, true);
+  assert.equal(document.querySelector('#calendarMiniSummary'), null);
+  assert.equal(document.querySelector('#calendarMiniLogHint'), null);
+  assert.equal(document.querySelector('#calendarBody').closest('#calendarWidget') !== null, true);
+  assert.equal(document.querySelector('#diaryLockPanel').closest('.sidebar') !== null, true);
+  assert.equal(document.querySelector('#btnBackup').closest('.backup-buttons') !== null, true);
+  assert.equal(document.querySelector('#btnRestore').closest('.backup-buttons') !== null, true);
   assert.equal(document.querySelector('#todoView') !== null, true);
   assert.equal(document.querySelector('#todoView').style.display, 'none');
   assert.equal(document.querySelector('#todoSearchInput') !== null, true);
@@ -1761,8 +2008,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnManageCats'), null);
   assert.equal(document.querySelector('#aiApiKeyInput').getAttribute('type'), 'password');
   assert.equal(document.querySelector('#aiApiKeyInput').getAttribute('autocomplete'), 'off');
-  assert.equal(document.querySelector('#aiApiKeyTitle').textContent, 'AI 设置');
-  assert.equal(document.querySelector('#aiSettingsTabChat').textContent, 'AI 设置');
+  assert.equal(document.querySelector('#aiSettingsTitle').textContent, 'AI 设置');
+  assert.equal(document.querySelector('#aiSettingsView .ai-settings-rail') !== null, true);
+  assert.equal(document.querySelector('#aiSettingsView .ai-settings-page') !== null, true);
+  assert.equal(document.querySelector('#aiSettingsTabChat').textContent, '基础设置');
   assert.equal(document.querySelector('#aiSettingsTabChat').getAttribute('aria-selected'), 'true');
   assert.equal(document.querySelector('#aiSettingsTabImage').textContent, '生图设置');
   assert.equal(document.querySelector('#aiSettingsTabImage').getAttribute('aria-controls'), 'aiSettingsPanelImage');
@@ -1771,30 +2020,41 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiSettingsPanelImage').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('#aiSettingsPanelSkills').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('label[for="aiApiKeyInput"] span').textContent, 'DeepSeek API Key');
-  assert.equal(document.querySelector('#aiApiKeyOverlay').getAttribute('aria-labelledby'), 'aiApiKeyTitle');
-  assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#aiApiKeyOverlay'), null);
+  assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-haspopup'), null);
   assert.equal(document.querySelector('#btnAiApiKey').getAttribute('aria-label'), 'AI 设置');
   assert.equal(document.querySelector('#btnAiNewChat'), null);
   assert.equal(document.querySelector('#btnAiClear'), null);
   assert.equal(document.querySelector('#btnAiApiKey').closest('.ai-sidebar-actions') !== null, true);
   assert.equal(document.querySelector('#btnAiApiKey').classList.contains('ai-sidebar-settings'), true);
   assert.equal(document.querySelector('#btnAiApiKey svg') !== null, true);
-  assert.equal(document.querySelector('#aiModelSelect').closest('#aiApiKeyOverlay') !== null, true);
-  assert.equal(document.querySelector('#aiReasoningEffort').closest('#aiApiKeyOverlay') !== null, true);
-  assert.equal(document.querySelector('#aiStreamToggle').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiModelSelect').closest('#aiSettingsPanelChat') !== null, true);
+  assert.equal(document.querySelector('#aiReasoningEffort').closest('#aiSettingsPanelChat') !== null, true);
+  assert.equal(document.querySelector('#aiStreamToggle').closest('#aiSettingsPanelChat') !== null, true);
   assert.equal(document.querySelector('#aiUserProfileInput').closest('#aiSettingsPanelChat') !== null, true);
   assert.equal(document.querySelector('#aiUserProfileInput').getAttribute('maxlength'), '2000');
   assert.equal(document.querySelector('#aiLogContextToggle').closest('#aiSettingsPanelChat') !== null, true);
   assert.equal(document.querySelector('#aiDiaryContextToggle').closest('#aiSettingsPanelChat') !== null, true);
-  assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiSettingsPanelChat'), null);
+  assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiTavilyConfig') !== null, true);
   assert.equal(document.querySelector('#aiTavilyApiKeyInput').getAttribute('placeholder'), 'tvly-...');
-  assert.equal(document.querySelector('#aiWebSearchToggle').closest('#aiApiKeyOverlay') !== null, true);
-  assert.equal(document.querySelector('#aiWebSearchDepth').closest('#aiApiKeyOverlay') !== null, true);
+  assert.equal(document.querySelector('#aiPerplexityApiKeyInput').closest('#aiSettingsPanelChat'), null);
+  assert.equal(document.querySelector('#aiPerplexityApiKeyInput').closest('#aiPerplexityConfig') !== null, true);
+  assert.equal(document.querySelector('#aiPerplexityApiKeyInput').getAttribute('placeholder'), 'pplx-...');
+  assert.equal(document.querySelector('#aiWebSearchToggle').closest('#aiSettingsPanelSkills') !== null, true);
+  assert.equal(document.querySelector('#aiWebSearchDepth').closest('#aiTavilyConfig') !== null, true);
   assert.equal(document.querySelector('#aiSeedreamApiKeyInput').closest('#aiSettingsPanelImage') !== null, true);
   assert.equal(document.querySelector('#aiSeedreamModel').closest('#aiSettingsPanelImage') !== null, true);
   assert.equal(document.querySelector('#aiSeedreamSize').closest('#aiSettingsPanelImage') !== null, true);
   assert.equal(document.querySelector('#aiSeedreamWatermark').closest('#aiSettingsPanelImage') !== null, true);
   assert.equal(document.querySelector('#aiSkillWestockToggle').closest('#aiSettingsPanelSkills') !== null, true);
+  assert.equal(document.querySelector('#aiSkillPerplexityToggle').closest('#aiSettingsPanelSkills') !== null, true);
+  assert.equal(document.querySelector('#aiTavilyConfig summary'), null);
+  assert.equal(document.querySelector('#aiPerplexityConfig summary'), null);
+  assert.equal(document.querySelector('[aria-controls="aiTavilyConfig"]').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('[aria-controls="aiPerplexityConfig"]').getAttribute('aria-expanded'), 'false');
+  assert.equal(document.querySelector('[aria-controls="aiTavilyConfig"]').closest('.ai-skill-config-card') !== null, true);
+  assert.equal(document.querySelector('[aria-controls="aiPerplexityConfig"]').closest('.ai-skill-config-card') !== null, true);
   assert.deepEqual([...document.querySelectorAll('#aiSeedreamModel option')].map(option => option.value), [
     'doubao-seedream-5-0-260128',
     'doubao-seedream-4-5-251128',
@@ -1814,6 +2074,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnAiSidebarNewChat').getAttribute('aria-label'), '新建对话');
   assert.equal(document.querySelector('#btnAiApiKeySave').textContent, '保存');
   assert.equal(document.querySelector('#btnAiApiKeyClear').textContent, '清除 Key');
+  assert.equal(document.querySelector('#btnAiSettingsBack').textContent, '返回对话');
   assert.equal(document.querySelector('#aiRenameOverlay').getAttribute('aria-labelledby'), 'aiRenameTitle');
   assert.equal(document.querySelector('#aiRenameInput').getAttribute('maxlength'), '40');
   assert.equal(document.querySelector('#aiChatInput').getAttribute('maxlength'), '4000');
@@ -1855,6 +2116,13 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnCatRename').getAttribute('aria-label'), '重命名分类');
   assert.equal(document.querySelector('#btnCatDelete').getAttribute('aria-label'), '删除分类');
   assert.equal(document.querySelector('#catDetailLogCount').closest('.cat-detail-heading') !== null, true);
+  assert.equal(document.querySelector('#catViewListBtn').closest('.cat-view-toggle') !== null, true);
+  assert.equal(document.querySelector('#catViewGraphBtn').closest('.cat-view-toggle') !== null, true);
+  assert.equal(document.querySelector('#catViewListBtn').textContent.trim(), '列表');
+  assert.equal(document.querySelector('#catViewGraphBtn').textContent.trim(), '图谱');
+  assert.equal(document.querySelector('#catViewListBtn').getAttribute('aria-pressed'), 'true');
+  assert.equal(document.querySelector('#catViewGraphBtn').getAttribute('aria-pressed'), 'false');
+  assert.equal(document.querySelector('#catGraphView').closest('#catDetailContent') !== null, true);
   assert.equal(document.querySelector('#catSubBrowseSidebar').closest('.category-parent-panel') !== null, true);
   assert.equal(document.querySelector('#catSubBrowseContent').closest('.category-detail-panel') !== null, true);
   assert.equal(document.querySelector('#btnSubBrowseBack').textContent.trim(), '← 父分类');
@@ -1891,8 +2159,34 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.doesNotMatch(categorySource, /cat-sub-log-meta/);
   assert.match(categorySource, /class="cat-icon-action subcat-edit-btn"[\s\S]*aria-label="重命名子分类：\$\{escHtml\(s\)\}"/);
   assert.match(categorySource, /class="cat-icon-action danger subcat-del-btn"[\s\S]*aria-label="删除子分类：\$\{escHtml\(s\)\}"/);
+  assert.match(categorySource, /class="cat-detail-sub-item"[\s\S]*draggable="true"/);
+  assert.match(categorySource, /setupDragAndDrop\(\{[\s\S]*container: \$\('#catSubList'\),[\s\S]*itemSelector: '\.cat-detail-sub-item'/);
+  assert.match(categorySource, /apiFetch\(`\/api\/categories\/\$\{encodeURIComponent\(selectedCategoryName\)\}\/subcategories\/reorder`/);
+  assert.match(categorySource, /cat\.sub\.map\(s => `<option value="\$\{escHtml\(s\)\}">\$\{escHtml\(s\)\}<\/option>`\)\.join\(''\)/);
+  assert.match(categorySource, /const CATEGORY_DETAIL_VIEW_STORAGE_KEY = 'categoryDetailViewMode';/);
+  assert.match(categorySource, /localStorage\.getItem\(CATEGORY_DETAIL_VIEW_STORAGE_KEY\)/);
+  assert.match(categorySource, /localStorage\.setItem\(CATEGORY_DETAIL_VIEW_STORAGE_KEY, mode\)/);
+  assert.match(categorySource, /function renderCategoryGraph\(cat\)/);
+  assert.match(categorySource, /const subs = cat\.sub \|\| \[\];/);
+  assert.match(categorySource, /class="cat-graph-lines"/);
+  assert.match(categorySource, /class="cat-graph-node cat-graph-parent"/);
+  assert.match(categorySource, /class="cat-graph-node cat-graph-sub"[\s\S]*data-sub="\$\{escHtml\(point\.sub\)\}"/);
+  assert.match(categorySource, /\$\{cat\.sub_log_counts\?\.\[point\.sub\] \|\| 0\}/);
+  assert.match(categorySource, /\$\('#catGraphView'\)\.addEventListener\('click'[\s\S]*openSubcategoryBrowse\(node\.dataset\.sub\)/);
+  assert.match(categorySource, /setCategoryDetailViewMode\(categoryDetailViewMode\)/);
+  assert.match(htmlSource, /id="catViewListBtn"[\s\S]*aria-pressed="true"[\s\S]*>列表<\/button>/);
+  assert.match(htmlSource, /id="catViewGraphBtn"[\s\S]*aria-pressed="false"[\s\S]*>图谱<\/button>/);
+  assert.match(htmlSource, /<div class="cat-graph-view" id="catGraphView" style="display:none;"><\/div>/);
   assert.match(styleSource, /\.cat-icon-action\s*\{[\s\S]*width:\s*30px;[\s\S]*height:\s*30px;/);
   assert.match(styleSource, /\.cat-icon-action\.primary\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.cat-view-toggle\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /\.cat-view-toggle button\[aria-pressed="true"\]\s*\{[\s\S]*background:\s*var\(--color-card\);/);
+  assert.match(styleSource, /\.cat-graph-view\s*\{[\s\S]*min-height:\s*min\(460px, 55vh\);/);
+  assert.match(styleSource, /\.cat-graph-lines\s*\{[\s\S]*pointer-events:\s*none;/);
+  assert.match(styleSource, /\.cat-graph-node\s*\{[\s\S]*position:\s*absolute;[\s\S]*transform:\s*translate\(-50%, -50%\);/);
+  assert.match(styleSource, /\.cat-graph-parent\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.cat-graph-empty\s*\{[\s\S]*justify-content:\s*center;/);
+  assert.match(styleSource, /@media[\s\S]*\.cat-graph-view\s*\{[\s\S]*min-width:\s*520px;[\s\S]*min-height:\s*360px;/);
   assert.match(styleSource, /\.category-sidebar-panel\s*\{[\s\S]*display:\s*none;[\s\S]*background:\s*var\(--sidebar-bg-subtle\);/);
   assert.match(styleSource, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1;/);
   assert.doesNotMatch(styleSource, /category-sidebar-search|category-sidebar-toolbar/);
@@ -1963,6 +2257,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-page-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(300px, 360px\);/);
   assert.match(styleSource, /\.todo-sidebar-stats\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, 1fr\);/);
   assert.match(styleSource, /body\.sidebar-todo-mode \.todo-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.todo-full-form textarea\s*\{[\s\S]*min-height:\s*200px;/);
 });
 
 test('application initialization waits for auth and diary selection before refreshing', () => {
@@ -1974,6 +2269,37 @@ test('application initialization waits for auth and diary selection before refre
   assert.match(authSource, /showLoginOverlay\(\);\s*return false;/);
 });
 
+test('default sidebar uses card navigation and a collapsible calendar', () => {
+  const calendarSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'calendar.js'), 'utf8');
+  const logListSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'logList.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+
+  assert.match(calendarSource, /const CALENDAR_COLLAPSED_STORAGE_KEY = 'calendarCollapsed';/);
+  assert.match(calendarSource, /localStorage\.getItem\(CALENDAR_COLLAPSED_STORAGE_KEY\) === 'true'/);
+  assert.match(calendarSource, /localStorage\.setItem\(CALENDAR_COLLAPSED_STORAGE_KEY, String\(collapsed\)\)/);
+  assert.match(calendarSource, /calendarWidget\.classList\.toggle\('collapsed', calendarCollapsed\)/);
+  assert.match(calendarSource, /calendarCollapseToggle\.setAttribute\('aria-expanded', String\(!calendarCollapsed\)\)/);
+  assert.match(calendarSource, /import \{ businessDateString, formatDateLabel, formatTemplateDate \} from '\.\/businessDate\.js';/);
+  assert.match(calendarSource, /calendarMiniToday\.textContent = formatTemplateDate\(today, 'MM月DD日 ddd'\)/);
+  assert.doesNotMatch(calendarSource, /calendarMiniSummary|calendarMiniLogHint|monthLogDays/);
+  assert.match(calendarSource, /calendarCollapseToggle\.addEventListener\('click'/);
+  assert.match(logListSource, /renderCardNavigator\(data\)/);
+  assert.match(styleSource, /\.calendar-widget\.collapsed \.calendar-body\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.calendar-widget\.collapsed ~ \.diary-lock-panel,[\s\S]*\.calendar-widget\.collapsed ~ \.backup-buttons\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /body\.sidebar-tools-mode \.calendar-widget\.collapsed ~ \.diary-lock-panel\s*\{[\s\S]*display:\s*block;/);
+  assert.match(styleSource, /body\.sidebar-tools-mode \.calendar-widget\.collapsed ~ \.backup-buttons\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.calendar-collapse-toggle\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
+  assert.doesNotMatch(styleSource, /calendar-mini-summary|calendar-mini-log-hint/);
+  assert.match(styleSource, /\.card-nav-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1;[\s\S]*min-height:\s*0;[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.card-nav-body\s*\{[\s\S]*flex:\s*1;[\s\S]*min-height:\s*0;[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.card-nav-list\s*\{[\s\S]*max-height:\s*none;/);
+  assert.match(styleSource, /\.todo-panel\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.stats-panel\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /body\.sidebar-todo-mode \.todo-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
+  assert.doesNotMatch(styleSource, /sidebar-nav-mode/);
+});
+
 test('AI chat frontend supports local history and fixed thinking mode', () => {
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const aiSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiChat.js'), 'utf8');
@@ -1982,8 +2308,10 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
   assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
   assert.match(appSource, /function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
+  assert.match(appSource, /if \(!\['normal', 'todo', 'categories', 'ai'\]\.includes\(mode\)\) mode = 'normal';/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-ai-mode', mode === 'ai'\);/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-category-mode', mode === 'categories'\);/);
+  assert.doesNotMatch(appSource, /sidebar-nav-mode|mode === 'nav'|当前为日志导航/);
   assert.match(appSource, /import \{ loadCategories, openCategoryManager \} from '\.\/categories\.js';/);
   assert.match(appSource, /import \{ loadTodos, showTodoView \} from '\.\/todos\.js';/);
   assert.match(appSource, /\$\('#sidebarModeTrigger'\)\.addEventListener\('click', toggleSidebarModeMenu\)/);
@@ -1995,7 +2323,8 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(appSource, /function syncMainViewWithSidebarMode\(\)[\s\S]*activeSidebarMode\(\) === 'ai'[\s\S]*showAiChatView\(\)[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*openCategoryManager\(\)[\s\S]*activeSidebarMode\(\) === 'todo'[\s\S]*showTodoView\(\)/);
   assert.match(appSource, /window\.addEventListener\('category-manager-closed'/);
   assert.doesNotMatch(appSource, /btnCategoryBack/);
-  assert.match(aiSource, /for \(const id of \['editorView', 'categoryView', 'todoView', 'listView'\]\)/);
+  assert.match(aiSource, /for \(const id of \['aiSettingsView', 'aiChatView', 'editorView', 'categoryView', 'todoView', 'listView'\]\)/);
+  assert.match(aiSource, /for \(const viewId of \['listView', 'editorView', 'categoryView', 'todoView', 'aiChatView', 'aiSettingsView'\]\)/);
   assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8'), /btnManageCats/);
   assert.match(appSource, /if \(!diarySelected\) await refreshAll\(\);[\s\S]*syncMainViewWithSidebarMode\(\);/);
   assert.match(appSource, /\$\('#fabCapture'\)\.addEventListener\('click', \(\) => \{[\s\S]*setSidebarMode\('ai'\);[\s\S]*\}\);/);
@@ -2012,7 +2341,8 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /const AI_SETTINGS_ENDPOINT = '\/api\/ai\/settings';/);
   assert.match(aiSource, /async function loadSettings\(\)/);
   assert.match(aiSource, /await saveSettings\(\{ quiet: true \}\);[\s\S]*localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
-  assert.match(aiSource, /const submitted = \{ \.\.\.settings, skills: \{ \.\.\.settings\.skills, westock: \{ \.\.\.settings\.skills\?\.westock \} \} \};/);
+  assert.match(aiSource, /westock: \{ \.\.\.settings\.skills\?\.westock \}/);
+  assert.match(aiSource, /perplexity: \{ \.\.\.settings\.skills\?\.perplexity \}/);
   assert.match(aiSource, /服务端未保存 AI 设置，请重启应用后再试/);
   assert.match(aiSource, /apiKey: settings\.apiKey/);
   assert.match(aiSource, /model: settings\.model \|\| DEFAULT_MODEL/);
@@ -2023,14 +2353,23 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /logContextEnabled: Boolean\(settings\.logContextEnabled\)/);
   assert.match(aiSource, /diaryContextEnabled: Boolean\(settings\.diaryContextEnabled\)/);
   assert.match(aiSource, /tavilyApiKey: settings\.tavilyApiKey/);
+  assert.match(aiSource, /perplexityApiKey: settings\.perplexityApiKey/);
   assert.match(aiSource, /webSearchEnabled: Boolean\(settings\.webSearchEnabled\)/);
   assert.match(aiSource, /webSearchDepth: settings\.webSearchDepth \|\| 'basic'/);
   assert.match(aiSource, /const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';/);
   assert.match(aiSource, /seedreamApiKey: typeof value\?\.seedreamApiKey === 'string'/);
+  assert.match(aiSource, /perplexityApiKey: typeof value\?\.perplexityApiKey === 'string'/);
   assert.match(aiSource, /seedreamModel: \['doubao-seedream-5-0-260128'/);
+  assert.match(aiSource, /\$\('#aiPerplexityApiKeyInput'\)\.value = settings\.perplexityApiKey;/);
   assert.match(aiSource, /\$\('#aiSeedreamApiKeyInput'\)\.value = settings\.seedreamApiKey;/);
   assert.match(aiSource, /function setSettingsTab\(tab\)/);
   assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-settings-tab\]'\)/);
+  assert.match(aiSource, /function setSkillConfigExpanded\(card, expanded\)/);
+  assert.match(aiSource, /trigger\.setAttribute\('aria-expanded', String\(expanded\)\)/);
+  assert.match(aiSource, /panel\.hidden = !expanded/);
+  assert.match(aiSource, /function resetSkillConfigPanels\(\)/);
+  assert.match(aiSource, /function toggleSkillConfigFromHeader\(event\)/);
+  assert.match(aiSource, /document\.querySelectorAll\('\[data-skill-config-toggle\]'\)/);
   assert.match(aiSource, /const AI_SKILLS_ENDPOINT = '\/api\/ai\/skills';/);
   assert.match(aiSource, /async function loadSkills\(\)/);
   assert.match(aiSource, /function renderSkillPicker\(\)/);
@@ -2039,7 +2378,8 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /async function executeSkillTool\(index\)/);
   assert.match(aiSource, /request\.skill = \{ id: skill\.id \};/);
   assert.match(aiSource, /\$\('#btnAiSkill'\)\?\.addEventListener\('click', toggleSkillPicker\);/);
-  assert.match(aiSource, /apiFetch\('\/api\/ai\/skills\/westock\/run'/);
+  assert.match(aiSource, /apiFetch\(`\/api\/ai\/skills\/\$\{encodeURIComponent\(toolCall\.skillId\)\}\/run`/);
+  assert.match(aiSource, /data\.toolCall\?\.skillId === 'westock'/);
   assert.doesNotMatch(aiSource, /function isImageGenerationRequest\(text\)/);
   assert.doesNotMatch(aiSource, /isImageGenerationRequest\(content\)/);
   assert.match(aiSource, /function renderImageGenerationCard\(imageGeneration, index/);
@@ -2074,8 +2414,12 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.doesNotMatch(aiSource, /btnAiBack|btnAiHistory|aiHistoryOverlay|aiChatHistoryList/);
   assert.doesNotMatch(aiSource, /localStorage\.setItem\(API_KEY_STORAGE_KEY/);
   assert.match(aiSource, /localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
-  assert.match(aiSource, /\$\('#btnAiApiKey'\)\.addEventListener\('click', openSettingsModal\);/);
-  assert.match(aiSource, /\$\('#btnAiApiKeySave'\)\.addEventListener\('click', saveSettingsFromModal\);/);
+  assert.match(aiSource, /function openSettingsPage\(tab = 'chat'\)/);
+  assert.match(aiSource, /function closeSettingsPage\(\)/);
+  assert.match(aiSource, /function saveSettingsFromPage\(\)/);
+  assert.match(aiSource, /\$\('#btnAiApiKey'\)\.addEventListener\('click', \(\) => openSettingsPage\('chat'\)\);/);
+  assert.match(aiSource, /\$\('#btnAiSettingsBack'\)\.addEventListener\('click', closeSettingsPage\);/);
+  assert.match(aiSource, /\$\('#btnAiApiKeySave'\)\.addEventListener\('click', saveSettingsFromPage\);/);
   assert.match(aiSource, /\$\('#aiRenameClose'\)\.addEventListener\('click', closeRenameModal\);/);
   assert.match(aiSource, /\$\('#btnAiRenameSave'\)\.addEventListener\('click', saveRenameConversation\);/);
   assert.match(aiSource, /message\.role === 'assistant' \? renderToHtml\(message\.content\) : escHtml\(message\.content\)/);
@@ -2134,9 +2478,19 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(styleSource, /\.ai-message-thinking \.ai-message-content\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /@keyframes ai-thinking-pulse/);
   assert.doesNotMatch(styleSource, /\.ai-chat-header\s*\{/);
+  assert.match(styleSource, /\.ai-settings-view\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.ai-settings-rail\s*\{[\s\S]*width:\s*min\(260px, 24vw\);/);
+  assert.match(styleSource, /\.ai-settings-page\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.ai-settings-toggle\s*\{[\s\S]*justify-content:\s*space-between;/);
-  assert.match(styleSource, /\.ai-settings-tabs\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /\.ai-settings-tabs\s*\{[\s\S]*display:\s*grid;/);
   assert.match(styleSource, /\.ai-settings-panel\.active\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(styleSource, /\.ai-skill-settings-grid\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(styleSource, /\.ai-skill-config-card\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*border:\s*1px solid var\(--color-border\);/);
+  assert.match(styleSource, /\.ai-skill-config-head\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.ai-skill-config-trigger\s*\{[\s\S]*cursor:\s*pointer;/);
+  assert.match(styleSource, /\.ai-skill-config-card\.expanded \.ai-skill-config-chevron\s*\{[\s\S]*transform:\s*rotate\(180deg\);/);
+  assert.match(styleSource, /\.ai-skill-config\s*\{[\s\S]*border-top:\s*1px solid var\(--color-border\);/);
+  assert.doesNotMatch(styleSource, /\.ai-skill-config summary/);
   assert.match(styleSource, /\.ai-image-card\s*\{[\s\S]*border:\s*1px solid rgba\(var\(--color-primary-rgb\), 0\.18\);/);
   assert.match(styleSource, /\.ai-image-optimizing\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /\.ai-image-prompt-options\s*\{[\s\S]*display:\s*inline-flex;/);
@@ -2145,10 +2499,9 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(styleSource, /\.ai-image-preview\s*\{[\s\S]*max-height:\s*360px;/);
   assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*margin:\s*0 auto 12px;/);
   assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*72px;[\s\S]*max-height:\s*120px;[\s\S]*resize:\s*none;/);
-  assert.match(styleSource, /\.modal-ai-key,[\s\S]*\.modal-ai-rename\s*\{[\s\S]*width:\s*440px;/);
-  assert.match(styleSource, /\.modal-ai-key\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-direction:\s*column;[\s\S]*max-height:\s*min\(760px, calc\(100vh - 48px\)\);/);
   assert.match(styleSource, /\.ai-settings-body\s*\{[\s\S]*overflow-y:\s*auto;/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.modal-ai-key\s*\{[\s\S]*max-height:\s*calc\(100dvh - 24px\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-settings-view\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-settings-tabs\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-view::after\s*\{[\s\S]*left:\s*0;[\s\S]*height:\s*calc\(132px \+ env\(safe-area-inset-bottom\)\);/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-messages\s*\{[\s\S]*padding:\s*16px 12px 210px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer\s*\{[\s\S]*position:\s*sticky;/);
@@ -2365,6 +2718,7 @@ test('mobile layout uses compact on-demand sidebar panels and retains collapse c
   assert.match(mobileStyles, /body\.sidebar-ai-mode \.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*flex;/);
   assert.match(mobileStyles, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;/);
   assert.match(mobileStyles, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
+  assert.doesNotMatch(mobileStyles, /sidebar-nav-mode/);
   assert.match(mobileStyles, /body\.sidebar-collapsed \.sidebar\s*\{\s*display:\s*none;/);
   assert.match(appSource, /function collapseSidebar\(\)\s*\{\s*document\.body\.classList\.toggle\('sidebar-collapsed'\);\s*\}/);
   assert.match(appSource, /\$\('#btnToggleSidebar'\)\.addEventListener\('click', collapseSidebar\);[\s\S]*\$\('#btnSidebarExpand'\)\.addEventListener\('click', collapseSidebar\);/);

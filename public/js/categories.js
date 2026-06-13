@@ -5,6 +5,8 @@ import { loadLogs } from './logList.js';
 import { loadStats } from './stats.js';
 import { formatShortDateLabel } from './businessDate.js';
 
+const CATEGORY_DETAIL_VIEW_STORAGE_KEY = 'categoryDetailViewMode';
+
 export async function loadCategories() {
   try {
     const res = await apiFetch('/api/categories');
@@ -70,6 +72,24 @@ let selectedCategoryName = null;
 let editingSubcategory = null;
 let subcategoryBrowseParent = null;
 let selectedSubcategoryName = null;
+let categoryDetailViewMode = loadCategoryDetailViewMode();
+
+function loadCategoryDetailViewMode() {
+  try {
+    const mode = localStorage.getItem(CATEGORY_DETAIL_VIEW_STORAGE_KEY);
+    return ['list', 'graph'].includes(mode) ? mode : 'list';
+  } catch (err) {
+    return 'list';
+  }
+}
+
+function saveCategoryDetailViewMode(mode) {
+  try {
+    localStorage.setItem(CATEGORY_DETAIL_VIEW_STORAGE_KEY, mode);
+  } catch (err) {
+    // View preference is nice-to-have; blocked storage should not break category management.
+  }
+}
 
 function parentFromFilter() {
   return (state.category || '').split('/')[0] || null;
@@ -108,6 +128,49 @@ function isProtectedRootCategory(name) {
 
 function fullSubcategoryName(parent, sub) {
   return `${parent}/${sub}`;
+}
+
+function graphPoint(index, total) {
+  if (total === 1) return { x: 50, y: 18 };
+  const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+  return {
+    x: Math.round((50 + Math.cos(angle) * 38) * 100) / 100,
+    y: Math.round((50 + Math.sin(angle) * 32) * 100) / 100,
+  };
+}
+
+function renderCategoryGraph(cat) {
+  const subs = cat.sub || [];
+  const graph = $('#catGraphView');
+  if (!subs.length) {
+    graph.innerHTML = '<div class="cat-graph-empty">暂无子分类，先添加一个节点。</div>';
+    return;
+  }
+  const points = subs.map((sub, index) => ({ sub, ...graphPoint(index, subs.length) }));
+  graph.innerHTML = `
+    <svg class="cat-graph-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      ${points.map(point => `<line x1="50" y1="50" x2="${point.x}" y2="${point.y}" vector-effect="non-scaling-stroke"></line>`).join('')}
+    </svg>
+    <button type="button" class="cat-graph-node cat-graph-parent" style="--x:50;--y:50" disabled>
+      <span class="cat-graph-node-title">${escHtml(cat.name)}</span>
+      <span class="cat-graph-node-count">${cat.log_count || 0}</span>
+    </button>
+    ${points.map(point => `
+      <button type="button" class="cat-graph-node cat-graph-sub" data-sub="${escHtml(point.sub)}" style="--x:${point.x};--y:${point.y}" aria-label="浏览子分类：${escHtml(point.sub)}">
+        <span class="cat-graph-node-title">${escHtml(point.sub)}</span>
+        <span class="cat-graph-node-count">${cat.sub_log_counts?.[point.sub] || 0}</span>
+      </button>
+    `).join('')}
+  `;
+}
+
+function setCategoryDetailViewMode(mode) {
+  categoryDetailViewMode = mode === 'graph' ? 'graph' : 'list';
+  saveCategoryDetailViewMode(categoryDetailViewMode);
+  $('#catViewListBtn').setAttribute('aria-pressed', String(categoryDetailViewMode === 'list'));
+  $('#catViewGraphBtn').setAttribute('aria-pressed', String(categoryDetailViewMode === 'graph'));
+  $('#catSubList').style.display = categoryDetailViewMode === 'list' ? '' : 'none';
+  $('#catGraphView').style.display = categoryDetailViewMode === 'graph' ? '' : 'none';
 }
 
 function syncMainCategoryFilter(category) {
@@ -197,7 +260,7 @@ function renderCategoryDetail() {
   $('#catSubNewInput').value = '';
   editingSubcategory = null;
   $('#catSubList').innerHTML = (cat.sub || []).map(s => `
-    <div class="cat-detail-sub-item" data-sub="${escHtml(s)}" tabindex="0" role="button" aria-label="浏览子分类：${escHtml(s)}">
+    <div class="cat-detail-sub-item" data-sub="${escHtml(s)}" tabindex="0" role="button" draggable="true" aria-label="浏览子分类：${escHtml(s)}">
       <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
       <span class="cat-detail-sub-name">${escHtml(s)}</span>
       <div class="cat-detail-sub-actions">
@@ -206,6 +269,8 @@ function renderCategoryDetail() {
       </div>
     </div>
   `).join('');
+  renderCategoryGraph(cat);
+  setCategoryDetailViewMode(categoryDetailViewMode);
 }
 
 async function loadSubcategoryLogs(parent, sub) {
@@ -459,6 +524,7 @@ $('#catSubList').addEventListener('click', async (e) => {
   const subName = item.dataset.sub;
   if (e.target.closest('.subcat-edit-btn')) {
     editingSubcategory = subName;
+    item.draggable = false;
     item.innerHTML = `
       <input class="cat-detail-sub-input" value="${escHtml(subName)}" maxlength="20">
       <div class="cat-detail-sub-actions">
@@ -525,6 +591,15 @@ $('#catSubList').addEventListener('keydown', (e) => {
   }
 });
 
+$('#catViewListBtn').addEventListener('click', () => setCategoryDetailViewMode('list'));
+$('#catViewGraphBtn').addEventListener('click', () => setCategoryDetailViewMode('graph'));
+
+$('#catGraphView').addEventListener('click', async (e) => {
+  const node = e.target.closest('.cat-graph-sub');
+  if (!node) return;
+  await openSubcategoryBrowse(node.dataset.sub);
+});
+
 $('#catSubBrowseList').addEventListener('click', async (e) => {
   const item = e.target.closest('.cat-sub-browse-item');
   if (!item || !subcategoryBrowseParent) return;
@@ -551,5 +626,21 @@ setupDragAndDrop({
     });
     await loadCategories();
     renderParentList();
+  }
+});
+
+setupDragAndDrop({
+  container: $('#catSubList'),
+  itemSelector: '.cat-detail-sub-item',
+  getId: (el) => el.dataset.sub,
+  onReorder: async (subs) => {
+    if (!selectedCategoryName || editingSubcategory) return;
+    await apiFetch(`/api/categories/${encodeURIComponent(selectedCategoryName)}/subcategories/reorder`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderedSubs: subs }),
+    });
+    await loadCategories();
+    renderCategoryDetail();
   }
 });

@@ -26,7 +26,6 @@
         </button>
         <div class="sidebar-mode-menu" id="sidebarModeMenu" role="menu" style="display:none;">
           <button type="button" role="menuitem" data-mode="normal">默认侧栏</button>
-          <button type="button" role="menuitem" data-mode="nav">日志导航</button>
           <button type="button" role="menuitem" data-mode="todo">待办面板</button>
           <button type="button" role="menuitem" data-mode="categories">管理分类</button>
           <button type="button" role="menuitem" data-mode="ai">AI 对话</button>
@@ -42,6 +41,11 @@
 
 
     <div class="calendar-widget" id="calendarWidget">
+      <button class="calendar-collapse-toggle" id="calendarCollapseToggle" type="button" aria-expanded="true" aria-controls="calendarBody" title="收起日历">
+        <span class="calendar-mini-today" id="calendarMiniToday">今天</span>
+        <span class="calendar-collapse-icon" aria-hidden="true">⌄</span>
+      </button>
+      <div class="calendar-body" id="calendarBody">
       <div class="calendar-header">
         <button class="btn-icon" id="prevMonth" title="上个月" aria-label="上个月">&lsaquo;</button>
         <div class="calendar-selects">
@@ -56,6 +60,7 @@
         <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
       </div>
       <div class="calendar-days" id="calendarDays" role="grid" aria-label="日志日历"></div>
+      </div>
     </div>
 
     <div class="card-nav-panel" id="cardNavPanel">
@@ -113,7 +118,7 @@
       <div class="ai-sidebar-history-header">
         <h3>历史对话</h3>
         <div class="ai-sidebar-actions">
-          <button class="btn-sidebar-mode ai-sidebar-settings ai-key-button" id="btnAiApiKey" type="button" title="AI 设置" aria-label="AI 设置" aria-haspopup="dialog">
+          <button class="btn-sidebar-mode ai-sidebar-settings ai-key-button" id="btnAiApiKey" type="button" title="AI 设置" aria-label="AI 设置">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" stroke="currentColor" stroke-width="2"/>
               <path d="M19.4 15a1.8 1.8 0 0 0 .36 2l.06.06a2.1 2.1 0 0 1-2.97 2.97l-.06-.06a1.8 1.8 0 0 0-2-.36 1.8 1.8 0 0 0-1.09 1.65V21a2.1 2.1 0 0 1-4.2 0v-.08a1.8 1.8 0 0 0-1.18-1.65 1.8 1.8 0 0 0-2 .36l-.06.06a2.1 2.1 0 0 1-2.97-2.97l.06-.06a1.8 1.8 0 0 0 .36-2 1.8 1.8 0 0 0-1.65-1.09H2a2.1 2.1 0 0 1 0-4.2h.08a1.8 1.8 0 0 0 1.65-1.18 1.8 1.8 0 0 0-.36-2l-.06-.06a2.1 2.1 0 0 1 2.97-2.97l.06.06a1.8 1.8 0 0 0 2 .36H8.4A1.8 1.8 0 0 0 9.5 2V2a2.1 2.1 0 0 1 4.2 0v.08a1.8 1.8 0 0 0 1.09 1.65 1.8 1.8 0 0 0 2-.36l.06-.06a2.1 2.1 0 0 1 2.97 2.97l-.06.06a1.8 1.8 0 0 0-.36 2v.08A1.8 1.8 0 0 0 21 9.5h.08a2.1 2.1 0 0 1 0 4.2H21a1.8 1.8 0 0 0-1.6 1.3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -358,7 +363,7 @@
               <button class="editor-ai-icon-action" id="btnEditorAiHistory" type="button" aria-expanded="false" aria-controls="editorAiHistoryPopover" title="历史对话" aria-label="历史对话">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M3 4v5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7v5l3 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
-              <button class="editor-ai-icon-action" id="btnEditorAiSettings" type="button" title="AI 设置" aria-label="AI 设置" aria-haspopup="dialog">
+              <button class="editor-ai-icon-action" id="btnEditorAiSettings" type="button" title="AI 设置" aria-label="AI 设置">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.23.32.43.66.6 1H20a2 2 0 1 1 0 4h-.09c-.17.34-.37.68-.51 1Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               <button class="btn-secondary btn-sm" id="btnEditorAiNew" type="button">新对话</button>
@@ -403,6 +408,182 @@
           <button class="btn-primary" id="btnAiSend" type="button" disabled>发送</button>
         </div>
       </div>
+    </div>
+
+    <!-- AI Settings View -->
+    <div class="ai-settings-view" id="aiSettingsView" style="display:none;">
+      <aside class="ai-settings-rail">
+        <div>
+          <h2 id="aiSettingsTitle">AI 设置</h2>
+          <p>管理模型、上下文、图像和技能连接。</p>
+        </div>
+        <div class="ai-settings-tabs" role="tablist" aria-label="AI 设置类型">
+          <button class="ai-settings-tab active" id="aiSettingsTabChat" type="button" role="tab" aria-selected="true" aria-controls="aiSettingsPanelChat" data-ai-settings-tab="chat">基础设置</button>
+          <button class="ai-settings-tab" id="aiSettingsTabImage" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelImage" data-ai-settings-tab="image">生图设置</button>
+          <button class="ai-settings-tab" id="aiSettingsTabSkills" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelSkills" data-ai-settings-tab="skills">技能设置</button>
+        </div>
+      </aside>
+      <section class="ai-settings-page" aria-labelledby="aiSettingsTitle">
+        <div class="ai-settings-page-head">
+          <div>
+            <span class="ai-settings-kicker">本机配置</span>
+            <h3 id="aiSettingsSectionTitle">基础设置</h3>
+          </div>
+          <button class="btn-secondary" id="btnAiSettingsBack" type="button">返回对话</button>
+        </div>
+        <div class="ai-settings-body">
+          <div class="ai-settings-panel active" id="aiSettingsPanelChat" role="tabpanel" aria-labelledby="aiSettingsTabChat">
+            <label class="ai-settings-field" for="aiApiKeyInput">
+              <span>DeepSeek API Key</span>
+              <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
+            </label>
+            <label class="ai-settings-field" for="aiModelSelect">
+              <span>模型</span>
+              <select id="aiModelSelect" class="ai-chat-select" title="AI 模型">
+                <option value="deepseek-v4-flash">DeepSeek Flash</option>
+                <option value="deepseek-v4-pro">DeepSeek Pro</option>
+              </select>
+            </label>
+            <label class="ai-settings-field" for="aiReasoningEffort">
+              <span>思考强度</span>
+              <select id="aiReasoningEffort" class="ai-chat-select" title="思考强度">
+                <option value="high">高</option>
+                <option value="max">最高</option>
+              </select>
+            </label>
+            <label class="ai-settings-toggle" for="aiStreamToggle">
+              <span>
+                <strong>流式输出</strong>
+                <small>开启后 AI 回复会逐字显示</small>
+              </span>
+              <input type="checkbox" id="aiStreamToggle">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="ai-settings-field" for="aiUserProfileInput">
+              <span>用户画像</span>
+              <textarea id="aiUserProfileInput" class="ai-settings-textarea" rows="4" maxlength="2000" placeholder="例如：我的职业、关注领域、偏好的回答风格、常用语言等"></textarea>
+            </label>
+            <label class="ai-settings-toggle" for="aiLogContextToggle">
+              <span>
+                <strong>允许 AI 访问日志内容</strong>
+                <small>开启后提问时会附带最近日志作为只读上下文</small>
+              </span>
+              <input type="checkbox" id="aiLogContextToggle">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="ai-settings-toggle" for="aiDiaryContextToggle">
+              <span>
+                <strong>允许 AI 访问日记内容</strong>
+                <small>需同时开启日志访问；日记锁定时不会发送日记</small>
+              </span>
+              <input type="checkbox" id="aiDiaryContextToggle">
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
+          <div class="ai-settings-panel" id="aiSettingsPanelImage" role="tabpanel" aria-labelledby="aiSettingsTabImage" hidden>
+            <label class="ai-settings-field" for="aiSeedreamApiKeyInput">
+              <span>Seedream API Key</span>
+              <input type="password" id="aiSeedreamApiKeyInput" class="ai-key-input" placeholder="4b45..." autocomplete="off" spellcheck="false">
+            </label>
+            <label class="ai-settings-field" for="aiSeedreamModel">
+              <span>生图模型</span>
+              <select id="aiSeedreamModel" class="ai-chat-select" title="Seedream 生图模型">
+                <option value="doubao-seedream-5-0-260128">Seedream 5.0</option>
+                <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
+                <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
+              </select>
+            </label>
+            <label class="ai-settings-field" for="aiSeedreamSize">
+              <span>图片尺寸</span>
+              <select id="aiSeedreamSize" class="ai-chat-select" title="Seedream 图片尺寸">
+                <option value="2K">2K</option>
+                <option value="3K">3K</option>
+                <option value="4K">4K</option>
+                <option value="2048x2048">2048x2048</option>
+                <option value="2848x1600">2848x1600（16:9）</option>
+                <option value="1600x2848">1600x2848（9:16）</option>
+              </select>
+            </label>
+            <label class="ai-settings-toggle" for="aiSeedreamWatermark">
+              <span>
+                <strong>Seedream 水印</strong>
+                <small>开启后保留上游 “AI 生成” 标识</small>
+              </span>
+              <input type="checkbox" id="aiSeedreamWatermark">
+              <i aria-hidden="true"></i>
+            </label>
+          </div>
+          <div class="ai-settings-panel" id="aiSettingsPanelSkills" role="tabpanel" aria-labelledby="aiSettingsTabSkills" hidden>
+            <div class="ai-skill-settings-grid">
+              <label class="ai-settings-toggle ai-skill-settings-card" for="aiSkillWestockToggle">
+                <span>
+                  <strong>WeStock Data</strong>
+                  <small>A股、港股、美股行情与财务数据查询</small>
+                </span>
+                <input type="checkbox" id="aiSkillWestockToggle">
+                <i aria-hidden="true"></i>
+              </label>
+              <div class="ai-skill-settings-card ai-skill-config-card">
+                <div class="ai-skill-config-head">
+                  <button type="button" class="ai-skill-config-trigger" aria-expanded="false" aria-controls="aiTavilyConfig" data-skill-config-toggle>
+                    <span>
+                      <strong>Tavily 联网搜索</strong>
+                      <small>普通聊天自动搜索网页并作为回答上下文</small>
+                    </span>
+                    <span class="ai-skill-config-chevron" aria-hidden="true">⌄</span>
+                  </button>
+                  <label class="ai-settings-toggle ai-skill-enable-toggle" for="aiWebSearchToggle">
+                    <span class="sr-only">启用 Tavily 联网搜索</span>
+                    <input type="checkbox" id="aiWebSearchToggle">
+                    <i aria-hidden="true"></i>
+                  </label>
+                </div>
+                <div class="ai-skill-config" id="aiTavilyConfig" hidden>
+                  <label class="ai-settings-field" for="aiTavilyApiKeyInput">
+                    <span>Tavily API Key</span>
+                    <input type="password" id="aiTavilyApiKeyInput" class="ai-key-input" placeholder="tvly-..." autocomplete="off" spellcheck="false">
+                  </label>
+                  <label class="ai-settings-field" for="aiWebSearchDepth">
+                    <span>搜索强度</span>
+                    <select id="aiWebSearchDepth" class="ai-chat-select" title="联网搜索强度">
+                      <option value="basic">Basic（更快）</option>
+                      <option value="advanced">Advanced（更全面）</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div class="ai-skill-settings-card ai-skill-config-card">
+                <div class="ai-skill-config-head">
+                  <button type="button" class="ai-skill-config-trigger" aria-expanded="false" aria-controls="aiPerplexityConfig" data-skill-config-toggle>
+                    <span>
+                      <strong>Perplexity Search</strong>
+                      <small>普通聊天自动搜索网页并作为回答上下文</small>
+                    </span>
+                    <span class="ai-skill-config-chevron" aria-hidden="true">⌄</span>
+                  </button>
+                  <label class="ai-settings-toggle ai-skill-enable-toggle" for="aiSkillPerplexityToggle">
+                    <span class="sr-only">启用 Perplexity Search</span>
+                    <input type="checkbox" id="aiSkillPerplexityToggle">
+                    <i aria-hidden="true"></i>
+                  </label>
+                </div>
+                <div class="ai-skill-config" id="aiPerplexityConfig" hidden>
+                  <label class="ai-settings-field" for="aiPerplexityApiKeyInput">
+                    <span>Perplexity API Key</span>
+                    <input type="password" id="aiPerplexityApiKeyInput" class="ai-key-input" placeholder="pplx-..." autocomplete="off" spellcheck="false">
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="ai-key-note">保存后写入本机数据目录的 ai-settings.json；API Key 不会写入日志数据。</p>
+        </div>
+        <div class="ai-settings-actions">
+          <button class="btn-secondary" id="btnAiApiKeyClear" type="button">清除 Key</button>
+          <button class="btn-secondary" id="btnAiApiKeyCancel" type="button">返回对话</button>
+          <button class="btn-primary" id="btnAiApiKeySave" type="button">保存</button>
+        </div>
+      </section>
     </div>
 
     <!-- Category Management View -->
@@ -456,8 +637,13 @@
             <div class="cat-subsection-header">
               <h4>子分类</h4>
               <span id="catDetailSubCount"></span>
+              <div class="cat-view-toggle" role="group" aria-label="子分类视图">
+                <button type="button" id="catViewListBtn" data-cat-view="list" aria-pressed="true">列表</button>
+                <button type="button" id="catViewGraphBtn" data-cat-view="graph" aria-pressed="false">图谱</button>
+              </div>
             </div>
             <div class="cat-detail-sub-list" id="catSubList"></div>
+            <div class="cat-graph-view" id="catGraphView" style="display:none;"></div>
           </div>
           <div class="cat-sub-browse-content" id="catSubBrowseContent" style="display:none;">
             <div class="cat-sub-browse-header">
@@ -494,139 +680,6 @@
       <div class="modal-footer">
         <span class="log-link-hint">选择后会插入 [标题](#log/id)</span>
         <button class="btn-secondary" id="logLinkDone">完成</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- AI Settings Modal -->
-  <div class="modal-overlay" id="aiApiKeyOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiApiKeyTitle">
-    <div class="modal modal-ai-key">
-      <div class="modal-header">
-        <h2 id="aiApiKeyTitle" class="sr-only">AI 设置</h2>
-        <div class="ai-settings-tabs" role="tablist" aria-label="AI 设置类型">
-          <button class="ai-settings-tab active" id="aiSettingsTabChat" type="button" role="tab" aria-selected="true" aria-controls="aiSettingsPanelChat" data-ai-settings-tab="chat">AI 设置</button>
-          <button class="ai-settings-tab" id="aiSettingsTabImage" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelImage" data-ai-settings-tab="image">生图设置</button>
-          <button class="ai-settings-tab" id="aiSettingsTabSkills" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelSkills" data-ai-settings-tab="skills">技能设置</button>
-        </div>
-        <button class="btn-icon modal-close" id="aiApiKeyClose" aria-label="关闭">&times;</button>
-      </div>
-      <div class="modal-body ai-key-body ai-settings-body">
-        <div class="ai-settings-panel active" id="aiSettingsPanelChat" role="tabpanel" aria-labelledby="aiSettingsTabChat">
-          <label class="ai-settings-field" for="aiApiKeyInput">
-            <span>DeepSeek API Key</span>
-            <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
-          </label>
-          <label class="ai-settings-field" for="aiModelSelect">
-            <span>模型</span>
-            <select id="aiModelSelect" class="ai-chat-select" title="AI 模型">
-              <option value="deepseek-v4-flash">DeepSeek Flash</option>
-              <option value="deepseek-v4-pro">DeepSeek Pro</option>
-            </select>
-          </label>
-          <label class="ai-settings-field" for="aiReasoningEffort">
-            <span>思考强度</span>
-            <select id="aiReasoningEffort" class="ai-chat-select" title="思考强度">
-              <option value="high">高</option>
-              <option value="max">最高</option>
-            </select>
-          </label>
-          <label class="ai-settings-toggle" for="aiStreamToggle">
-            <span>
-              <strong>流式输出</strong>
-              <small>开启后 AI 回复会逐字显示</small>
-            </span>
-            <input type="checkbox" id="aiStreamToggle">
-            <i aria-hidden="true"></i>
-          </label>
-          <label class="ai-settings-field" for="aiUserProfileInput">
-            <span>用户画像</span>
-            <textarea id="aiUserProfileInput" class="ai-settings-textarea" rows="4" maxlength="2000" placeholder="例如：我的职业、关注领域、偏好的回答风格、常用语言等"></textarea>
-          </label>
-          <label class="ai-settings-toggle" for="aiLogContextToggle">
-            <span>
-              <strong>允许 AI 访问日志内容</strong>
-              <small>开启后提问时会附带最近日志作为只读上下文</small>
-            </span>
-            <input type="checkbox" id="aiLogContextToggle">
-            <i aria-hidden="true"></i>
-          </label>
-          <label class="ai-settings-toggle" for="aiDiaryContextToggle">
-            <span>
-              <strong>允许 AI 访问日记内容</strong>
-              <small>需同时开启日志访问；日记锁定时不会发送日记</small>
-            </span>
-            <input type="checkbox" id="aiDiaryContextToggle">
-            <i aria-hidden="true"></i>
-          </label>
-          <label class="ai-settings-field" for="aiTavilyApiKeyInput">
-            <span>Tavily API Key</span>
-            <input type="password" id="aiTavilyApiKeyInput" class="ai-key-input" placeholder="tvly-..." autocomplete="off" spellcheck="false">
-          </label>
-          <label class="ai-settings-toggle" for="aiWebSearchToggle">
-            <span>
-              <strong>联网搜索</strong>
-              <small>开启后发送问题时会先用 Tavily 搜索网页</small>
-            </span>
-            <input type="checkbox" id="aiWebSearchToggle">
-            <i aria-hidden="true"></i>
-          </label>
-          <label class="ai-settings-field" for="aiWebSearchDepth">
-            <span>搜索深度</span>
-            <select id="aiWebSearchDepth" class="ai-chat-select" title="联网搜索深度">
-              <option value="basic">Basic（更快）</option>
-              <option value="advanced">Advanced（更全面）</option>
-            </select>
-          </label>
-        </div>
-        <div class="ai-settings-panel" id="aiSettingsPanelImage" role="tabpanel" aria-labelledby="aiSettingsTabImage" hidden>
-          <label class="ai-settings-field" for="aiSeedreamApiKeyInput">
-            <span>Seedream API Key</span>
-            <input type="password" id="aiSeedreamApiKeyInput" class="ai-key-input" placeholder="4b45..." autocomplete="off" spellcheck="false">
-          </label>
-          <label class="ai-settings-field" for="aiSeedreamModel">
-            <span>生图模型</span>
-            <select id="aiSeedreamModel" class="ai-chat-select" title="Seedream 生图模型">
-              <option value="doubao-seedream-5-0-260128">Seedream 5.0</option>
-              <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
-              <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
-            </select>
-          </label>
-          <label class="ai-settings-field" for="aiSeedreamSize">
-            <span>图片尺寸</span>
-            <select id="aiSeedreamSize" class="ai-chat-select" title="Seedream 图片尺寸">
-              <option value="2K">2K</option>
-              <option value="3K">3K</option>
-              <option value="4K">4K</option>
-              <option value="2048x2048">2048x2048</option>
-              <option value="2848x1600">2848x1600（16:9）</option>
-              <option value="1600x2848">1600x2848（9:16）</option>
-            </select>
-          </label>
-          <label class="ai-settings-toggle" for="aiSeedreamWatermark">
-            <span>
-              <strong>Seedream 水印</strong>
-              <small>开启后保留上游 “AI 生成” 标识</small>
-            </span>
-            <input type="checkbox" id="aiSeedreamWatermark">
-            <i aria-hidden="true"></i>
-          </label>
-        </div>
-        <div class="ai-settings-panel" id="aiSettingsPanelSkills" role="tabpanel" aria-labelledby="aiSettingsTabSkills" hidden>
-          <label class="ai-settings-toggle" for="aiSkillWestockToggle">
-            <span>
-              <strong>WeStock Data</strong>
-              <small>A股、港股、美股行情与财务数据查询</small>
-            </span>
-            <input type="checkbox" id="aiSkillWestockToggle">
-            <i aria-hidden="true"></i>
-          </label>
-        </div>
-        <p class="ai-key-note">保存后写入本机数据目录的 ai-settings.json；API Key 不会写入日志数据。</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" id="btnAiApiKeyClear" type="button">清除 Key</button>
-        <button class="btn-secondary" id="btnAiApiKeyCancel" type="button">取消</button>
-        <button class="btn-primary" id="btnAiApiKeySave" type="button">保存</button>
       </div>
     </div>
   </div>

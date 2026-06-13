@@ -1,6 +1,6 @@
 # Work Log
 
-本地优先的工作日志、待办和 AI 辅助应用。它用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类管理、日历浏览、待办主界面、统计、图片上传、模板、备份恢复，以及可选的 DeepSeek/Tavily/Seedream AI 能力。
+本地优先的工作日志、待办和 AI 辅助应用。它用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类管理、日历浏览、待办主界面、统计、图片上传、模板、备份恢复，以及可选的 DeepSeek、Tavily、Perplexity、Seedream 和 WeStock 能力。
 
 ## Quick Start
 
@@ -46,16 +46,21 @@ npm test
 
 - 分类管理通过侧边栏标题下拉进入。
 - 支持父分类、子分类、拖拽排序、重命名和删除。
+- 子分类支持在父分类详情中拖拽排序；日志筛选二级分类会沿用该顺序。
 - 父分类和子分类显示日志数量。
+- 父分类详情支持“列表 / 图谱”切换；图谱展示当前父分类和子分类关系，并可点击子分类进入浏览。
 - 可为父分类设置“日历显示”，控制点击日历某天时该分类日志是否参与显示。
 - 月份筛选、分类筛选和工时统计不会因“日历显示”关闭而丢失日志。
 
-### 日历与统计
+### 默认侧栏、日历与统计
 
+- 默认侧栏显示可收起日历和当前日志导航，待办与统计默认隐藏在对应侧栏模式中。
+- 日历收起后只显示日期和星期几，并会一起收起日记锁、备份导出和导入恢复入口。
+- 当前日志导航会随列表分页更新，折叠日历后占据更多侧栏空间。
 - 点击日历日期可查看当天日志。
 - 月份筛选可查看整月日志。
 - 新建日志会继承当前选中日期和有效分类筛选。
-- 统计面板包含本周工时、本月工时、日均、总记录和分类分布。
+- 统计面板仍保留在更多工具模式中，包含本周工时、本月工时、日均、总记录和分类分布。
 
 ## AI
 
@@ -66,7 +71,8 @@ AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不�
 - 右下角 `AI` 浮动按钮进入独立 AI 对话页。
 - 侧边栏切换到 AI 模式后显示全局历史对话。
 - 支持新建、切换、重命名、删除历史对话。
-- 支持 DeepSeek 模型、思考强度、流式输出、Tavily 联网搜索和 Seedream 生图设置。
+- AI 设置是独立页面，包含基础设置、生图设置和技能设置。
+- 支持 DeepSeek 模型、思考强度、流式输出、Tavily/Perplexity 联网搜索、WeStock 数据技能和 Seedream 生图设置。
 - 普通发送只处理用户输入的对话内容，不读取日志、待办或分类。
 
 ### 日志内 AI
@@ -88,9 +94,17 @@ AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不�
 
 ### 联网搜索
 
-- 在 AI 设置中填写 Tavily API Key 并开启联网搜索后，AI 会先搜索用户本轮问题。
-- Tavily 只接收用户主动发送的问题，不接收日志全文。
-- 回复下方会显示来源链接。
+- Tavily 和 Perplexity 都在 AI 设置的技能设置中配置。
+- 开启后会用用户本轮最后一条问题自动搜索，再把结果作为只读上下文交给 DeepSeek。
+- Tavily 和 Perplexity 可以同时开启；搜索结果会合并，单个搜索源失败不会阻断 AI 回复。
+- Perplexity 自动搜索使用用户原问题，仅做空白清理和长度限制，不由模型改写 query。
+- 回复下方会显示来源链接，并标明 `tavily` 或 `perplexity`。
+
+### 技能
+
+- WeStock 是手动选择技能，适合股票、ETF、指数、财报、资金流、日历等市场数据查询。
+- 手动技能保持单选；选择技能后 AI 会生成确认执行卡片，用户点击确认后才调用工具。
+- Perplexity 已迁移为自动联网搜索源，不再作为新对话的手动技能展示。
 
 ## Configuration
 
@@ -107,9 +121,12 @@ AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不�
 | `DEEPSEEK_DEFAULT_MODEL` | 默认 DeepSeek 模型 | `deepseek-v4-flash` |
 | `TAVILY_API_KEY` | 服务端默认 Tavily API Key | empty |
 | `TAVILY_BASE_URL` | Tavily API 基础地址 | `https://api.tavily.com` |
+| `PERPLEXITY_API_KEY` | 服务端默认 Perplexity API Key | empty |
+| `PERPLEXITY_BASE_URL` | Perplexity API 基础地址 | `https://api.perplexity.ai` |
 | `SEEDREAM_API_KEY` | 服务端默认 Seedream API Key | empty |
 | `SEEDREAM_BASE_URL` | Seedream API 基础地址 | `https://ark.cn-beijing.volces.com/api/v3` |
 | `SEEDREAM_DEFAULT_MODEL` | 默认 Seedream 模型 | `doubao-seedream-5-0-260128` |
+| `WESTOCK_NPX_COMMAND` | WeStock CLI 启动命令 | `npx -y westock-data-clawhub@1.0.4` |
 
 生成日记密码哈希：
 
@@ -128,7 +145,7 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 | `logs.json` | 日志 |
 | `todos.json` | 待办 |
 | `categories.json` | 父分类、子分类和日历显示设置 |
-| `ai-settings.json` | AI、Tavily、Seedream 设置和本地 API Key |
+| `ai-settings.json` | AI、Tavily、Perplexity、Seedream、WeStock 设置和本地 API Key |
 | `ai-chats.json` | 独立 AI 和日志内 AI 历史 |
 | `private-uploads.json` | 日记保护图片标记 |
 | `uploads/` | 上传图片和生成图片 |
@@ -138,7 +155,7 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 - 后端 AI 聊天接口不会自行读取 `data/` 注入上下文。
 - 独立 AI 对话只发送用户在对话框中输入的消息。
 - 日志内 AI 只使用前端主动发送的当前日志上下文。
-- Tavily 搜索只接收用户问题，不接收日志全文。
+- Tavily 和 Perplexity 搜索只接收用户问题，不接收日志全文。
 - `.env` 和 `data/` 已在 `.gitignore` 中排除，提交前仍建议用 `git status` 检查。
 
 ## Backup And Restore
@@ -195,11 +212,14 @@ http://<电脑局域网 IP>:<PORT>
 | `DELETE` | `/api/todos/:id` | 删除待办 |
 | `PUT` | `/api/todos/reorder` | 待办拖拽排序 |
 | `GET` | `/api/categories` | 获取分类树 |
+| `PUT` | `/api/categories/:parent/subcategories/reorder` | 重排父分类下的子分类 |
 | `POST` | `/api/upload` | 上传日志图片 |
 | `GET` | `/api/backup` | 导出 JSON 备份 |
 | `POST` | `/api/restore` | 恢复 JSON 备份 |
 | `GET` | `/api/ai/settings` | 读取 AI 设置 |
 | `PUT` | `/api/ai/settings` | 保存 AI 设置 |
+| `GET` | `/api/ai/skills` | 获取可手动选择的 AI 技能 |
+| `POST` | `/api/ai/skills/:skill/run` | 确认执行 AI 技能工具 |
 | `GET` | `/api/ai/conversations` | 读取 AI 历史 |
 | `PUT` | `/api/ai/conversations` | 保存 AI 历史 |
 | `POST` | `/api/ai/chat` | 独立 AI 对话 |

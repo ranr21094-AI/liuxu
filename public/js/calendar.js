@@ -1,12 +1,33 @@
 import { state } from './state.js';
 import { $ } from './helpers.js';
 import { loadLogs } from './logList.js';
-import { businessDateString, formatDateLabel } from './businessDate.js';
+import { businessDateString, formatDateLabel, formatTemplateDate } from './businessDate.js';
 
 const calendarDays = $('#calendarDays');
 const calYearSelect = $('#calendarYearSelect');
 const calMonthSelect = $('#calendarMonthSelect');
+const calendarWidget = $('#calendarWidget');
+const calendarCollapseToggle = $('#calendarCollapseToggle');
+const calendarMiniToday = $('#calendarMiniToday');
+const CALENDAR_COLLAPSED_STORAGE_KEY = 'calendarCollapsed';
 let calendarFocusDate = businessDateString();
+let calendarCollapsed = loadCalendarCollapsed();
+
+function loadCalendarCollapsed() {
+  try {
+    return localStorage.getItem(CALENDAR_COLLAPSED_STORAGE_KEY) === 'true';
+  } catch (err) {
+    return false;
+  }
+}
+
+function saveCalendarCollapsed(collapsed) {
+  try {
+    localStorage.setItem(CALENDAR_COLLAPSED_STORAGE_KEY, String(collapsed));
+  } catch (err) {
+    // Calendar collapse is a visual preference; storage failures should not block use.
+  }
+}
 
 function dateString(year, month, day) {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -28,6 +49,17 @@ function moveMonth(value, months) {
   const target = new Date(Date.UTC(year, month + months, 1));
   const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
   return dateString(target.getUTCFullYear(), target.getUTCMonth(), Math.min(day, lastDay));
+}
+
+function applyCalendarCollapsed() {
+  calendarWidget.classList.toggle('collapsed', calendarCollapsed);
+  calendarCollapseToggle.setAttribute('aria-expanded', String(!calendarCollapsed));
+  calendarCollapseToggle.title = calendarCollapsed ? '展开日历' : '收起日历';
+}
+
+function updateCalendarMiniSummary() {
+  const today = businessDateString();
+  calendarMiniToday.textContent = formatTemplateDate(today, 'MM月DD日 ddd');
 }
 
 function focusCalendarDate(value) {
@@ -84,6 +116,7 @@ export function renderCalendar() {
       ? selectedDate
       : (today.startsWith(visibleMonth) ? today : dateString(currentYear, currentMonth, 1));
   }
+  updateCalendarMiniSummary();
 
   let html = '';
   for (let i = firstDay - 1; i >= 0; i--) {
@@ -151,6 +184,14 @@ calendarDays.addEventListener('keydown', (event) => {
 function changeMonth(delta) {
   focusCalendarDate(moveMonth(calendarFocusDate, delta));
 }
+
+applyCalendarCollapsed();
+
+calendarCollapseToggle.addEventListener('click', () => {
+  calendarCollapsed = !calendarCollapsed;
+  saveCalendarCollapsed(calendarCollapsed);
+  applyCalendarCollapsed();
+});
 
 $('#prevMonth').addEventListener('click', () => changeMonth(-1));
 $('#nextMonth').addEventListener('click', () => changeMonth(1));

@@ -20,6 +20,8 @@ const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepsee
 const DEEPSEEK_DEFAULT_MODEL = process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-flash';
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY || '';
 const TAVILY_BASE_URL = (process.env.TAVILY_BASE_URL || 'https://api.tavily.com').replace(/\/+$/, '');
+const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
+const PERPLEXITY_BASE_URL = (process.env.PERPLEXITY_BASE_URL || 'https://api.perplexity.ai').replace(/\/+$/, '');
 const SEEDREAM_API_KEY = process.env.SEEDREAM_API_KEY || '';
 const SEEDREAM_BASE_URL = (process.env.SEEDREAM_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
 const SEEDREAM_DEFAULT_MODEL = process.env.SEEDREAM_DEFAULT_MODEL || 'doubao-seedream-5-0-260128';
@@ -44,6 +46,9 @@ const AI_LOG_CONTEXT_MAX_CHARS = 30000;
 const AI_LOG_CONTEXT_MAX_CONTENT_CHARS = 1200;
 const WESTOCK_MAX_OUTPUT_CHARS = 60000;
 const WESTOCK_TIMEOUT_MS = 60000;
+const PERPLEXITY_MAX_QUERIES = 3;
+const PERPLEXITY_MAX_QUERY_CHARS = 300;
+const PERPLEXITY_MAX_OUTPUT_CHARS = 12000;
 const WESTOCK_ALLOWED_TOOLS = new Set([
   'search', 'kline', 'minute', 'finance', 'profile', 'asfund', 'hkfund', 'usfund',
   'technical', 'chip', 'shareholder', 'dividend', 'etf', 'etf-holdings', 'etf-nav',
@@ -424,6 +429,7 @@ function sanitizeProviderText(value, maxLength = 240) {
   return String(value || '')
     .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
     .replace(/tvly-[A-Za-z0-9_-]+/g, 'tvly-***')
+    .replace(/pplx-[A-Za-z0-9_-]+/g, 'pplx-***')
     .slice(0, maxLength)
     .trim();
 }
@@ -432,6 +438,7 @@ function sanitizeToolText(value, maxLength = 1000) {
   return String(value || '')
     .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***')
     .replace(/tvly-[A-Za-z0-9_-]+/g, 'tvly-***')
+    .replace(/pplx-[A-Za-z0-9_-]+/g, 'pplx-***')
     .replace(/[A-Za-z]:\\[^\s"'<>|]+/g, '[local-path]')
     .replace(/\bat .+\(.+:\d+:\d+\)/g, '')
     .replace(/\s+npx\s+-y\s+westock-data-clawhub@[^\s]+/g, ' westock')
@@ -495,8 +502,14 @@ function parseAiSettingsInput(body) {
   const westockSource = skillSource.westock && typeof skillSource.westock === 'object' && !Array.isArray(skillSource.westock)
     ? skillSource.westock
     : {};
+  const perplexitySource = skillSource.perplexity && typeof skillSource.perplexity === 'object' && !Array.isArray(skillSource.perplexity)
+    ? skillSource.perplexity
+    : {};
   if (westockSource.enabled !== undefined && typeof westockSource.enabled !== 'boolean') {
     throw new Error('Unsupported WeStock skill option');
+  }
+  if (perplexitySource.enabled !== undefined && typeof perplexitySource.enabled !== 'boolean') {
+    throw new Error('Unsupported Perplexity skill option');
   }
   return {
     apiKey: typeof body?.apiKey === 'string' ? body.apiKey.trim() : '',
@@ -507,6 +520,7 @@ function parseAiSettingsInput(body) {
     logContextEnabled,
     diaryContextEnabled,
     tavilyApiKey: typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '',
+    perplexityApiKey: typeof body?.perplexityApiKey === 'string' ? body.perplexityApiKey.trim() : '',
     webSearchEnabled,
     webSearchDepth,
     seedreamApiKey: typeof body?.seedreamApiKey === 'string' ? body.seedreamApiKey.trim() : '',
@@ -515,6 +529,7 @@ function parseAiSettingsInput(body) {
     seedreamWatermark,
     skills: {
       westock: { enabled: westockSource.enabled !== false },
+      perplexity: { enabled: perplexitySource.enabled !== false },
     },
   };
 }
@@ -632,6 +647,7 @@ function resolveAiChatOptions(body) {
 
   const requestApiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : '';
   const requestTavilyApiKey = typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '';
+  const requestPerplexityApiKey = typeof body?.perplexityApiKey === 'string' ? body.perplexityApiKey.trim() : '';
   return {
     apiKey: requestApiKey || saved.apiKey || DEEPSEEK_API_KEY,
     model,
@@ -642,6 +658,7 @@ function resolveAiChatOptions(body) {
     logContextEnabled,
     diaryContextEnabled,
     tavilyApiKey: requestTavilyApiKey || saved.tavilyApiKey || TAVILY_API_KEY,
+    perplexityApiKey: requestPerplexityApiKey || saved.perplexityApiKey || PERPLEXITY_API_KEY,
     webSearchEnabled,
     webSearchDepth,
   };
@@ -654,6 +671,7 @@ function inferTavilyTopic(query) {
 function normalizeTavilySources(results) {
   if (!Array.isArray(results)) return [];
   return results.slice(0, 5).map((item) => ({
+    provider: 'tavily',
     title: sanitizeProviderText(item?.title || item?.url || 'Source', 120),
     url: typeof item?.url === 'string' ? item.url.slice(0, 800) : '',
     content: sanitizeProviderText(item?.content || '', 700),
@@ -661,19 +679,91 @@ function normalizeTavilySources(results) {
   })).filter(item => item.url);
 }
 
-function buildSearchContext(search) {
-  if (!search) return '';
+function buildSearchContext(searches) {
+  const rawList = Array.isArray(searches)
+    ? searches
+    : (Array.isArray(searches?.searches) ? searches.searches : (searches ? [searches] : []));
+  const list = rawList.filter(Boolean);
+  if (!list.length) return '';
   const lines = [
-    'Web search results from Tavily. Use them only to answer the user question, cite source URLs when relevant, and say when results are insufficient.',
-    `Search query: ${search.query}`,
+    'Web search results. Use them only to answer the user question, cite source URLs when relevant, and say when results are insufficient.',
   ];
-  if (search.answer) lines.push(`Tavily answer: ${search.answer}`);
-  search.sources.forEach((source, index) => {
-    lines.push(`[${index + 1}] ${source.title}`);
-    lines.push(`URL: ${source.url}`);
-    if (source.content) lines.push(`Snippet: ${source.content}`);
-  });
+
+  let sourceIndex = 1;
+  for (const search of list) {
+    const provider = search.provider === 'perplexity' ? 'Perplexity' : 'Tavily';
+    lines.push('', `Provider: ${provider}`);
+    lines.push(`Search query: ${search.query}`);
+    if (search.answer) lines.push(`${provider} answer: ${search.answer}`);
+    search.sources.forEach((source) => {
+      lines.push(`[${sourceIndex}] ${source.title}`);
+      lines.push(`Provider: ${provider}`);
+      lines.push(`URL: ${source.url}`);
+      if (source.content) lines.push(`Snippet: ${source.content}`);
+      sourceIndex += 1;
+    });
+  }
+
   return lines.join('\n');
+}
+
+function mergeSearchResults(searches) {
+  const list = Array.isArray(searches) ? searches.filter(Boolean) : [];
+  const seen = new Set();
+  const sources = [];
+  for (const search of list) {
+    for (const source of search.sources || []) {
+      const url = source.url || '';
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      sources.push(source);
+    }
+  }
+  return { searches: list, sources };
+}
+
+async function collectWebSearches(query, { tavilyApiKey, webSearchEnabled, webSearchDepth, perplexityApiKey }) {
+  const tasks = [];
+  if (webSearchEnabled) {
+    tasks.push(runTavilySearch(query, { tavilyApiKey, webSearchDepth }));
+  }
+  if (perplexityEnabled()) {
+    tasks.push(runPerplexityAutoSearch(query, { perplexityApiKey }));
+  }
+  if (!tasks.length) return { searches: [], sources: [] };
+
+  const settled = await Promise.allSettled(tasks);
+  return mergeSearchResults(settled
+    .filter(item => item.status === 'fulfilled')
+    .map(item => item.value));
+}
+
+function normalizePerplexitySources(data) {
+  const results = normalizePerplexityResults(data).slice(0, 5).map((item) => ({
+    provider: 'perplexity',
+    title: sanitizeProviderText(item?.title || item?.name || item?.url || 'Source', 120),
+    url: typeof item?.url === 'string' ? item.url.slice(0, 800) : '',
+    content: sanitizeProviderText(item?.snippet || item?.content || item?.text || item?.description || '', 700),
+    score: Number.isFinite(Number(item?.score)) ? Number(item.score) : null,
+  })).filter(item => item.url);
+
+  const seen = new Set(results.map(item => item.url));
+  const citations = Array.isArray(data?.citations)
+    ? data.citations.filter(item => typeof item === 'string' && item.trim()).slice(0, 8)
+    : [];
+  citations.forEach((url) => {
+    const clipped = url.slice(0, 800);
+    if (!clipped || seen.has(clipped)) return;
+    seen.add(clipped);
+    results.push({
+      provider: 'perplexity',
+      title: 'Perplexity citation',
+      url: clipped,
+      content: '',
+      score: null,
+    });
+  });
+  return results;
 }
 
 function appendLimited(lines, line, budget) {
@@ -732,11 +822,16 @@ function buildAiMemoryContext({ userProfile, logContextEnabled, diaryContextEnab
 
 function normalizeSkillSelection(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return value.id === 'westock' ? { id: 'westock' } : null;
+  if (value.id === 'westock') return { id: 'westock' };
+  return null;
 }
 
 function westockEnabled() {
   return db.getAiSettings().skills?.westock?.enabled !== false;
+}
+
+function perplexityEnabled() {
+  return db.getAiSettings().skills?.perplexity?.enabled !== false;
 }
 
 function westockMetadata() {
@@ -775,6 +870,11 @@ function normalizeWestockToolCall(rawCall) {
     requiresConfirmation: true,
     status: 'pending',
   };
+}
+
+function normalizeAiToolCall(rawCall, selectedSkillId) {
+  if (selectedSkillId === 'westock') return normalizeWestockToolCall(rawCall);
+  return null;
 }
 
 function splitCommand(command) {
@@ -889,10 +989,145 @@ function runWestockCli(tool, args) {
   });
 }
 
-function parseAiToolReply(reply) {
+function normalizePerplexityQueries(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    throw new Error('Perplexity args must be an object');
+  }
+  const rawQueries = Array.isArray(args.queries) ? args.queries : [args.query];
+  const queries = rawQueries
+    .map(value => String(value ?? '').trim().replace(/\s+/g, ' '))
+    .filter(Boolean);
+  if (!queries.length) {
+    throw new Error('Perplexity search query is required');
+  }
+  if (queries.length > PERPLEXITY_MAX_QUERIES) {
+    throw new Error(`Perplexity supports at most ${PERPLEXITY_MAX_QUERIES} queries per request`);
+  }
+  for (const query of queries) {
+    if (query.length > PERPLEXITY_MAX_QUERY_CHARS) {
+      throw new Error(`Perplexity query must be ${PERPLEXITY_MAX_QUERY_CHARS} characters or fewer`);
+    }
+  }
+  return queries;
+}
+
+function normalizePerplexityResults(data) {
+  if (Array.isArray(data)) {
+    return data.flatMap(item => {
+      if (Array.isArray(item) || Array.isArray(item?.results)) return normalizePerplexityResults(item);
+      return [item];
+    });
+  }
+  if (Array.isArray(data?.results)) return data.results;
+  const nested = Object.values(data || {}).filter(item => item && typeof item === 'object' && (item.title || item.url || item.snippet || item.content));
+  return nested;
+}
+
+function formatPerplexityResultItem(item) {
+  const title = sanitizeProviderText(item?.title || item?.name || item?.url || 'Source', 160);
+  const url = typeof item?.url === 'string' ? item.url.slice(0, 800) : '';
+  const snippet = sanitizeProviderText(item?.snippet || item?.content || item?.text || item?.description || '', 700);
+  const lines = [];
+  if (title) lines.push(`**${title}**`);
+  if (url) lines.push(url);
+  if (snippet) lines.push(snippet);
+  return lines.join('\n');
+}
+
+function formatPerplexityResponse(data, queries) {
+  const lines = ['Perplexity search results'];
+  let hasResults = false;
+  const answer = sanitizeProviderText(data?.answer || data?.summary || '', 1200);
+  if (answer) lines.push('', answer);
+
+  if (Array.isArray(data) && queries.length > 1 && data.length === queries.length) {
+    lines.push('');
+    data.forEach((resultGroup, index) => {
+      const results = normalizePerplexityResults(resultGroup).slice(0, 5);
+      if (!results.length) return;
+      hasResults = true;
+      lines.push(`## ${queries[index]}`);
+      for (const item of results) {
+        const formatted = formatPerplexityResultItem(item);
+        if (formatted) lines.push('', formatted);
+      }
+    });
+  } else {
+    const results = normalizePerplexityResults(data).slice(0, 5);
+    if (results.length) {
+      hasResults = true;
+      lines.push('');
+      if (queries.length === 1) lines.push(`## ${queries[0]}`);
+      for (const item of results) {
+        const formatted = formatPerplexityResultItem(item);
+        if (formatted) lines.push('', formatted);
+      }
+    }
+  }
+
+  const citations = Array.isArray(data?.citations) ? data.citations.filter(item => typeof item === 'string' && item.trim()).slice(0, 8) : [];
+  if (citations.length) {
+    lines.push('', 'Citations:');
+    citations.forEach((url, index) => lines.push(`${index + 1}. ${url.slice(0, 800)}`));
+  }
+
+  if (!answer && !hasResults && !citations.length) {
+    lines.push('', sanitizeToolText(JSON.stringify(data, null, 2), PERPLEXITY_MAX_OUTPUT_CHARS));
+  }
+  return sanitizeToolText(lines.join('\n'), PERPLEXITY_MAX_OUTPUT_CHARS);
+}
+
+function safePerplexityError(status, data) {
+  const detail = sanitizeProviderText(data?.error?.message || data?.error || data?.message || data?.detail || '', 240);
+  return detail
+    ? `Perplexity request failed (${status}): ${detail}`
+    : `Perplexity request failed (${status})`;
+}
+
+async function fetchPerplexitySearch(queries, apiKey) {
+  if (!apiKey) {
+    const err = new Error('Perplexity API key is not configured');
+    err.status = 503;
+    throw err;
+  }
+  const upstream = await fetch(`${PERPLEXITY_BASE_URL}/search`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query: queries }),
+  });
+  const data = await upstream.json().catch(() => ({}));
+  if (!upstream.ok) {
+    const err = new Error(safePerplexityError(upstream.status, data));
+    err.status = 502;
+    throw err;
+  }
+  return data;
+}
+
+async function runPerplexitySearch(args, apiKey) {
+  const queries = normalizePerplexityQueries(args);
+  const data = await fetchPerplexitySearch(queries, apiKey);
+  return formatPerplexityResponse(data, queries);
+}
+
+async function runPerplexityAutoSearch(query, { perplexityApiKey }) {
+  const queries = normalizePerplexityQueries({ query });
+  const data = await fetchPerplexitySearch(queries, perplexityApiKey);
+  return {
+    provider: 'perplexity',
+    query,
+    answer: sanitizeProviderText(data?.answer || data?.summary || '', 1200),
+    sources: normalizePerplexitySources(data),
+  };
+}
+
+function parseAiToolReply(reply, selectedSkillId) {
   const parsed = extractJsonObject(reply);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { content: reply, toolCall: null };
-  const toolCall = normalizeWestockToolCall(parsed.toolCall);
+  const toolCall = normalizeAiToolCall(parsed.toolCall, selectedSkillId);
   const content = typeof parsed.reply === 'string' && parsed.reply.trim()
     ? parsed.reply.trim().slice(0, AI_MAX_MESSAGE_CHARS)
     : reply;
@@ -1053,6 +1288,29 @@ app.post('/api/ai/skills/westock/run', async (req, res) => {
   }
 });
 
+app.post('/api/ai/skills/perplexity/run', async (req, res) => {
+  try {
+    if (!perplexityEnabled()) {
+      return res.status(403).json({ error: 'Perplexity skill is disabled' });
+    }
+    const tool = typeof req.body?.tool === 'string' ? req.body.tool.trim() : '';
+    if (tool !== 'search') {
+      return res.status(400).json({ error: 'Unsupported Perplexity tool' });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({ error: 'Perplexity tool execution requires confirmation' });
+    }
+    const saved = db.getAiSettings();
+    const apiKey = saved.perplexityApiKey || PERPLEXITY_API_KEY;
+    const content = await runPerplexitySearch(req.body?.args || {}, apiKey);
+    res.json({ skillId: 'perplexity', tool, content });
+  } catch (err) {
+    const message = sanitizeToolText(err.message || 'Perplexity request failed', 500);
+    const status = err.status || (/Unsupported|Invalid|required|supports at most|characters|confirmation|args/.test(message) ? 400 : 502);
+    res.status(status).json({ error: message || 'Perplexity request failed' });
+  }
+});
+
 app.post('/api/ai/image/prompt', async (req, res) => {
   try {
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
@@ -1180,6 +1438,7 @@ app.post('/api/ai/chat', async (req, res) => {
       logContextEnabled,
       diaryContextEnabled,
       tavilyApiKey,
+      perplexityApiKey,
       webSearchEnabled,
       webSearchDepth,
     } = resolveAiChatOptions(req.body);
@@ -1193,8 +1452,7 @@ app.post('/api/ai/chat', async (req, res) => {
     if (selectedSkill?.id === 'westock' && !westockEnabled()) {
       return res.status(403).json({ error: 'WeStock skill is disabled' });
     }
-
-    let search = null;
+    let search = { searches: [], sources: [] };
     let deepSeekMessages = messages;
     const memoryContext = buildAiMemoryContext({
       userProfile,
@@ -1208,13 +1466,21 @@ app.post('/api/ai/chat', async (req, res) => {
         ...deepSeekMessages,
       ];
     }
-    if (webSearchEnabled) {
+    if (webSearchEnabled || perplexityEnabled()) {
       const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
-      search = await runTavilySearch(lastUserMessage.content, { tavilyApiKey, webSearchDepth });
-      deepSeekMessages = [
-        { role: 'system', content: buildSearchContext(search) },
-        ...deepSeekMessages,
-      ];
+      search = await collectWebSearches(lastUserMessage.content, {
+        tavilyApiKey,
+        webSearchEnabled,
+        webSearchDepth,
+        perplexityApiKey,
+      });
+      const searchContext = buildSearchContext(search.searches);
+      if (searchContext) {
+        deepSeekMessages = [
+          { role: 'system', content: searchContext },
+          ...deepSeekMessages,
+        ];
+      }
     }
     if (selectedSkill?.id === 'westock') {
       deepSeekMessages = [
@@ -1222,7 +1488,6 @@ app.post('/api/ai/chat', async (req, res) => {
         ...deepSeekMessages,
       ];
     }
-
     const payload = {
       model,
       messages: deepSeekMessages,
@@ -1241,7 +1506,7 @@ app.post('/api/ai/chat', async (req, res) => {
     });
 
     if (stream) {
-      return pipeDeepSeekStream(upstream, res, search?.sources || []);
+      return pipeDeepSeekStream(upstream, res, search.sources || []);
     }
 
     const data = await upstream.json().catch(() => ({}));
@@ -1254,13 +1519,13 @@ app.post('/api/ai/chat', async (req, res) => {
       return res.status(502).json({ error: 'DeepSeek response was empty' });
     }
 
-    const parsedReply = selectedSkill?.id === 'westock'
-      ? parseAiToolReply(reply)
+    const parsedReply = selectedSkill
+      ? parseAiToolReply(reply, selectedSkill.id)
       : { content: reply, toolCall: null };
     res.json({
       message: { role: 'assistant', content: parsedReply.content },
       toolCall: parsedReply.toolCall || undefined,
-      sources: search?.sources || [],
+      sources: search.sources || [],
     });
   } catch (err) {
     const status = err.status || (/messages|message role|message content|Unsupported/.test(err.message) ? 400 : 500);
@@ -1285,10 +1550,11 @@ app.post('/api/ai/editor', async (req, res) => {
       return res.status(503).json({ error: 'DeepSeek API key is not configured' });
     }
 
-    let search = null;
+    let search = { searches: [], sources: [] };
     if (webSearchEnabled) {
       const lastUserMessage = [...messages].reverse().find(message => message.role === 'user');
-      search = await runTavilySearch(lastUserMessage.content, { tavilyApiKey, webSearchDepth });
+      const tavily = await runTavilySearch(lastUserMessage.content, { tavilyApiKey, webSearchDepth });
+      search = mergeSearchResults([tavily]);
     }
 
     const payload = {
@@ -1325,7 +1591,7 @@ app.post('/api/ai/editor', async (req, res) => {
     res.json({
       message: { role: 'assistant', content: editorSuggestion.reply },
       editorSuggestion,
-      sources: search?.sources || [],
+      sources: search.sources || [],
     });
   } catch (err) {
     const status = err.status || (/messages|message role|message content|editorContext|Unsupported/.test(err.message) ? 400 : 500);
@@ -1651,6 +1917,22 @@ app.put('/api/categories/reorder', (req, res) => {
     }
     db.reorderCategories(orderedCats);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/categories/:parent/subcategories/reorder', (req, res) => {
+  try {
+    const parent = decodeURIComponent(req.params.parent);
+    const { orderedSubs } = req.body;
+    if (isDiaryCategory(parent) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
+    if (!Array.isArray(orderedSubs)) {
+      return res.status(400).json({ error: 'orderedSubs array required' });
+    }
+    const result = db.reorderSubcategories(parent, orderedSubs);
+    if (!result) return res.status(404).json({ error: 'Parent category not found' });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

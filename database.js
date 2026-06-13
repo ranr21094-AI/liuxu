@@ -18,6 +18,7 @@ const DEFAULT_AI_SETTINGS = {
   logContextEnabled: false,
   diaryContextEnabled: false,
   tavilyApiKey: '',
+  perplexityApiKey: '',
   webSearchEnabled: false,
   webSearchDepth: 'basic',
   seedreamApiKey: '',
@@ -26,6 +27,7 @@ const DEFAULT_AI_SETTINGS = {
   seedreamWatermark: true,
   skills: {
     westock: { enabled: true },
+    perplexity: { enabled: true },
   },
 };
 
@@ -312,6 +314,7 @@ function normalizeAiSettings(data) {
     : DEFAULT_AI_SETTINGS.reasoningEffort;
   const skillsSource = isPlainObject(source.skills) ? source.skills : {};
   const westockSource = isPlainObject(skillsSource.westock) ? skillsSource.westock : {};
+  const perplexitySource = isPlainObject(skillsSource.perplexity) ? skillsSource.perplexity : {};
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
     model,
@@ -321,6 +324,7 @@ function normalizeAiSettings(data) {
     logContextEnabled: typeof source.logContextEnabled === 'boolean' ? source.logContextEnabled : DEFAULT_AI_SETTINGS.logContextEnabled,
     diaryContextEnabled: typeof source.diaryContextEnabled === 'boolean' ? source.diaryContextEnabled : DEFAULT_AI_SETTINGS.diaryContextEnabled,
     tavilyApiKey: typeof source.tavilyApiKey === 'string' ? source.tavilyApiKey.trim().slice(0, 500) : '',
+    perplexityApiKey: typeof source.perplexityApiKey === 'string' ? source.perplexityApiKey.trim().slice(0, 500) : '',
     webSearchEnabled: typeof source.webSearchEnabled === 'boolean' ? source.webSearchEnabled : DEFAULT_AI_SETTINGS.webSearchEnabled,
     webSearchDepth: ['basic', 'advanced'].includes(source.webSearchDepth) ? source.webSearchDepth : DEFAULT_AI_SETTINGS.webSearchDepth,
     seedreamApiKey: typeof source.seedreamApiKey === 'string' ? source.seedreamApiKey.trim().slice(0, 500) : '',
@@ -334,6 +338,9 @@ function normalizeAiSettings(data) {
     skills: {
       westock: {
         enabled: typeof westockSource.enabled === 'boolean' ? westockSource.enabled : true,
+      },
+      perplexity: {
+        enabled: typeof perplexitySource.enabled === 'boolean' ? perplexitySource.enabled : true,
       },
     },
   };
@@ -1227,6 +1234,27 @@ function reorderCategories(orderedCats) {
   writeCategories(cats);
 }
 
+function reorderSubcategories(parentName, orderedSubs) {
+  const cats = readCategories();
+  const parent = cats.find(c => c.name === parentName);
+  if (!parent) return null;
+  const existing = Array.isArray(parent.sub) ? parent.sub : [];
+  const seen = new Set();
+  const ordered = [];
+  orderedSubs.forEach(name => {
+    if (typeof name !== 'string') return;
+    if (!existing.includes(name) || seen.has(name)) return;
+    seen.add(name);
+    ordered.push(name);
+  });
+  existing.forEach(name => {
+    if (!seen.has(name)) ordered.push(name);
+  });
+  parent.sub = ordered;
+  writeCategories(cats);
+  return { name: parent.name, sub: [...parent.sub] };
+}
+
 /** Merge two category trees, deduplicating by parent name and unioning subcategories */
 function mergeCategoryTrees(existing, incoming) {
   const merged = existing.map(c => ({
@@ -1252,4 +1280,4 @@ function mergeCategoryTrees(existing, incoming) {
   return merged;
 }
 
-module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, setCategoryCalendarDayVisible, getAiChats: readAiChats, saveAiChats: writeAiChats, getAiSettings: readAiSettings, saveAiSettings: writeAiSettings, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };
+module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, reorderSubcategories, setCategoryCalendarDayVisible, getAiChats: readAiChats, saveAiChats: writeAiChats, getAiSettings: readAiSettings, saveAiSettings: writeAiSettings, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };
