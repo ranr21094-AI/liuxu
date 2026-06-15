@@ -1,6 +1,6 @@
 // Main entry point — imports all modules and initializes the app
 import { state } from './state.js';
-import { apiFetch, checkAuth, checkDiaryStatus, unlockDiary, lockDiary } from './auth.js';
+import { apiFetch, checkAuth, getDiaryStatus, unlockDiary, lockDiary } from './auth.js';
 import { showToast, confirmDialog, openModal, closeModal, $ } from './helpers.js';
 import { clearMdCache } from './markdown.js';
 import { populateCalendarSelects, renderCalendar } from './calendar.js';
@@ -43,8 +43,8 @@ const mobileSidebarMedia = window.matchMedia(MOBILE_SIDEBAR_QUERY);
 function setSidebarTitle(mode) {
   const title = $('#sidebarTitle');
   if (mode === 'todo') {
-    title.textContent = '待办事项';
-    $('#sidebarModeTrigger').title = '当前为待办面板';
+    title.textContent = '工作日志';
+    $('#sidebarModeTrigger').title = '当前为待办页面，侧栏为默认日志导航';
   } else if (mode === 'ai') {
     title.textContent = 'AI 对话';
     $('#sidebarModeTrigger').title = '当前为 AI 历史对话';
@@ -145,6 +145,10 @@ window.addEventListener('category-manager-closed', () => {
   if (activeSidebarMode() === 'categories') setSidebarMode('normal', { updateMain: false });
 });
 
+window.addEventListener('category-log-opened', () => {
+  if (activeSidebarMode() === 'categories') setSidebarMode('normal', { updateMain: false });
+});
+
 document.addEventListener('click', (event) => {
   if (!event.target.closest('.sidebar-title-menu')) closeSidebarModeMenu();
 });
@@ -171,18 +175,23 @@ function collapseSidebar() {
 $('#btnToggleSidebar').addEventListener('click', collapseSidebar);
 $('#btnSidebarExpand').addEventListener('click', collapseSidebar);
 
-// FAB AI chat
-$('#fabCapture').addEventListener('click', () => {
-  if (!document.body.classList.contains('editor-fullscreen')) setSidebarMode('ai');
-});
-
 // Diary lock
-$('#btnDiaryUnlock').addEventListener('click', () => {
+function syncDiaryLockState(status) {
+  state.diaryLockEnabled = status.enabled !== false;
+  state.diaryUnlocked = !state.diaryLockEnabled || !status.locked;
+}
+
+function openDiaryUnlockModal() {
   openModal($('#diaryUnlockOverlay'), '#diaryPasswordInput');
-});
+}
+
+$('#btnDiaryUnlock').addEventListener('click', openDiaryUnlockModal);
+
+window.addEventListener('request-diary-unlock', openDiaryUnlockModal);
 
 $('#btnDiaryLock').addEventListener('click', async () => {
   await lockDiary();
+  syncDiaryLockState({ enabled: true, locked: true });
   $('#btnDiaryUnlock').style.display = '';
   $('#btnDiaryLock').style.display = 'none';
   showToast('日记已锁定', 'info');
@@ -207,15 +216,17 @@ $('#btnDiaryUnlockCancel').addEventListener('click', () => {
 $('#btnDiaryUnlockSubmit').addEventListener('click', async () => {
   const password = $('#diaryPasswordInput').value;
   if (!password) return;
+  const preserveCurrentDiaryFilter = state.category === '日记' || state.category.startsWith('日记/');
   const ok = await unlockDiary(password);
   if (ok) {
+    syncDiaryLockState({ enabled: true, locked: false });
     closeModal($('#diaryUnlockOverlay'));
     $('#diaryPasswordInput').value = '';
     $('#btnDiaryUnlock').style.display = 'none';
     $('#btnDiaryLock').style.display = '';
     showToast('日记已解锁', 'success');
     await loadCategories();
-    selectDiaryLogs();
+    if (!preserveCurrentDiaryFilter) selectDiaryLogs();
     await Promise.all([loadLogs(), loadStats(), loadTodos()]);
   } else {
     showToast('密码错误', 'error');
@@ -242,8 +253,9 @@ function selectDiaryLogs() {
 
 // Check diary status on init
 async function initDiaryLock() {
-  const unlocked = await checkDiaryStatus();
-  if (unlocked) {
+  const status = await getDiaryStatus();
+  syncDiaryLockState(status);
+  if (state.diaryLockEnabled && state.diaryUnlocked) {
     $('#btnDiaryUnlock').style.display = 'none';
     $('#btnDiaryLock').style.display = '';
     await loadCategories();

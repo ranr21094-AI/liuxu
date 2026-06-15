@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const childProcess = require('child_process');
 const multer = require('multer');
 const db = require('./database');
-const { businessDateString } = require('./business-date');
+const { businessDateString, weekdayIndex } = require('./business-date');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -338,11 +338,19 @@ function normalizeEditorContext(value) {
   };
 }
 
+function buildCurrentDateContext(date = new Date()) {
+  const today = businessDateString(date);
+  const weekdays = ['日', '一', '二', '三', '四', '五', '六'];
+  const weekday = weekdays[weekdayIndex(today)] || '';
+  return `今天日期：${today}${weekday ? `，星期${weekday}` : ''}。`;
+}
+
 function buildEditorContextPrompt(editorContext, search) {
   const searchContext = buildSearchContext(search);
   return [
     'You are an AI writing assistant embedded inside a Markdown work-log editor.',
-    'Use only the editor context explicitly provided below and the user messages. Do not claim to have written to the log.',
+    buildCurrentDateContext(),
+    'Prioritize the editor context explicitly provided below and the user messages. Do not claim to have written to the log.',
     'Return ONLY valid JSON without Markdown fences. Schema: {"reply":"short explanation","suggestedTitle":"optional new title","suggestedContent":"optional full replacement Markdown","insertText":"optional Markdown to insert at cursor or replace selection"}.',
     'Keep suggestions focused on title and Markdown body only. Do not change dates, hours, categories, files, or storage.',
     searchContext ? `Optional web search context:\n${searchContext}` : '',
@@ -465,6 +473,7 @@ function parseAiSettingsInput(body) {
   const seedreamModel = body?.seedreamModel || SEEDREAM_DEFAULT_MODEL;
   const seedreamSize = body?.seedreamSize || '2K';
   const seedreamWatermark = body?.seedreamWatermark === undefined ? true : body.seedreamWatermark;
+  const logAccessPolicy = parseLogAccessPolicyInput(body?.logAccessPolicy, { allowDefault: true });
   if (!AI_ALLOWED_MODELS.has(model)) {
     throw new Error('Unsupported AI model');
   }
@@ -527,11 +536,40 @@ function parseAiSettingsInput(body) {
     seedreamModel,
     seedreamSize,
     seedreamWatermark,
+    logAccessPolicy,
     skills: {
       westock: { enabled: westockSource.enabled !== false },
       perplexity: { enabled: perplexitySource.enabled !== false },
     },
   };
+}
+
+function cleanPolicyName(value) {
+  return typeof value === 'string' ? value.trim().slice(0, 80) : '';
+}
+
+function parseLogAccessPolicyInput(value, { allowDefault = false } = {}) {
+  if (value === undefined || value === null) return allowDefault ? null : undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Unsupported log access policy option');
+  }
+  if (!Array.isArray(value.allowedParents)) {
+    throw new Error('Unsupported log access policy option');
+  }
+  const allowedParents = [...new Set(value.allowedParents.map(cleanPolicyName).filter(Boolean))];
+  const deniedSource = value.deniedSubcategories === undefined ? {} : value.deniedSubcategories;
+  if (!deniedSource || typeof deniedSource !== 'object' || Array.isArray(deniedSource)) {
+    throw new Error('Unsupported log access policy option');
+  }
+  const deniedSubcategories = {};
+  Object.entries(deniedSource).forEach(([parent, subs]) => {
+    if (!Array.isArray(subs)) throw new Error('Unsupported log access policy option');
+    const cleanParent = cleanPolicyName(parent);
+    if (!cleanParent) return;
+    const cleanSubs = [...new Set(subs.map(cleanPolicyName).filter(Boolean))];
+    if (cleanSubs.length) deniedSubcategories[cleanParent] = cleanSubs;
+  });
+  return { allowedParents, deniedSubcategories };
 }
 
 function isValidSeedreamSize(size) {
@@ -614,6 +652,9 @@ function resolveAiChatOptions(body) {
   const userProfile = body?.userProfile === undefined ? saved.userProfile || '' : body.userProfile;
   const logContextEnabled = body?.logContextEnabled === undefined ? Boolean(saved.logContextEnabled) : body.logContextEnabled;
   const diaryContextEnabled = body?.diaryContextEnabled === undefined ? Boolean(saved.diaryContextEnabled) : body.diaryContextEnabled;
+  const logAccessPolicy = body?.logAccessPolicy === undefined
+    ? (saved.logAccessPolicy || null)
+    : parseLogAccessPolicyInput(body.logAccessPolicy, { allowDefault: true });
   const webSearchEnabled = body?.webSearchEnabled === undefined ? Boolean(saved.webSearchEnabled) : body.webSearchEnabled;
   const webSearchDepth = body?.webSearchDepth || saved.webSearchDepth || 'basic';
 
@@ -657,6 +698,7 @@ function resolveAiChatOptions(body) {
     userProfile: userProfile.trim().slice(0, AI_USER_PROFILE_MAX_CHARS),
     logContextEnabled,
     diaryContextEnabled,
+    logAccessPolicy,
     tavilyApiKey: requestTavilyApiKey || saved.tavilyApiKey || TAVILY_API_KEY,
     perplexityApiKey: requestPerplexityApiKey || saved.perplexityApiKey || PERPLEXITY_API_KEY,
     webSearchEnabled,
@@ -776,16 +818,41 @@ function appendLimited(lines, line, budget) {
   return budget.remaining;
 }
 
-function buildStoredLogsContext({ includeDiary, diaryUnlocked }) {
+function splitLogCategory(category) {
+  const value = String(category || '其他');
+  const index = value.indexOf('/');
+  if (index === -1) return { parent: value, sub: '' };
+  return { parent: value.slice(0, index), sub: value.slice(index + 1) };
+}
+
+function isLogAllowedForAi(log, policy) {
+  const category = String(log.category || '');
+  if (!policy) return !db.isDiaryCategory(category);
+  const { parent, sub } = splitLogCategory(category);
+  if (!policy.allowedParents.includes(parent)) return false;
+  if (sub && (policy.deniedSubcategories?.[parent] || []).includes(sub)) return false;
+  return true;
+}
+
+function buildStoredLogsContext({ includeDiary, diaryUnlocked, logAccessPolicy }) {
   const canReadDiary = includeDiary && diaryUnlocked;
-  const { items, total } = db.getAll({ limit: AI_LOG_CONTEXT_MAX_LOGS }, canReadDiary);
+  const { items, total } = db.getAll({ limit: Math.max(AI_LOG_CONTEXT_MAX_LOGS, 500) }, canReadDiary);
+  const allowedItems = items
+    .filter(log => isLogAllowedForAi(log, logAccessPolicy))
+    .slice(0, AI_LOG_CONTEXT_MAX_LOGS);
   const lines = [
     'Stored work-log context from this local app. Treat it as read-only background and use it only when relevant to the user question.',
+    'When you cite or recommend opening a local log, use Markdown links in the exact format [log title](#log/id).',
     `Diary logs included: ${canReadDiary ? 'yes' : 'no'}`,
-    `Shared logs: ${items.length} of ${total}`,
+    `Log access policy: ${logAccessPolicy ? 'custom categories only' : 'default non-diary categories'}`,
+    `Shared logs: ${allowedItems.length} of ${total}`,
   ];
+  if (!allowedItems.length) {
+    lines.push('Log access is enabled, but no logs are currently allowed by the access settings.');
+    return lines.join('\n');
+  }
   const budget = { remaining: AI_LOG_CONTEXT_MAX_CHARS };
-  for (const [index, log] of items.entries()) {
+  for (const [index, log] of allowedItems.entries()) {
     const category = String(log.category || '');
     const content = String(log.content || '').slice(0, AI_LOG_CONTEXT_MAX_CONTENT_CHARS);
     const header = [
@@ -802,8 +869,8 @@ function buildStoredLogsContext({ includeDiary, diaryUnlocked }) {
   return lines.join('\n');
 }
 
-function buildAiMemoryContext({ userProfile, logContextEnabled, diaryContextEnabled, diaryUnlocked }) {
-  const sections = [];
+function buildAiMemoryContext({ userProfile, logContextEnabled, diaryContextEnabled, diaryUnlocked, logAccessPolicy }) {
+  const sections = [buildCurrentDateContext()];
   const profile = String(userProfile || '').trim();
   if (profile) {
     sections.push([
@@ -815,6 +882,7 @@ function buildAiMemoryContext({ userProfile, logContextEnabled, diaryContextEnab
     sections.push(buildStoredLogsContext({
       includeDiary: diaryContextEnabled,
       diaryUnlocked,
+      logAccessPolicy,
     }));
   }
   return sections.join('\n\n');
@@ -1437,6 +1505,7 @@ app.post('/api/ai/chat', async (req, res) => {
       userProfile,
       logContextEnabled,
       diaryContextEnabled,
+      logAccessPolicy,
       tavilyApiKey,
       perplexityApiKey,
       webSearchEnabled,
@@ -1458,6 +1527,7 @@ app.post('/api/ai/chat', async (req, res) => {
       userProfile,
       logContextEnabled,
       diaryContextEnabled,
+      logAccessPolicy,
       diaryUnlocked: hasDiaryAccess(req),
     });
     if (memoryContext) {

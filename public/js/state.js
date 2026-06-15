@@ -17,4 +17,6 @@ export const state = {
   datesWithLogs: [],
   categories: [],
   listScrollY: null,
+  diaryLockEnabled: false,
+  diaryUnlocked: true,
 };

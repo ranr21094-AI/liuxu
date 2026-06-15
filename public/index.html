@@ -76,25 +76,6 @@
       </div>
     </div>
 
-    <div class="todo-panel">
-      <div class="todo-panel-header">
-        <h3>待办事项</h3>
-        <span class="todo-count" id="todoCount">0</span>
-      </div>
-      <div class="todo-sidebar-stats" aria-label="待办概览">
-        <span><strong id="todoSidebarPending">0</strong> 待办</span>
-        <span><strong id="todoSidebarToday">0</strong> 今日</span>
-        <span><strong id="todoSidebarOverdue">0</strong> 逾期</span>
-      </div>
-      <div class="todo-input-wrap">
-        <label class="sr-only" for="todoInput">添加待办任务</label>
-        <input type="text" id="todoInput" placeholder="添加新待办..." maxlength="200">
-        <button class="btn-todo-add" id="btnTodoAdd" aria-label="添加待办">+</button>
-      </div>
-      <div class="todo-list" id="todoList"></div>
-      <button class="btn-todo-clear" id="btnTodoClear" style="display:none">清除已完成</button>
-    </div>
-
     <div class="stats-panel" id="statsPanel">
       <h3>统计</h3>
       <div class="stat-row"><span>本周工时</span><span id="statWeekHours">0h</span></div>
@@ -207,7 +188,7 @@
       <div class="todo-page-controls">
         <div class="todo-filter-tabs" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
           <button class="active" data-filter="pending" role="tab" aria-selected="true">待办</button>
-          <button data-filter="all" role="tab" aria-selected="false">全部</button>
+          <button data-filter="undated" role="tab" aria-selected="false">无日期</button>
           <button data-filter="done" role="tab" aria-selected="false">已完成</button>
         </div>
         <div class="todo-search-box">
@@ -401,11 +382,20 @@
         <div class="ai-skill-chip-row" id="aiSkillChipRow"></div>
         <textarea id="aiChatInput" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
         <div class="ai-skill-picker" id="aiSkillPicker" hidden></div>
+        <label class="ai-chat-web-toggle" for="aiChatWebSearchToggle" title="Tavily 联网搜索">
+          <input type="checkbox" id="aiChatWebSearchToggle" aria-label="Tavily 联网搜索">
+          <span aria-hidden="true"></span>
+          <strong>Tavily</strong>
+        </label>
         <div class="ai-chat-composer-actions">
           <span class="ai-chat-sending" id="aiChatSending" style="display:none;">发送中...</span>
           <button class="btn-secondary btn-ai-skill" id="btnAiSkill" type="button" aria-haspopup="listbox" aria-expanded="false">技能</button>
-          <button class="btn-secondary btn-ai-image" id="btnAiImage" type="button" disabled aria-label="生成图片">生图</button>
-          <button class="btn-primary" id="btnAiSend" type="button" disabled>发送</button>
+          <button class="ai-round-action ai-image-action" id="btnAiImage" type="button" disabled aria-label="生成图片" title="生成图片">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="10" r="1.5" fill="currentColor"/><path d="M21 15l-4.5-4.5L11 16l-2-2-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button class="ai-round-action ai-send-action" id="btnAiSend" type="button" disabled aria-label="发送消息" title="发送">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 19V5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M6.5 10.5 12 5l5.5 5.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -419,6 +409,7 @@
         </div>
         <div class="ai-settings-tabs" role="tablist" aria-label="AI 设置类型">
           <button class="ai-settings-tab active" id="aiSettingsTabChat" type="button" role="tab" aria-selected="true" aria-controls="aiSettingsPanelChat" data-ai-settings-tab="chat">基础设置</button>
+          <button class="ai-settings-tab" id="aiSettingsTabAccess" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelAccess" data-ai-settings-tab="access">访问设置</button>
           <button class="ai-settings-tab" id="aiSettingsTabImage" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelImage" data-ai-settings-tab="image">生图设置</button>
           <button class="ai-settings-tab" id="aiSettingsTabSkills" type="button" role="tab" aria-selected="false" aria-controls="aiSettingsPanelSkills" data-ai-settings-tab="skills">技能设置</button>
         </div>
@@ -462,7 +453,10 @@
             <label class="ai-settings-field" for="aiUserProfileInput">
               <span>用户画像</span>
               <textarea id="aiUserProfileInput" class="ai-settings-textarea" rows="4" maxlength="2000" placeholder="例如：我的职业、关注领域、偏好的回答风格、常用语言等"></textarea>
+              <small class="ai-settings-hint">系统会自动附带今天日期，无需手填。</small>
             </label>
+          </div>
+          <div class="ai-settings-panel" id="aiSettingsPanelAccess" role="tabpanel" aria-labelledby="aiSettingsTabAccess" hidden>
             <label class="ai-settings-toggle" for="aiLogContextToggle">
               <span>
                 <strong>允许 AI 访问日志内容</strong>
@@ -479,6 +473,15 @@
               <input type="checkbox" id="aiDiaryContextToggle">
               <i aria-hidden="true"></i>
             </label>
+            <div class="ai-access-panel-head">
+              <div>
+                <strong>日志访问范围</strong>
+                <small>父分类控制整组，可展开后单独取消子分类。默认允许非日记分类。</small>
+              </div>
+              <button class="btn-secondary btn-sm" id="btnAiAccessRefresh" type="button">刷新分类</button>
+            </div>
+            <div class="ai-access-tree" id="aiAccessTree" aria-label="AI 可读取的分类"></div>
+            <p class="ai-settings-hint">关闭“允许 AI 访问日志内容”时，此处选择不会发送给模型；日记还需要同时开启日记访问并解锁。</p>
           </div>
           <div class="ai-settings-panel" id="aiSettingsPanelImage" role="tabpanel" aria-labelledby="aiSettingsTabImage" hidden>
             <label class="ai-settings-field" for="aiSeedreamApiKeyInput">
@@ -661,8 +664,6 @@
 
   </main>
 
-    <!-- FAB AI chat -->
-    <button class="fab-capture" id="fabCapture" title="AI 对话" aria-label="打开 AI 对话">AI</button>
     <div id="a11yStatus" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Log Link Picker Modal -->

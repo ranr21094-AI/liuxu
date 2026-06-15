@@ -89,12 +89,16 @@ export async function checkAuth() {
 }
 
 export async function checkDiaryStatus() {
+  const data = await getDiaryStatus();
+  return data.enabled !== false && !data.locked;
+}
+
+export async function getDiaryStatus() {
   try {
     const res = await apiFetch('/api/auth/diary/status');
-    const data = await res.json();
-    return data.enabled !== false && !data.locked;
+    return await res.json();
   } catch {
-    return false;
+    return { enabled: true, locked: true };
   }
 }
 

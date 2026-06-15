@@ -4,7 +4,8 @@ import { businessDateString } from './businessDate.js';
 
 let allTodos = [];
 let activeFilter = localStorage.getItem('todoFilter') || 'pending';
-if (!['pending', 'all', 'done'].includes(activeFilter)) activeFilter = 'pending';
+if (activeFilter === 'all') activeFilter = 'undated';
+if (!['pending', 'undated', 'done'].includes(activeFilter)) activeFilter = 'pending';
 let selectedTodoId = null;
 let todoSearchQuery = '';
 
@@ -42,6 +43,24 @@ function todoStats() {
   return { pending, done, overdue, dueToday };
 }
 
+function manualTodoOrder(a, b) {
+  const orderDiff = (a.sort_order || 0) - (b.sort_order || 0);
+  return orderDiff || ((b.id || 0) - (a.id || 0));
+}
+
+function dueDateTodoOrder(a, b) {
+  const aDate = a.due_date || '9999-12-31';
+  const bDate = b.due_date || '9999-12-31';
+  if (aDate !== bDate) return aDate.localeCompare(bDate);
+  return manualTodoOrder(a, b);
+}
+
+function sortTodosForView(todos, mode) {
+  const list = [...todos];
+  if (mode === 'pending' || mode === 'done') return list.sort(dueDateTodoOrder);
+  return list.sort(manualTodoOrder);
+}
+
 function dueHtml(todo) {
   if (!todo.due_date) return '';
   const today = todayString();
@@ -72,32 +91,19 @@ function todoItemHtml(todo, { full = false } = {}) {
   `;
 }
 
-function renderCompactTodos() {
-  const { pending, done, overdue, dueToday } = todoStats();
-  $('#todoCount').textContent = pending.length;
-  $('#todoSidebarPending').textContent = pending.length;
-  $('#todoSidebarToday').textContent = dueToday.length;
-  $('#todoSidebarOverdue').textContent = overdue.length;
-  if (allTodos.length === 0) {
-    $('#todoList').innerHTML = '<div class="todo-empty">暂无待办事项</div>';
-    $('#btnTodoClear').style.display = 'none';
-    return;
-  }
-  const compactTodos = pending.length ? pending.slice(0, 6) : done.slice(0, 4);
-  $('#todoList').innerHTML = compactTodos.map(t => todoItemHtml(t)).join('');
-  $('#btnTodoClear').style.display = done.length > 0 ? 'block' : 'none';
-}
-
 function filteredTodos() {
   let items = allTodos;
   if (activeFilter === 'done') items = items.filter(t => t.done);
-  if (activeFilter === 'pending') items = items.filter(t => !t.done);
+  if (activeFilter === 'pending') items = items.filter(t => !t.done && t.due_date);
+  if (activeFilter === 'undated') items = items.filter(t => !t.done && !t.due_date);
   const query = todoSearchQuery.trim().toLowerCase();
-  if (!query) return items;
-  return items.filter(t =>
-    String(t.title || '').toLowerCase().includes(query) ||
-    String(t.notes || '').toLowerCase().includes(query)
-  );
+  if (query) {
+    items = items.filter(t =>
+      String(t.title || '').toLowerCase().includes(query) ||
+      String(t.notes || '').toLowerCase().includes(query)
+    );
+  }
+  return sortTodosForView(items, activeFilter);
 }
 
 function sectionHtml(title, todos) {
@@ -122,26 +128,20 @@ function renderFullTodos() {
   const list = $('#todoFullList');
   const todos = filteredTodos();
   if (todos.length === 0) {
-    list.innerHTML = '<div class="todo-empty">当前筛选下没有待办</div>';
+    list.innerHTML = `<div class="todo-empty">${activeFilter === 'undated' ? '没有无截止日期的待办' : '当前筛选下没有待办'}</div>`;
     return;
   }
 
   if (activeFilter === 'pending') {
-    const urgentIds = new Set([...overdue, ...dueToday].map(t => t.id));
-    list.innerHTML =
-      sectionHtml('逾期 / 今日', todos.filter(t => urgentIds.has(t.id))) +
-      sectionHtml('其他待办', todos.filter(t => !urgentIds.has(t.id)));
+    list.innerHTML = sectionHtml('按截止日期', todos);
   } else if (activeFilter === 'done') {
     list.innerHTML = sectionHtml('已完成', todos);
   } else {
-    list.innerHTML =
-      sectionHtml('待办', todos.filter(t => !t.done)) +
-      sectionHtml('已完成', todos.filter(t => t.done));
+    list.innerHTML = sectionHtml('无日期', todos);
   }
 }
 
 function renderTodos() {
-  renderCompactTodos();
   renderFullTodos();
 }
 
@@ -279,7 +279,6 @@ async function handleTodoListClick(e, { full = false } = {}) {
   }
 }
 
-$('#todoList').addEventListener('click', (e) => handleTodoListClick(e));
 $('#todoFullList').addEventListener('click', (e) => handleTodoListClick(e, { full: true }));
 
 function setupTodoDrag(container) {
@@ -298,28 +297,7 @@ function setupTodoDrag(container) {
   });
 }
 
-setupTodoDrag($('#todoList'));
 setupTodoDrag($('#todoFullList'));
-
-$('#btnTodoAdd').addEventListener('click', async () => {
-  const title = $('#todoInput').value.trim();
-  if (!title) return;
-  try {
-    await apiFetch('/api/todos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title }),
-    });
-    $('#todoInput').value = '';
-    await loadTodos();
-  } catch (err) {
-    showToast('添加失败: ' + err.message, 'error');
-  }
-});
-
-$('#todoInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); $('#btnTodoAdd').click(); }
-});
 
 $('#btnTodoFullSave').addEventListener('click', saveTodoFromFullForm);
 $('#btnTodoFormCancel').addEventListener('click', resetTodoForm);
@@ -339,5 +317,4 @@ $('#todoSearchInput').addEventListener('input', (e) => {
   renderFullTodos();
 });
 
-$('#btnTodoClear').addEventListener('click', clearCompletedTodos);
 $('#btnTodoFullClear').addEventListener('click', clearCompletedTodos);

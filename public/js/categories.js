@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
+import { showToast, escHtml, setupDragAndDrop, confirmDialog, $, $$ } from './helpers.js';
 import { loadLogs } from './logList.js';
 import { loadStats } from './stats.js';
 import { formatShortDateLabel } from './businessDate.js';
@@ -131,34 +131,50 @@ function fullSubcategoryName(parent, sub) {
 }
 
 function graphPoint(index, total) {
-  if (total === 1) return { x: 50, y: 18 };
-  const angle = -Math.PI / 2 + (Math.PI * 2 * index) / total;
+  if (total === 1) return { x: 50, y: 20, ring: 'single' };
+  const multiRing = total > 8;
+  const innerCount = multiRing ? Math.min(7, Math.max(4, Math.ceil(total * 0.42))) : total;
+  const ringIndex = multiRing && index >= innerCount ? index - innerCount : index;
+  const ringTotal = multiRing && index >= innerCount ? total - innerCount : innerCount;
+  const ringOffset = multiRing && index >= innerCount ? 0.5 : 0;
+  const angle = -Math.PI / 2 + (Math.PI * 2 * (ringIndex + ringOffset)) / ringTotal;
+  const radiusX = multiRing && index >= innerCount ? 41 : (total <= 4 ? 28 : 35);
+  const radiusY = multiRing && index >= innerCount ? 34 : (total <= 4 ? 23 : 29);
   return {
-    x: Math.round((50 + Math.cos(angle) * 38) * 100) / 100,
-    y: Math.round((50 + Math.sin(angle) * 32) * 100) / 100,
+    x: Math.round((50 + Math.cos(angle) * radiusX) * 100) / 100,
+    y: Math.round((50 + Math.sin(angle) * radiusY) * 100) / 100,
+    ring: multiRing && index >= innerCount ? 'outer' : 'inner',
   };
+}
+
+function graphPath(point, index) {
+  const dx = point.x - 50;
+  const dy = point.y - 50;
+  const curve = index % 2 === 0 ? 3 : -3;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const controlX = Math.round((50 + dx * 0.52 - (dy / length) * curve) * 100) / 100;
+  const controlY = Math.round((50 + dy * 0.52 + (dx / length) * curve) * 100) / 100;
+  return `M 50 50 Q ${controlX} ${controlY} ${point.x} ${point.y}`;
 }
 
 function renderCategoryGraph(cat) {
   const subs = cat.sub || [];
   const graph = $('#catGraphView');
   if (!subs.length) {
-    graph.innerHTML = '<div class="cat-graph-empty">暂无子分类，先添加一个节点。</div>';
+    graph.innerHTML = '<div class="cat-graph-empty"><span>暂无子分类</span></div>';
     return;
   }
   const points = subs.map((sub, index) => ({ sub, ...graphPoint(index, subs.length) }));
   graph.innerHTML = `
     <svg class="cat-graph-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      ${points.map(point => `<line x1="50" y1="50" x2="${point.x}" y2="${point.y}" vector-effect="non-scaling-stroke"></line>`).join('')}
+      ${points.map((point, index) => `<path class="cat-graph-orbit" data-sub="${escHtml(point.sub)}" d="${graphPath(point, index)}" vector-effect="non-scaling-stroke"></path>`).join('')}
     </svg>
-    <button type="button" class="cat-graph-node cat-graph-parent" style="--x:50;--y:50" disabled>
+    <button type="button" class="cat-graph-node cat-graph-parent" style="--x:50;--y:50" disabled title="${escHtml(cat.name)}，日志 ${cat.log_count || 0} 条" aria-label="父分类：${escHtml(cat.name)}，日志 ${cat.log_count || 0} 条">
       <span class="cat-graph-node-title">${escHtml(cat.name)}</span>
-      <span class="cat-graph-node-count">${cat.log_count || 0}</span>
     </button>
     ${points.map(point => `
-      <button type="button" class="cat-graph-node cat-graph-sub" data-sub="${escHtml(point.sub)}" style="--x:${point.x};--y:${point.y}" aria-label="浏览子分类：${escHtml(point.sub)}">
+      <button type="button" class="cat-graph-node cat-graph-sub cat-graph-${point.ring}" data-sub="${escHtml(point.sub)}" style="--x:${point.x};--y:${point.y}" title="${escHtml(point.sub)}，日志 ${cat.sub_log_counts?.[point.sub] || 0} 条" aria-label="浏览子分类：${escHtml(point.sub)}，日志 ${cat.sub_log_counts?.[point.sub] || 0} 条">
         <span class="cat-graph-node-title">${escHtml(point.sub)}</span>
-        <span class="cat-graph-node-count">${cat.sub_log_counts?.[point.sub] || 0}</span>
       </button>
     `).join('')}
   `;
@@ -203,6 +219,14 @@ function setCategoryAddPanel(open) {
   } else {
     $('#catNewInput').value = '';
   }
+}
+
+function selectParentCategory(parentName) {
+  selectedCategoryName = parentName || null;
+  subcategoryBrowseParent = null;
+  selectedSubcategoryName = null;
+  syncMainCategoryFilter(selectedCategoryName || '');
+  renderParentList();
 }
 
 function renderParentList() {
@@ -385,21 +409,13 @@ $('#catAddCancelBtn').addEventListener('click', () => {
 
 $('#btnSubBrowseBack').addEventListener('click', () => {
   const parent = subcategoryBrowseParent;
-  subcategoryBrowseParent = null;
-  selectedSubcategoryName = null;
-  selectedCategoryName = parent || selectedCategoryName;
-  state.category = selectedCategoryName || '';
-  $('#filterCategory').value = selectedCategoryName || '';
-  populateFilterSubCategory(selectedCategoryName || null);
-  $('#filterSubcategory').value = '';
-  renderParentList();
+  selectParentCategory(parent || selectedCategoryName);
 });
 
 $('#catList').addEventListener('click', async (e) => {
   const select = e.target.closest('.cat-parent-select');
   if (!select) return;
-  selectedCategoryName = select.dataset.cat;
-  renderParentList();
+  selectParentCategory(select.dataset.cat);
 });
 
 $('#catAddBtn').addEventListener('click', async () => {
@@ -600,6 +616,32 @@ $('#catGraphView').addEventListener('click', async (e) => {
   await openSubcategoryBrowse(node.dataset.sub);
 });
 
+function setActiveGraphSub(subName) {
+  $$('#catGraphView .cat-graph-orbit').forEach(line => {
+    line.classList.toggle('active', Boolean(subName) && line.dataset.sub === subName);
+  });
+}
+
+$('#catGraphView').addEventListener('pointerover', (e) => {
+  const node = e.target.closest('.cat-graph-sub');
+  if (node) setActiveGraphSub(node.dataset.sub);
+});
+
+$('#catGraphView').addEventListener('pointerout', (e) => {
+  const node = e.target.closest('.cat-graph-sub');
+  if (node && !node.contains(e.relatedTarget)) setActiveGraphSub(null);
+});
+
+$('#catGraphView').addEventListener('focusin', (e) => {
+  const node = e.target.closest('.cat-graph-sub');
+  if (node) setActiveGraphSub(node.dataset.sub);
+});
+
+$('#catGraphView').addEventListener('focusout', (e) => {
+  const node = e.target.closest('.cat-graph-sub');
+  if (node && !node.contains(e.relatedTarget)) setActiveGraphSub(null);
+});
+
 $('#catSubBrowseList').addEventListener('click', async (e) => {
   const item = e.target.closest('.cat-sub-browse-item');
   if (!item || !subcategoryBrowseParent) return;
@@ -611,6 +653,7 @@ $('#catSubLogList').addEventListener('click', async (e) => {
   if (!card) return;
   const { openEditor } = await import('./editor.js');
   openEditor(parseInt(card.dataset.id, 10));
+  window.dispatchEvent(new CustomEvent('category-log-opened'));
 });
 
 setupDragAndDrop({

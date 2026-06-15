@@ -1,6 +1,7 @@
 import { apiFetch } from './auth.js';
 import { showToast, escHtml, openModal, closeModal, confirmDialog, $ } from './helpers.js';
 import { renderToHtml } from './markdown.js';
+import { handleInternalLogLinkClick } from './editor.js';
 
 const DEFAULT_MODEL = 'deepseek-v4-flash';
 const DEFAULT_REASONING = 'high';
@@ -22,6 +23,7 @@ let sending = false;
 let renameConversationId = '';
 let availableSkills = [];
 let selectedSkillId = '';
+let aiAccessCategories = [];
 let settings = {
   apiKey: '',
   model: DEFAULT_MODEL,
@@ -38,6 +40,7 @@ let settings = {
   seedreamModel: DEFAULT_SEEDREAM_MODEL,
   seedreamSize: DEFAULT_SEEDREAM_SIZE,
   seedreamWatermark: true,
+  logAccessPolicy: null,
   skills: {
     westock: { enabled: true },
     perplexity: { enabled: true },
@@ -67,6 +70,30 @@ function normalizeConversations(items) {
     : [];
 }
 
+function normalizeLogAccessPolicy(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const allowedParents = Array.isArray(value.allowedParents)
+    ? [...new Set(value.allowedParents.filter(parent => typeof parent === 'string' && parent.trim()).map(parent => parent.trim()))]
+    : [];
+  const deniedSource = value.deniedSubcategories && typeof value.deniedSubcategories === 'object' && !Array.isArray(value.deniedSubcategories)
+    ? value.deniedSubcategories
+    : {};
+  const deniedSubcategories = {};
+  Object.entries(deniedSource).forEach(([parent, subs]) => {
+    if (typeof parent !== 'string' || !Array.isArray(subs)) return;
+    const cleanSubs = [...new Set(subs.filter(sub => typeof sub === 'string' && sub.trim()).map(sub => sub.trim()))];
+    if (parent.trim() && cleanSubs.length) deniedSubcategories[parent.trim()] = cleanSubs;
+  });
+  return { allowedParents, deniedSubcategories };
+}
+
+function defaultLogAccessPolicy(categories = aiAccessCategories) {
+  return {
+    allowedParents: categories.filter(category => category.name !== '日记').map(category => category.name),
+    deniedSubcategories: {},
+  };
+}
+
 function normalizeSettings(value) {
   const skills = value?.skills && typeof value.skills === 'object' ? value.skills : {};
   const westock = skills.westock && typeof skills.westock === 'object' ? skills.westock : {};
@@ -87,6 +114,7 @@ function normalizeSettings(value) {
     seedreamModel: ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'].includes(value?.seedreamModel) ? value.seedreamModel : DEFAULT_SEEDREAM_MODEL,
     seedreamSize: typeof value?.seedreamSize === 'string' && value.seedreamSize ? value.seedreamSize : DEFAULT_SEEDREAM_SIZE,
     seedreamWatermark: typeof value?.seedreamWatermark === 'boolean' ? value.seedreamWatermark : true,
+    logAccessPolicy: normalizeLogAccessPolicy(value?.logAccessPolicy),
     skills: {
       westock: { enabled: typeof westock.enabled === 'boolean' ? westock.enabled : true },
       perplexity: { enabled: typeof perplexity.enabled === 'boolean' ? perplexity.enabled : true },
@@ -163,6 +191,18 @@ async function loadSettings() {
   }
 }
 
+async function loadAccessCategories() {
+  try {
+    const res = await apiFetch('/api/categories');
+    if (!res.ok) throw new Error('分类加载失败');
+    const data = await res.json();
+    aiAccessCategories = Array.isArray(data) ? data : [];
+  } catch (err) {
+    aiAccessCategories = [];
+    console.warn('Failed to load AI access categories:', err);
+  }
+}
+
 async function loadSkills() {
   try {
     const res = await apiFetch(AI_SKILLS_ENDPOINT);
@@ -209,6 +249,7 @@ async function saveSettings({ quiet = false } = {}) {
     data.seedreamModel !== submitted.seedreamModel ||
     data.seedreamSize !== submitted.seedreamSize ||
     data.seedreamWatermark !== submitted.seedreamWatermark ||
+    JSON.stringify(data.logAccessPolicy || null) !== JSON.stringify(submitted.logAccessPolicy || null) ||
     data.skills?.westock?.enabled !== submitted.skills?.westock?.enabled ||
     data.skills?.perplexity?.enabled !== submitted.skills?.perplexity?.enabled
   ) {
@@ -217,6 +258,7 @@ async function saveSettings({ quiet = false } = {}) {
   settings = normalizeSettings(data);
   await loadSkills();
   updateSettingsButton();
+  syncWebSearchToggleUi();
   if (!quiet) showToast('AI 设置已保存', 'success');
 }
 
@@ -350,7 +392,7 @@ function renderMessages() {
     list.innerHTML = `
       <div class="ai-chat-empty">
         <strong>AI 对话助手</strong>
-        <span>输入你想讨论的问题。当前版本不会读取日志、待办或分类内容。</span>
+        <span>输入你想讨论的问题。日志访问会遵守 AI 设置里的访问范围。</span>
       </div>
     `;
     renderHistory();
@@ -662,8 +704,9 @@ function updateSendState() {
   const send = $('#btnAiSend');
   const image = $('#btnAiImage');
   const hasText = input.value.trim().length > 0;
-  send.disabled = sending || !hasText;
-  if (image) image.disabled = sending || !hasText;
+  const disabled = sending || !hasText;
+  send.disabled = disabled;
+  if (image) image.disabled = disabled;
   $('#aiChatSending').style.display = sending ? '' : 'none';
 }
 
@@ -682,6 +725,7 @@ function currentSettings() {
     perplexityApiKey: settings.perplexityApiKey,
     webSearchEnabled: Boolean(settings.webSearchEnabled),
     webSearchDepth: settings.webSearchDepth || 'basic',
+    logAccessPolicy: settings.logAccessPolicy,
   };
   if (skill) request.skill = { id: skill.id };
   return request;
@@ -695,6 +739,76 @@ function updateSettingsButton() {
   button.setAttribute('aria-label', button.title);
 }
 
+function syncWebSearchToggleUi() {
+  const enabled = Boolean(settings.webSearchEnabled);
+  const settingsToggle = $('#aiWebSearchToggle');
+  const quickToggle = $('#aiChatWebSearchToggle');
+  if (settingsToggle) settingsToggle.checked = enabled;
+  if (quickToggle) {
+    quickToggle.checked = enabled;
+    quickToggle.closest('.ai-chat-web-toggle')?.classList.toggle('active', enabled);
+  }
+}
+
+function effectiveLogAccessPolicy() {
+  return settings.logAccessPolicy || defaultLogAccessPolicy();
+}
+
+function renderAccessTree() {
+  const tree = $('#aiAccessTree');
+  if (!tree) return;
+  if (!aiAccessCategories.length) {
+    tree.innerHTML = '<div class="ai-access-empty">暂无分类，保存后会默认允许非日记分类。</div>';
+    return;
+  }
+  const policy = effectiveLogAccessPolicy();
+  const allowed = new Set(policy.allowedParents || []);
+  const denied = policy.deniedSubcategories || {};
+  tree.innerHTML = aiAccessCategories.map(category => {
+    const subs = Array.isArray(category.sub) ? category.sub : [];
+    const parentAllowed = allowed.has(category.name);
+    const deniedSubs = new Set(denied[category.name] || []);
+    return `
+      <div class="ai-access-parent" data-parent="${escHtml(category.name)}">
+        <label class="ai-access-parent-row">
+          <input type="checkbox" class="ai-access-parent-check" ${parentAllowed ? 'checked' : ''}>
+          <span>
+            <strong>${escHtml(category.name)}</strong>
+            <small>${subs.length ? `${subs.length} 个子分类` : '无子分类'}${category.name === '日记' ? ' · 需解锁日记' : ''}</small>
+          </span>
+        </label>
+        ${subs.length ? `
+          <div class="ai-access-sublist">
+            ${subs.map(sub => `
+              <label class="ai-access-sub-row">
+                <input type="checkbox" class="ai-access-sub-check" data-sub="${escHtml(sub)}" ${parentAllowed && !deniedSubs.has(sub) ? 'checked' : ''} ${parentAllowed ? '' : 'disabled'}>
+                <span>${escHtml(sub)}</span>
+              </label>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function collectLogAccessPolicyFromPage() {
+  const allowedParents = [];
+  const deniedSubcategories = {};
+  document.querySelectorAll('#aiAccessTree .ai-access-parent').forEach(parentEl => {
+    const parent = parentEl.dataset.parent;
+    const parentCheck = parentEl.querySelector('.ai-access-parent-check');
+    if (!parent || !parentCheck?.checked) return;
+    allowedParents.push(parent);
+    const denied = [...parentEl.querySelectorAll('.ai-access-sub-check')]
+      .filter(input => !input.checked)
+      .map(input => input.dataset.sub)
+      .filter(Boolean);
+    if (denied.length) deniedSubcategories[parent] = denied;
+  });
+  return { allowedParents, deniedSubcategories };
+}
+
 function fillSettingsModal() {
   $('#aiApiKeyInput').value = settings.apiKey;
   $('#aiModelSelect').value = settings.model || DEFAULT_MODEL;
@@ -705,7 +819,7 @@ function fillSettingsModal() {
   $('#aiDiaryContextToggle').checked = Boolean(settings.diaryContextEnabled);
   $('#aiTavilyApiKeyInput').value = settings.tavilyApiKey;
   $('#aiPerplexityApiKeyInput').value = settings.perplexityApiKey;
-  $('#aiWebSearchToggle').checked = Boolean(settings.webSearchEnabled);
+  syncWebSearchToggleUi();
   $('#aiWebSearchDepth').value = settings.webSearchDepth || 'basic';
   $('#aiSeedreamApiKeyInput').value = settings.seedreamApiKey;
   $('#aiSeedreamModel').value = settings.seedreamModel || DEFAULT_SEEDREAM_MODEL;
@@ -713,12 +827,14 @@ function fillSettingsModal() {
   $('#aiSeedreamWatermark').checked = settings.seedreamWatermark !== false;
   $('#aiSkillWestockToggle').checked = settings.skills?.westock?.enabled !== false;
   $('#aiSkillPerplexityToggle').checked = settings.skills?.perplexity?.enabled !== false;
+  renderAccessTree();
 }
 
 function setSettingsTab(tab) {
-  const activeTab = ['image', 'skills'].includes(tab) ? tab : 'chat';
+  const activeTab = ['access', 'image', 'skills'].includes(tab) ? tab : 'chat';
   const titles = {
     chat: '基础设置',
+    access: '访问设置',
     image: '生图设置',
     skills: '技能设置',
   };
@@ -731,6 +847,8 @@ function setSettingsTab(tab) {
   if (title) title.textContent = titles[activeTab] || titles.chat;
   $('#aiSettingsPanelChat').hidden = activeTab !== 'chat';
   $('#aiSettingsPanelChat').classList.toggle('active', activeTab === 'chat');
+  $('#aiSettingsPanelAccess').hidden = activeTab !== 'access';
+  $('#aiSettingsPanelAccess').classList.toggle('active', activeTab === 'access');
   $('#aiSettingsPanelImage').hidden = activeTab !== 'image';
   $('#aiSettingsPanelImage').classList.toggle('active', activeTab === 'image');
   $('#aiSettingsPanelSkills').hidden = activeTab !== 'skills';
@@ -777,6 +895,7 @@ async function saveSettingsFromPage() {
     seedreamModel: $('#aiSeedreamModel').value,
     seedreamSize: $('#aiSeedreamSize').value,
     seedreamWatermark: $('#aiSeedreamWatermark').checked,
+    logAccessPolicy: collectLogAccessPolicyFromPage(),
     skills: {
       westock: { enabled: $('#aiSkillWestockToggle').checked },
       perplexity: { enabled: $('#aiSkillPerplexityToggle').checked },
@@ -1122,9 +1241,10 @@ export function hideAiChatView() {
 }
 
 export async function initAiChat() {
-  await Promise.all([loadSettings(), loadConversations()]);
+  await Promise.all([loadSettings(), loadConversations(), loadAccessCategories()]);
   await loadSkills();
   updateSettingsButton();
+  syncWebSearchToggleUi();
   renderMessages();
   updateSendState();
 
@@ -1134,6 +1254,10 @@ export async function initAiChat() {
   $('#btnAiApiKeyCancel').addEventListener('click', closeSettingsPage);
   $('#btnAiApiKeySave').addEventListener('click', saveSettingsFromPage);
   $('#btnAiApiKeyClear').addEventListener('click', clearApiKey);
+  $('#btnAiAccessRefresh')?.addEventListener('click', async () => {
+    await loadAccessCategories();
+    renderAccessTree();
+  });
   $('#aiRenameClose').addEventListener('click', closeRenameModal);
   $('#btnAiRenameCancel').addEventListener('click', closeRenameModal);
   $('#btnAiRenameSave').addEventListener('click', saveRenameConversation);
@@ -1152,6 +1276,17 @@ export async function initAiChat() {
   document.querySelectorAll('[data-skill-config-toggle]').forEach(button => {
     button.addEventListener('click', toggleSkillConfigFromHeader);
   });
+  $('#aiAccessTree')?.addEventListener('change', (event) => {
+    const parentEl = event.target.closest('.ai-access-parent');
+    if (!parentEl) return;
+    if (event.target.classList.contains('ai-access-parent-check')) {
+      const enabled = event.target.checked;
+      parentEl.querySelectorAll('.ai-access-sub-check').forEach(input => {
+        input.disabled = !enabled;
+        input.checked = enabled;
+      });
+    }
+  });
   $('#aiSidebarHistoryList').addEventListener('click', (event) => {
     const item = event.target.closest('.ai-history-item');
     if (!item) return;
@@ -1163,11 +1298,25 @@ export async function initAiChat() {
   $('#btnAiSend').addEventListener('click', sendMessage);
   $('#btnAiImage')?.addEventListener('click', () => sendMessage({ forceImage: true }));
   $('#btnAiSkill')?.addEventListener('click', toggleSkillPicker);
+  $('#aiChatWebSearchToggle')?.addEventListener('change', async (event) => {
+    const previous = Boolean(settings.webSearchEnabled);
+    settings.webSearchEnabled = event.target.checked;
+    syncWebSearchToggleUi();
+    try {
+      await saveSettings({ quiet: true });
+      showToast(settings.webSearchEnabled ? 'Tavily 联网搜索已开启' : 'Tavily 联网搜索已关闭', 'success');
+    } catch (err) {
+      settings.webSearchEnabled = previous;
+      syncWebSearchToggleUi();
+      showToast('Tavily 开关保存失败：' + err.message, 'error');
+    }
+  });
   $('#aiSkillPicker')?.addEventListener('click', (event) => {
     const option = event.target.closest('[data-skill-id]');
     if (option) chooseSkill(option.dataset.skillId);
   });
-  $('#aiChatMessages').addEventListener('click', (event) => {
+  $('#aiChatMessages').addEventListener('click', async (event) => {
+    if (await handleInternalLogLinkClick(event)) return;
     const toolAction = event.target.closest('.ai-tool-card [data-action]');
     if (toolAction) {
       const item = toolAction.closest('.ai-message');

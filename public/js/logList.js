@@ -182,6 +182,8 @@ cardNavPanel?.addEventListener('click', (e) => {
 function renderLogList(data) {
   const { items, total } = data;
   logCount.textContent = `共 ${total} 条记录`;
+  const isDiaryFilter = state.category === '日记' || state.category.startsWith('日记/');
+  const isLockedDiaryFilter = isDiaryFilter && state.diaryLockEnabled && !state.diaryUnlocked;
 
   if (state.selectedDate) {
     listTitle.textContent = formatDate(state.selectedDate);
@@ -194,7 +196,13 @@ function renderLogList(data) {
   if (items.length === 0) {
     let msg = '暂无日志记录，点击「+ 新建日志」开始记录';
     let action = '';
-    if (state.search) msg = `未找到匹配「${escHtml(state.search)}」的日志`;
+    let className = 'empty-state';
+    if (isLockedDiaryFilter) {
+      msg = '日记已锁定，解锁后查看日记内容。';
+      action = '<button type="button" class="btn-primary btn-sm" data-action="unlock-diary-from-list">解锁日记</button>';
+      className += ' locked-diary-empty-state';
+    }
+    else if (state.search) msg = `未找到匹配「${escHtml(state.search)}」的日志`;
     else if (state.category === '日记') {
       msg = '日记分类暂无记录。旧版通过日记模板创建的记录可能仍在原分类中。';
       action = '<button type="button" class="btn-secondary btn-sm" data-action="find-legacy-diary">查找旧日记</button>';
@@ -202,7 +210,7 @@ function renderLogList(data) {
     else if (state.selectedDate) msg = `${state.selectedDate} 没有日志记录`;
     else if (state.category) msg = `分类「${escHtml(state.category)}」中暂无日志`;
     else if (state.month) msg = `${state.month} 没有日志记录`;
-    logList.innerHTML = `<div class="empty-state">${msg}${action ? `<div class="empty-state-action">${action}</div>` : ''}</div>`;
+    logList.innerHTML = `<div class="${className}">${msg}${action ? `<div class="empty-state-action">${action}</div>` : ''}</div>`;
     return;
   }
 
@@ -276,6 +284,11 @@ async function moveVisibleLog(id, delta, action) {
 }
 
 logList.addEventListener('click', async (e) => {
+  if (e.target.closest('[data-action="unlock-diary-from-list"]')) {
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent('request-diary-unlock'));
+    return;
+  }
   if (e.target.closest('[data-action="find-legacy-diary"]')) {
     state.category = '';
     state.month = '';

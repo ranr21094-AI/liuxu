@@ -25,6 +25,7 @@ const DEFAULT_AI_SETTINGS = {
   seedreamModel: 'doubao-seedream-5-0-260128',
   seedreamSize: '2K',
   seedreamWatermark: true,
+  logAccessPolicy: null,
   skills: {
     westock: { enabled: true },
     perplexity: { enabled: true },
@@ -315,6 +316,18 @@ function normalizeAiSettings(data) {
   const skillsSource = isPlainObject(source.skills) ? source.skills : {};
   const westockSource = isPlainObject(skillsSource.westock) ? skillsSource.westock : {};
   const perplexitySource = isPlainObject(skillsSource.perplexity) ? skillsSource.perplexity : {};
+  const policySource = isPlainObject(source.logAccessPolicy) ? source.logAccessPolicy : null;
+  const deniedSource = isPlainObject(policySource?.deniedSubcategories) ? policySource.deniedSubcategories : {};
+  const deniedSubcategories = {};
+  Object.entries(deniedSource).forEach(([parent, subs]) => {
+    if (typeof parent !== 'string' || !Array.isArray(subs)) return;
+    const cleanParent = parent.trim().slice(0, 80);
+    const cleanSubs = [...new Set(subs
+      .filter(sub => typeof sub === 'string')
+      .map(sub => sub.trim().slice(0, 80))
+      .filter(Boolean))];
+    if (cleanParent && cleanSubs.length) deniedSubcategories[cleanParent] = cleanSubs;
+  });
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
     model,
@@ -335,6 +348,15 @@ function normalizeAiSettings(data) {
       ? source.seedreamSize.trim().slice(0, 40)
       : DEFAULT_AI_SETTINGS.seedreamSize,
     seedreamWatermark: typeof source.seedreamWatermark === 'boolean' ? source.seedreamWatermark : DEFAULT_AI_SETTINGS.seedreamWatermark,
+    logAccessPolicy: policySource ? {
+      allowedParents: Array.isArray(policySource.allowedParents)
+        ? [...new Set(policySource.allowedParents
+          .filter(parent => typeof parent === 'string')
+          .map(parent => parent.trim().slice(0, 80))
+          .filter(Boolean))]
+        : [],
+      deniedSubcategories,
+    } : null,
     skills: {
       westock: {
         enabled: typeof westockSource.enabled === 'boolean' ? westockSource.enabled : true,
