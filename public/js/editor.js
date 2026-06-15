@@ -2,7 +2,7 @@ import { state } from './state.js';
 import { apiFetch, getAuthToken } from './auth.js';
 import { showToast, escHtml, confirmDialog, openModal, closeModal, $, $$ } from './helpers.js';
 import { renderToHtmlUncached } from './markdown.js';
-import { loadLogs, listView } from './logList.js';
+import { loadLogs, listView, syncArchiveFilterControls } from './logList.js';
 import { loadStats } from './stats.js';
 import { findAction, getAllShortcuts, setShortcut, resetAllShortcuts, formatKeys, isComboUsed, isImeComposingEvent } from './shortcuts.js';
 import { closeCategoryManager, loadCategories, populateFilterCategory, populateEditorParentCategory, populateEditorSubCategory } from './categories.js';
@@ -1285,6 +1285,7 @@ document.addEventListener('keydown', (e) => {
       $('#filterSubcategory').value = '';
       $('#filterSubcategory').style.display = 'none';
       $('#filterMonth').value = '';
+      syncArchiveFilterControls();
       renderCalendar();
       loadLogs();
       break;

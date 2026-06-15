@@ -2217,6 +2217,74 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.match(document.querySelector('.template-token-hint').textContent, /\{\{上一周:MM月DD日\}\}/);
 });
 
+test('log main page uses archive layout while preserving existing controls', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const logListSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'logList.js'), 'utf8');
+  const document = new JSDOM(html).window.document;
+
+  assert.equal(document.querySelector('#listView.archive-log-view') !== null, true);
+  assert.equal(document.querySelector('#listView .log-archive-kicker'), null);
+  assert.equal(document.querySelector('#listView .log-archive-hero #btnNewLog') !== null, true);
+  assert.equal(document.querySelector('#btnNewLog .new-log-icon').textContent.trim(), '+');
+  assert.equal(document.querySelector('#btnNewLog .new-log-label').textContent.trim(), '新建日志');
+  assert.equal(document.querySelector('#listTitle').closest('.log-archive-hero') !== null, true);
+  assert.equal(document.querySelector('#logCount').closest('.log-archive-hero') !== null, true);
+  assert.equal(document.querySelector('#searchInput').closest('.log-archive-toolbar') !== null, true);
+  assert.equal(document.querySelector('#filterCategory').closest('.log-filter-row') !== null, true);
+  assert.equal(document.querySelector('#filterSubcategory').closest('.log-filter-row') !== null, true);
+  assert.equal(document.querySelector('#filterMonth').closest('.log-filter-row') !== null, true);
+  assert.equal(document.querySelectorAll('.archive-filter-control').length, 3);
+  assert.equal(document.querySelector('#filterCategory').closest('.archive-filter-control').dataset.selectId, 'filterCategory');
+  assert.equal(document.querySelector('#filterSubcategory').closest('.archive-filter-control').style.display, 'none');
+  assert.equal(document.querySelector('#filterMonth').closest('.archive-filter-control').querySelector('.archive-filter-trigger').getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(document.querySelector('#filterCategoryMenu').getAttribute('role'), 'listbox');
+  assert.equal(document.querySelector('#btnResetCardWidth').closest('.log-filter-row') !== null, true);
+  assert.equal(document.querySelector('#logList').closest('.log-archive-track') !== null, true);
+
+  assert.match(logListSource, /const ARCHIVE_FILTER_IDS = \['filterCategory', 'filterSubcategory', 'filterMonth'\];/);
+  assert.match(logListSource, /export function syncArchiveFilterControls\(\)/);
+  assert.match(logListSource, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/);
+  assert.match(logListSource, /archive-filter-option/);
+  assert.match(logListSource, /<div class="log-card"[\s\S]*<div class="log-card-top">[\s\S]*<span class="log-card-category">[\s\S]*<div class="log-card-content log-card-preview">[\s\S]*<div class="log-card-meta-row">[\s\S]*<span class="log-card-date">[\s\S]*<span class="log-card-hours">[\s\S]*<div class="card-resize-handle"><\/div>/);
+  assert.match(logListSource, /<div class="preview-md markdown-body">\$\{renderToHtml\(log\.content\)\}<\/div>/);
+  assert.match(logListSource, /<div class="log-card-drag" title="拖动排序">/);
+  assert.doesNotMatch(logListSource, /previewFormat/);
+  assert.doesNotMatch(logListSource, /renderToText/);
+  assert.doesNotMatch(logListSource, /btn-preview-toggle/);
+  assert.doesNotMatch(logListSource, /data-action="toggle-preview"/);
+  assert.doesNotMatch(logListSource, /moveVisibleLog/);
+  assert.doesNotMatch(logListSource, /data-action="move-up"/);
+  assert.doesNotMatch(logListSource, /data-action="move-down"/);
+  assert.match(styleSource, /\.archive-log-view\s*\{[\s\S]*--archive-line:/);
+  assert.match(styleSource, /\.log-archive-hero\s*\{[\s\S]*border-bottom:\s*1px solid var\(--archive-line\);/);
+  assert.doesNotMatch(styleSource, /\.log-archive-kicker\s*\{/);
+  assert.match(styleSource, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*min-height:\s*40px;/);
+  assert.match(styleSource, /\.archive-log-view\s*\{[\s\S]*font-family:\s*Inter, MiSans, "HarmonyOS Sans SC"/);
+  assert.match(styleSource, /\.new-log-icon\s*\{[\s\S]*border-radius:\s*7px;/);
+  assert.match(styleSource, /\.log-archive-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(280px, 1fr\) auto;/);
+  assert.match(styleSource, /\.log-filter-row\s*\{[\s\S]*justify-content:\s*flex-end;/);
+  assert.match(styleSource, /\.archive-native-select\s*\{[\s\S]*opacity:\s*0;[\s\S]*pointer-events:\s*none;/);
+  assert.match(styleSource, /\.archive-filter-trigger:hover\s*\{[\s\S]*border-color:\s*rgba\(47, 125, 244, 0\.36\);/);
+  assert.match(styleSource, /\.archive-filter-control\.has-value \.archive-filter-trigger\s*\{[\s\S]*background:\s*linear-gradient/);
+  assert.match(styleSource, /\.archive-filter-option:hover,\s*\.archive-filter-option:focus-visible\s*\{[\s\S]*background:\s*var\(--archive-mint-soft\);/);
+  assert.match(styleSource, /\.archive-filter-option\.selected,\s*\.archive-filter-option\[aria-selected="true"\]\s*\{[\s\S]*background:\s*var\(--archive-fresh-soft\);/);
+  assert.match(styleSource, /\.log-archive-track\s*\{[\s\S]*display:\s*flex;[\s\S]*min-height:\s*0;/);
+  assert.match(styleSource, /\.log-list::-webkit-scrollbar\s*\{[\s\S]*height:\s*12px;/);
+  assert.match(styleSource, /\.log-card-top\s*\{[\s\S]*grid-template-areas:[\s\S]*"title";/);
+  assert.match(styleSource, /\.log-card-category\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*40px;[\s\S]*border-radius:\s*7px;/);
+  assert.match(styleSource, /\.log-card-meta-row\s*\{[\s\S]*justify-content:\s*space-between;/);
+  assert.match(styleSource, /\.log-card-date,\s*\.log-card-hours\s*\{[\s\S]*color:\s*var\(--archive-muted\);/);
+  assert.doesNotMatch(styleSource, /\.btn-preview-toggle\s*\{/);
+  assert.doesNotMatch(styleSource, /\.item-order-controls\s*\{/);
+  assert.doesNotMatch(styleSource, /\.btn-order\s*\{/);
+  assert.match(styleSource, /\.log-card-content\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-archive-toolbar\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-filter-row\s*\{[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.archive-filter-control\s*\{[\s\S]*width:\s*100%;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-card-top\s*\{[\s\S]*grid-template-areas:[\s\S]*"title";/);
+});
+
 test('category manager uses drag sorting and log count badges without move buttons', () => {
   const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
@@ -2911,7 +2979,10 @@ test('mobile layout gives filters and editor controls touch-friendly responsive 
   const mobileStyles = styleSource.slice(styleSource.indexOf('@media (max-width: 768px)'), styleSource.indexOf('/* Collapsed sidebar */'));
 
   assert.match(mobileStyles, /\.toolbar\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(2,/);
-  assert.match(mobileStyles, /#btnNewLog,[\s\S]*#filterSubcategory\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
+  assert.match(mobileStyles, /\.log-archive-hero\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(mobileStyles, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*width:\s*100%;/);
+  assert.match(mobileStyles, /\.search-box,[\s\S]*#filterSubcategory\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
+  assert.match(mobileStyles, /\.archive-filter-control\[data-select-id="filterSubcategory"\]\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(mobileStyles, /\.editor-meta\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.match(mobileStyles, /\.editor-toolbar\s*\{[\s\S]*overflow-x:\s*auto;/);
   assert.match(mobileStyles, /\.codemirror-content-editor\s*\{\s*min-height:\s*52vh;/);

@@ -135,36 +135,68 @@
   <main class="main">
 
     <!-- List View -->
-    <div class="list-view" id="listView">
-      <div class="toolbar">
-        <button class="btn-primary" id="btnNewLog">+ 新建日志</button>
+    <div class="list-view archive-log-view" id="listView">
+      <div class="log-archive-hero">
+        <div class="log-archive-titleblock">
+          <div class="log-list-header">
+            <h2 id="listTitle">所有日志</h2>
+            <span class="log-count" id="logCount"></span>
+          </div>
+        </div>
+        <button class="btn-primary" id="btnNewLog">
+          <span class="new-log-icon" aria-hidden="true">+</span>
+          <span class="new-log-label">新建日志</span>
+        </button>
+      </div>
+
+      <div class="toolbar log-archive-toolbar" aria-label="日志筛选工具">
         <div class="search-box">
           <label class="sr-only" for="searchInput">搜索日志</label>
           <input type="text" id="searchInput" placeholder="搜索日志...">
           <button class="btn-search-clear" id="btnSearchClear" title="清除搜索" aria-label="清除搜索">&times;</button>
         </div>
-        <label class="sr-only" for="filterCategory">按分类筛选日志</label>
-        <select class="filter-select" id="filterCategory">
-          <option value="">全部分类</option>
-        </select>
-        <label class="sr-only" for="filterSubcategory">按子分类筛选日志</label>
-        <select class="filter-select" id="filterSubcategory" style="display:none">
-          <option value="">全部二级</option>
-        </select>
-        <label class="sr-only" for="filterMonth">按月份筛选日志</label>
-        <select class="filter-select" id="filterMonth">
-          <option value="">全部月份</option>
-        </select>
-        <button class="btn-secondary btn-sm" id="btnResetCardWidth" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">🔲</button>
+        <div class="log-filter-row">
+          <div class="archive-filter-control" data-filter-control data-select-id="filterCategory">
+            <label class="sr-only" for="filterCategory">按分类筛选日志</label>
+            <select class="filter-select archive-native-select" id="filterCategory" tabindex="-1" aria-hidden="true">
+              <option value="">全部分类</option>
+            </select>
+            <button class="archive-filter-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="filterCategoryMenu">
+              <span class="archive-filter-value">全部分类</span>
+              <span class="archive-filter-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="archive-filter-menu" id="filterCategoryMenu" role="listbox" hidden></div>
+          </div>
+          <div class="archive-filter-control" data-filter-control data-select-id="filterSubcategory" style="display:none">
+            <label class="sr-only" for="filterSubcategory">按子分类筛选日志</label>
+            <select class="filter-select archive-native-select" id="filterSubcategory" style="display:none" tabindex="-1" aria-hidden="true">
+              <option value="">全部二级</option>
+            </select>
+            <button class="archive-filter-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="filterSubcategoryMenu">
+              <span class="archive-filter-value">全部二级</span>
+              <span class="archive-filter-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="archive-filter-menu" id="filterSubcategoryMenu" role="listbox" hidden></div>
+          </div>
+          <div class="archive-filter-control" data-filter-control data-select-id="filterMonth">
+            <label class="sr-only" for="filterMonth">按月份筛选日志</label>
+            <select class="filter-select archive-native-select" id="filterMonth" tabindex="-1" aria-hidden="true">
+              <option value="">全部月份</option>
+            </select>
+            <button class="archive-filter-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="filterMonthMenu">
+              <span class="archive-filter-value">全部月份</span>
+              <span class="archive-filter-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="archive-filter-menu" id="filterMonthMenu" role="listbox" hidden></div>
+          </div>
+          <button class="btn-secondary btn-sm" id="btnResetCardWidth" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">🔲</button>
+        </div>
       </div>
 
-      <div class="log-list-header">
-        <h2 id="listTitle">所有日志</h2>
-        <span class="log-count" id="logCount"></span>
-      </div>
-
-      <div class="log-list" id="logList">
-        <div class="empty-state">暂无日志记录，点击「+ 新建日志」开始记录</div>
+      <div class="log-archive-track">
+        <div class="log-list" id="logList">
+          <div class="empty-state">暂无日志记录，点击「+ 新建日志」开始记录</div>
+        </div>
       </div>
 
       <div class="pagination" id="pagination"></div>

@@ -4,7 +4,7 @@ import { apiFetch, checkAuth, getDiaryStatus, unlockDiary, lockDiary } from './a
 import { showToast, confirmDialog, openModal, closeModal, $ } from './helpers.js';
 import { clearMdCache } from './markdown.js';
 import { populateCalendarSelects, renderCalendar } from './calendar.js';
-import { loadLogs, populateMonthFilter } from './logList.js';
+import { loadLogs, populateMonthFilter, syncArchiveFilterControls } from './logList.js';
 import { showListView } from './editor.js';
 import { initAiChat, showAiChatView } from './aiChat.js';
 import { loadStats } from './stats.js';
@@ -248,6 +248,7 @@ function selectDiaryLogs() {
   $('#filterMonth').value = '';
   $('#searchInput').value = '';
   $('#btnSearchClear').classList.remove('visible');
+  syncArchiveFilterControls();
   renderCalendar();
 }
 

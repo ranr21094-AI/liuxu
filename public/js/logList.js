@@ -1,13 +1,12 @@
 import { state } from './state.js';
 import { apiFetch } from './auth.js';
-import { formatDate, escHtml, setupDragAndDrop, announce, showToast, $ } from './helpers.js';
-import { renderToHtml, renderToText } from './markdown.js';
+import { formatDate, escHtml, setupDragAndDrop, $ } from './helpers.js';
+import { renderToHtml } from './markdown.js';
 import { renderCalendar } from './calendar.js';
 import { handleInternalLogLinkClick, openEditor, openEditorFromNavigation } from './editor.js';
 import { populateFilterSubCategory } from './categories.js';
 import { formatShortDateLabel, getBusinessDateParts } from './businessDate.js';
 
-let previewFormat = localStorage.getItem('previewFormat') || 'plain';
 let lastData = null;
 const CARD_WIDTH_KEY = 'logCardWidth';
 const CARD_NAV_COLLAPSED_KEY = 'cardNavCollapsed';
@@ -22,6 +21,145 @@ const cardNavToggle = $('#cardNavToggle');
 const cardNavCount = $('#cardNavCount');
 const cardNavList = $('#cardNavList');
 let cardNavPageInfo = null;
+const ARCHIVE_FILTER_IDS = ['filterCategory', 'filterSubcategory', 'filterMonth'];
+
+function archiveFilterControls() {
+  return ARCHIVE_FILTER_IDS
+    .map(id => document.querySelector(`[data-filter-control][data-select-id="${id}"]`))
+    .filter(Boolean);
+}
+
+function closeArchiveFilterControl(control) {
+  if (!control) return;
+  control.classList.remove('open');
+  control.querySelector('.archive-filter-trigger')?.setAttribute('aria-expanded', 'false');
+  const menu = control.querySelector('.archive-filter-menu');
+  if (menu) menu.hidden = true;
+}
+
+function closeArchiveFilterControls(except = null) {
+  archiveFilterControls().forEach(control => {
+    if (control !== except) closeArchiveFilterControl(control);
+  });
+}
+
+function selectFromArchiveFilterOption(control, optionButton) {
+  const select = document.getElementById(control.dataset.selectId);
+  if (!select || !optionButton) return;
+  select.value = optionButton.dataset.value || '';
+  closeArchiveFilterControl(control);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  syncArchiveFilterControls();
+  control.querySelector('.archive-filter-trigger')?.focus();
+}
+
+function focusArchiveFilterOption(control, direction = 1) {
+  const options = [...control.querySelectorAll('.archive-filter-option')];
+  if (!options.length) return;
+  const activeIndex = options.indexOf(document.activeElement);
+  const selectedIndex = options.findIndex(option => option.getAttribute('aria-selected') === 'true');
+  const baseIndex = activeIndex >= 0 ? activeIndex : (selectedIndex >= 0 ? selectedIndex : 0);
+  const nextIndex = (baseIndex + direction + options.length) % options.length;
+  options[nextIndex].focus();
+}
+
+function openArchiveFilterControl(control, { focusSelected = false } = {}) {
+  const trigger = control.querySelector('.archive-filter-trigger');
+  const menu = control.querySelector('.archive-filter-menu');
+  if (!trigger || !menu) return;
+  syncArchiveFilterControls();
+  closeArchiveFilterControls(control);
+  control.classList.add('open');
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.hidden = false;
+  if (focusSelected) {
+    const selected = menu.querySelector('.archive-filter-option[aria-selected="true"]');
+    (selected || menu.querySelector('.archive-filter-option'))?.focus();
+  }
+}
+
+function toggleArchiveFilterControl(control) {
+  if (control.classList.contains('open')) {
+    closeArchiveFilterControl(control);
+  } else {
+    openArchiveFilterControl(control);
+  }
+}
+
+export function syncArchiveFilterControls() {
+  archiveFilterControls().forEach(control => {
+    const select = document.getElementById(control.dataset.selectId);
+    const trigger = control.querySelector('.archive-filter-trigger');
+    const value = control.querySelector('.archive-filter-value');
+    const menu = control.querySelector('.archive-filter-menu');
+    if (!select || !trigger || !value || !menu) return;
+
+    const hidden = select.style.display === 'none' || select.hidden;
+    control.style.display = hidden ? 'none' : '';
+    if (hidden) {
+      closeArchiveFilterControl(control);
+      return;
+    }
+
+    const options = [...select.options];
+    const selected = select.selectedOptions[0] || options.find(option => option.value === select.value) || options[0];
+    const hasValue = Boolean(select.value);
+    value.textContent = selected?.textContent || '';
+    control.classList.toggle('has-value', hasValue);
+    trigger.setAttribute('aria-label', `${select.labels?.[0]?.textContent || '筛选'}：${selected?.textContent || '未选择'}`);
+    menu.innerHTML = options.map(option => `
+      <button
+        class="archive-filter-option${option.value === select.value ? ' selected' : ''}"
+        type="button"
+        role="option"
+        data-value="${escHtml(option.value)}"
+        aria-selected="${option.value === select.value}"
+        tabindex="-1"
+      >${escHtml(option.textContent)}</button>
+    `).join('');
+  });
+}
+
+function initArchiveFilterControls() {
+  archiveFilterControls().forEach(control => {
+    const trigger = control.querySelector('.archive-filter-trigger');
+    const menu = control.querySelector('.archive-filter-menu');
+    trigger?.addEventListener('click', () => toggleArchiveFilterControl(control));
+    trigger?.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      openArchiveFilterControl(control, { focusSelected: true });
+      if (event.key === 'ArrowUp') focusArchiveFilterOption(control, -1);
+    });
+    menu?.addEventListener('click', (event) => {
+      const option = event.target.closest('.archive-filter-option');
+      if (option) selectFromArchiveFilterOption(control, option);
+    });
+    menu?.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        focusArchiveFilterOption(control, 1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        focusArchiveFilterOption(control, -1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectFromArchiveFilterOption(control, event.target.closest('.archive-filter-option'));
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeArchiveFilterControl(control);
+        trigger?.focus();
+      }
+    });
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-filter-control]')) closeArchiveFilterControls();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeArchiveFilterControls();
+  });
+  syncArchiveFilterControls();
+}
 
 function loadSavedCardWidth() {
   const value = parseInt(localStorage.getItem(CARD_WIDTH_KEY), 10);
@@ -214,21 +352,10 @@ function renderLogList(data) {
     return;
   }
 
-  logList.innerHTML = items.map((log, index) => {
+  logList.innerHTML = items.map((log) => {
     // Highlight search term in title
     let title = escHtml(log.title);
-    let previewHtml;
-    if (previewFormat === 'plain') {
-      let text = renderToText(log.content);
-      text = escHtml(text);
-      if (state.search) {
-        const re = new RegExp('(' + state.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-        text = text.replace(re, '<mark>$1</mark>');
-      }
-      previewHtml = `<div class="preview-plain">${text}</div>`;
-    } else {
-      previewHtml = `<div class="preview-md markdown-body">${renderToHtml(log.content)}</div>`;
-    }
+    const previewHtml = `<div class="preview-md markdown-body">${renderToHtml(log.content)}</div>`;
     if (state.search) {
       const re = new RegExp('(' + state.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
       title = title.replace(re, '<mark>$1</mark>');
@@ -237,50 +364,21 @@ function renderLogList(data) {
     return `
       <div class="log-card" data-id="${log.id}" draggable="true" tabindex="0" role="button" aria-label="打开日志: ${escHtml(log.title)}">
         <div class="log-card-drag" title="拖动排序">⋮⋮</div>
-        <span class="item-order-controls" aria-label="调整日志顺序">
-          <button type="button" class="btn-order" data-action="move-up" aria-label="上移日志：${escHtml(log.title)}" ${index === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" class="btn-order" data-action="move-down" aria-label="下移日志：${escHtml(log.title)}" ${index === items.length - 1 ? 'disabled' : ''}>↓</button>
-        </span>
         <div class="log-card-top">
           <span class="log-card-title">${title}</span>
           <span class="log-card-category">${escHtml(log.category)}</span>
-          <span class="log-card-hours">${log.hours}h</span>
-          <button class="btn-preview-toggle${previewFormat === 'markdown' ? ' active' : ''}" data-action="toggle-preview" title="切换纯文本/Markdown" aria-label="切换日志预览格式" aria-pressed="${previewFormat === 'markdown'}">◧</button>
         </div>
         <div class="log-card-content log-card-preview">
           ${previewHtml}
         </div>
-        <div class="log-card-date">${dateLabel}</div>
+        <div class="log-card-meta-row">
+          <span class="log-card-date">${dateLabel}</span>
+          <span class="log-card-hours">${log.hours}h</span>
+        </div>
         <div class="card-resize-handle"></div>
       </div>
     `;
   }).join('');
-}
-
-async function moveVisibleLog(id, delta, action) {
-  const items = lastData?.items || [];
-  const index = items.findIndex(log => log.id === id);
-  const targetIndex = index + delta;
-  if (index < 0 || targetIndex < 0 || targetIndex >= items.length) return;
-  const reordered = [...items];
-  [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
-  try {
-    const res = await apiFetch('/api/logs/reorder', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ orderedIds: reordered.map(log => log.id) }),
-    });
-    if (!res.ok) throw new Error('服务器拒绝排序请求');
-    lastData = { ...lastData, items: reordered };
-    renderLogList(lastData);
-    renderCardNavigator(lastData);
-    logList.querySelector(`.log-card[data-id="${id}"] [data-action="${action}"]`)?.focus();
-    announce(`日志已${delta < 0 ? '上移' : '下移'}`);
-  } catch (err) {
-    showToast('日志排序失败: ' + err.message, 'error');
-    announce('日志排序失败');
-    console.error('Log reorder failed:', err);
-  }
 }
 
 logList.addEventListener('click', async (e) => {
@@ -300,6 +398,7 @@ logList.addEventListener('click', async (e) => {
     $('#filterMonth').value = '';
     $('#searchInput').value = '日记';
     $('#btnSearchClear').classList.add('visible');
+    syncArchiveFilterControls();
     await loadLogs();
     return;
   }
@@ -310,20 +409,6 @@ logList.addEventListener('click', async (e) => {
   }
   if (e.target.closest('.log-card-drag')) return;
   if (e.target.closest('.card-resize-handle')) return;
-  const moveButton = e.target.closest('[data-action="move-up"], [data-action="move-down"]');
-  if (moveButton) {
-    const id = parseInt(moveButton.closest('.log-card').dataset.id, 10);
-    await moveVisibleLog(id, moveButton.dataset.action === 'move-up' ? -1 : 1, moveButton.dataset.action);
-    return;
-  }
-  const toggleBtn = e.target.closest('[data-action="toggle-preview"]');
-  if (toggleBtn) {
-    e.stopPropagation();
-    previewFormat = previewFormat === 'plain' ? 'markdown' : 'plain';
-    localStorage.setItem('previewFormat', previewFormat);
-    if (lastData) renderLogList(lastData);
-    return;
-  }
   const card = e.target.closest('.log-card');
   if (!card) return;
   openEditor(parseInt(card.dataset.id));
@@ -398,6 +483,7 @@ $('#filterCategory').addEventListener('change', () => {
   state.category = parent;
   state.currentPage = 1;
   populateFilterSubCategory(parent || null);
+  syncArchiveFilterControls();
   loadLogs();
 });
 
@@ -406,6 +492,7 @@ $('#filterSubcategory').addEventListener('change', () => {
   const sub = $('#filterSubcategory').value;
   state.category = parent && sub ? parent + '/' + sub : parent;
   state.currentPage = 1;
+  syncArchiveFilterControls();
   loadLogs();
 });
 
@@ -415,6 +502,7 @@ $('#filterMonth').addEventListener('change', () => {
   state.currentPage = 1;
   loadLogs();
   listTitle.textContent = state.month ? `${state.month} 的日志` : '所有日志';
+  syncArchiveFilterControls();
 });
 
 export function populateMonthFilter() {
@@ -428,6 +516,7 @@ export function populateMonthFilter() {
     html += `<option value="${val}" ${val === state.month ? 'selected' : ''}>${val}</option>`;
   }
   $('#filterMonth').innerHTML = html;
+  syncArchiveFilterControls();
 }
 
 // Card resize
@@ -469,3 +558,5 @@ $('#btnResetCardWidth').addEventListener('click', () => {
   document.documentElement.style.removeProperty('--card-width');
   document.querySelectorAll('.log-card').forEach(c => { c.style.width = ''; });
 });
+
+initArchiveFilterControls();

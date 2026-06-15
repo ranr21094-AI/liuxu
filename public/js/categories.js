@@ -1,7 +1,7 @@
 import { state } from './state.js';
 import { apiFetch } from './auth.js';
 import { showToast, escHtml, setupDragAndDrop, confirmDialog, $, $$ } from './helpers.js';
-import { loadLogs } from './logList.js';
+import { loadLogs, syncArchiveFilterControls } from './logList.js';
 import { loadStats } from './stats.js';
 import { formatShortDateLabel } from './businessDate.js';
 
@@ -26,6 +26,7 @@ export function populateFilterCategory() {
     state.categories.map(c => `<option value="${escHtml(c.name)}">${escHtml(c.name)}</option>`).join('');
   if (state.categories.some(c => c.name === current)) sel.value = current;
   populateFilterSubCategory(sel.value || null);
+  syncArchiveFilterControls();
 }
 
 export function populateFilterSubCategory(parent) {
@@ -33,12 +34,14 @@ export function populateFilterSubCategory(parent) {
   if (!parent) {
     sel.style.display = 'none';
     sel.value = '';
+    syncArchiveFilterControls();
     return;
   }
   const cat = state.categories.find(c => c.name === parent);
   if (!cat || !cat.sub || cat.sub.length === 0) {
     sel.style.display = 'none';
     sel.value = '';
+    syncArchiveFilterControls();
     return;
   }
   const current = state.category.startsWith(parent + '/') ? state.category.slice(parent.length + 1) : '';
@@ -46,6 +49,7 @@ export function populateFilterSubCategory(parent) {
     cat.sub.map(s => `<option value="${escHtml(s)}">${escHtml(s)}</option>`).join('');
   sel.style.display = '';
   if (cat.sub.includes(current)) sel.value = current;
+  syncArchiveFilterControls();
 }
 
 export function populateEditorParentCategory() {
@@ -197,6 +201,7 @@ function syncMainCategoryFilter(category) {
   $('#filterCategory').value = parent;
   populateFilterSubCategory(parent || null);
   $('#filterSubcategory').value = subParts.join('/');
+  syncArchiveFilterControls();
 }
 
 function setSubcategoryBrowseMode(enabled) {
