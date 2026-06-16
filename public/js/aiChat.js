@@ -501,6 +501,7 @@ function skillMeta(skillId) {
   const fallback = {
     westock: { name: 'WeStock Data', label: 'WeStock', icon: 'W', runningText: '正在查询市场数据', errorText: 'WeStock 查询失败' },
     perplexity: { name: 'Perplexity Search', label: 'Perplexity', icon: 'P', runningText: '正在搜索网页', errorText: 'Perplexity 搜索失败' },
+    logs: { name: '日志管理', label: '日志', icon: 'L', runningText: '正在执行日志操作', errorText: '日志操作失败' },
   }[skillId] || { name: 'AI Skill', label: 'Skill', icon: 'S', runningText: '正在执行技能', errorText: '技能执行失败' };
   return {
     ...fallback,
@@ -579,17 +580,53 @@ function chooseSkill(id) {
   $('#aiChatInput').focus();
 }
 
+function formatLogToolValue(value, fallback = '未设置') {
+  const text = typeof value === 'string' ? value.trim() : value === undefined || value === null ? '' : String(value);
+  return text || fallback;
+}
+
+function renderLogToolPreview(toolCall) {
+  if (toolCall?.skillId !== 'logs') return '';
+  const args = toolCall.args || {};
+  const fields = [];
+  if (toolCall.tool === 'update' || toolCall.tool === 'delete') fields.push(['日志 ID', formatLogToolValue(args.id)]);
+  if (toolCall.tool !== 'delete' || args.title) fields.push(['标题', formatLogToolValue(args.title, toolCall.tool === 'update' ? '未修改' : '未命名日志')]);
+  if (toolCall.tool !== 'delete' || args.category) fields.push(['分类', formatLogToolValue(args.category, toolCall.tool === 'update' ? '未修改' : '其他')]);
+  if (toolCall.tool !== 'delete' || args.log_date) fields.push(['日期', formatLogToolValue(args.log_date, toolCall.tool === 'update' ? '未修改' : '默认日期')]);
+  if (toolCall.tool !== 'delete' || args.hours !== undefined) fields.push(['工时', `${formatLogToolValue(args.hours, toolCall.tool === 'update' ? '未修改' : '0')}h`]);
+  const content = typeof args.content === 'string' ? args.content.trim() : '';
+  const contentPreview = content ? `${content.slice(0, 180)}${content.length > 180 ? '...' : ''}` : (toolCall.tool === 'update' ? '未修改正文' : '');
+  const operation = {
+    create: '新增日志',
+    update: '编辑日志',
+    delete: '删除日志',
+  }[toolCall.tool] || '日志操作';
+  return `
+    <div class="ai-log-tool-summary">
+      <div class="ai-log-tool-operation">${escHtml(operation)}</div>
+      <div class="ai-log-tool-fields">
+        ${fields.map(([label, value]) => `
+          <span><strong>${escHtml(label)}</strong>${escHtml(value)}</span>
+        `).join('')}
+      </div>
+      ${contentPreview ? `<p>${escHtml(contentPreview)}</p>` : ''}
+    </div>
+  `;
+}
+
 function renderToolCallCard(toolCall, toolResult, index) {
-  if (!toolCall || !['westock', 'perplexity'].includes(toolCall.skillId)) return '';
+  if (!toolCall || !['westock', 'perplexity', 'logs'].includes(toolCall.skillId)) return '';
   const status = toolCall.status || 'pending';
   const argsJson = JSON.stringify(toolCall.args || {}, null, 2);
   const meta = skillMeta(toolCall.skillId);
+  const dangerClass = toolCall.skillId === 'logs' && toolCall.tool === 'delete' ? ' danger' : '';
   return `
-    <div class="ai-tool-card ${escHtml(status)}" data-tool-message-index="${index}">
+    <div class="ai-tool-card ${escHtml(status)}${dangerClass}" data-tool-message-index="${index}">
       <div class="ai-tool-card-head">
         <strong>${escHtml(meta.name)}</strong>
         <span>${escHtml(toolCall.tool)}</span>
       </div>
+      ${renderLogToolPreview(toolCall)}
       <pre class="ai-tool-args"><code>${escHtml(argsJson)}</code></pre>
       ${status === 'running' ? `
         <div class="ai-tool-running">
@@ -717,7 +754,7 @@ function currentSettings() {
     model: settings.model || DEFAULT_MODEL,
     thinkingMode: 'enabled',
     reasoningEffort: settings.reasoningEffort || DEFAULT_REASONING,
-    stream: skill ? false : Boolean(settings.stream),
+    stream: skill || settings.logContextEnabled ? false : Boolean(settings.stream),
     userProfile: settings.userProfile || '',
     logContextEnabled: Boolean(settings.logContextEnabled),
     diaryContextEnabled: Boolean(settings.diaryContextEnabled),
@@ -754,14 +791,13 @@ function effectiveLogAccessPolicy() {
   return settings.logAccessPolicy || defaultLogAccessPolicy();
 }
 
-function renderAccessTree() {
-  const tree = $('#aiAccessTree');
+function renderPolicyTree(treeSelector, policy, emptyText) {
+  const tree = $(treeSelector);
   if (!tree) return;
   if (!aiAccessCategories.length) {
-    tree.innerHTML = '<div class="ai-access-empty">暂无分类，保存后会默认允许非日记分类。</div>';
+    tree.innerHTML = `<div class="ai-access-empty">${escHtml(emptyText)}</div>`;
     return;
   }
-  const policy = effectiveLogAccessPolicy();
   const allowed = new Set(policy.allowedParents || []);
   const denied = policy.deniedSubcategories || {};
   tree.innerHTML = aiAccessCategories.map(category => {
@@ -792,10 +828,14 @@ function renderAccessTree() {
   }).join('');
 }
 
-function collectLogAccessPolicyFromPage() {
+function renderAccessTree() {
+  renderPolicyTree('#aiAccessTree', effectiveLogAccessPolicy(), '暂无分类，保存后会默认允许非日记分类。');
+}
+
+function collectPolicyFromTree(selector) {
   const allowedParents = [];
   const deniedSubcategories = {};
-  document.querySelectorAll('#aiAccessTree .ai-access-parent').forEach(parentEl => {
+  document.querySelectorAll(`${selector} .ai-access-parent`).forEach(parentEl => {
     const parent = parentEl.dataset.parent;
     const parentCheck = parentEl.querySelector('.ai-access-parent-check');
     if (!parent || !parentCheck?.checked) return;
@@ -809,8 +849,14 @@ function collectLogAccessPolicyFromPage() {
   return { allowedParents, deniedSubcategories };
 }
 
+function collectLogAccessPolicyFromPage() {
+  return collectPolicyFromTree('#aiAccessTree');
+}
+
 function fillSettingsModal() {
-  $('#aiApiKeyInput').value = settings.apiKey;
+  const apiKeyInput = $('#aiApiKeyInput');
+  if (!apiKeyInput) return;
+  apiKeyInput.value = settings.apiKey;
   $('#aiModelSelect').value = settings.model || DEFAULT_MODEL;
   $('#aiReasoningEffort').value = settings.reasoningEffort || DEFAULT_REASONING;
   $('#aiStreamToggle').checked = Boolean(settings.stream);
@@ -907,6 +953,15 @@ async function saveSettingsFromPage() {
   } catch (err) {
     showToast('AI 设置保存失败：' + err.message, 'error');
   }
+}
+
+async function refreshAfterLogToolRun() {
+  const [{ loadLogs }, { loadStats }, { loadCategories }] = await Promise.all([
+    import('./logList.js'),
+    import('./stats.js'),
+    import('./categories.js'),
+  ]);
+  await Promise.all([loadLogs(), loadStats(), loadCategories()]);
 }
 
 function setSkillConfigExpanded(card, expanded) {
@@ -1069,7 +1124,7 @@ async function sendJsonMessage(chat, requestSettings) {
   if (!res.ok) throw new Error(data.error || 'AI 请求失败');
   if (!data.message?.content) throw new Error('AI 没有返回内容');
   const assistantMessage = { role: 'assistant', content: data.message.content, sources: Array.isArray(data.sources) ? data.sources : [] };
-  if (data.toolCall?.skillId === 'westock') assistantMessage.toolCall = data.toolCall;
+  if (['westock', 'logs'].includes(data.toolCall?.skillId)) assistantMessage.toolCall = data.toolCall;
   chat.messages.push(assistantMessage);
 }
 
@@ -1077,7 +1132,17 @@ async function executeSkillTool(index) {
   const chat = activeConversation();
   const message = chat?.messages[index];
   const toolCall = message?.toolCall;
-  if (!chat || !toolCall || !['westock', 'perplexity'].includes(toolCall.skillId) || sending) return;
+  if (!chat || !toolCall || !['westock', 'perplexity', 'logs'].includes(toolCall.skillId) || sending) return;
+  if (toolCall.skillId === 'logs' && toolCall.tool === 'delete') {
+    const confirmedDelete = await confirmDialog({
+      title: '删除日志',
+      message: '确认删除这条日志？此操作不可撤销。',
+      confirmText: '删除',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (!confirmedDelete) return;
+  }
   const meta = skillMeta(toolCall.skillId);
   toolCall.status = 'running';
   toolCall.error = '';
@@ -1085,7 +1150,10 @@ async function executeSkillTool(index) {
   await saveConversations();
   renderMessages();
   try {
-    const res = await apiFetch(`/api/ai/skills/${encodeURIComponent(toolCall.skillId)}/run`, {
+    const endpoint = toolCall.skillId === 'logs'
+      ? '/api/ai/logs/run'
+      : `/api/ai/skills/${encodeURIComponent(toolCall.skillId)}/run`;
+    const res = await apiFetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1102,6 +1170,9 @@ async function executeSkillTool(index) {
       tool: toolCall.tool,
       content: data.content || `${meta.name} 没有返回内容`,
     };
+    if (toolCall.skillId === 'logs') {
+      await refreshAfterLogToolRun();
+    }
     chat.updatedAt = Date.now();
     await saveConversations();
     renderMessages();

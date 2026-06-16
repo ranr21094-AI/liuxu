@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
@@ -32,7 +33,7 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand } = {}) {
+function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   if (diaryPassword) {
@@ -52,6 +53,8 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   process.env.SEEDREAM_BASE_URL = seedreamBaseUrl || 'https://ark.cn-beijing.volces.com/api/v3';
   process.env.SEEDREAM_DEFAULT_MODEL = seedreamDefaultModel || 'doubao-seedream-5-0-260128';
   process.env.WESTOCK_NPX_COMMAND = westockNpxCommand || 'npx -y westock-data-clawhub@1.0.4';
+  process.env.QQ_EMAIL_ACCOUNT = qqEmailAccount || '';
+  process.env.QQ_EMAIL_AUTH_CODE = qqEmailAuthCode || '';
   clearAppModules();
 
   const db = require(path.join(ROOT, 'database.js'));
@@ -75,10 +78,12 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
     delete process.env.SEEDREAM_BASE_URL;
     delete process.env.SEEDREAM_DEFAULT_MODEL;
     delete process.env.WESTOCK_NPX_COMMAND;
+    delete process.env.QQ_EMAIL_ACCOUNT;
+    delete process.env.QQ_EMAIL_AUTH_CODE;
     clearAppModules();
   });
 
-  return { app, db, baseUrl, dataDir };
+  return { app, db, baseUrl, dataDir, server };
 }
 
 function loadFreshDb(t) {
@@ -855,6 +860,176 @@ test('AI chat injects selected skill prompts only when selected and returns tool
     body: JSON.stringify({ messages: [{ role: 'user', content: 'test' }], skill: { id: 'unknown' } }),
   });
   assert.equal(badSkill.status, 400);
+});
+
+test('AI log tool requires confirmation, write permissions, and diary unlock', async (t) => {
+  const { db, baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+
+  const disabled = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'create',
+      confirmed: true,
+      args: { title: 'Draft', content: 'Body', category: '开发' },
+    }),
+  });
+  assert.equal(disabled.status, 403);
+
+  const settings = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      logContextEnabled: true,
+      logAccessPolicy: {
+        allowedParents: ['开发', DIARY_CATEGORY],
+        deniedSubcategories: { 开发: ['秘密'] },
+      },
+    }),
+  });
+  assert.equal(settings.status, 200);
+
+  const unconfirmed = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'create',
+      confirmed: false,
+      args: { title: 'Draft', content: 'Body', category: '开发' },
+    }),
+  });
+  assert.equal(unconfirmed.status, 400);
+
+  const deniedSub = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'create',
+      confirmed: true,
+      args: { title: 'Secret', content: 'Body', category: '开发/秘密' },
+    }),
+  });
+  assert.equal(deniedSub.status, 403);
+
+  const diaryLocked = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'create',
+      confirmed: true,
+      args: { title: 'Diary', content: 'Hidden', category: DIARY_CATEGORY },
+    }),
+  });
+  assert.equal(diaryLocked.status, 423);
+
+  const created = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'create',
+      confirmed: true,
+      args: { title: 'Dev note', content: 'Created by AI preview.', category: '开发', log_date: '2026-06-16', hours: 1.5 },
+    }),
+  });
+  assert.equal(created.status, 200);
+  const createdBody = await created.json();
+  assert.equal(createdBody.skillId, 'logs');
+  assert.equal(createdBody.tool, 'create');
+  assert.match(createdBody.content, /\[Dev note\]\(#log\/\d+\)/);
+  const logId = createdBody.log.id;
+  assert.equal(db.getById(logId).title, 'Dev note');
+
+  const updated = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'update',
+      confirmed: true,
+      args: { id: logId, title: 'Updated note', hours: 2 },
+    }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(db.getById(logId).title, 'Updated note');
+  assert.equal(db.getById(logId).hours, 2);
+
+  const deniedMove = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'update',
+      confirmed: true,
+      args: { id: logId, category: '开发/秘密' },
+    }),
+  });
+  assert.equal(deniedMove.status, 403);
+
+  const deleted = await fetch(`${baseUrl}/api/ai/logs/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool: 'delete',
+      confirmed: true,
+      args: { id: logId },
+    }),
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal(db.getById(logId), null);
+});
+
+test('AI chat can return log tool calls without mutating logs before confirmation', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const payloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (target === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      payloads.push(payload);
+      return new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              reply: '我准备新增这条日志，请确认。',
+              toolCall: {
+                skillId: 'logs',
+                tool: 'create',
+                args: { title: 'AI draft', content: 'Pending only.', category: '开发', log_date: '2026-06-16', hours: 1 },
+                requiresConfirmation: true,
+              },
+            }),
+          },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const res = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '帮我新增一条开发日志' }],
+      logContextEnabled: true,
+      logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+    }),
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.deepEqual(body.toolCall, {
+    skillId: 'logs',
+    tool: 'create',
+    args: { title: 'AI draft', content: 'Pending only.', category: '开发', log_date: '2026-06-16', hours: 1 },
+    requiresConfirmation: true,
+    status: 'pending',
+  });
+  assert.equal(db.getAll({}).total, 0);
+  assert.equal(payloads[0].stream, false);
+  assert.equal(payloads[0].messages.some(message => /local log management tool/.test(message.content || '')), true);
 });
 
 test('AI chat sends only explicit conversation messages to DeepSeek', async (t) => {
@@ -1841,6 +2016,7 @@ test('todo API stores due date, priority, and notes', async (t) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title: 'task',
+      category: '待学习',
       due_date: '2026-05-18',
       priority: 'important',
       notes: 'bring context',
@@ -1848,6 +2024,7 @@ test('todo API stores due date, priority, and notes', async (t) => {
   });
   assert.equal(created.status, 201);
   const createdBody = await created.json();
+  assert.equal(createdBody.category, '待学习');
   assert.equal(createdBody.due_date, '2026-05-18');
   assert.equal(createdBody.priority, 'important');
   assert.equal(createdBody.notes, 'bring context');
@@ -1857,19 +2034,58 @@ test('todo API stores due date, priority, and notes', async (t) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       priority: 'urgent',
+      category: '待办',
       notes: 'updated note',
     }),
   });
   assert.equal(updated.status, 200);
   const updatedBody = await updated.json();
+  assert.equal(updatedBody.category, '待办');
   assert.equal(updatedBody.priority, 'urgent');
   assert.equal(updatedBody.notes, 'updated note');
 
   const listed = await fetch(`${baseUrl}/api/todos`);
   assert.equal(listed.status, 200);
   const items = await listed.json();
+  assert.equal(items[0].category, '待办');
   assert.equal(items[0].priority, 'urgent');
   assert.equal(items[0].notes, 'updated note');
+});
+
+test('todo categories can be added and deleted while preserving tasks under default', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+
+  const categories = await fetch(`${baseUrl}/api/todo-categories`);
+  assert.equal(categories.status, 200);
+  assert.deepEqual(await categories.json(), ['待办']);
+
+  const createdCategory = await fetch(`${baseUrl}/api/todo-categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '待学习' }),
+  });
+  assert.equal(createdCategory.status, 201);
+  assert.deepEqual((await createdCategory.json()).categories, ['待办', '待学习']);
+
+  const createdTodo = await fetch(`${baseUrl}/api/todos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'learn typescript', category: '待学习' }),
+  });
+  assert.equal(createdTodo.status, 201);
+  assert.equal((await createdTodo.json()).category, '待学习');
+
+  const deletedCategory = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待学习')}`, {
+    method: 'DELETE',
+  });
+  assert.equal(deletedCategory.status, 200);
+  assert.deepEqual((await deletedCategory.json()).categories, ['待办']);
+  assert.equal((await (await fetch(`${baseUrl}/api/todos`)).json())[0].category, '待办');
+
+  const protectedDefault = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待办')}`, {
+    method: 'DELETE',
+  });
+  assert.equal(protectedDefault.status, 409);
 });
 
 test('todo priorities preserve none normal important and urgent values', async (t) => {
@@ -1891,6 +2107,348 @@ test('todo priorities preserve none normal important and urgent values', async (
   for (const priority of priorities) {
     assert.equal(byTitle.get(`task-${priority}`), priority);
   }
+});
+
+test('todo reminder settings and state persist with validation', (t) => {
+  const db = loadFreshDb(t);
+
+  assert.deepEqual(db.getTodoReminderSettings(), {
+    enabled: false,
+    recipientEmail: '',
+    sendTime: '08:00',
+  });
+  assert.deepEqual(db.getTodoReminderState(), {
+    businessDate: '',
+    capturedAt: '',
+    status: 'idle',
+    snapshot: [],
+    sentAt: '',
+    lastError: '',
+  });
+
+  assert.match(db.saveTodoReminderSettings({
+    enabled: false,
+    recipientEmail: 'bad-email',
+    sendTime: '08:00',
+  }).error, /recipientEmail/);
+  assert.match(db.saveTodoReminderSettings({
+    enabled: false,
+    recipientEmail: '',
+    sendTime: '8:00',
+  }).error, /sendTime/);
+  assert.match(db.saveTodoReminderSettings({
+    enabled: true,
+    recipientEmail: 'notify@example.com',
+    sendTime: '08:00',
+  }, { mailReady: false }).error, /QQ mail credentials/);
+
+  const savedSettings = db.saveTodoReminderSettings({
+    enabled: true,
+    recipientEmail: 'notify@example.com',
+    sendTime: '09:15',
+  }, { mailReady: true });
+  assert.deepEqual(savedSettings, {
+    enabled: true,
+    recipientEmail: 'notify@example.com',
+    sendTime: '09:15',
+  });
+
+  const savedState = db.saveTodoReminderState({
+    businessDate: '2026-05-18',
+    capturedAt: '2026-05-18T00:00:00.000Z',
+    status: 'pending',
+    snapshot: [{ id: 1, title: 'task', category: '待办', priority: 'urgent', due_date: '2026-05-18', notes: 'note', sort_order: 3 }],
+    sentAt: '',
+    lastError: 'SMTP failed',
+  });
+  assert.equal(savedState.status, 'pending');
+  assert.equal(savedState.snapshot.length, 1);
+  assert.equal(savedState.snapshot[0].priority, 'urgent');
+
+  clearAppModules();
+  const reloaded = require(path.join(ROOT, 'database.js'));
+  assert.deepEqual(reloaded.getTodoReminderSettings(), savedSettings);
+  assert.equal(reloaded.getTodoReminderState().businessDate, '2026-05-18');
+  assert.equal(reloaded.getTodoReminderState().lastError, 'SMTP failed');
+});
+
+test('todo reminder settings API validates mail readiness and persists across restart', async (t) => {
+  const first = loadFreshApp(t, {
+    qqEmailAccount: 'sender@qq.com',
+    qqEmailAuthCode: 'auth-code',
+  });
+
+  const initial = await fetch(`${first.baseUrl}/api/todo-reminder-settings`);
+  assert.equal(initial.status, 200);
+  const initialBody = await initial.json();
+  assert.equal(initialBody.mailReady, true);
+  assert.equal(initialBody.recipientEmail, 'sender@qq.com');
+  assert.equal(initialBody.sendTime, '08:00');
+  assert.equal(initialBody.lastStatus, 'idle');
+
+  const saved = await fetch(`${first.baseUrl}/api/todo-reminder-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: true,
+      recipientEmail: 'notify@example.com',
+      sendTime: '09:30',
+    }),
+  });
+  assert.equal(saved.status, 200);
+  const savedBody = await saved.json();
+  assert.equal(savedBody.enabled, true);
+  assert.equal(savedBody.recipientEmail, 'notify@example.com');
+  assert.equal(savedBody.sendTime, '09:30');
+
+  await new Promise(resolve => first.server.close(resolve));
+  clearAppModules();
+  const { app: reloadedApp } = require(path.join(ROOT, 'server.js'));
+  const reloadedServer = reloadedApp.listen(0);
+  const reloadedBaseUrl = `http://127.0.0.1:${reloadedServer.address().port}`;
+  t.after(() => new Promise(resolve => reloadedServer.close(resolve)));
+
+  const afterRestart = await fetch(`${reloadedBaseUrl}/api/todo-reminder-settings`);
+  assert.equal(afterRestart.status, 200);
+  const afterRestartBody = await afterRestart.json();
+  assert.equal(afterRestartBody.enabled, true);
+  assert.equal(afterRestartBody.recipientEmail, 'notify@example.com');
+  assert.equal(afterRestartBody.sendTime, '09:30');
+
+  process.env.QQ_EMAIL_ACCOUNT = '';
+  process.env.QQ_EMAIL_AUTH_CODE = '';
+  clearAppModules();
+  const { app: noMailApp } = require(path.join(ROOT, 'server.js'));
+  const noMailServer = noMailApp.listen(0);
+  const noMailBaseUrl = `http://127.0.0.1:${noMailServer.address().port}`;
+  t.after(() => new Promise(resolve => noMailServer.close(resolve)));
+
+  const rejected = await fetch(`${noMailBaseUrl}/api/todo-reminder-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: true,
+      recipientEmail: 'notify@example.com',
+      sendTime: '08:00',
+    }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.match((await rejected.json()).error, /QQ mail credentials/);
+});
+
+test('todo reminder mail builder keeps only title due date and notes in a utf-8 text mail', (t) => {
+  process.env.QQ_EMAIL_ACCOUNT = 'sender@qq.com';
+  process.env.QQ_EMAIL_AUTH_CODE = 'auth-code';
+  clearAppModules();
+  t.after(() => {
+    delete process.env.QQ_EMAIL_ACCOUNT;
+    delete process.env.QQ_EMAIL_AUTH_CODE;
+    clearAppModules();
+  });
+
+  const {
+    buildTodoReminderMail,
+    createTodoReminderEmailMessage,
+  } = require(path.join(ROOT, 'server.js'));
+
+  const snapshot = [
+    {
+      id: 1,
+      title: '提交周报',
+      category: '开发',
+      priority: 'urgent',
+      due_date: '2026-05-18',
+      notes: '带上会议纪要',
+      sort_order: 1,
+    },
+    {
+      id: 2,
+      title: '空备注任务',
+      category: '测试',
+      priority: 'normal',
+      due_date: '2026-05-18',
+      notes: '',
+      sort_order: 2,
+    },
+  ];
+
+  const mail = buildTodoReminderMail({
+    businessDate: '2026-05-18',
+    snapshot,
+  });
+  assert.equal(mail.subject, '待办到期提醒 (2026-05-18)');
+  assert.match(mail.text, /日期: 2026-05-18/);
+  assert.match(mail.text, /待办数: 2/);
+  assert.match(mail.text, /1\. 提交周报/);
+  assert.match(mail.text, /截止日期: 2026-05-18/);
+  assert.match(mail.text, /备注: 带上会议纪要/);
+  assert.match(mail.text, /2\. 空备注任务/);
+  assert.equal((mail.text.match(/备注:/g) || []).length, 1);
+  assert.doesNotMatch(mail.text, /分类|优先级|紧急|重要|普通/);
+
+  const message = createTodoReminderEmailMessage({
+    to: 'notify@example.com',
+    businessDate: '2026-05-18',
+    snapshot,
+  });
+  assert.equal(message.from, 'sender@qq.com');
+  assert.equal(message.to, 'notify@example.com');
+  assert.equal(message.subject, mail.subject);
+  assert.equal(message.text, mail.text);
+  assert.equal(message.textEncoding, 'base64');
+  assert.equal(message.html, undefined);
+});
+
+test('todo reminder service sends once per day and records empty days after the configured time', async (t) => {
+  const db = loadFreshDb(t);
+  const { createTodoReminderService } = require(path.join(ROOT, 'server.js'));
+  let current = new Date('2026-05-17T23:30:00.000Z');
+  const sent = [];
+
+  db.saveTodoReminderSettings({
+    enabled: true,
+    recipientEmail: 'notify@example.com',
+    sendTime: '08:00',
+  }, { mailReady: true });
+  db.createTodo({
+    title: 'Submit report',
+    due_date: '2026-05-18',
+    priority: 'important',
+    category: '待办',
+    notes: 'Bring context',
+  });
+
+  const service = createTodoReminderService({
+    db,
+    mailReady: () => true,
+    sendMail: async (mail) => { sent.push(mail); },
+    now: () => current,
+    intervalMs: 100000,
+  });
+
+  await service.tick();
+  assert.equal(sent.length, 0);
+
+  current = new Date('2026-05-18T00:01:00.000Z');
+  await service.tick();
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].subject, /待办到期提醒 \(2026-05-18\)/);
+  assert.match(sent[0].text, /Submit report/);
+  assert.match(sent[0].text, /截止日期: 2026-05-18/);
+  assert.match(sent[0].text, /Bring context/);
+  assert.equal(sent[0].textEncoding, 'base64');
+  assert.equal(sent[0].html, undefined);
+  assert.doesNotMatch(sent[0].text, /分类|优先级/);
+  assert.equal(db.getTodoReminderState().status, 'sent');
+
+  await service.tick();
+  assert.equal(sent.length, 1);
+
+  current = new Date('2026-05-19T00:01:00.000Z');
+  await service.tick();
+  const state = db.getTodoReminderState();
+  assert.equal(state.businessDate, '2026-05-19');
+  assert.equal(state.status, 'empty');
+  assert.equal(sent.length, 1);
+});
+
+test('todo reminder service retries the same snapshot after failure and ignores later same-day todos', async (t) => {
+  const db = loadFreshDb(t);
+  const { createTodoReminderService } = require(path.join(ROOT, 'server.js'));
+  let current = new Date('2026-05-18T00:02:00.000Z');
+  let attempts = 0;
+  const delivered = [];
+
+  db.saveTodoReminderSettings({
+    enabled: true,
+    recipientEmail: 'notify@example.com',
+    sendTime: '08:00',
+  }, { mailReady: true });
+  db.createTodo({
+    title: 'First task',
+    due_date: '2026-05-18',
+    priority: 'important',
+    category: '待办',
+    notes: 'original snapshot',
+  });
+
+  const service = createTodoReminderService({
+    db,
+    mailReady: () => true,
+    now: () => current,
+    sendMail: async (mail) => {
+      attempts++;
+      if (attempts === 1) throw new Error('SMTP down');
+      delivered.push(mail);
+    },
+    intervalMs: 100000,
+  });
+
+  await service.tick();
+  assert.equal(attempts, 1);
+  assert.equal(db.getTodoReminderState().status, 'pending');
+  assert.equal(db.getTodoReminderState().snapshot.length, 1);
+  assert.match(db.getTodoReminderState().lastError, /SMTP down/);
+
+  db.createTodo({
+    title: 'Second task',
+    due_date: '2026-05-18',
+    priority: 'urgent',
+    category: '待办',
+    notes: 'should not enter the old snapshot',
+  });
+
+  current = new Date('2026-05-18T01:05:00.000Z');
+  await service.tick();
+  assert.equal(attempts, 2);
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0].text, /First task/);
+  assert.doesNotMatch(delivered[0].text, /Second task/);
+  assert.equal(delivered[0].textEncoding, 'base64');
+  assert.doesNotMatch(delivered[0].text, /分类|优先级/);
+  assert.equal(db.getTodoReminderState().status, 'sent');
+
+  await service.tick();
+  assert.equal(attempts, 2);
+});
+
+test('todo reminder dry-run script reuses the reminder text format', (t) => {
+  const db = loadFreshDb(t);
+  db.createTodo({
+    title: '中文待办',
+    due_date: '2026-05-18',
+    priority: 'urgent',
+    category: '开发',
+    notes: '中文备注',
+  });
+
+  const output = childProcess.execFileSync(process.execPath, [
+    path.join(ROOT, 'scripts', 'send-todo-reminder-mail.js'),
+    '--dry-run',
+    '--to',
+    'notify@example.com',
+    '--date',
+    '2026-05-18',
+  ], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      DATA_DIR: process.env.DATA_DIR,
+      DOTENV_CONFIG_QUIET: 'true',
+      QQ_EMAIL_ACCOUNT: 'sender@qq.com',
+      QQ_EMAIL_AUTH_CODE: 'auth-code',
+    },
+    encoding: 'utf8',
+  });
+  const preview = JSON.parse(output.slice(output.indexOf('{')));
+
+  assert.equal(preview.to, 'notify@example.com');
+  assert.equal(preview.subject, '待办到期提醒 (2026-05-18)');
+  assert.equal(preview.textEncoding, 'base64');
+  assert.match(preview.text, /中文待办/);
+  assert.match(preview.text, /截止日期: 2026-05-18/);
+  assert.match(preview.text, /备注: 中文备注/);
+  assert.doesNotMatch(preview.text, /分类|优先级/);
 });
 
 test('undated logs are saved and searchable from all months only', async (t) => {
@@ -2058,6 +2616,13 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#todoStatDone') !== null, true);
   assert.equal(document.querySelector('#todoFullPanel').closest('#todoView') !== null, true);
   assert.equal(document.querySelector('#todoFullTitle').closest('#todoView') !== null, true);
+  assert.equal(document.querySelector('#todoFullCategory').closest('#todoView') !== null, true);
+  assert.equal(document.querySelector('#todoFullCategory').closest('[data-todo-select-control]').dataset.selectId, 'todoFullCategory');
+  assert.equal(document.querySelector('#todoFullPriority').closest('[data-todo-select-control]').dataset.selectId, 'todoFullPriority');
+  assert.equal(document.querySelector('#todoFullSummary'), null);
+  assert.equal(document.querySelector('#btnTodoFullClear'), null);
+  assert.equal(document.querySelector('#todoFilterTabs [data-filter="undated"]'), null);
+  assert.equal(document.querySelector('#todoCategoryAddForm').closest('#todoView') !== null, true);
   assert.equal(document.querySelector('.todo-panel'), null);
   assert.equal(document.querySelector('#todoSidebarPending'), null);
   assert.equal(document.querySelector('#todoInput'), null);
@@ -2103,6 +2668,9 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiDiaryContextToggle').closest('#aiSettingsPanelAccess') !== null, true);
   assert.equal(document.querySelector('#aiAccessTree').closest('#aiSettingsPanelAccess') !== null, true);
   assert.equal(document.querySelector('#btnAiAccessRefresh').closest('#aiSettingsPanelAccess') !== null, true);
+  assert.equal(document.querySelector('#aiLogWriteToggle'), null);
+  assert.equal(document.querySelector('#aiWriteAccessTree'), null);
+  assert.match(document.querySelector('#aiSettingsPanelAccess').textContent, /开启日志访问后，AI 可在同一范围内提出新增、编辑、删除日志操作/);
   assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiSettingsPanelChat'), null);
   assert.equal(document.querySelector('#aiTavilyApiKeyInput').closest('#aiTavilyConfig') !== null, true);
   assert.equal(document.querySelector('#aiTavilyApiKeyInput').getAttribute('placeholder'), 'tvly-...');
@@ -2175,7 +2743,8 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#fabCapture'), null);
   assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
   assert.equal(document.querySelector('#btnCategoryBack'), null);
-  assert.equal(document.querySelector('#categoryView .category-page-title h2'), null);
+  assert.equal(document.querySelector('#categoryView .category-page-title h2')?.textContent, '分类控制台');
+  assert.equal(document.querySelector('#categoryView .category-page-kicker')?.textContent, '分类管理');
   assert.equal(document.querySelector('#catManagerSummary').closest('.category-page-header') !== null, true);
   assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
   assert.equal(document.querySelector('#catSearchInput').closest('#categorySidebarPanel'), null);
@@ -2226,8 +2795,12 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.equal(document.querySelector('#listView.archive-log-view') !== null, true);
   assert.equal(document.querySelector('#listView .log-archive-kicker'), null);
   assert.equal(document.querySelector('#listView .log-archive-hero #btnNewLog') !== null, true);
+  assert.equal(document.querySelector('#btnNewLog').closest('.log-archive-actions') !== null, true);
   assert.equal(document.querySelector('#btnNewLog .new-log-icon').textContent.trim(), '+');
   assert.equal(document.querySelector('#btnNewLog .new-log-label').textContent.trim(), '新建日志');
+  assert.equal(document.querySelector('#btnResetCardWidth').closest('.log-archive-actions') !== null, true);
+  assert.equal(document.querySelector('#btnResetCardWidth').closest('.log-filter-row'), null);
+  assert.equal(document.querySelector('#btnResetCardWidth').textContent.trim(), '重置宽度');
   assert.equal(document.querySelector('#listTitle').closest('.log-archive-hero') !== null, true);
   assert.equal(document.querySelector('#logCount').closest('.log-archive-hero') !== null, true);
   assert.equal(document.querySelector('#searchInput').closest('.log-archive-toolbar') !== null, true);
@@ -2239,7 +2812,6 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.equal(document.querySelector('#filterSubcategory').closest('.archive-filter-control').style.display, 'none');
   assert.equal(document.querySelector('#filterMonth').closest('.archive-filter-control').querySelector('.archive-filter-trigger').getAttribute('aria-haspopup'), 'listbox');
   assert.equal(document.querySelector('#filterCategoryMenu').getAttribute('role'), 'listbox');
-  assert.equal(document.querySelector('#btnResetCardWidth').closest('.log-filter-row') !== null, true);
   assert.equal(document.querySelector('#logList').closest('.log-archive-track') !== null, true);
 
   assert.match(logListSource, /const ARCHIVE_FILTER_IDS = \['filterCategory', 'filterSubcategory', 'filterMonth'\];/);
@@ -2259,14 +2831,19 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.match(styleSource, /\.archive-log-view\s*\{[\s\S]*--archive-line:/);
   assert.match(styleSource, /\.log-archive-hero\s*\{[\s\S]*border-bottom:\s*1px solid var\(--archive-line\);/);
   assert.doesNotMatch(styleSource, /\.log-archive-kicker\s*\{/);
+  assert.match(styleSource, /\.log-archive-actions\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*min-height:\s*40px;/);
+  assert.match(styleSource, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*border:\s*1px solid rgba\(47, 125, 244, 0\.34\);[\s\S]*background:\s*rgba\(255, 255, 255, 0\.92\);[\s\S]*color:\s*#1d5fd7;/);
+  assert.doesNotMatch(styleSource, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*background:\s*linear-gradient\(135deg, #3f83f8, #2f7df4\);/);
   assert.match(styleSource, /\.archive-log-view\s*\{[\s\S]*font-family:\s*Inter, MiSans, "HarmonyOS Sans SC"/);
-  assert.match(styleSource, /\.new-log-icon\s*\{[\s\S]*border-radius:\s*7px;/);
+  assert.match(styleSource, /\.new-log-icon\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;/);
+  assert.match(styleSource, /\.log-archive-actions #btnResetCardWidth\s*\{[\s\S]*min-height:\s*40px;[\s\S]*background:\s*rgba\(255, 255, 255, 0\.88\);/);
   assert.match(styleSource, /\.log-archive-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(280px, 1fr\) auto;/);
   assert.match(styleSource, /\.log-filter-row\s*\{[\s\S]*justify-content:\s*flex-end;/);
   assert.match(styleSource, /\.archive-native-select\s*\{[\s\S]*opacity:\s*0;[\s\S]*pointer-events:\s*none;/);
   assert.match(styleSource, /\.archive-filter-trigger:hover\s*\{[\s\S]*border-color:\s*rgba\(47, 125, 244, 0\.36\);/);
-  assert.match(styleSource, /\.archive-filter-control\.has-value \.archive-filter-trigger\s*\{[\s\S]*background:\s*linear-gradient/);
+  assert.match(styleSource, /\.archive-filter-control\.has-value \.archive-filter-trigger\s*\{[\s\S]*linear-gradient\(90deg, rgba\(47, 125, 244, 0\.12\) 0 3px, transparent 3px\),[\s\S]*rgba\(255, 255, 255, 0\.96\);/);
+  assert.doesNotMatch(styleSource, /\.archive-filter-control\.has-value \.archive-filter-trigger\s*\{[^}]*linear-gradient\(135deg/);
   assert.match(styleSource, /\.archive-filter-option:hover,\s*\.archive-filter-option:focus-visible\s*\{[\s\S]*background:\s*var\(--archive-mint-soft\);/);
   assert.match(styleSource, /\.archive-filter-option\.selected,\s*\.archive-filter-option\[aria-selected="true"\]\s*\{[\s\S]*background:\s*var\(--archive-fresh-soft\);/);
   assert.match(styleSource, /\.log-archive-track\s*\{[\s\S]*display:\s*flex;[\s\S]*min-height:\s*0;/);
@@ -2337,7 +2914,7 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.match(htmlSource, /id="catViewGraphBtn"[\s\S]*aria-pressed="false"[\s\S]*>图谱<\/button>/);
   assert.match(htmlSource, /<div class="cat-graph-view" id="catGraphView" style="display:none;"><\/div>/);
   assert.match(styleSource, /\.cat-icon-action\s*\{[\s\S]*width:\s*30px;[\s\S]*height:\s*30px;/);
-  assert.match(styleSource, /\.cat-icon-action\.primary\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.cat-icon-action\.primary\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.08\);/);
   assert.match(styleSource, /\.cat-view-toggle\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /\.cat-view-toggle button\[aria-pressed="true"\]\s*\{[\s\S]*background:\s*var\(--color-card\);/);
   assert.match(styleSource, /\.cat-graph-view\s*\{[\s\S]*min-height:\s*min\(500px, 58vh\);/);
@@ -2352,20 +2929,22 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.doesNotMatch(styleSource, /background-size:\s*34px 34px|\.cat-graph-lines line|\.cat-graph-node-count/);
   assert.match(styleSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.cat-graph-node,[\s\S]*\.cat-graph-orbit[\s\S]*transition:\s*none;/);
   assert.match(styleSource, /@media[\s\S]*\.cat-graph-view\s*\{[\s\S]*min-width:\s*560px;[\s\S]*min-height:\s*380px;/);
-  assert.match(styleSource, /\.category-sidebar-panel\s*\{[\s\S]*display:\s*none;[\s\S]*background:\s*var\(--sidebar-bg-subtle\);/);
+  assert.match(styleSource, /\.category-sidebar-panel\s*\{[\s\S]*display:\s*none;[\s\S]*border:\s*1px solid var\(--sidebar-border\);/);
   assert.match(styleSource, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1;/);
   assert.doesNotMatch(styleSource, /category-sidebar-search|category-sidebar-toolbar/);
-  assert.match(styleSource, /\.category-page-search\s*\{[\s\S]*justify-content:\s*flex-end;/);
-  assert.match(styleSource, /\.cat-page-search-input\s*\{[\s\S]*width:\s*min\(460px, 44vw\);/);
+  assert.match(htmlSource, /class="category-page-kicker">分类管理<\/span>[\s\S]*<h2>分类控制台<\/h2>/);
+  assert.match(styleSource, /\.category-page-search\s*\{[\s\S]*justify-content:\s*center;/);
+  assert.match(styleSource, /\.cat-search-input\.cat-page-search-input\s*\{[\s\S]*width:\s*min\(560px, 48vw\);/);
   assert.match(styleSource, /\.category-sidebar-add\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 30px 30px;/);
   assert.match(styleSource, /\.category-sidebar-add\[hidden\]\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.cat-add-row\.category-sidebar-add\[hidden\]\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /\.category-sidebar-panel \.cat-list\s*\{[\s\S]*overflow-y:\s*auto;/);
   assert.match(styleSource, /\.category-page-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(360px, 1fr\);/);
   assert.match(styleSource, /\.category-view\.sub-browse-mode \.category-page-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(280px, 340px\) minmax\(360px, 1fr\);/);
   assert.match(styleSource, /\.category-parent-panel\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /\.category-view\.sub-browse-mode \.category-parent-panel\s*\{[\s\S]*display:\s*flex;/);
-  assert.match(styleSource, /\.cat-manager-summary\s*\{[\s\S]*border:\s*1px solid rgba\(16, 185, 129, 0\.35\);/);
-  assert.match(styleSource, /\.cat-manager-summary::before\s*\{[\s\S]*box-shadow:/);
+  assert.match(styleSource, /\.cat-manager-summary\s*\{[\s\S]*border:\s*1px solid rgba\(148, 163, 184, 0\.32\);/);
+  assert.match(styleSource, /\.cat-manager-summary::before\s*\{[\s\S]*background:\s*var\(--color-success\);/);
   assert.match(categorySource, /summary\.textContent = total;/);
   assert.doesNotMatch(categorySource, /个父分类，/);
   assert.doesNotMatch(categorySource, /个子分类/);
@@ -2374,12 +2953,15 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.match(categorySource, /setupDragAndDrop\(\{[\s\S]*itemSelector: '\.cat-parent-item'/);
   assert.doesNotMatch(categorySource, /data-cat-action/);
   assert.doesNotMatch(categorySource, /moveCategory/);
-  assert.match(styleSource, /\.cat-log-count\s*\{[\s\S]*background:\s*var\(--color-primary\);[\s\S]*color:\s*var\(--color-card\);/);
+  assert.match(categorySource, /class="cat-parent-log-count"[\s\S]*\$\{c\.log_count \|\| 0\} 日志/);
+  assert.match(categorySource, /class="cat-sub-drag-handle"/);
+  assert.match(styleSource, /\.cat-log-count\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.08\);[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.cat-detail-sub-list\s*\{[\s\S]*border:\s*1px solid rgba\(148, 163, 184, 0\.22\);/);
   assert.match(styleSource, /\.cat-detail-log-count\s*\{[\s\S]*min-width:\s*30px;/);
   assert.match(styleSource, /\.cat-parent-select \.cat-sub-count\s*\{[\s\S]*border:\s*1px solid var\(--color-border\);/);
   assert.match(styleSource, /\.cat-sub-browse-sidebar\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.cat-sub-log-list\s*\{[\s\S]*flex-direction:\s*column;/);
-  assert.match(styleSource, /\.cat-sub-log-card\s*\{[\s\S]*min-height:\s*46px;[\s\S]*border:\s*1px solid var\(--color-border\);/);
+  assert.match(styleSource, /\.cat-sub-log-card\s*\{[\s\S]*min-height:\s*46px;[\s\S]*border:\s*1px solid rgba\(148, 163, 184, 0\.24\);/);
   assert.match(styleSource, /\.cat-sub-log-index\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.12\);/);
   assert.match(styleSource, /\.cat-sub-log-date\s*\{[\s\S]*border-radius:\s*999px;/);
   assert.match(styleSource, /\.cat-sub-log-card:hover \.cat-sub-log-arrow/);
@@ -2393,7 +2975,12 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   const priorityStyleBlock = styleSource.match(/\.todo-priority\s*\{[\s\S]*?\n\}/)?.[0] || '';
 
   assert.match(htmlSource, /<option value="none">无<\/option>[\s\S]*<option value="normal">普通<\/option>[\s\S]*<option value="important">重要<\/option>[\s\S]*<option value="urgent">紧急<\/option>/);
-  assert.match(htmlSource, /data-filter="pending"[\s\S]*>待办<\/button>[\s\S]*data-filter="undated"[\s\S]*>无日期<\/button>[\s\S]*data-filter="done"[\s\S]*>已完成<\/button>/);
+  assert.match(htmlSource, /id="todoFullCategory"/);
+  assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullCategory"[\s\S]*id="todoFullCategoryMenu" role="listbox"/);
+  assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullPriority"[\s\S]*id="todoFullPriorityMenu" role="listbox"/);
+  assert.match(htmlSource, /id="todoCategoryAddForm"[\s\S]*id="todoCategoryInput"[\s\S]*id="btnTodoCategoryAdd"/);
+  assert.doesNotMatch(htmlSource, /todo-full-summary|id="btnTodoFullClear"/);
+  assert.doesNotMatch(htmlSource, /data-filter="pending"|data-filter="undated"|>无日期<\/button>/);
   assert.doesNotMatch(htmlSource, /data-filter="all"|>全部<\/button>|todo-panel|todoInput|todoList|btnTodoClear|todoSidebar/);
   assert.doesNotMatch(todoSource, /data-action="move-up"/);
   assert.doesNotMatch(todoSource, /data-action="move-down"/);
@@ -2402,19 +2989,35 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.doesNotMatch(todoSource, /todo-notes-preview/);
   assert.doesNotMatch(styleSource, /todo-notes-preview/);
   assert.match(todoSource, /priority: todo\.priority \|\| 'none'/);
+  assert.match(todoSource, /const DEFAULT_TODO_CATEGORY = '待办';/);
+  assert.match(todoSource, /category: todo\.category \|\| DEFAULT_TODO_CATEGORY/);
+  assert.match(todoSource, /apiFetch\('\/api\/todo-categories'\)/);
+  assert.match(todoSource, /function renderTodoFilterTabs\(\)/);
+  assert.match(todoSource, /data-filter="\$\{escHtml\(category\)\}"/);
+  assert.match(todoSource, /data-filter="done"[\s\S]*已完成/);
+  assert.match(todoSource, /data-action="delete-category"/);
+  assert.match(todoSource, /function addTodoCategoryFromForm\(event\)/);
+  assert.match(todoSource, /function deleteTodoCategory\(name\)/);
   assert.match(todoSource, /function priorityBadge\(todo\)/);
   assert.match(todoSource, /const labels = \{ normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' \};/);
   assert.match(todoSource, /const codes = \{ normal: 'P2', important: 'P1', urgent: 'P0' \};/);
-  assert.match(todoSource, /if \(activeFilter === 'all'\) activeFilter = 'undated';/);
+  assert.match(todoSource, /if \(activeFilter === 'all' \|\| activeFilter === 'undated' \|\| activeFilter === 'pending'\) activeFilter = DEFAULT_TODO_CATEGORY;/);
   assert.match(todoSource, /function sortTodosForView\(todos, mode\)/);
-  assert.match(todoSource, /if \(mode === 'pending' \|\| mode === 'done'\) return list\.sort\(dueDateTodoOrder\);/);
-  assert.match(todoSource, /if \(activeFilter === 'pending'\) items = items\.filter\(t => !t\.done && t\.due_date\);/);
-  assert.match(todoSource, /if \(activeFilter === 'undated'\) items = items\.filter\(t => !t\.done && !t\.due_date\);/);
-  assert.match(todoSource, /没有无截止日期的待办/);
+  assert.match(todoSource, /else items = items\.filter\(t => !t\.done && \(t\.category \|\| DEFAULT_TODO_CATEGORY\) === activeFilter\);/);
+  assert.doesNotMatch(todoSource, /没有无截止日期的待办/);
+  assert.doesNotMatch(todoSource, /items = items\.filter\(t => !t\.done && t\.due_date\)/);
+  assert.doesNotMatch(todoSource, /items = items\.filter\(t => !t\.done && !t\.due_date\)/);
   assert.match(todoSource, /export function showTodoView\(\)/);
   assert.match(todoSource, /\$\('#todoView'\)\.style\.display = 'flex';/);
   assert.match(todoSource, /let todoSearchQuery = '';/);
   assert.match(todoSource, /\$\('#todoSearchInput'\)\.addEventListener\('input'/);
+  assert.match(todoSource, /const TODO_SELECT_IDS = \['todoFullCategory', 'todoFullPriority'\];/);
+  assert.match(todoSource, /function syncTodoSelectControls\(\)/);
+  assert.match(todoSource, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/);
+  assert.match(todoSource, /todo-select-option/);
+  assert.match(todoSource, /data-action="clear-completed"/);
+  assert.match(todoSource, /message: '清除所有已完成待办，此操作不可撤销。'/);
+  assert.doesNotMatch(todoSource, /todoFullSummary|btnTodoFullClear/);
   assert.match(todoSource, /String\(t\.notes \|\| ''\)\.toLowerCase\(\)\.includes\(query\)/);
   assert.match(todoSource, /\$\('#todoStatOverdue'\)\.textContent = overdue\.length;/);
   assert.doesNotMatch(todoSource, /priorityDot/);
@@ -2426,9 +3029,44 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-priority\.prio-urgent\s*\{ background: var\(--color-danger\); \}/);
   assert.match(styleSource, /\.todo-view\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.todo-page-stats\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(styleSource, /\.todo-stat-card\s*\{[\s\S]*radial-gradient\(circle at top right, rgba\(47, 125, 244, 0\.12\), transparent 42%\)[\s\S]*box-shadow:\s*0 10px 26px rgba\(15, 23, 42, 0\.06\);/);
+  assert.match(styleSource, /\.todo-stat-card::before\s*\{[\s\S]*linear-gradient\(90deg, rgba\(47, 125, 244, 0\.58\), rgba\(20, 184, 166, 0\.34\)\);/);
+  assert.match(styleSource, /\.todo-category-add\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
+  assert.match(styleSource, /\.todo-category-remove\s*\{[\s\S]*border-radius:\s*999px;/);
+  assert.match(styleSource, /\.todo-category-badge\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.08\);/);
+  assert.match(styleSource, /\.todo-select-control\[data-select-id="todoFullCategory"\]\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
+  assert.match(styleSource, /\.todo-native-select\s*\{[\s\S]*opacity:\s*0;[\s\S]*pointer-events:\s*none;/);
+  assert.match(styleSource, /\.todo-select-trigger:hover\s*\{[\s\S]*border-color:\s*rgba\(47, 125, 244, 0\.36\);/);
+  assert.match(styleSource, /\.todo-select-control\.has-value \.todo-select-trigger\s*\{[\s\S]*linear-gradient\(90deg, rgba\(47, 125, 244, 0\.12\) 0 3px, transparent 3px\),[\s\S]*rgba\(255, 255, 255, 0\.96\);/);
+  assert.doesNotMatch(styleSource, /\.todo-select-control\.has-value \.todo-select-trigger\s*\{[^}]*linear-gradient\(135deg/);
+  assert.match(styleSource, /\.todo-select-option:hover,\s*\.todo-select-option:focus-visible\s*\{[\s\S]*background:\s*var\(--archive-mint-soft\);/);
+  assert.match(styleSource, /\.todo-section-clear\s*\{[\s\S]*width:\s*auto;[\s\S]*min-height:\s*24px;[\s\S]*font-size:\s*0\.68rem;/);
   assert.match(styleSource, /\.todo-page-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(300px, 360px\);/);
   assert.doesNotMatch(styleSource, /body\.sidebar-todo-mode \.todo-panel|body\.sidebar-todo-mode \.calendar-widget|todo-sidebar-stats/);
   assert.match(styleSource, /\.todo-full-form textarea\s*\{[\s\S]*min-height:\s*200px;/);
+});
+
+test('todo reminder UI loads, saves, and displays reminder status in the todo page', () => {
+  const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+
+  assert.match(htmlSource, /id="todoReminderHeading">邮件提醒/);
+  assert.match(htmlSource, /id="todoReminderEnabled"/);
+  assert.match(htmlSource, /id="todoReminderRecipient"/);
+  assert.match(htmlSource, /id="todoReminderTime"/);
+  assert.match(htmlSource, /id="btnTodoReminderSave"/);
+  assert.match(htmlSource, /id="todoReminderStatusText" role="status" aria-live="polite"/);
+  assert.match(todoSource, /apiFetch\('\/api\/todo-reminder-settings'\)/);
+  assert.match(todoSource, /function renderTodoReminderSettings\(\)/);
+  assert.match(todoSource, /function saveTodoReminderSettings\(\)/);
+  assert.match(todoSource, /\$\('#btnTodoReminderSave'\)\.addEventListener\('click', saveTodoReminderSettings\);/);
+  assert.match(todoSource, /const \[todosRes, categoriesRes, reminderRes\] = await Promise\.all\(\[/);
+  assert.match(todoSource, /mailReady:\s*Boolean\(data\.mailReady\)/);
+  assert.match(styleSource, /\.todo-reminder-card\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.todo-reminder-chip\.ready\s*\{[\s\S]*0f766e/);
+  assert.match(styleSource, /\.todo-reminder-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 120px;/);
+  assert.match(styleSource, /\.todo-reminder-status\s*\{[\s\S]*min-height:\s*2\.9em;/);
 });
 
 test('application initialization waits for auth and diary selection before refreshing', () => {
@@ -2495,6 +3133,9 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
 test('AI chat frontend supports local history and fixed thinking mode', () => {
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const aiSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiChat.js'), 'utf8');
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+  const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
+  const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 
   assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
@@ -2513,6 +3154,12 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(appSource, /mode === 'todo'[\s\S]*title\.textContent = '工作日志';[\s\S]*当前为待办页面，侧栏为默认日志导航/);
   assert.match(appSource, /mode === 'todo'[\s\S]*showTodoView\(\)/);
   assert.match(appSource, /function syncMainViewWithSidebarMode\(\)[\s\S]*activeSidebarMode\(\) === 'ai'[\s\S]*showAiChatView\(\)[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*openCategoryManager\(\)[\s\S]*activeSidebarMode\(\) === 'todo'[\s\S]*showTodoView\(\)/);
+  assert.match(editorSource, /const aiSettingsView = \$\('#aiSettingsView'\);/);
+  assert.match(editorSource, /export function showListView\(\)[\s\S]*if \(aiSettingsView\) aiSettingsView\.style\.display = 'none';/);
+  assert.match(editorSource, /function showEditorView\(\)[\s\S]*if \(aiSettingsView\) aiSettingsView\.style\.display = 'none';/);
+  assert.match(todoSource, /export function showTodoView\(\)[\s\S]*\$\('#aiSettingsView'\)\.style\.display = 'none';/);
+  assert.match(categorySource, /export async function openCategoryManager\(\)[\s\S]*\$\('#aiSettingsView'\)\.style\.display = 'none';/);
+  assert.match(categorySource, /export function closeCategoryManager\(\)[\s\S]*\$\('#aiSettingsView'\)\.style\.display = 'none';/);
   assert.match(appSource, /window\.addEventListener\('category-manager-closed'/);
   assert.match(appSource, /window\.addEventListener\('category-log-opened'[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*setSidebarMode\('normal', \{ updateMain: false \}\)/);
   assert.doesNotMatch(appSource, /btnCategoryBack/);
@@ -2540,7 +3187,7 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /model: settings\.model \|\| DEFAULT_MODEL/);
   assert.match(aiSource, /thinkingMode: 'enabled'/);
   assert.match(aiSource, /reasoningEffort: settings\.reasoningEffort \|\| DEFAULT_REASONING/);
-  assert.match(aiSource, /stream: skill \? false : Boolean\(settings\.stream\)/);
+  assert.match(aiSource, /stream: skill \|\| settings\.logContextEnabled \? false : Boolean\(settings\.stream\)/);
   assert.match(aiSource, /userProfile: settings\.userProfile \|\| ''/);
   assert.match(aiSource, /logContextEnabled: Boolean\(settings\.logContextEnabled\)/);
   assert.match(aiSource, /diaryContextEnabled: Boolean\(settings\.diaryContextEnabled\)/);
@@ -2559,6 +3206,7 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /function renderAccessTree\(\)/);
   assert.match(aiSource, /function collectLogAccessPolicyFromPage\(\)/);
   assert.match(aiSource, /logAccessPolicy: collectLogAccessPolicyFromPage\(\)/);
+  assert.doesNotMatch(aiSource, /aiLogWriteToggle|logWriteEnabled/);
   assert.match(aiSource, /\$\('#aiPerplexityApiKeyInput'\)\.value = settings\.perplexityApiKey;/);
   assert.match(aiSource, /\$\('#aiSeedreamApiKeyInput'\)\.value = settings\.seedreamApiKey;/);
   assert.match(aiSource, /function setSettingsTab\(tab\)/);
@@ -2590,8 +3238,14 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /\$\('#aiChatMessages'\)\.addEventListener\('click', async \(event\) => \{[\s\S]*await handleInternalLogLinkClick\(event\)/);
   assert.match(aiSource, /\$\('#aiAccessTree'\)\?\.addEventListener\('change'/);
   assert.match(aiSource, /\$\('#btnAiAccessRefresh'\)\?\.addEventListener\('click'/);
-  assert.match(aiSource, /apiFetch\(`\/api\/ai\/skills\/\$\{encodeURIComponent\(toolCall\.skillId\)\}\/run`/);
-  assert.match(aiSource, /data\.toolCall\?\.skillId === 'westock'/);
+  assert.match(aiSource, /apiFetch\(endpoint, \{/);
+  assert.match(aiSource, /endpoint = toolCall\.skillId === 'logs'/);
+  assert.match(aiSource, /'\/api\/ai\/logs\/run'/);
+  assert.match(aiSource, /async function refreshAfterLogToolRun\(\)/);
+  assert.match(aiSource, /import\('\.\/categories\.js'\)/);
+  assert.match(aiSource, /\['westock', 'logs'\]\.includes\(data\.toolCall\?\.skillId\)/);
+  assert.match(aiSource, /renderLogToolPreview\(toolCall\)/);
+  assert.match(aiSource, /确认删除这条日志？此操作不可撤销/);
   assert.doesNotMatch(aiSource, /function isImageGenerationRequest\(text\)/);
   assert.doesNotMatch(aiSource, /isImageGenerationRequest\(content\)/);
   assert.match(aiSource, /function renderImageGenerationCard\(imageGeneration, index/);
@@ -2630,6 +3284,7 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(aiSource, /localStorage\.removeItem\(API_KEY_STORAGE_KEY\);/);
   assert.match(aiSource, /function openSettingsPage\(tab = 'chat'\)/);
   assert.match(aiSource, /function closeSettingsPage\(\)/);
+  assert.match(aiSource, /function closeSettingsPage\(\)[\s\S]*setMainView\('aiChatView'\);/);
   assert.match(aiSource, /function saveSettingsFromPage\(\)/);
   assert.match(aiSource, /\$\('#btnAiApiKey'\)\.addEventListener\('click', \(\) => openSettingsPage\('chat'\)\);/);
   assert.match(aiSource, /\$\('#btnAiSettingsBack'\)\.addEventListener\('click', closeSettingsPage\);/);
@@ -2724,6 +3379,7 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(styleSource, /\.ai-settings-tabs\s*\{[\s\S]*display:\s*grid;/);
   assert.match(styleSource, /\.ai-settings-panel\.active\s*\{[\s\S]*display:\s*grid;/);
   assert.match(styleSource, /\.ai-access-tree\s*\{[\s\S]*display:\s*grid;/);
+  assert.doesNotMatch(styleSource, /\.ai-write-access-head/);
   assert.match(styleSource, /\.ai-access-parent\s*\{[\s\S]*border:\s*1px solid var\(--color-border\);/);
   assert.match(styleSource, /\.ai-access-sublist\s*\{[\s\S]*padding:\s*0 12px 10px 36px;/);
   assert.match(styleSource, /\.ai-skill-settings-grid\s*\{[\s\S]*display:\s*grid;/);
@@ -2733,6 +3389,9 @@ test('AI chat frontend supports local history and fixed thinking mode', () => {
   assert.match(styleSource, /\.ai-skill-config-card\.expanded \.ai-skill-config-chevron\s*\{[\s\S]*transform:\s*rotate\(180deg\);/);
   assert.match(styleSource, /\.ai-skill-config\s*\{[\s\S]*border-top:\s*1px solid var\(--color-border\);/);
   assert.doesNotMatch(styleSource, /\.ai-skill-config summary/);
+  assert.match(styleSource, /\.ai-tool-card\.danger\s*\{[\s\S]*border-color:\s*rgba\(var\(--color-danger-rgb\), 0\.28\);/);
+  assert.match(styleSource, /\.ai-log-tool-summary\s*\{[\s\S]*display:\s*grid;/);
+  assert.match(styleSource, /\.ai-log-tool-fields\s*\{[\s\S]*grid-template-columns:\s*repeat\(auto-fit, minmax\(120px, 1fr\)\);/);
   assert.match(styleSource, /\.ai-image-card\s*\{[\s\S]*border:\s*1px solid rgba\(var\(--color-primary-rgb\), 0\.18\);/);
   assert.match(styleSource, /\.ai-image-optimizing\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /\.ai-image-prompt-options\s*\{[\s\S]*display:\s*inline-flex;/);
@@ -2980,7 +3639,8 @@ test('mobile layout gives filters and editor controls touch-friendly responsive 
 
   assert.match(mobileStyles, /\.toolbar\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*repeat\(2,/);
   assert.match(mobileStyles, /\.log-archive-hero\s*\{[\s\S]*flex-direction:\s*column;/);
-  assert.match(mobileStyles, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*width:\s*100%;/);
+  assert.match(mobileStyles, /\.log-archive-actions\s*\{[\s\S]*width:\s*100%;/);
+  assert.match(mobileStyles, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*flex:\s*1 1 auto;/);
   assert.match(mobileStyles, /\.search-box,[\s\S]*#filterSubcategory\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(mobileStyles, /\.archive-filter-control\[data-select-id="filterSubcategory"\]\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(mobileStyles, /\.editor-meta\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,/);
@@ -3078,9 +3738,11 @@ test('content editor defers textarea changes until IME composition ends', async 
 
 test('shortcut matching ignores IME composition keyboard events', async () => {
   const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'shortcuts.js')).href + `?ime=${Date.now()}`;
-  const { findAction, isImeComposingEvent } = await import(moduleUrl);
+  const { eventMatches, findAction, isImeComposingEvent } = await import(moduleUrl);
 
   assert.equal(isImeComposingEvent({ key: 'Process', keyCode: 229 }), true);
+  assert.equal(eventMatches({ ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }, 'Ctrl+S'), false);
+  assert.equal(eventMatches({ key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }, null), false);
   assert.equal(findAction({ key: 'Process', keyCode: 229, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), null);
   assert.equal(findAction({ key: 's', isComposing: true, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), null);
 });

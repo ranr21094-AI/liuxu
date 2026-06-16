@@ -67,7 +67,9 @@ export function normalizeKeys(combo) {
 
 // Check if a keyboard event matches a combo string
 export function eventMatches(e, combo) {
+  if (typeof combo !== 'string') return false;
   const parsed = parseKeys(combo);
+  if (!parsed.key || typeof e?.key !== 'string') return false;
   const ctrlOk = parsed.ctrl === (e.ctrlKey || e.metaKey);
   const altOk = parsed.alt === e.altKey;
   const keyOk = parsed.key.toLowerCase() === e.key.toLowerCase();

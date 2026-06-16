@@ -15,6 +15,7 @@ import { createContentEditor } from './contentEditor.js';
 const editorView = $('#editorView');
 const categoryView = $('#categoryView');
 const aiChatView = $('#aiChatView');
+const aiSettingsView = $('#aiSettingsView');
 const todoView = $('#todoView');
 const editTitle = $('#editTitle');
 const editContent = $('#editContent');
@@ -845,6 +846,7 @@ export function showListView() {
   editorView.style.display = 'none';
   categoryView.style.display = 'none';
   if (aiChatView) aiChatView.style.display = 'none';
+  if (aiSettingsView) aiSettingsView.style.display = 'none';
   if (todoView) todoView.style.display = 'none';
   state.editingId = null;
   clearAutoSave();
@@ -860,6 +862,7 @@ function showEditorView() {
   listView.style.display = 'none';
   categoryView.style.display = 'none';
   if (aiChatView) aiChatView.style.display = 'none';
+  if (aiSettingsView) aiSettingsView.style.display = 'none';
   if (todoView) todoView.style.display = 'none';
   editorView.style.display = 'flex';
 }

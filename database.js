@@ -9,6 +9,8 @@ const OTHER_CATEGORY = '\u5176\u4ed6';
 const PRIVATE_UPLOADS_FILE = path.join(DATA_DIR, 'private-uploads.json');
 const AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
+const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
+const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   model: 'deepseek-v4-flash',
@@ -36,12 +38,30 @@ const DEFAULT_AI_SETTINGS = {
 const cache = {
   logs: null,
   todos: null,
+  todoCategories: null,
   categories: null,
   privateUploads: null,
   aiChats: null,
   aiSettings: null,
+  todoReminderSettings: null,
+  todoReminderState: null,
   maxLogId: 0,
   maxTodoId: 0,
+};
+
+const DEFAULT_TODO_REMINDER_SETTINGS = {
+  enabled: false,
+  recipientEmail: '',
+  sendTime: '08:00',
+};
+
+const DEFAULT_TODO_REMINDER_STATE = {
+  businessDate: '',
+  capturedAt: '',
+  status: 'idle',
+  snapshot: [],
+  sentAt: '',
+  lastError: '',
 };
 
 function ensureDataDir() {
@@ -122,6 +142,80 @@ function normalizeFiniteNumber(value, fallback, { min = -Infinity, max = Infinit
 
 function normalizeString(value, fallback = '') {
   return typeof value === 'string' ? value : fallback;
+}
+
+function isValidEmail(value) {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function isValidTime24h(value) {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) return false;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
+}
+
+function normalizeTodoReminderSnapshotItem(item) {
+  if (!isPlainObject(item)) return null;
+  const id = toPositiveInteger(item.id);
+  if (!id) return null;
+  return {
+    id,
+    title: normalizeString(item.title, '').trim().slice(0, 200),
+    category: normalizeTodoCategoryName(item.category),
+    priority: normalizeTodoPriority(item.priority),
+    due_date: isValidDate(item.due_date) ? item.due_date : '',
+    notes: normalizeString(item.notes, '').slice(0, 1000),
+    sort_order: Number.isFinite(Number(item.sort_order)) ? Number(item.sort_order) : 0,
+  };
+}
+
+function normalizeTodoReminderSettings(data, { mailReady = true } = {}) {
+  const source = isPlainObject(data) ? data : {};
+  const enabled = typeof source.enabled === 'boolean' ? source.enabled : DEFAULT_TODO_REMINDER_SETTINGS.enabled;
+  const recipientEmail = normalizeString(source.recipientEmail, '').trim().slice(0, 320);
+  const sendTime = normalizeString(source.sendTime, DEFAULT_TODO_REMINDER_SETTINGS.sendTime).trim();
+  if (recipientEmail && !isValidEmail(recipientEmail)) {
+    return { error: 'Invalid reminder recipientEmail' };
+  }
+  if (!isValidTime24h(sendTime)) {
+    return { error: 'Invalid reminder sendTime' };
+  }
+  if (enabled && !recipientEmail) {
+    return { error: 'Reminder recipientEmail is required when reminders are enabled' };
+  }
+  if (enabled && !mailReady) {
+    return { error: 'QQ mail credentials are required when reminders are enabled' };
+  }
+  return {
+    enabled,
+    recipientEmail,
+    sendTime,
+  };
+}
+
+function normalizeTodoReminderState(data) {
+  const source = isPlainObject(data) ? data : {};
+  const businessDate = isValidDate(source.businessDate) ? source.businessDate : '';
+  const capturedAt = normalizeString(source.capturedAt, '').trim().slice(0, 40);
+  const sentAt = normalizeString(source.sentAt, '').trim().slice(0, 40);
+  const lastError = normalizeString(source.lastError, '').trim().slice(0, 500);
+  const status = ['idle', 'pending', 'empty', 'sent'].includes(source.status)
+    ? source.status
+    : DEFAULT_TODO_REMINDER_STATE.status;
+  const snapshot = Array.isArray(source.snapshot)
+    ? source.snapshot.map(normalizeTodoReminderSnapshotItem).filter(Boolean)
+    : [];
+  return {
+    businessDate,
+    capturedAt,
+    status,
+    snapshot,
+    sentAt,
+    lastError,
+  };
 }
 
 function readLogs() {
@@ -317,17 +411,29 @@ function normalizeAiSettings(data) {
   const westockSource = isPlainObject(skillsSource.westock) ? skillsSource.westock : {};
   const perplexitySource = isPlainObject(skillsSource.perplexity) ? skillsSource.perplexity : {};
   const policySource = isPlainObject(source.logAccessPolicy) ? source.logAccessPolicy : null;
-  const deniedSource = isPlainObject(policySource?.deniedSubcategories) ? policySource.deniedSubcategories : {};
-  const deniedSubcategories = {};
-  Object.entries(deniedSource).forEach(([parent, subs]) => {
-    if (typeof parent !== 'string' || !Array.isArray(subs)) return;
-    const cleanParent = parent.trim().slice(0, 80);
-    const cleanSubs = [...new Set(subs
-      .filter(sub => typeof sub === 'string')
-      .map(sub => sub.trim().slice(0, 80))
-      .filter(Boolean))];
-    if (cleanParent && cleanSubs.length) deniedSubcategories[cleanParent] = cleanSubs;
-  });
+  const normalizePolicy = (policy) => {
+    if (!policy) return null;
+    const deniedSource = isPlainObject(policy.deniedSubcategories) ? policy.deniedSubcategories : {};
+    const deniedSubcategories = {};
+    Object.entries(deniedSource).forEach(([parent, subs]) => {
+      if (typeof parent !== 'string' || !Array.isArray(subs)) return;
+      const cleanParent = parent.trim().slice(0, 80);
+      const cleanSubs = [...new Set(subs
+        .filter(sub => typeof sub === 'string')
+        .map(sub => sub.trim().slice(0, 80))
+        .filter(Boolean))];
+      if (cleanParent && cleanSubs.length) deniedSubcategories[cleanParent] = cleanSubs;
+    });
+    return {
+      allowedParents: Array.isArray(policy.allowedParents)
+        ? [...new Set(policy.allowedParents
+          .filter(parent => typeof parent === 'string')
+          .map(parent => parent.trim().slice(0, 80))
+          .filter(Boolean))]
+        : [],
+      deniedSubcategories,
+    };
+  };
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
     model,
@@ -348,15 +454,7 @@ function normalizeAiSettings(data) {
       ? source.seedreamSize.trim().slice(0, 40)
       : DEFAULT_AI_SETTINGS.seedreamSize,
     seedreamWatermark: typeof source.seedreamWatermark === 'boolean' ? source.seedreamWatermark : DEFAULT_AI_SETTINGS.seedreamWatermark,
-    logAccessPolicy: policySource ? {
-      allowedParents: Array.isArray(policySource.allowedParents)
-        ? [...new Set(policySource.allowedParents
-          .filter(parent => typeof parent === 'string')
-          .map(parent => parent.trim().slice(0, 80))
-          .filter(Boolean))]
-        : [],
-      deniedSubcategories,
-    } : null,
+    logAccessPolicy: normalizePolicy(policySource),
     skills: {
       westock: {
         enabled: typeof westockSource.enabled === 'boolean' ? westockSource.enabled : true,
@@ -392,6 +490,61 @@ function writeAiSettings(data) {
   fs.writeFileSync(tmp, JSON.stringify(cache.aiSettings, null, 2), 'utf-8');
   fs.renameSync(tmp, AI_SETTINGS_FILE);
   return cache.aiSettings;
+}
+
+function readTodoReminderSettings() {
+  if (cache.todoReminderSettings !== null) return cache.todoReminderSettings;
+  ensureDataDir();
+  if (!fs.existsSync(TODO_REMINDER_SETTINGS_FILE)) {
+    cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
+    return cache.todoReminderSettings;
+  }
+  try {
+    const normalized = normalizeTodoReminderSettings(JSON.parse(fs.readFileSync(TODO_REMINDER_SETTINGS_FILE, 'utf-8')));
+    cache.todoReminderSettings = normalized.error ? { ...DEFAULT_TODO_REMINDER_SETTINGS } : normalized;
+    return cache.todoReminderSettings;
+  } catch (err) {
+    console.error('Failed to parse todo-reminder-settings.json:', err.message);
+    cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
+    return cache.todoReminderSettings;
+  }
+}
+
+function writeTodoReminderSettings(data, options = {}) {
+  ensureDataDir();
+  const normalized = normalizeTodoReminderSettings(data, options);
+  if (normalized.error) return normalized;
+  cache.todoReminderSettings = normalized;
+  const tmp = TODO_REMINDER_SETTINGS_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cache.todoReminderSettings, null, 2), 'utf-8');
+  fs.renameSync(tmp, TODO_REMINDER_SETTINGS_FILE);
+  return cache.todoReminderSettings;
+}
+
+function readTodoReminderState() {
+  if (cache.todoReminderState !== null) return cache.todoReminderState;
+  ensureDataDir();
+  if (!fs.existsSync(TODO_REMINDER_STATE_FILE)) {
+    cache.todoReminderState = { ...DEFAULT_TODO_REMINDER_STATE, snapshot: [] };
+    return cache.todoReminderState;
+  }
+  try {
+    cache.todoReminderState = normalizeTodoReminderState(JSON.parse(fs.readFileSync(TODO_REMINDER_STATE_FILE, 'utf-8')));
+    return cache.todoReminderState;
+  } catch (err) {
+    console.error('Failed to parse todo-reminder-state.json:', err.message);
+    cache.todoReminderState = { ...DEFAULT_TODO_REMINDER_STATE, snapshot: [] };
+    return cache.todoReminderState;
+  }
+}
+
+function writeTodoReminderState(data) {
+  ensureDataDir();
+  cache.todoReminderState = normalizeTodoReminderState(data);
+  const tmp = TODO_REMINDER_STATE_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(cache.todoReminderState, null, 2), 'utf-8');
+  fs.renameSync(tmp, TODO_REMINDER_STATE_FILE);
+  return cache.todoReminderState;
 }
 
 function markPrivateUpload(filename) {
@@ -603,6 +756,13 @@ function getStats(diaryUnlocked = true, referenceDate = new Date()) {
 // Todo CRUD
 
 const TODOS_FILE = path.join(DATA_DIR, 'todos.json');
+const TODO_CATEGORIES_FILE = path.join(DATA_DIR, 'todo-categories.json');
+const DEFAULT_TODO_CATEGORY = '\u5f85\u529e';
+
+function normalizeTodoCategoryName(value, fallback = DEFAULT_TODO_CATEGORY) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  return name ? name.slice(0, 24) : fallback;
+}
 
 function readTodos() {
   if (cache.todos !== null) return cache.todos;
@@ -630,6 +790,72 @@ function writeTodos(todos) {
   fs.renameSync(tmp, TODOS_FILE);
 }
 
+function readTodoCategories() {
+  if (cache.todoCategories !== null) return cache.todoCategories;
+  ensureDataDir();
+  let categories = [];
+  if (fs.existsSync(TODO_CATEGORIES_FILE)) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(TODO_CATEGORIES_FILE, 'utf-8'));
+      categories = Array.isArray(saved) ? saved : [];
+    } catch (err) {
+      console.error('Failed to parse todo-categories.json:', err.message);
+    }
+  }
+  const names = new Set([DEFAULT_TODO_CATEGORY]);
+  categories.forEach(name => names.add(normalizeTodoCategoryName(name)));
+  readTodos().forEach(todo => names.add(normalizeTodoCategoryName(todo.category)));
+  cache.todoCategories = [...names];
+  return cache.todoCategories;
+}
+
+function writeTodoCategories(categories) {
+  ensureDataDir();
+  const names = [];
+  const seen = new Set();
+  [DEFAULT_TODO_CATEGORY, ...categories].forEach(name => {
+    const normalized = normalizeTodoCategoryName(name);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      names.push(normalized);
+    }
+  });
+  cache.todoCategories = names;
+  const tmp = TODO_CATEGORIES_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(names, null, 2), 'utf-8');
+  fs.renameSync(tmp, TODO_CATEGORIES_FILE);
+}
+
+function getTodoCategories() {
+  return [...readTodoCategories()];
+}
+
+function addTodoCategory(name) {
+  const normalized = normalizeTodoCategoryName(name, '');
+  if (!normalized) return { error: 'Invalid todo category name' };
+  const categories = readTodoCategories();
+  if (categories.includes(normalized)) return { category: normalized, categories };
+  const next = [...categories, normalized];
+  writeTodoCategories(next);
+  return { category: normalized, categories: next };
+}
+
+function deleteTodoCategory(name) {
+  const normalized = normalizeTodoCategoryName(name, '');
+  if (!normalized) return { error: 'Invalid todo category name' };
+  if (normalized === DEFAULT_TODO_CATEGORY) return { error: 'Default todo category is protected' };
+  const categories = readTodoCategories();
+  if (!categories.includes(normalized)) return null;
+  const next = categories.filter(category => category !== normalized);
+  const todos = readTodos();
+  todos.forEach(todo => {
+    if (normalizeTodoCategoryName(todo.category) === normalized) todo.category = DEFAULT_TODO_CATEGORY;
+  });
+  writeTodos(todos);
+  writeTodoCategories(next);
+  return { categories: next };
+}
+
 function getAllTodos(query = {}) {
   let todos = readTodos();
 
@@ -650,6 +876,7 @@ function getAllTodos(query = {}) {
     ...t,
     notes: typeof t.notes === 'string' ? t.notes : '',
     priority: normalizeTodoPriority(t.priority),
+    category: normalizeTodoCategoryName(t.category),
     due_date: t.due_date || null,
   }));
 }
@@ -672,10 +899,12 @@ function createTodo(data) {
     sort_order: data.sort_order !== undefined ? data.sort_order : 0,
     due_date: data.due_date || null,
     priority: normalizeTodoPriority(data.priority),
+    category: normalizeTodoCategoryName(data.category),
     notes: typeof data.notes === 'string' ? data.notes : '',
     created_at: now,
   };
   todos.push(entry);
+  addTodoCategory(entry.category);
   writeTodos(todos);
   return entry;
 }
@@ -690,6 +919,10 @@ function updateTodo(id, data) {
   if (data.done !== undefined) entry.done = !!data.done;
   if (data.due_date !== undefined) entry.due_date = data.due_date;
   if (data.priority !== undefined) entry.priority = normalizeTodoPriority(data.priority);
+  if (data.category !== undefined) {
+    entry.category = normalizeTodoCategoryName(data.category);
+    addTodoCategory(entry.category);
+  }
   if (data.notes !== undefined) entry.notes = typeof data.notes === 'string' ? data.notes : '';
 
   writeTodos(todos);
@@ -697,6 +930,7 @@ function updateTodo(id, data) {
     ...entry,
     notes: typeof entry.notes === 'string' ? entry.notes : '',
     priority: normalizeTodoPriority(entry.priority),
+    category: normalizeTodoCategoryName(entry.category),
     due_date: entry.due_date || null,
   };
 }
@@ -1002,6 +1236,7 @@ function backup() {
   return {
     logs: readLogs(),
     todos: getAllTodos(),
+    todoCategories: getTodoCategories(),
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
     exportedAt: new Date().toISOString(),
@@ -1140,6 +1375,7 @@ function normalizeTodosForRestore(todos) {
 
     const notes = item.notes === undefined ? '' : item.notes;
     if (typeof notes !== 'string') return { error: `Invalid notes for todo id ${id}` };
+    const category = normalizeTodoCategoryName(item.category);
 
     normalized.push({
       id,
@@ -1148,12 +1384,27 @@ function normalizeTodosForRestore(todos) {
       sort_order: sortOrder,
       due_date: dueDate,
       priority,
+      category,
       notes,
       created_at: normalizeString(item.created_at, now),
     });
   }
 
   return { todos: normalized };
+}
+
+function normalizeTodoCategoriesForRestore(todoCategories, todos) {
+  const names = new Set([DEFAULT_TODO_CATEGORY]);
+  if (todoCategories !== undefined) {
+    if (!Array.isArray(todoCategories)) return { error: 'Invalid todoCategories data' };
+    for (const name of todoCategories) {
+      const normalized = normalizeTodoCategoryName(name, '');
+      if (!normalized) return { error: 'Invalid todo category name' };
+      names.add(normalized);
+    }
+  }
+  todos.forEach(todo => names.add(normalizeTodoCategoryName(todo.category)));
+  return { todoCategories: [...names] };
 }
 
 function normalizeRestoreData(data) {
@@ -1168,6 +1419,9 @@ function normalizeRestoreData(data) {
   const todos = normalizeTodosForRestore(data.todos);
   if (todos.error) return todos;
 
+  const todoCategories = normalizeTodoCategoriesForRestore(data.todoCategories, todos.todos);
+  if (todoCategories.error) return todoCategories;
+
   const categories = normalizeCategoriesForRestore(data.categories);
   if (categories.error) return categories;
 
@@ -1177,6 +1431,7 @@ function normalizeRestoreData(data) {
   return {
     logs: logs.logs,
     todos: todos.todos,
+    todoCategories: todoCategories.todoCategories,
     categories: categories.categories,
     privateUploads: privateUploads.privateUploads,
   };
@@ -1222,9 +1477,11 @@ function restore(data, mode = 'replace') {
       : data.categories;
     const mergedCats = mergeCategoryTrees(existingCats, restoreCats);
     const mergedPrivateUploads = [...new Set([...readPrivateUploads(), ...data.privateUploads])];
+    const mergedTodoCategories = [...new Set([...readTodoCategories(), ...data.todoCategories])];
 
     writeLogs(mergedLogs);
     writeTodos(mergedTodos);
+    writeTodoCategories(mergedTodoCategories);
     writeCategories(mergedCats);
     writePrivateUploads(mergedPrivateUploads);
     mergedLogs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
@@ -1233,6 +1490,7 @@ function restore(data, mode = 'replace') {
 
   writeLogs(data.logs);
   writeTodos(data.todos);
+  writeTodoCategories(data.todoCategories);
   writeCategories((data.categories.length > 0 && typeof data.categories[0] === 'string')
     ? migrateToTree(data.categories)
     : data.categories);
@@ -1302,4 +1560,45 @@ function mergeCategoryTrees(existing, incoming) {
   return merged;
 }
 
-module.exports = { getAll, getById, create, update, remove, getStats, reorderLogs, getAllTodos, createTodo, updateTodo, removeTodo, removeCompletedTodos, reorderTodos, getAllCategories, addCategory, renameCategory, deleteCategory, reorderCategories, reorderSubcategories, setCategoryCalendarDayVisible, getAiChats: readAiChats, saveAiChats: writeAiChats, getAiSettings: readAiSettings, saveAiSettings: writeAiSettings, backup, restore, checkDataIntegrity, isDiaryCategory, isSafeUploadFilename, isPrivateUpload, markPrivateUpload, unmarkPrivateUpload, extractLocalUploadFilenames };
+module.exports = {
+  getAll,
+  getById,
+  create,
+  update,
+  remove,
+  getStats,
+  reorderLogs,
+  getAllTodos,
+  createTodo,
+  updateTodo,
+  removeTodo,
+  removeCompletedTodos,
+  reorderTodos,
+  getTodoCategories,
+  addTodoCategory,
+  deleteTodoCategory,
+  getTodoReminderSettings: readTodoReminderSettings,
+  saveTodoReminderSettings: writeTodoReminderSettings,
+  getTodoReminderState: readTodoReminderState,
+  saveTodoReminderState: writeTodoReminderState,
+  getAllCategories,
+  addCategory,
+  renameCategory,
+  deleteCategory,
+  reorderCategories,
+  reorderSubcategories,
+  setCategoryCalendarDayVisible,
+  getAiChats: readAiChats,
+  saveAiChats: writeAiChats,
+  getAiSettings: readAiSettings,
+  saveAiSettings: writeAiSettings,
+  backup,
+  restore,
+  checkDataIntegrity,
+  isDiaryCategory,
+  isSafeUploadFilename,
+  isPrivateUpload,
+  markPrivateUpload,
+  unmarkPrivateUpload,
+  extractLocalUploadFilenames,
+};

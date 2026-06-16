@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node scripts/build-editor.mjs",
     "start": "npm run build && node server.js",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test",
+    "todo:reminder:test": "node scripts/send-todo-reminder-mail.js"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
@@ -18,7 +19,8 @@
     "express": "^4.21.0",
     "katex": "^0.16.47",
     "marked": "^18.0.3",
-    "multer": "^2.1.1"
+    "multer": "^2.1.1",
+    "nodemailer": "^6.9.7"
   },
   "devDependencies": {
     "dompurify": "^3.4.3",

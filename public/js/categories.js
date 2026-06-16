@@ -253,9 +253,14 @@ function renderParentList() {
     <div class="cat-parent-item ${c.name === selectedCategoryName ? 'active' : ''}" data-cat="${escHtml(c.name)}" draggable="${!isSearching}">
       <span class="cat-drag-handle ${isSearching ? 'disabled' : ''}" title="${isSearching ? '搜索时暂不排序' : '拖动排序'}">⋮⋮</span>
       <button type="button" class="cat-parent-select" data-cat="${escHtml(c.name)}">
-        <span class="cat-parent-name">${escHtml(c.name)}</span>
-        ${isProtectedRootCategory(c.name) ? '<span class="cat-default-tag">不可删除</span>' : ''}
-        <span class="cat-sub-count" title="子分类数量">${(c.sub || []).length}</span>
+        <span class="cat-parent-main">
+          <span class="cat-parent-name">${escHtml(c.name)}</span>
+          ${isProtectedRootCategory(c.name) ? '<span class="cat-default-tag">不可删除</span>' : ''}
+        </span>
+        <span class="cat-parent-meta">
+          <span class="cat-parent-log-count" title="日志数量">${c.log_count || 0} 日志</span>
+          <span class="cat-sub-count" title="子分类数量">${(c.sub || []).length}</span>
+        </span>
       </button>
     </div>
   `).join('');
@@ -290,6 +295,7 @@ function renderCategoryDetail() {
   editingSubcategory = null;
   $('#catSubList').innerHTML = (cat.sub || []).map(s => `
     <div class="cat-detail-sub-item" data-sub="${escHtml(s)}" tabindex="0" role="button" draggable="true" aria-label="浏览子分类：${escHtml(s)}">
+      <span class="cat-sub-drag-handle" aria-hidden="true">⋮⋮</span>
       <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
       <span class="cat-detail-sub-name">${escHtml(s)}</span>
       <div class="cat-detail-sub-actions">
@@ -375,6 +381,7 @@ export async function openCategoryManager() {
   $('#listView').style.display = 'none';
   $('#editorView').style.display = 'none';
   $('#aiChatView').style.display = 'none';
+  $('#aiSettingsView').style.display = 'none';
   $('#todoView').style.display = 'none';
   $('#categoryView').style.display = 'flex';
   renderParentList();
@@ -384,6 +391,7 @@ export async function openCategoryManager() {
 export function closeCategoryManager() {
   $('#categoryView').style.display = 'none';
   $('#aiChatView').style.display = 'none';
+  $('#aiSettingsView').style.display = 'none';
   $('#todoView').style.display = 'none';
   $('#listView').style.display = 'flex';
   loadLogs();

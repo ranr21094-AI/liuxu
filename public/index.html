@@ -143,10 +143,13 @@
             <span class="log-count" id="logCount"></span>
           </div>
         </div>
-        <button class="btn-primary" id="btnNewLog">
-          <span class="new-log-icon" aria-hidden="true">+</span>
-          <span class="new-log-label">新建日志</span>
-        </button>
+        <div class="log-archive-actions">
+          <button class="btn-primary" id="btnNewLog">
+            <span class="new-log-icon" aria-hidden="true">+</span>
+            <span class="new-log-label">新建日志</span>
+          </button>
+          <button class="btn-secondary btn-sm" id="btnResetCardWidth" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">重置宽度</button>
+        </div>
       </div>
 
       <div class="toolbar log-archive-toolbar" aria-label="日志筛选工具">
@@ -189,7 +192,6 @@
             </button>
             <div class="archive-filter-menu" id="filterMonthMenu" role="listbox" hidden></div>
           </div>
-          <button class="btn-secondary btn-sm" id="btnResetCardWidth" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">🔲</button>
         </div>
       </div>
 
@@ -207,9 +209,7 @@
       <div class="todo-page-header">
         <div>
           <h2>待办事项</h2>
-          <div class="todo-full-summary" id="todoFullSummary">0 项待办</div>
         </div>
-        <button class="btn-todo-clear todo-page-clear" id="btnTodoFullClear" style="display:none">清除已完成</button>
       </div>
       <div class="todo-page-stats" aria-label="待办统计">
         <div class="todo-stat-card"><span>待办</span><strong id="todoStatPending">0</strong></div>
@@ -219,10 +219,12 @@
       </div>
       <div class="todo-page-controls">
         <div class="todo-filter-tabs" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
-          <button class="active" data-filter="pending" role="tab" aria-selected="true">待办</button>
-          <button data-filter="undated" role="tab" aria-selected="false">无日期</button>
-          <button data-filter="done" role="tab" aria-selected="false">已完成</button>
         </div>
+        <form class="todo-category-add" id="todoCategoryAddForm" autocomplete="off">
+          <label class="sr-only" for="todoCategoryInput">新增待办分类</label>
+          <input type="text" id="todoCategoryInput" placeholder="新增分类..." maxlength="24">
+          <button type="submit" class="btn-secondary btn-sm" id="btnTodoCategoryAdd">添加</button>
+        </form>
         <div class="todo-search-box">
           <label class="sr-only" for="todoSearchInput">搜索待办</label>
           <input type="search" id="todoSearchInput" placeholder="搜索标题或备注...">
@@ -237,15 +239,31 @@
           <label class="sr-only" for="todoFullTitle">任务标题</label>
           <input type="text" id="todoFullTitle" placeholder="任务标题..." maxlength="200">
           <div class="todo-form-grid">
+            <div class="todo-select-control" data-todo-select-control data-select-id="todoFullCategory">
+              <label class="sr-only" for="todoFullCategory">待办分类</label>
+              <select class="todo-native-select" id="todoFullCategory" title="待办分类" tabindex="-1" aria-hidden="true"></select>
+              <button class="todo-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="todoFullCategoryMenu">
+                <span class="todo-select-value">待办</span>
+                <span class="todo-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="todo-select-menu" id="todoFullCategoryMenu" role="listbox" hidden></div>
+            </div>
             <label class="sr-only" for="todoFullDueDate">截止日期</label>
             <input type="date" id="todoFullDueDate" title="截止日期">
-            <label class="sr-only" for="todoFullPriority">优先级</label>
-            <select id="todoFullPriority" title="优先级">
-              <option value="none">无</option>
-              <option value="normal">普通</option>
-              <option value="important">重要</option>
-              <option value="urgent">紧急</option>
-            </select>
+            <div class="todo-select-control" data-todo-select-control data-select-id="todoFullPriority">
+              <label class="sr-only" for="todoFullPriority">优先级</label>
+              <select class="todo-native-select" id="todoFullPriority" title="优先级" tabindex="-1" aria-hidden="true">
+                <option value="none">无</option>
+                <option value="normal">普通</option>
+                <option value="important">重要</option>
+                <option value="urgent">紧急</option>
+              </select>
+              <button class="todo-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="todoFullPriorityMenu">
+                <span class="todo-select-value">无</span>
+                <span class="todo-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="todo-select-menu" id="todoFullPriorityMenu" role="listbox" hidden></div>
+            </div>
           </div>
           <label class="sr-only" for="todoFullNotes">任务备注</label>
           <textarea id="todoFullNotes" placeholder="备注..." maxlength="1000"></textarea>
@@ -253,6 +271,33 @@
             <button class="btn-secondary btn-sm" id="btnTodoFormCancel" type="button">取消</button>
             <button class="btn-primary btn-sm" id="btnTodoFullSave" type="button">保存任务</button>
           </div>
+          <section class="todo-reminder-card" aria-labelledby="todoReminderHeading">
+            <div class="todo-reminder-header">
+              <div>
+                <h3 id="todoReminderHeading">邮件提醒</h3>
+                <p class="todo-reminder-subtitle">当天到期的未完成待办会按固定时间汇总发邮件</p>
+              </div>
+              <span class="todo-reminder-chip" id="todoReminderMailState">未配置</span>
+            </div>
+            <label class="todo-reminder-toggle" for="todoReminderEnabled">
+              <input type="checkbox" id="todoReminderEnabled">
+              <span>启用每日提醒</span>
+            </label>
+            <div class="todo-reminder-grid">
+              <div class="todo-reminder-field">
+                <label for="todoReminderRecipient">收件邮箱</label>
+                <input type="email" id="todoReminderRecipient" placeholder="name@example.com" maxlength="320">
+              </div>
+              <div class="todo-reminder-field">
+                <label for="todoReminderTime">提醒时间</label>
+                <input type="time" id="todoReminderTime" value="08:00" step="60">
+              </div>
+            </div>
+            <p class="todo-reminder-status" id="todoReminderStatusText" role="status" aria-live="polite">加载提醒状态中...</p>
+            <div class="todo-reminder-actions">
+              <button class="btn-secondary btn-sm" id="btnTodoReminderSave" type="button">保存提醒</button>
+            </div>
+          </section>
         </aside>
       </div>
     </div>
@@ -514,6 +559,7 @@
             </div>
             <div class="ai-access-tree" id="aiAccessTree" aria-label="AI 可读取的分类"></div>
             <p class="ai-settings-hint">关闭“允许 AI 访问日志内容”时，此处选择不会发送给模型；日记还需要同时开启日记访问并解锁。</p>
+            <p class="ai-settings-hint">开启日志访问后，AI 可在同一范围内提出新增、编辑、删除日志操作；执行前仍需人工确认。写入日记分类时还需要日记已解锁。</p>
           </div>
           <div class="ai-settings-panel" id="aiSettingsPanelImage" role="tabpanel" aria-labelledby="aiSettingsTabImage" hidden>
             <label class="ai-settings-field" for="aiSeedreamApiKeyInput">
@@ -624,13 +670,15 @@
     <!-- Category Management View -->
     <div class="category-view" id="categoryView" style="display:none;">
       <div class="category-page-header">
+        <div class="category-page-title">
+          <span class="category-page-kicker">分类管理</span>
+          <h2>分类控制台</h2>
+        </div>
         <div class="category-page-search">
           <label class="sr-only" for="catSearchInput">搜索分类</label>
           <input type="search" id="catSearchInput" class="cat-search-input cat-page-search-input" placeholder="搜索父分类或子分类...">
         </div>
-        <div class="category-page-title">
-          <div class="cat-manager-summary" id="catManagerSummary" title="父分类数量" aria-label="父分类数量">...</div>
-        </div>
+        <div class="cat-manager-summary" id="catManagerSummary" title="父分类数量" aria-label="父分类数量">...</div>
       </div>
       <div class="category-page-grid">
         <section class="category-parent-panel">

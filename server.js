@@ -6,10 +6,12 @@ const fs = require('fs');
 const crypto = require('crypto');
 const childProcess = require('child_process');
 const multer = require('multer');
+const nodemailer = require('nodemailer');
 const db = require('./database');
-const { businessDateString, weekdayIndex } = require('./business-date');
+const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
 
 const app = express();
+let todoReminderService = null;
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 
@@ -26,6 +28,8 @@ const SEEDREAM_API_KEY = process.env.SEEDREAM_API_KEY || '';
 const SEEDREAM_BASE_URL = (process.env.SEEDREAM_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
 const SEEDREAM_DEFAULT_MODEL = process.env.SEEDREAM_DEFAULT_MODEL || 'doubao-seedream-5-0-260128';
 const WESTOCK_NPX_COMMAND = process.env.WESTOCK_NPX_COMMAND || 'npx -y westock-data-clawhub@1.0.4';
+const QQ_EMAIL_ACCOUNT = process.env.QQ_EMAIL_ACCOUNT || '';
+const QQ_EMAIL_AUTH_CODE = process.env.QQ_EMAIL_AUTH_CODE || '';
 const AI_ALLOWED_MODELS = new Set(['deepseek-v4-flash', 'deepseek-v4-pro']);
 const AI_ALLOWED_THINKING = new Set(['enabled', 'disabled']);
 const AI_ALLOWED_REASONING = new Set(['high', 'max']);
@@ -68,6 +72,17 @@ const WESTOCK_ALLOWED_FLAGS = new Set([
   'period', 'limit', 'fq', 'days', 'num', 'type', 'date', 'group', 'start', 'end',
   'years', 'all', 'sector', 'country', 'indicator',
 ]);
+const TODO_REMINDER_INTERVAL_MS = 60000;
+const TODO_PRIORITY_RANK = { urgent: 0, important: 1, normal: 2, none: 3 };
+const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: BUSINESS_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
 
 // Diary lock (optional — set DIARY_PASSWORD_HASH env var to enable)
 const DIARY_PASSWORD_HASH = process.env.DIARY_PASSWORD_HASH || null;
@@ -175,6 +190,217 @@ function restoreRequiresDiaryAccess() {
 
 function isDiaryRoot(category) {
   return category === '\u65e5\u8bb0';
+}
+
+function qqMailReady() {
+  return Boolean(QQ_EMAIL_ACCOUNT && QQ_EMAIL_AUTH_CODE);
+}
+
+function getBusinessClockParts(date = new Date()) {
+  const parts = {};
+  for (const part of businessClockFormatter.formatToParts(date)) {
+    if (part.type === 'year' || part.type === 'month' || part.type === 'day' || part.type === 'hour' || part.type === 'minute') {
+      parts[part.type] = Number(part.value);
+    }
+  }
+  const businessDate = `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  const time = `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
+  return { ...parts, businessDate, time };
+}
+
+function createTodoReminderTransporter() {
+  return nodemailer.createTransport({
+    host: 'smtp.qq.com',
+    port: 465,
+    secure: true,
+    auth: {
+      user: QQ_EMAIL_ACCOUNT,
+      pass: QQ_EMAIL_AUTH_CODE,
+    },
+  });
+}
+
+async function sendTodoReminderEmail({ from = QQ_EMAIL_ACCOUNT, to, subject, text, textEncoding = 'base64' }) {
+  if (!qqMailReady()) throw new Error('QQ mail credentials are not configured');
+  const transporter = createTodoReminderTransporter();
+  await transporter.sendMail({
+    from,
+    to,
+    subject,
+    text,
+    textEncoding,
+  });
+}
+
+function todoReminderPriorityRank(priority) {
+  return Object.prototype.hasOwnProperty.call(TODO_PRIORITY_RANK, priority)
+    ? TODO_PRIORITY_RANK[priority]
+    : TODO_PRIORITY_RANK.none;
+}
+
+function sortTodosForReminder(todos) {
+  return todos
+    .map((todo, index) => ({ todo, index }))
+    .sort((a, b) => {
+      const priorityDiff = todoReminderPriorityRank(a.todo.priority) - todoReminderPriorityRank(b.todo.priority);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.index - b.index;
+    })
+    .map(({ todo }) => ({
+      id: todo.id,
+      title: todo.title || '',
+      category: todo.category || '\u5f85\u529e',
+      priority: todo.priority || 'none',
+      due_date: todo.due_date || '',
+      notes: typeof todo.notes === 'string' ? todo.notes : '',
+      sort_order: Number.isFinite(Number(todo.sort_order)) ? Number(todo.sort_order) : 0,
+    }));
+}
+
+function buildTodoReminderMail({ businessDate, snapshot }) {
+  const lines = [
+    `日期: ${businessDate}`,
+    `待办数: ${snapshot.length}`,
+    '',
+  ];
+  snapshot.forEach((todo, index) => {
+    lines.push(`${index + 1}. ${todo.title || '未命名任务'}`);
+    lines.push(`截止日期: ${todo.due_date || businessDate}`);
+    if (todo.notes) lines.push(`备注: ${todo.notes}`);
+    lines.push('');
+  });
+  return {
+    subject: `待办到期提醒 (${businessDate})`,
+    text: lines.join('\n').trim(),
+  };
+}
+
+function createTodoReminderEmailMessage({ to, businessDate, snapshot }) {
+  const mail = buildTodoReminderMail({ businessDate, snapshot });
+  return {
+    from: QQ_EMAIL_ACCOUNT,
+    to,
+    subject: mail.subject,
+    text: mail.text,
+    textEncoding: 'base64',
+  };
+}
+
+function getTodoReminderResponse() {
+  const saved = db.getTodoReminderSettings();
+  const state = db.getTodoReminderState();
+  return {
+    enabled: saved.enabled,
+    recipientEmail: saved.recipientEmail || QQ_EMAIL_ACCOUNT,
+    sendTime: saved.sendTime,
+    mailReady: qqMailReady(),
+    lastStatus: state.status,
+    lastSentAt: state.sentAt || '',
+    lastError: state.lastError || '',
+  };
+}
+
+function createTodoReminderService({
+  db: reminderDb = db,
+  sendMail = sendTodoReminderEmail,
+  mailReady = qqMailReady,
+  now = () => new Date(),
+  intervalMs = TODO_REMINDER_INTERVAL_MS,
+} = {}) {
+  let timer = null;
+  let running = false;
+
+  async function attemptSend(state, settings) {
+    if (!mailReady()) {
+      reminderDb.saveTodoReminderState({
+        ...state,
+        status: 'pending',
+        lastError: 'QQ mail credentials are not configured',
+      });
+      return false;
+    }
+    try {
+      const mail = createTodoReminderEmailMessage({
+        to: settings.recipientEmail,
+        businessDate: state.businessDate,
+        snapshot: state.snapshot,
+      });
+      await sendMail(mail);
+      reminderDb.saveTodoReminderState({
+        ...state,
+        status: 'sent',
+        sentAt: new Date(now()).toISOString(),
+        lastError: '',
+      });
+      return true;
+    } catch (err) {
+      reminderDb.saveTodoReminderState({
+        ...state,
+        status: 'pending',
+        lastError: err.message || 'Failed to send todo reminder email',
+      });
+      return false;
+    }
+  }
+
+  async function tick() {
+    if (running) return false;
+    running = true;
+    try {
+      const settings = reminderDb.getTodoReminderSettings();
+      if (!settings.enabled || !settings.recipientEmail) return false;
+
+      const currentNow = now();
+      const current = getBusinessClockParts(currentNow);
+      const state = reminderDb.getTodoReminderState();
+      if (state.businessDate === current.businessDate) {
+        if (state.status === 'pending' && Array.isArray(state.snapshot) && state.snapshot.length > 0) {
+          return attemptSend(state, settings);
+        }
+        return false;
+      }
+
+      if (current.time < settings.sendTime) return false;
+
+      const dueToday = reminderDb.getAllTodos({ status: 'pending' })
+        .filter(todo => !todo.done && todo.due_date === current.businessDate);
+      const snapshot = sortTodosForReminder(dueToday);
+      const nextState = {
+        businessDate: current.businessDate,
+        capturedAt: new Date(currentNow).toISOString(),
+        status: snapshot.length ? 'pending' : 'empty',
+        snapshot,
+        sentAt: '',
+        lastError: '',
+      };
+      reminderDb.saveTodoReminderState(nextState);
+      if (!snapshot.length) return false;
+      return attemptSend(nextState, settings);
+    } finally {
+      running = false;
+    }
+  }
+
+  function start() {
+    if (timer) return service;
+    void tick();
+    timer = setInterval(() => { void tick(); }, intervalMs);
+    if (timer.unref) timer.unref();
+    return service;
+  }
+
+  function stop() {
+    if (!timer) return;
+    clearInterval(timer);
+    timer = null;
+  }
+
+  const service = {
+    start,
+    stop,
+    tick,
+  };
+  return service;
 }
 
 // Simple in-memory rate limiter
@@ -926,6 +1152,59 @@ function buildWestockPrompt() {
   ].join('\n');
 }
 
+function policyAllowsCategory(policy, category) {
+  if (!policy) return !db.isDiaryCategory(String(category || ''));
+  if (!Array.isArray(policy.allowedParents)) return false;
+  const { parent, sub } = splitLogCategory(category);
+  if (!policy.allowedParents.includes(parent)) return false;
+  if (sub && (policy.deniedSubcategories?.[parent] || []).includes(sub)) return false;
+  return true;
+}
+
+function summarizeWritePolicy(policy) {
+  if (!policy) return 'Writable categories follow the log access range: default non-diary categories.';
+  if (!policy.allowedParents?.length) return 'No writable categories are currently allowed by the log access range.';
+  const denied = Object.entries(policy.deniedSubcategories || {})
+    .filter(([, subs]) => Array.isArray(subs) && subs.length)
+    .map(([parent, subs]) => `${parent}: exclude ${subs.join(', ')}`);
+  return [
+    `Writable parent categories follow the log access range: ${policy.allowedParents.join(', ')}`,
+    denied.length ? `Denied subcategories: ${denied.join('; ')}` : 'Denied subcategories: none',
+  ].join('\n');
+}
+
+function buildLogWritePrompt({ logAccessPolicy }) {
+  return [
+    'The user has enabled a local log management tool for this chat.',
+    'Use it ONLY when the user explicitly asks to create, edit, update, rewrite, reclassify, or delete local logs.',
+    'For ordinary questions, answer normally and do not return a toolCall.',
+    'When a log operation is needed, return ONLY valid JSON without Markdown fences:',
+    '{"reply":"briefly describe the pending log operation and ask the user to confirm","toolCall":{"skillId":"logs","tool":"create|update|delete","args":{},"requiresConfirmation":true}}',
+    'For create args use: title, content, category, log_date, hours.',
+    'For update args use: id plus any of title, content, category, log_date, hours. Include only fields that should change.',
+    'For delete args use: id.',
+    'Always set requiresConfirmation to true. Never claim the log was changed before the user confirms the tool card.',
+    'Use Markdown links like [title](#log/id) when referring to existing local logs.',
+    summarizeWritePolicy(logAccessPolicy),
+  ].join('\n');
+}
+
+const LOG_TOOL_ALLOWED_TOOLS = new Set(['create', 'update', 'delete']);
+
+function normalizeLogToolCall(rawCall) {
+  const source = rawCall && typeof rawCall === 'object' && !Array.isArray(rawCall) ? rawCall : {};
+  const skillId = source.skillId === 'logs' ? 'logs' : '';
+  const tool = typeof source.tool === 'string' ? source.tool.trim() : '';
+  if (skillId !== 'logs' || !LOG_TOOL_ALLOWED_TOOLS.has(tool)) return null;
+  return {
+    skillId,
+    tool,
+    args: source.args && typeof source.args === 'object' && !Array.isArray(source.args) ? source.args : {},
+    requiresConfirmation: true,
+    status: 'pending',
+  };
+}
+
 function normalizeWestockToolCall(rawCall) {
   const source = rawCall && typeof rawCall === 'object' && !Array.isArray(rawCall) ? rawCall : {};
   const skillId = source.skillId === 'westock' ? 'westock' : '';
@@ -940,8 +1219,9 @@ function normalizeWestockToolCall(rawCall) {
   };
 }
 
-function normalizeAiToolCall(rawCall, selectedSkillId) {
+function normalizeAiToolCall(rawCall, selectedSkillId, { logContextEnabled = false } = {}) {
   if (selectedSkillId === 'westock') return normalizeWestockToolCall(rawCall);
+  if (logContextEnabled) return normalizeLogToolCall(rawCall);
   return null;
 }
 
@@ -1192,14 +1472,152 @@ async function runPerplexityAutoSearch(query, { perplexityApiKey }) {
   };
 }
 
-function parseAiToolReply(reply, selectedSkillId) {
+function parseAiToolReply(reply, selectedSkillId, options = {}) {
   const parsed = extractJsonObject(reply);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { content: reply, toolCall: null };
-  const toolCall = normalizeAiToolCall(parsed.toolCall, selectedSkillId);
+  const toolCall = normalizeAiToolCall(parsed.toolCall, selectedSkillId, options);
   const content = typeof parsed.reply === 'string' && parsed.reply.trim()
     ? parsed.reply.trim().slice(0, AI_MAX_MESSAGE_CHARS)
     : reply;
   return { content, toolCall };
+}
+
+function cleanLogToolString(value, maxLength = 20000) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function normalizeLogToolHours(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0 || num > 24) {
+    const err = new Error('工时需为 0-24 之间的数字');
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
+function normalizeLogToolDate(value) {
+  const date = cleanLogToolString(value, 20);
+  if (!date) return '';
+  if (!isValidDate(date)) {
+    const err = new Error('日期格式无效');
+    err.status = 400;
+    throw err;
+  }
+  return date;
+}
+
+function ensureLogWriteEnabled(settings) {
+  if (!settings.logContextEnabled) {
+    const err = new Error('AI log access is disabled');
+    err.status = 403;
+    throw err;
+  }
+}
+
+function ensureLogWriteCategory(category, settings, req) {
+  if (!policyAllowsCategory(settings.logAccessPolicy, category)) {
+    const err = new Error('AI is not allowed to modify this log category');
+    err.status = 403;
+    throw err;
+  }
+  if (isDiaryCategory(category) && !hasDiaryAccess(req)) {
+    const err = new Error('Diary is locked');
+    err.status = 423;
+    throw err;
+  }
+}
+
+function formatLogToolResult(tool, log) {
+  if (tool === 'delete') {
+    return `已删除日志：${log.title || '未命名日志'}（${log.log_date || '无日期'}，${log.category || '未分类'}）。`;
+  }
+  const verb = tool === 'create' ? '已新增日志' : '已更新日志';
+  return `${verb}：[${log.title || '未命名日志'}](#log/${log.id})\n\n日期：${log.log_date || '无日期'}\n分类：${log.category || '未分类'}\n工时：${Number(log.hours || 0)}h`;
+}
+
+function runAiLogTool(tool, args, req) {
+  if (!LOG_TOOL_ALLOWED_TOOLS.has(tool)) {
+    const err = new Error('Unsupported log tool');
+    err.status = 400;
+    throw err;
+  }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    const err = new Error('Log tool args must be an object');
+    err.status = 400;
+    throw err;
+  }
+  const settings = db.getAiSettings();
+  ensureLogWriteEnabled(settings);
+
+  if (tool === 'create') {
+    const title = cleanLogToolString(args.title, 200);
+    const content = cleanLogToolString(args.content, 50000);
+    const category = cleanLogToolString(args.category, 160) || '其他';
+    if (!title || !content) {
+      const err = new Error('Title and content are required');
+      err.status = 400;
+      throw err;
+    }
+    ensureLogWriteCategory(category, settings, req);
+    const logDate = normalizeLogToolDate(args.log_date);
+    const payload = {
+      title,
+      content,
+      category,
+      hours: normalizeLogToolHours(args.hours),
+    };
+    if (logDate) payload.log_date = logDate;
+    const entry = db.create(payload);
+    return { log: entry, content: formatLogToolResult(tool, entry) };
+  }
+
+  const id = Number(args.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    const err = new Error('Valid log id is required');
+    err.status = 400;
+    throw err;
+  }
+  const existing = db.getById(id);
+  if (!existing) {
+    const err = new Error('Log not found');
+    err.status = 404;
+    throw err;
+  }
+  ensureLogWriteCategory(existing.category || '', settings, req);
+
+  if (tool === 'delete') {
+    const removed = db.remove(id);
+    if (!removed) {
+      const err = new Error('Log not found');
+      err.status = 404;
+      throw err;
+    }
+    return { log: existing, content: formatLogToolResult(tool, existing) };
+  }
+
+  const patch = {};
+  if (args.title !== undefined) patch.title = cleanLogToolString(args.title, 200);
+  if (args.content !== undefined) patch.content = cleanLogToolString(args.content, 50000);
+  if (args.category !== undefined) {
+    patch.category = cleanLogToolString(args.category, 160) || '其他';
+    ensureLogWriteCategory(patch.category, settings, req);
+  }
+  if (args.log_date !== undefined) patch.log_date = normalizeLogToolDate(args.log_date);
+  if (args.hours !== undefined) patch.hours = normalizeLogToolHours(args.hours);
+  if (!Object.keys(patch).length) {
+    const err = new Error('No log fields to update');
+    err.status = 400;
+    throw err;
+  }
+  const updated = db.update(id, patch);
+  if (!updated) {
+    const err = new Error('Log not found');
+    err.status = 404;
+    throw err;
+  }
+  return { log: updated, content: formatLogToolResult(tool, updated) };
 }
 
 async function runTavilySearch(query, { tavilyApiKey, webSearchDepth }) {
@@ -1376,6 +1794,24 @@ app.post('/api/ai/skills/perplexity/run', async (req, res) => {
     const message = sanitizeToolText(err.message || 'Perplexity request failed', 500);
     const status = err.status || (/Unsupported|Invalid|required|supports at most|characters|confirmation|args/.test(message) ? 400 : 502);
     res.status(status).json({ error: message || 'Perplexity request failed' });
+  }
+});
+
+app.post('/api/ai/logs/run', (req, res) => {
+  try {
+    const tool = typeof req.body?.tool === 'string' ? req.body.tool.trim() : '';
+    if (!LOG_TOOL_ALLOWED_TOOLS.has(tool)) {
+      return res.status(400).json({ error: 'Unsupported log tool' });
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({ error: 'Log tool execution requires confirmation' });
+    }
+    const result = runAiLogTool(tool, req.body?.args || {}, req);
+    res.json({ skillId: 'logs', tool, content: result.content, log: result.log });
+  } catch (err) {
+    const message = sanitizeToolText(err.message || 'Log tool request failed', 500);
+    const status = err.status || (/Unsupported|required|invalid|Title|content|日期|工时|id/.test(message) ? 400 : 500);
+    res.status(status).json({ error: message || 'Log tool request failed' });
   }
 });
 
@@ -1557,12 +1993,17 @@ app.post('/api/ai/chat', async (req, res) => {
         { role: 'system', content: buildWestockPrompt() },
         ...deepSeekMessages,
       ];
+    } else if (logContextEnabled) {
+      const logWritePrompt = { role: 'system', content: buildLogWritePrompt({ logAccessPolicy }) };
+      deepSeekMessages = deepSeekMessages[0]?.role === 'system'
+        ? [deepSeekMessages[0], logWritePrompt, ...deepSeekMessages.slice(1)]
+        : [logWritePrompt, ...deepSeekMessages];
     }
     const payload = {
       model,
       messages: deepSeekMessages,
       thinking: { type: thinkingMode },
-      stream,
+      stream: selectedSkill || logContextEnabled ? false : stream,
     };
     if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
 
@@ -1575,7 +2016,7 @@ app.post('/api/ai/chat', async (req, res) => {
       body: JSON.stringify(payload),
     });
 
-    if (stream) {
+    if (payload.stream) {
       return pipeDeepSeekStream(upstream, res, search.sources || []);
     }
 
@@ -1591,7 +2032,7 @@ app.post('/api/ai/chat', async (req, res) => {
 
     const parsedReply = selectedSkill
       ? parseAiToolReply(reply, selectedSkill.id)
-      : { content: reply, toolCall: null };
+      : parseAiToolReply(reply, null, { logContextEnabled });
     res.json({
       message: { role: 'assistant', content: parsedReply.content },
       toolCall: parsedReply.toolCall || undefined,
@@ -1825,6 +2266,58 @@ app.post('/api/restore', (req, res) => {
 });
 
 // Todo routes
+app.get('/api/todo-categories', (req, res) => {
+  try {
+    res.json(db.getTodoCategories());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/todo-categories', (req, res) => {
+  try {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    const result = db.addTodoCategory(name);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/todo-categories/:name', (req, res) => {
+  try {
+    const result = db.deleteTodoCategory(req.params.name);
+    if (!result) return res.status(404).json({ error: 'Todo category not found' });
+    if (result.error) return res.status(409).json({ error: result.error });
+    res.json({ success: true, categories: result.categories });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/todo-reminder-settings', (_req, res) => {
+  try {
+    res.json(getTodoReminderResponse());
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to load todo reminder settings' });
+  }
+});
+
+app.put('/api/todo-reminder-settings', (req, res) => {
+  try {
+    const result = db.saveTodoReminderSettings(req.body, { mailReady: qqMailReady() });
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    if (todoReminderService) void todoReminderService.tick();
+    res.json(getTodoReminderResponse());
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to save todo reminder settings' });
+  }
+});
+
 app.get('/api/todos', (req, res) => {
   try {
     const todos = db.getAllTodos(req.query);
@@ -2055,15 +2548,32 @@ app.delete('/api/categories/:name', (req, res) => {
 });
 
 function startServer(port = PORT) {
-  return app.listen(port, () => {
+  todoReminderService = createTodoReminderService();
+  const server = app.listen(port, () => {
     console.log(`Work Log server running at http://localhost:${port}`);
     if (AUTH_TOKEN) console.log('Authentication enabled (AUTH_TOKEN is set)');
     db.checkDataIntegrity();
+    todoReminderService.start();
   });
+  server.on('close', () => {
+    todoReminderService?.stop();
+  });
+  return server;
 }
 
 if (require.main === module) {
   startServer();
 }
 
-module.exports = { app, startServer, hasDiaryAccess, isDiaryCategory };
+module.exports = {
+  app,
+  startServer,
+  hasDiaryAccess,
+  isDiaryCategory,
+  createTodoReminderService,
+  buildTodoReminderMail,
+  createTodoReminderEmailMessage,
+  sendTodoReminderEmail,
+  getBusinessClockParts,
+  sortTodosForReminder,
+};
