@@ -16,12 +16,13 @@ const logCount = $('#logCount');
 const listTitle = $('#listTitle');
 export const listView = $('#listView');
 const pagination = $('#pagination');
+const filterPage = $('#filterPage');
 const cardNavPanel = $('#cardNavPanel');
 const cardNavToggle = $('#cardNavToggle');
 const cardNavCount = $('#cardNavCount');
 const cardNavList = $('#cardNavList');
 let cardNavPageInfo = null;
-const ARCHIVE_FILTER_IDS = ['filterCategory', 'filterSubcategory', 'filterMonth'];
+const ARCHIVE_FILTER_IDS = ['filterCategory', 'filterSubcategory', 'filterMonth', 'filterPage'];
 
 function archiveFilterControls() {
   return ARCHIVE_FILTER_IDS
@@ -190,6 +191,7 @@ export async function loadLogs() {
   try {
     const res = await apiFetch(`/api/logs?${params}`);
     const data = await res.json();
+    state.currentPage = data.page || state.currentPage || 1;
     lastData = data;
     renderLogList(data);
     renderPagination(data);
@@ -197,6 +199,7 @@ export async function loadLogs() {
   } catch (err) {
     if (err.message !== 'Unauthorized') {
       logList.innerHTML = `<div class="empty-state">加载失败: ${err.message}</div>`;
+      renderPagination({ totalPages: 0, page: 1 });
       renderCardNavigator({ items: [], total: 0, page: 1, totalPages: 0 });
     }
   }
@@ -437,18 +440,27 @@ setupDragAndDrop({
 });
 
 function renderPagination(data) {
-  if (data.totalPages <= 1) { pagination.innerHTML = ''; return; }
+  pagination.innerHTML = '';
+  if (!filterPage) return;
+  if (data.totalPages <= 1) {
+    filterPage.innerHTML = '<option value="1">第 1 / 1 页</option>';
+    filterPage.value = '1';
+    filterPage.style.display = 'none';
+    syncArchiveFilterControls();
+    return;
+  }
   let html = '';
   for (let i = 1; i <= data.totalPages; i++) {
-    html += `<button class="${i === data.page ? 'active' : ''}" data-page="${i}">${i}</button>`;
+    html += `<option value="${i}" ${i === data.page ? 'selected' : ''}>第 ${i} / ${data.totalPages} 页</option>`;
   }
-  pagination.innerHTML = html;
+  filterPage.innerHTML = html;
+  filterPage.value = String(data.page);
+  filterPage.style.display = '';
+  syncArchiveFilterControls();
 }
 
-pagination.addEventListener('click', (e) => {
-  const btn = e.target.closest('button');
-  if (!btn) return;
-  state.currentPage = parseInt(btn.dataset.page);
+filterPage?.addEventListener('change', () => {
+  state.currentPage = parseInt(filterPage.value, 10) || 1;
   loadLogs();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });

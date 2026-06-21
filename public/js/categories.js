@@ -60,6 +60,7 @@ export function populateEditorParentCategory() {
   // Update subcategory dropdown for the selected parent
   const parent = sel.value || (state.categories[0] && state.categories[0].name);
   if (parent) populateEditorSubCategory(parent);
+  document.dispatchEvent(new CustomEvent('editor-category-options-changed'));
 }
 
 export function populateEditorSubCategory(parent) {
@@ -69,6 +70,7 @@ export function populateEditorSubCategory(parent) {
   sel.innerHTML = '<option value="">（无）</option>' +
     (cat && cat.sub ? cat.sub.map(s => `<option value="${escHtml(s)}">${escHtml(s)}</option>`).join('') : '');
   if (cat && cat.sub && cat.sub.includes(current)) sel.value = current;
+  document.dispatchEvent(new CustomEvent('editor-category-options-changed'));
 }
 
 // Category Management View

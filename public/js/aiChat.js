@@ -14,6 +14,7 @@ const ACTIVE_CHAT_STORAGE_KEY = 'aiChatActiveConversationId';
 const AI_CONVERSATIONS_ENDPOINT = '/api/ai/conversations';
 const AI_SETTINGS_ENDPOINT = '/api/ai/settings';
 const AI_SKILLS_ENDPOINT = '/api/ai/skills';
+const AI_SETTINGS_SELECT_IDS = ['aiModelSelect', 'aiReasoningEffort', 'aiSeedreamModel', 'aiSeedreamSize', 'aiWebSearchDepth'];
 
 let conversations = [];
 let allConversations = [];
@@ -46,6 +47,131 @@ let settings = {
     perplexity: { enabled: true },
   },
 };
+
+function aiSettingsSelectControls() {
+  return AI_SETTINGS_SELECT_IDS
+    .map(id => document.querySelector(`[data-ai-settings-select-control][data-select-id="${id}"]`))
+    .filter(Boolean);
+}
+
+function closeAiSettingsSelectControl(control) {
+  if (!control) return;
+  control.classList.remove('open');
+  control.querySelector('.ai-settings-select-trigger')?.setAttribute('aria-expanded', 'false');
+  const menu = control.querySelector('.ai-settings-select-menu');
+  if (menu) menu.hidden = true;
+}
+
+function closeAiSettingsSelectControls(except = null) {
+  aiSettingsSelectControls().forEach(control => {
+    if (control !== except) closeAiSettingsSelectControl(control);
+  });
+}
+
+function focusAiSettingsOption(control, direction = 1) {
+  const options = [...control.querySelectorAll('.ai-settings-select-option')];
+  if (!options.length) return;
+  const activeIndex = options.indexOf(document.activeElement);
+  const selectedIndex = options.findIndex(option => option.getAttribute('aria-selected') === 'true');
+  const baseIndex = activeIndex >= 0 ? activeIndex : (selectedIndex >= 0 ? selectedIndex : 0);
+  const nextIndex = (baseIndex + direction + options.length) % options.length;
+  options[nextIndex].focus();
+}
+
+function openAiSettingsSelectControl(control, { focusSelected = false } = {}) {
+  const trigger = control.querySelector('.ai-settings-select-trigger');
+  const menu = control.querySelector('.ai-settings-select-menu');
+  if (!trigger || !menu) return;
+  syncAiSettingsSelectControls();
+  closeAiSettingsSelectControls(control);
+  control.classList.add('open');
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.hidden = false;
+  if (focusSelected) {
+    const selected = menu.querySelector('.ai-settings-select-option[aria-selected="true"]');
+    (selected || menu.querySelector('.ai-settings-select-option'))?.focus();
+  }
+}
+
+function toggleAiSettingsSelectControl(control) {
+  if (control.classList.contains('open')) closeAiSettingsSelectControl(control);
+  else openAiSettingsSelectControl(control);
+}
+
+function selectFromAiSettingsOption(control, optionButton) {
+  const select = document.getElementById(control.dataset.selectId);
+  if (!select || !optionButton) return;
+  select.value = optionButton.dataset.value || '';
+  closeAiSettingsSelectControl(control);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  syncAiSettingsSelectControls();
+  control.querySelector('.ai-settings-select-trigger')?.focus();
+}
+
+function syncAiSettingsSelectControls() {
+  aiSettingsSelectControls().forEach(control => {
+    const select = document.getElementById(control.dataset.selectId);
+    const trigger = control.querySelector('.ai-settings-select-trigger');
+    const value = control.querySelector('.ai-settings-select-value');
+    const menu = control.querySelector('.ai-settings-select-menu');
+    if (!select || !trigger || !value || !menu) return;
+
+    const options = [...select.options];
+    const selected = select.selectedOptions[0] || options.find(option => option.value === select.value) || options[0];
+    value.textContent = selected?.textContent || '';
+    trigger.setAttribute('aria-label', `${select.labels?.[0]?.textContent || '选择'}：${selected?.textContent || '未选择'}`);
+    menu.innerHTML = options.map(option => `
+      <button
+        class="ai-settings-select-option${option.value === select.value ? ' selected' : ''}"
+        type="button"
+        role="option"
+        data-value="${escHtml(option.value)}"
+        aria-selected="${option.value === select.value}"
+        tabindex="-1"
+      >${escHtml(option.textContent)}</button>
+    `).join('');
+  });
+}
+
+function initAiSettingsSelectControls() {
+  aiSettingsSelectControls().forEach(control => {
+    const trigger = control.querySelector('.ai-settings-select-trigger');
+    const menu = control.querySelector('.ai-settings-select-menu');
+    trigger?.addEventListener('click', () => toggleAiSettingsSelectControl(control));
+    trigger?.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      openAiSettingsSelectControl(control, { focusSelected: true });
+      if (event.key === 'ArrowUp') focusAiSettingsOption(control, -1);
+    });
+    menu?.addEventListener('click', (event) => {
+      const option = event.target.closest('.ai-settings-select-option');
+      if (option) selectFromAiSettingsOption(control, option);
+    });
+    menu?.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        focusAiSettingsOption(control, 1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        focusAiSettingsOption(control, -1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectFromAiSettingsOption(control, event.target.closest('.ai-settings-select-option'));
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeAiSettingsSelectControl(control);
+        trigger?.focus();
+      }
+    });
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-ai-settings-select-control]')) closeAiSettingsSelectControls();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeAiSettingsSelectControls();
+  });
+}
 
 function createConversation(title = '新对话') {
   return {
@@ -373,6 +499,8 @@ function renderHistory() {
   const list = $('#aiSidebarHistoryList');
   if (!list) return;
   const sorted = [...conversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const summary = $('#aiSidebarHistorySummary');
+  if (summary) summary.textContent = `${sorted.length} 个对话`;
   list.innerHTML = sorted.map(chat => `
     <div class="ai-history-item${chat.id === activeConversationId ? ' active' : ''}" data-id="${escHtml(chat.id)}">
       <button type="button" class="ai-history-open" title="${escHtml(chat.title || '新对话')}">
@@ -385,14 +513,42 @@ function renderHistory() {
   `).join('');
 }
 
+function updateAiChatHeader() {
+  const current = activeConversation();
+  const title = $('#aiChatCurrentTitle');
+  const meta = $('#aiChatCurrentMeta');
+  const badge = $('#aiChatCurrentBadge');
+  const skill = selectedSkill();
+  const messageCount = current?.messages?.length || 0;
+  const countLabel = `${messageCount} 条消息`;
+  const scopeLabel = settings.logContextEnabled
+    ? '日志访问会遵守当前访问范围'
+    : '仅发送你主动输入的内容';
+  if (title) title.textContent = current?.title || '新对话';
+  if (meta) meta.textContent = `${countLabel} · ${scopeLabel}`;
+  if (badge) {
+    if (skill) {
+      const metaInfo = skillMeta(skill.id);
+      badge.textContent = `技能 · ${metaInfo.label || metaInfo.name}`;
+    } else if (settings.webSearchEnabled) {
+      badge.textContent = '联网搜索已开';
+    } else {
+      badge.textContent = '本地对话';
+    }
+  }
+}
+
 function renderMessages() {
   const list = $('#aiChatMessages');
   const messages = activeMessages();
+  updateAiChatHeader();
   if (!messages.length) {
     list.innerHTML = `
       <div class="ai-chat-empty">
-        <strong>AI 对话助手</strong>
-        <span>输入你想讨论的问题。日志访问会遵守 AI 设置里的访问范围。</span>
+        <div class="ai-chat-empty-copy">
+          <strong>AI 对话助手</strong>
+          <span>输入你想讨论的问题。日志访问会遵守 AI 设置里的访问范围。</span>
+        </div>
       </div>
     `;
     renderHistory();
@@ -529,6 +685,7 @@ function renderSelectedSkillChip() {
     renderSelectedSkillChip();
     renderSkillPicker();
   });
+  updateAiChatHeader();
 }
 
 function renderSkillPicker() {
@@ -785,6 +942,7 @@ function syncWebSearchToggleUi() {
     quickToggle.checked = enabled;
     quickToggle.closest('.ai-chat-web-toggle')?.classList.toggle('active', enabled);
   }
+  updateAiChatHeader();
 }
 
 function effectiveLogAccessPolicy() {
@@ -873,6 +1031,7 @@ function fillSettingsModal() {
   $('#aiSeedreamWatermark').checked = settings.seedreamWatermark !== false;
   $('#aiSkillWestockToggle').checked = settings.skills?.westock?.enabled !== false;
   $('#aiSkillPerplexityToggle').checked = settings.skills?.perplexity?.enabled !== false;
+  syncAiSettingsSelectControls();
   renderAccessTree();
 }
 
@@ -1314,10 +1473,12 @@ export function hideAiChatView() {
 export async function initAiChat() {
   await Promise.all([loadSettings(), loadConversations(), loadAccessCategories()]);
   await loadSkills();
+  initAiSettingsSelectControls();
   updateSettingsButton();
   syncWebSearchToggleUi();
   renderMessages();
   updateSendState();
+  syncAiSettingsSelectControls();
 
   $('#btnAiSidebarNewChat').addEventListener('click', newConversation);
   $('#btnAiApiKey').addEventListener('click', () => openSettingsPage('chat'));

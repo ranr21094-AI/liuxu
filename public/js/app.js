@@ -38,7 +38,15 @@ $('#btnThemeToggle').addEventListener('click', toggleTheme);
 // Sidebar mode: default log tools, todo panel, category manager, or AI history
 const SIDEBAR_MODE_KEY = 'sidebarMode';
 const MOBILE_SIDEBAR_QUERY = '(max-width: 768px)';
+const COMPACT_DESKTOP_SIDEBAR_QUERY = '(max-width: 1100px)';
+const DESKTOP_POINTER_QUERY = '(hover: hover) and (pointer: fine)';
 const mobileSidebarMedia = window.matchMedia(MOBILE_SIDEBAR_QUERY);
+const compactDesktopSidebarMedia = window.matchMedia(COMPACT_DESKTOP_SIDEBAR_QUERY);
+const desktopPointerMedia = window.matchMedia(DESKTOP_POINTER_QUERY);
+
+function isCompactDesktopSidebar() {
+  return compactDesktopSidebarMedia.matches && desktopPointerMedia.matches;
+}
 
 function setSidebarTitle(mode) {
   const title = $('#sidebarTitle');
@@ -89,6 +97,15 @@ function activeSidebarMode() {
 
 function closeMobileCalendar() {
   $('#calendarWidget').classList.remove('mobile-show');
+}
+
+function syncSidebarViewportMode() {
+  const compactDesktop = isCompactDesktopSidebar();
+  document.body.classList.toggle('desktop-narrow-sidebar', compactDesktop);
+  if (compactDesktop) closeMobileCalendar();
+  if (!compactDesktop && !mobileSidebarMedia.matches && document.body.classList.contains('sidebar-tools-mode')) {
+    setSidebarToolsMode(false);
+  }
 }
 
 function setSidebarMode(mode, { updateMain = true } = {}) {
@@ -161,11 +178,17 @@ $('#btnSidebarTools').addEventListener('click', () => {
 });
 
 mobileSidebarMedia.addEventListener('change', (event) => {
-  if (!event.matches && document.body.classList.contains('sidebar-tools-mode')) {
+  if (!event.matches && !isCompactDesktopSidebar() && document.body.classList.contains('sidebar-tools-mode')) {
     setSidebarToolsMode(false);
   }
-  if (!event.matches) closeMobileCalendar();
+  if (!event.matches || isCompactDesktopSidebar()) closeMobileCalendar();
+  syncSidebarViewportMode();
 });
+
+compactDesktopSidebarMedia.addEventListener('change', syncSidebarViewportMode);
+desktopPointerMedia.addEventListener('change', syncSidebarViewportMode);
+
+syncSidebarViewportMode();
 
 // Sidebar collapse
 function collapseSidebar() {

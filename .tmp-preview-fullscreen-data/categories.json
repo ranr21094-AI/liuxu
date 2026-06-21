@@ -1,0 +1,32 @@
+[
+  {
+    "name": "会议",
+    "sub": [],
+    "calendar_day_visible": true
+  },
+  {
+    "name": "开发",
+    "sub": [],
+    "calendar_day_visible": true
+  },
+  {
+    "name": "文档",
+    "sub": [],
+    "calendar_day_visible": true
+  },
+  {
+    "name": "测试",
+    "sub": [],
+    "calendar_day_visible": true
+  },
+  {
+    "name": "学习",
+    "sub": [],
+    "calendar_day_visible": true
+  },
+  {
+    "name": "其他",
+    "sub": [],
+    "calendar_day_visible": true
+  }
+]

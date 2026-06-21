@@ -1,0 +1,13 @@
+{
+  "conversations": [
+    {
+      "id": "chat-1782035411432-809c0376e853b",
+      "title": "新对话",
+      "messages": [],
+      "updatedAt": 1782035411432,
+      "scope": "global",
+      "logKey": ""
+    }
+  ],
+  "activeConversationId": "chat-1782035411432-809c0376e853b"
+}

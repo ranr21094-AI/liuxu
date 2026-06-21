@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { $ } from './helpers.js';
+import { $, escHtml } from './helpers.js';
 import { loadLogs } from './logList.js';
 import { businessDateString, formatDateLabel, formatTemplateDate } from './businessDate.js';
 
@@ -10,8 +10,134 @@ const calendarWidget = $('#calendarWidget');
 const calendarCollapseToggle = $('#calendarCollapseToggle');
 const calendarMiniToday = $('#calendarMiniToday');
 const CALENDAR_COLLAPSED_STORAGE_KEY = 'calendarCollapsed';
+const CALENDAR_SELECT_IDS = ['calendarYearSelect', 'calendarMonthSelect'];
 let calendarFocusDate = businessDateString();
 let calendarCollapsed = loadCalendarCollapsed();
+
+function calendarSelectControls() {
+  return CALENDAR_SELECT_IDS
+    .map(id => document.querySelector(`[data-calendar-select-control][data-select-id="${id}"]`))
+    .filter(Boolean);
+}
+
+function closeCalendarSelectControl(control) {
+  if (!control) return;
+  control.classList.remove('open');
+  control.querySelector('.calendar-select-trigger')?.setAttribute('aria-expanded', 'false');
+  const menu = control.querySelector('.calendar-select-menu');
+  if (menu) menu.hidden = true;
+}
+
+function closeCalendarSelectControls(except = null) {
+  calendarSelectControls().forEach(control => {
+    if (control !== except) closeCalendarSelectControl(control);
+  });
+}
+
+function focusCalendarSelectOption(control, direction = 1) {
+  const options = [...control.querySelectorAll('.calendar-select-option')];
+  if (!options.length) return;
+  const activeIndex = options.indexOf(document.activeElement);
+  const selectedIndex = options.findIndex(option => option.getAttribute('aria-selected') === 'true');
+  const baseIndex = activeIndex >= 0 ? activeIndex : (selectedIndex >= 0 ? selectedIndex : 0);
+  const nextIndex = (baseIndex + direction + options.length) % options.length;
+  options[nextIndex].focus();
+}
+
+function openCalendarSelectControl(control, { focusSelected = false } = {}) {
+  const trigger = control.querySelector('.calendar-select-trigger');
+  const menu = control.querySelector('.calendar-select-menu');
+  if (!trigger || !menu) return;
+  syncCalendarSelectControls();
+  closeCalendarSelectControls(control);
+  control.classList.add('open');
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.hidden = false;
+  if (focusSelected) {
+    const selected = menu.querySelector('.calendar-select-option[aria-selected="true"]');
+    (selected || menu.querySelector('.calendar-select-option'))?.focus();
+  }
+}
+
+function toggleCalendarSelectControl(control) {
+  if (control.classList.contains('open')) closeCalendarSelectControl(control);
+  else openCalendarSelectControl(control);
+}
+
+function selectFromCalendarOption(control, optionButton) {
+  const select = document.getElementById(control.dataset.selectId);
+  if (!select || !optionButton) return;
+  select.value = optionButton.dataset.value || '';
+  closeCalendarSelectControl(control);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  syncCalendarSelectControls();
+  control.querySelector('.calendar-select-trigger')?.focus();
+}
+
+function syncCalendarSelectControls() {
+  calendarSelectControls().forEach(control => {
+    const select = document.getElementById(control.dataset.selectId);
+    const trigger = control.querySelector('.calendar-select-trigger');
+    const value = control.querySelector('.calendar-select-value');
+    const menu = control.querySelector('.calendar-select-menu');
+    if (!select || !trigger || !value || !menu) return;
+
+    const options = [...select.options];
+    const selected = select.selectedOptions[0] || options.find(option => option.value === select.value) || options[0];
+    value.textContent = selected?.textContent || '';
+    trigger.setAttribute('aria-label', `${select.labels?.[0]?.textContent || '选择'}：${selected?.textContent || '未选择'}`);
+    menu.innerHTML = options.map(option => `
+      <button
+        class="calendar-select-option${option.value === select.value ? ' selected' : ''}"
+        type="button"
+        role="option"
+        data-value="${escHtml(option.value)}"
+        aria-selected="${option.value === select.value}"
+        tabindex="-1"
+      >${escHtml(option.textContent)}</button>
+    `).join('');
+  });
+}
+
+function initCalendarSelectControls() {
+  calendarSelectControls().forEach(control => {
+    const trigger = control.querySelector('.calendar-select-trigger');
+    const menu = control.querySelector('.calendar-select-menu');
+    trigger?.addEventListener('click', () => toggleCalendarSelectControl(control));
+    trigger?.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      openCalendarSelectControl(control, { focusSelected: true });
+      if (event.key === 'ArrowUp') focusCalendarSelectOption(control, -1);
+    });
+    menu?.addEventListener('click', (event) => {
+      const option = event.target.closest('.calendar-select-option');
+      if (option) selectFromCalendarOption(control, option);
+    });
+    menu?.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        focusCalendarSelectOption(control, 1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        focusCalendarSelectOption(control, -1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectFromCalendarOption(control, event.target.closest('.calendar-select-option'));
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeCalendarSelectControl(control);
+        trigger?.focus();
+      }
+    });
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-calendar-select-control]')) closeCalendarSelectControls();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeCalendarSelectControls();
+  });
+}
 
 function loadCalendarCollapsed() {
   try {
@@ -87,6 +213,7 @@ export function populateCalendarSelects() {
     monthOpts += `<option value="${m}" ${m === state.currentMonth ? 'selected' : ''}>${m + 1}月</option>`;
   }
   calMonthSelect.innerHTML = monthOpts;
+  syncCalendarSelectControls();
 }
 
 function updateCalendarFromSelects() {
@@ -181,17 +308,12 @@ calendarDays.addEventListener('keydown', (event) => {
   focusCalendarDate(nextDate);
 });
 
-function changeMonth(delta) {
-  focusCalendarDate(moveMonth(calendarFocusDate, delta));
-}
-
 applyCalendarCollapsed();
+initCalendarSelectControls();
+syncCalendarSelectControls();
 
 calendarCollapseToggle.addEventListener('click', () => {
   calendarCollapsed = !calendarCollapsed;
   saveCalendarCollapsed(calendarCollapsed);
   applyCalendarCollapsed();
 });
-
-$('#prevMonth').addEventListener('click', () => changeMonth(-1));
-$('#nextMonth').addEventListener('click', () => changeMonth(1));
