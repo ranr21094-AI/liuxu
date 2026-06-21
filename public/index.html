@@ -47,14 +47,26 @@
       </button>
       <div class="calendar-body" id="calendarBody">
       <div class="calendar-header">
-        <button class="btn-icon" id="prevMonth" title="上个月" aria-label="上个月">&lsaquo;</button>
         <div class="calendar-selects">
-          <label class="sr-only" for="calendarYearSelect">日历年份</label>
-          <select id="calendarYearSelect" class="calendar-select"></select>
-          <label class="sr-only" for="calendarMonthSelect">日历月份</label>
-          <select id="calendarMonthSelect" class="calendar-select"></select>
+          <div class="calendar-select-control" data-calendar-select-control data-select-id="calendarYearSelect">
+            <label class="sr-only" for="calendarYearSelect">日历年份</label>
+            <select id="calendarYearSelect" class="calendar-select calendar-native-select" tabindex="-1" aria-hidden="true"></select>
+            <button class="calendar-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="calendarYearSelectMenu">
+              <span class="calendar-select-value">年份</span>
+              <span class="calendar-select-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="calendar-select-menu" id="calendarYearSelectMenu" role="listbox" hidden></div>
+          </div>
+          <div class="calendar-select-control" data-calendar-select-control data-select-id="calendarMonthSelect">
+            <label class="sr-only" for="calendarMonthSelect">日历月份</label>
+            <select id="calendarMonthSelect" class="calendar-select calendar-native-select" tabindex="-1" aria-hidden="true"></select>
+            <button class="calendar-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="calendarMonthSelectMenu">
+              <span class="calendar-select-value">月份</span>
+              <span class="calendar-select-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="calendar-select-menu" id="calendarMonthSelectMenu" role="listbox" hidden></div>
+          </div>
         </div>
-        <button class="btn-icon" id="nextMonth" title="下个月" aria-label="下个月">&rsaquo;</button>
       </div>
       <div class="calendar-weekdays" aria-hidden="true">
         <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
@@ -304,38 +316,81 @@
 
     <!-- Editor View -->
     <div class="editor-view" id="editorView" style="display:none;">
-      <div class="editor-topbar">
-        <div class="editor-nav-actions">
-          <button class="btn-icon btn-back" id="btnBack" title="返回列表">← 返回</button>
-          <button class="btn-secondary btn-sm btn-editor-fullscreen" id="btnEditorFullscreen" type="button" aria-pressed="false" title="进入全屏编辑">全屏编辑</button>
+      <section class="editor-header-card" id="editorHeaderCard" aria-label="标题与日志信息">
+        <div class="editor-title-row">
+          <button class="editor-title-action editor-title-back" id="btnBack" type="button" title="返回列表" aria-label="返回列表">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/><path d="M9 12h10"/></svg>
+          </button>
+          <label class="sr-only" for="editTitle">日志标题</label>
+          <input type="text" id="editTitle" class="edit-title" placeholder="给这篇日志起一个清晰的标题...">
+          <div class="editor-title-tools">
+            <span class="save-status" id="saveStatus" role="status" aria-live="polite"></span>
+            <div class="editor-title-actions" aria-label="编辑器操作">
+              <button class="editor-title-action btn-editor-fullscreen" id="btnEditorFullscreen" type="button" aria-pressed="false" title="进入全屏编辑" aria-label="进入全屏编辑">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5"/><path d="M3 3l7 7"/><path d="M16 3h5v5"/><path d="M21 3l-7 7"/><path d="M8 21H3v-5"/><path d="M3 21l7-7"/><path d="M16 21h5v-5"/><path d="M21 21l-7-7"/></svg>
+              </button>
+              <button class="editor-title-action" id="btnCopyMarkdown" type="button" title="复制 Markdown" aria-label="复制 Markdown">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button class="editor-title-action" id="btnExportMarkdown" type="button" title="导出 Markdown" aria-label="导出 Markdown">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"/><path d="M8 10l4 4 4-4"/><path d="M4 18v1a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1"/></svg>
+              </button>
+              <button class="editor-title-action danger" id="btnDeleteEditor" type="button" title="删除日志" aria-label="删除日志">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg>
+              </button>
+            </div>
+          </div>
         </div>
         <div class="editor-meta">
-          <label class="sr-only" for="editDate">日志日期</label>
-          <input type="date" id="editDate" class="edit-date">
-          <label class="sr-only" for="editCategory">日志分类</label>
-          <select id="editCategory" class="edit-cat"></select>
-          <label class="sr-only" for="editSubcategory">日志子分类</label>
-          <select id="editSubcategory" class="edit-subcat"></select>
-          <label class="sr-only" for="editHours">工时</label>
-          <input type="number" id="editHours" class="edit-hours" min="0" max="24" step="0.5" value="0" title="工时">
-          <span class="edit-hours-label">小时</span>
+          <div class="editor-field editor-field-mode">
+            <span class="editor-field-label">视图</span>
+            <div class="editor-mode-tabs" id="editorModeTabs" role="tablist" aria-label="编辑器显示模式">
+              <button class="editor-tab active" id="editorTabWrite" data-tab="write" role="tab" aria-selected="true" aria-controls="editorPanel" tabindex="0">编辑</button>
+              <button class="editor-tab" id="editorTabPreview" data-tab="preview" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">预览</button>
+              <button class="editor-tab" id="editorTabSplit" data-tab="split" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">分屏</button>
+            </div>
+          </div>
+          <label class="editor-field editor-field-date" for="editDate">
+            <span class="editor-field-label">日期</span>
+            <input type="date" id="editDate" class="edit-date">
+          </label>
+          <div class="editor-field editor-select-control" data-editor-select-control data-select-id="editCategory">
+            <label class="editor-field-label sr-only" for="editCategory">日志分类</label>
+            <span class="editor-field-label">分类</span>
+            <select id="editCategory" class="edit-cat editor-native-select" tabindex="-1" aria-hidden="true"></select>
+            <button class="editor-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="editCategoryMenu">
+              <span class="editor-select-value">选择分类</span>
+              <span class="editor-select-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="editor-select-menu" id="editCategoryMenu" role="listbox" hidden></div>
+          </div>
+          <div class="editor-field editor-select-control" data-editor-select-control data-select-id="editSubcategory">
+            <label class="editor-field-label sr-only" for="editSubcategory">日志子分类</label>
+            <span class="editor-field-label">子分类</span>
+            <select id="editSubcategory" class="edit-subcat editor-native-select" tabindex="-1" aria-hidden="true"></select>
+            <button class="editor-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="editSubcategoryMenu">
+              <span class="editor-select-value">（无）</span>
+              <span class="editor-select-caret" aria-hidden="true">⌄</span>
+            </button>
+            <div class="editor-select-menu" id="editSubcategoryMenu" role="listbox" hidden></div>
+          </div>
+          <label class="editor-field editor-field-hours" for="editHours">
+            <span class="editor-field-label">工时</span>
+            <div class="editor-hours-input">
+              <input type="number" id="editHours" class="edit-hours" min="0" max="24" step="0.5" value="0" title="工时">
+              <span class="edit-hours-label">小时</span>
+            </div>
+          </label>
         </div>
-        <div class="editor-actions">
-          <span class="save-status" id="saveStatus" role="status" aria-live="polite"></span>
-          <button class="btn-secondary btn-sm" id="btnCopyMarkdown">复制</button>
-          <button class="btn-secondary btn-sm" id="btnExportMarkdown">导出</button>
-          <button class="btn-secondary btn-sm" id="btnDeleteEditor">删除</button>
-        </div>
-      </div>
-
-      <label class="sr-only" for="editTitle">日志标题</label>
-      <input type="text" id="editTitle" class="edit-title" placeholder="日志标题...">
+      </section>
 
       <div class="editor-outline-layout" id="editorOutlineLayout">
         <aside class="editor-outline-panel" id="editorOutlinePanel" aria-hidden="true">
           <div class="editor-outline-panel-header">
             <span>标题大纲</span>
-            <button class="btn-icon editor-outline-close" id="btnCloseOutlinePanel" type="button" aria-label="收起标题栏">&times;</button>
+            <button class="btn-icon editor-outline-close" id="btnCloseOutlinePanel" type="button" aria-label="收起标题大纲">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>
+            </button>
           </div>
           <div class="editor-outline-list" id="editorOutlineList">
             <div class="editor-outline-empty">暂无标题</div>
@@ -343,63 +398,91 @@
         </aside>
 
         <div class="editor-workspace">
-          <div class="editor-tabs" role="tablist" aria-label="编辑器显示模式">
-            <button class="editor-outline-toggle" id="btnEditorOutlinePanel" type="button" aria-controls="editorOutlinePanel" aria-expanded="false" title="展开标题栏">标题</button>
-            <button class="editor-ai-toggle" id="btnEditorAiPanel" type="button" aria-controls="editorAiPanel" aria-expanded="false" title="打开编辑器 AI">AI</button>
-            <button class="editor-tab active" id="editorTabWrite" data-tab="write" role="tab" aria-selected="true" aria-controls="editorPanel" tabindex="0">编辑</button>
-            <button class="editor-tab" id="editorTabPreview" data-tab="preview" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">预览</button>
-            <button class="editor-tab" id="editorTabSplit" data-tab="split" role="tab" aria-selected="false" aria-controls="editorPanel" tabindex="-1">分屏</button>
-            <span class="editor-help">支持 Markdown 格式</span>
-            <select class="template-select" id="templateSelect" title="使用模板">
-              <option value="">模板</option>
-            </select>
-            <button class="btn-secondary btn-sm btn-template-manage" id="btnManageTemplates">管理模板</button>
-          </div>
-
           <div class="editor-toolbar" id="editorToolbar" role="toolbar" aria-label="Markdown 格式工具">
-            <span class="toolbar-group">
+            <span class="toolbar-group toolbar-group-outline">
+              <button class="editor-toolbar-toggle editor-outline-toggle icon-only" id="btnEditorOutlinePanel" type="button" aria-controls="editorOutlinePanel" aria-expanded="false" title="展开标题大纲" aria-label="展开标题大纲">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14"/><path d="M5 12h10"/><path d="M5 18h8"/><path d="M18 11.5 20.5 14 18 16.5"/></svg>
+                <span class="toolbar-button-label">大纲</span>
+              </button>
+            </span>
+            <span class="toolbar-group toolbar-group-format">
               <button data-action="bold" title="加粗 (Ctrl+B)"><b>B</b></button>
               <button data-action="italic" title="斜体 (Ctrl+I)"><i>I</i></button>
               <button data-action="strikethrough" title="删除线"><s>S</s></button>
             </span>
-            <span class="toolbar-group">
+            <span class="toolbar-group toolbar-group-format">
               <button data-action="h1" title="一级标题">H1</button>
               <button data-action="h2" title="二级标题">H2</button>
               <button data-action="h3" title="三级标题">H3</button>
+              <button data-action="quote" class="icon-only" title="引用" aria-label="引用">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H6a1 1 0 0 0-1 1v4h4V8Z"/><path d="M19 8h-3a1 1 0 0 0-1 1v4h4V8Z"/><path d="M9 13c0 3-1.2 4.7-3.5 6"/><path d="M19 13c0 3-1.2 4.7-3.5 6"/></svg>
+                <span class="toolbar-button-label">引用</span>
+              </button>
             </span>
-            <span class="toolbar-group">
-              <button data-action="ul" title="无序列表">• 列表</button>
-              <button data-action="ol" title="有序列表">1. 列表</button>
-              <button data-action="checklist" title="任务列表">☑ 任务</button>
+            <span class="toolbar-group toolbar-group-format">
+              <button data-action="ul" title="无序列表">无序</button>
+              <button data-action="ol" title="有序列表">有序</button>
+              <button data-action="checklist" class="icon-only" title="任务列表" aria-label="任务列表">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="4" height="4" rx="1"/><path d="M10.5 7H20"/><rect x="4" y="15" width="4" height="4" rx="1"/><path d="m5.5 17 1.2 1.2L9 15.8"/><path d="M10.5 17H20"/></svg>
+                <span class="toolbar-button-label">任务</span>
+              </button>
+              <button data-action="code" class="icon-only" title="行内代码" aria-label="行内代码">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 8-4 4 4 4"/><path d="m15 8 4 4-4 4"/><path d="m13.5 5-3 14"/></svg>
+                <span class="toolbar-button-label">行内</span>
+              </button>
+              <button data-action="codeblock" class="icon-only" title="代码块" aria-label="代码块">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="m10 10-2 2 2 2"/><path d="m14 10 2 2-2 2"/></svg>
+                <span class="toolbar-button-label">代码块</span>
+              </button>
             </span>
-            <span class="toolbar-group">
-              <button data-action="quote" title="引用">❝ 引用</button>
-              <button data-action="code" title="行内代码">&lt;/&gt;</button>
-              <button data-action="codeblock" title="代码块">{ }</button>
-              <button data-action="mathInline" title="行内公式">$f$</button>
-              <button data-action="mathBlock" title="块级公式">$$</button>
-              <button class="btn-table" id="btnTable" title="插入表格">⊞ 表格</button>
+            <span class="toolbar-group toolbar-group-format">
+              <button class="btn-table icon-only" id="btnTable" title="插入表格" aria-label="插入表格">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16"/><path d="M10 5v14"/><path d="M15 5v14"/></svg>
+                <span class="toolbar-button-label">表格</span>
+              </button>
               <div class="table-grid-popup" id="tableGridPopup" style="display:none">
                 <div class="table-grid-header">选择表格尺寸 <span id="tableGridDim"></span></div>
                 <div class="table-grid" id="tableGrid"></div>
               </div>
-              <button data-action="link" title="链接">🔗</button>
-              <button type="button" id="btnLogLink" title="插入日志链接">日志链接</button>
-              <button data-action="hr" title="分割线">—</button>
-            </span>
-            <span class="toolbar-group">
-              <button class="btn-upload-img" id="btnUploadImg" title="插入图片">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              <button data-action="link" class="icon-only" title="插入链接" aria-label="插入链接">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 13.5 13.5 10.5"/><path d="M8 16a3.5 3.5 0 0 1 0-5l2-2a3.5 3.5 0 0 1 5 5l-1 1"/><path d="M16 8a3.5 3.5 0 0 1 0 5l-2 2a3.5 3.5 0 0 1-5-5l1-1"/></svg>
+                <span class="toolbar-button-label">链接</span>
+              </button>
+              <button class="btn-upload-img icon-only" id="btnUploadImg" title="插入图片" aria-label="插入图片">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 16-4.8-4.8a1.4 1.4 0 0 0-2 0L8 17.4"/><path d="m12 14 1.6-1.6a1.4 1.4 0 0 1 2 0L20 17"/></svg>
+                <span class="toolbar-button-label">图片</span>
               </button>
               <input type="file" id="imgFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" style="display:none">
-              <span class="upload-status" id="uploadStatus" role="status" aria-live="polite"></span>
             </span>
-            <span class="toolbar-group emoji-tools" aria-label="常用 Emoji">
-              <button type="button" data-emoji="✅" title="插入完成标记">✅</button>
-              <button type="button" data-emoji="📌" title="插入重点标记">📌</button>
-              <button type="button" data-emoji="💡" title="插入想法标记">💡</button>
-              <button type="button" data-emoji="⚠️" title="插入提醒标记">⚠️</button>
-              <button type="button" data-emoji="🚀" title="插入进度标记">🚀</button>
+            <span class="toolbar-group toolbar-group-more toolbar-group-format">
+              <button class="editor-toolbar-more-trigger icon-only" id="btnEditorToolbarMore" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="editorToolbarMoreMenu" title="更多工具" aria-label="更多工具">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18" cy="12" r="1.5"/></svg>
+                <span class="toolbar-button-label">更多</span>
+              </button>
+              <div class="editor-toolbar-more-menu" id="editorToolbarMoreMenu" role="menu" hidden>
+                <button type="button" data-action="mathInline" role="menuitem" title="行内公式">$f$</button>
+                <button type="button" data-action="mathBlock" role="menuitem" title="块级公式">$$</button>
+                <button type="button" data-action="hr" role="menuitem" title="分割线">分割线</button>
+                <button type="button" id="btnLogLink" role="menuitem" title="插入日志链接">日志链接</button>
+                <button type="button" data-emoji="✅" role="menuitem" title="插入完成标记">✅ 完成</button>
+                <button type="button" data-emoji="📌" role="menuitem" title="插入重点标记">📌 重点</button>
+                <button type="button" data-emoji="💡" role="menuitem" title="插入想法标记">💡 想法</button>
+                <button type="button" data-emoji="⚠️" role="menuitem" title="插入提醒标记">⚠️ 提醒</button>
+                <button type="button" data-emoji="🚀" role="menuitem" title="插入进度标记">🚀 进度</button>
+              </div>
+            </span>
+            <div class="editor-template-hidden" hidden>
+              <select class="template-select" id="templateSelect" title="使用模板">
+                <option value="">模板</option>
+              </select>
+              <button class="btn-secondary btn-sm btn-template-manage" id="btnManageTemplates" type="button">管理模板</button>
+            </div>
+            <span class="upload-status" id="uploadStatus" role="status" aria-live="polite"></span>
+            <span class="toolbar-group toolbar-group-ai">
+              <button class="editor-toolbar-toggle editor-ai-toggle" id="btnEditorAiPanel" type="button" aria-controls="editorAiPanel" aria-expanded="false" title="打开编辑器 AI">
+                <svg class="toolbar-button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.9 4.8L19 9.7l-4.1 3.3L16.1 18 12 15.1 7.9 18l1.2-5L5 9.7l5.1-1.9Z"/></svg>
+                <span class="toolbar-button-label">AI</span>
+              </button>
             </span>
           </div>
 
@@ -425,13 +508,17 @@
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.23.32.43.66.6 1H20a2 2 0 1 1 0 4h-.09c-.17.34-.37.68-.51 1Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
               </button>
               <button class="btn-secondary btn-sm" id="btnEditorAiNew" type="button">新对话</button>
-              <button class="btn-icon editor-ai-close" id="btnCloseEditorAiPanel" type="button" aria-label="收起编辑器 AI">&times;</button>
+              <button class="btn-icon editor-ai-close" id="btnCloseEditorAiPanel" type="button" aria-label="收起编辑器 AI">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>
+              </button>
             </div>
           </div>
           <div class="editor-ai-history-popover" id="editorAiHistoryPopover" hidden>
             <div class="editor-ai-history-head">
               <strong>历史对话</strong>
-              <button class="btn-icon editor-ai-history-close" id="btnEditorAiHistoryClose" type="button" aria-label="关闭历史对话">&times;</button>
+              <div class="editor-ai-history-actions">
+                <button class="btn-secondary btn-sm" id="btnEditorAiHistoryClose" type="button">收起</button>
+              </div>
             </div>
             <div class="editor-ai-history-list" id="editorAiHistoryList"></div>
           </div>
@@ -446,6 +533,7 @@
             <span class="editor-ai-sending" id="editorAiSending" style="display:none;">正在思考...</span>
           </div>
         </aside>
+        <button class="editor-ai-backdrop" id="editorAiBackdrop" type="button" hidden aria-label="关闭编辑器侧边栏"></button>
       </div>
     </div>
 
@@ -505,20 +593,32 @@
               <span>DeepSeek API Key</span>
               <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
             </label>
-            <label class="ai-settings-field" for="aiModelSelect">
+            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiModelSelect">
               <span>模型</span>
-              <select id="aiModelSelect" class="ai-chat-select" title="AI 模型">
+              <label class="sr-only" for="aiModelSelect">模型</label>
+              <select id="aiModelSelect" class="ai-chat-select ai-native-select" title="AI 模型" tabindex="-1" aria-hidden="true">
                 <option value="deepseek-v4-flash">DeepSeek Flash</option>
                 <option value="deepseek-v4-pro">DeepSeek Pro</option>
               </select>
-            </label>
-            <label class="ai-settings-field" for="aiReasoningEffort">
+              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiModelSelectMenu">
+                <span class="ai-settings-select-value">DeepSeek Flash</span>
+                <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="ai-settings-select-menu" id="aiModelSelectMenu" role="listbox" hidden></div>
+            </div>
+            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiReasoningEffort">
               <span>思考强度</span>
-              <select id="aiReasoningEffort" class="ai-chat-select" title="思考强度">
+              <label class="sr-only" for="aiReasoningEffort">思考强度</label>
+              <select id="aiReasoningEffort" class="ai-chat-select ai-native-select" title="思考强度" tabindex="-1" aria-hidden="true">
                 <option value="high">高</option>
                 <option value="max">最高</option>
               </select>
-            </label>
+              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiReasoningEffortMenu">
+                <span class="ai-settings-select-value">高</span>
+                <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="ai-settings-select-menu" id="aiReasoningEffortMenu" role="listbox" hidden></div>
+            </div>
             <label class="ai-settings-toggle" for="aiStreamToggle">
               <span>
                 <strong>流式输出</strong>
@@ -566,17 +666,24 @@
               <span>Seedream API Key</span>
               <input type="password" id="aiSeedreamApiKeyInput" class="ai-key-input" placeholder="4b45..." autocomplete="off" spellcheck="false">
             </label>
-            <label class="ai-settings-field" for="aiSeedreamModel">
+            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiSeedreamModel">
               <span>生图模型</span>
-              <select id="aiSeedreamModel" class="ai-chat-select" title="Seedream 生图模型">
+              <label class="sr-only" for="aiSeedreamModel">生图模型</label>
+              <select id="aiSeedreamModel" class="ai-chat-select ai-native-select" title="Seedream 生图模型" tabindex="-1" aria-hidden="true">
                 <option value="doubao-seedream-5-0-260128">Seedream 5.0</option>
                 <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
                 <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
               </select>
-            </label>
-            <label class="ai-settings-field" for="aiSeedreamSize">
+              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiSeedreamModelMenu">
+                <span class="ai-settings-select-value">Seedream 5.0</span>
+                <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="ai-settings-select-menu" id="aiSeedreamModelMenu" role="listbox" hidden></div>
+            </div>
+            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiSeedreamSize">
               <span>图片尺寸</span>
-              <select id="aiSeedreamSize" class="ai-chat-select" title="Seedream 图片尺寸">
+              <label class="sr-only" for="aiSeedreamSize">图片尺寸</label>
+              <select id="aiSeedreamSize" class="ai-chat-select ai-native-select" title="Seedream 图片尺寸" tabindex="-1" aria-hidden="true">
                 <option value="2K">2K</option>
                 <option value="3K">3K</option>
                 <option value="4K">4K</option>
@@ -584,7 +691,12 @@
                 <option value="2848x1600">2848x1600（16:9）</option>
                 <option value="1600x2848">1600x2848（9:16）</option>
               </select>
-            </label>
+              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiSeedreamSizeMenu">
+                <span class="ai-settings-select-value">2K</span>
+                <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="ai-settings-select-menu" id="aiSeedreamSizeMenu" role="listbox" hidden></div>
+            </div>
             <label class="ai-settings-toggle" for="aiSeedreamWatermark">
               <span>
                 <strong>Seedream 水印</strong>
@@ -624,13 +736,19 @@
                     <span>Tavily API Key</span>
                     <input type="password" id="aiTavilyApiKeyInput" class="ai-key-input" placeholder="tvly-..." autocomplete="off" spellcheck="false">
                   </label>
-                  <label class="ai-settings-field" for="aiWebSearchDepth">
+                  <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiWebSearchDepth">
                     <span>搜索强度</span>
-                    <select id="aiWebSearchDepth" class="ai-chat-select" title="联网搜索强度">
+                    <label class="sr-only" for="aiWebSearchDepth">搜索强度</label>
+                    <select id="aiWebSearchDepth" class="ai-chat-select ai-native-select" title="联网搜索强度" tabindex="-1" aria-hidden="true">
                       <option value="basic">Basic（更快）</option>
                       <option value="advanced">Advanced（更全面）</option>
                     </select>
-                  </label>
+                    <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiWebSearchDepthMenu">
+                      <span class="ai-settings-select-value">Basic（更快）</span>
+                      <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="ai-settings-select-menu" id="aiWebSearchDepthMenu" role="listbox" hidden></div>
+                  </div>
                 </div>
               </div>
               <div class="ai-skill-settings-card ai-skill-config-card">

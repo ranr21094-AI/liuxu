@@ -27,8 +27,10 @@ const editDate = $('#editDate');
 const editCategory = $('#editCategory');
 const editSubcategory = $('#editSubcategory');
 const editHours = $('#editHours');
+const editorModeTabs = $('#editorModeTabs');
 const saveStatus = $('#saveStatus');
 const btnEditorFullscreen = $('#btnEditorFullscreen');
+const editorToolbar = $('#editorToolbar');
 const editorOutlineLayout = $('#editorOutlineLayout');
 const editorOutlinePanel = $('#editorOutlinePanel');
 const editorOutlineList = $('#editorOutlineList');
@@ -47,10 +49,30 @@ const btnEditorAiHistoryClose = $('#btnEditorAiHistoryClose');
 const editorAiHistoryPopover = $('#editorAiHistoryPopover');
 const editorAiHistoryList = $('#editorAiHistoryList');
 const btnCloseEditorAiPanel = $('#btnCloseEditorAiPanel');
+const editorAiBackdrop = $('#editorAiBackdrop');
 const editorAiSending = $('#editorAiSending');
 const editorAiScopeLabel = $('#editorAiScopeLabel');
 const editorAiRenameOverlay = $('#editorAiRenameOverlay');
 const editorAiRenameInput = $('#editorAiRenameInput');
+const btnEditorToolbarMore = $('#btnEditorToolbarMore');
+const editorToolbarMoreMenu = $('#editorToolbarMoreMenu');
+
+function editorTitleActionIcon(name) {
+  switch (name) {
+    case 'fullscreen-exit':
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H4v6"/><path d="M4 4l7 7"/><path d="M14 4h6v6"/><path d="M20 4l-7 7"/><path d="M10 20H4v-6"/><path d="M4 20l7-7"/><path d="M14 20h6v-6"/><path d="M20 20l-7-7"/></svg>';
+    case 'fullscreen-enter':
+    default:
+      return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5"/><path d="M3 3l7 7"/><path d="M16 3h5v5"/><path d="M21 3l-7 7"/><path d="M8 21H3v-5"/><path d="M3 21l7-7"/><path d="M16 21h5v-5"/><path d="M21 21l-7-7"/></svg>';
+  }
+}
+
+function renderEditorFullscreenButton(enabled) {
+  btnEditorFullscreen.setAttribute('aria-pressed', String(enabled));
+  btnEditorFullscreen.innerHTML = editorTitleActionIcon(enabled ? 'fullscreen-exit' : 'fullscreen-enter');
+  btnEditorFullscreen.title = enabled ? '退出全屏编辑' : '进入全屏编辑';
+  btnEditorFullscreen.setAttribute('aria-label', enabled ? '退出全屏编辑' : '进入全屏编辑');
+}
 
 // Editor-internal state
 const EDITOR_TAB_STORAGE_KEY = 'editorTabMode';
@@ -74,13 +96,185 @@ let editorAiActiveConversationId = '';
 let editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 let editorAiIsSending = false;
 let editorAiRenameConversationId = '';
+const EDITOR_SELECT_IDS = ['editCategory', 'editSubcategory'];
 
-function setOutlinePanelOpen(open) {
+function isOutlinePanelOpen() {
+  return btnEditorOutlinePanel.getAttribute('aria-expanded') === 'true';
+}
+
+function isEditorAiPanelOpen() {
+  return btnEditorAiPanel.getAttribute('aria-expanded') === 'true';
+}
+
+function syncEditorDrawerBackdrop() {
+  if (!editorAiBackdrop) return;
+  const isMobile = Boolean(window.matchMedia && window.matchMedia('(max-width: 768px)').matches);
+  const mobileOutlineOverlay = isMobile && isOutlinePanelOpen();
+  const mobileAiOverlay = isMobile && isEditorAiPanelOpen();
+  const open = mobileOutlineOverlay || mobileAiOverlay;
+  editorAiBackdrop.hidden = !open;
+}
+
+function setOutlinePanelOpen(open, { closeAi = true } = {}) {
+  if (open && closeAi && isEditorAiPanelOpen()) {
+    void setEditorAiPanelOpen(false, { closeOutline: false, focusInput: false });
+  }
+  editorView.classList.toggle('editor-outline-open', open);
   editorOutlineLayout.classList.toggle('outline-panel-open', open);
   editorOutlinePanel.setAttribute('aria-hidden', String(!open));
+  editorOutlinePanel.inert = !open;
   btnEditorOutlinePanel.setAttribute('aria-expanded', String(open));
-  btnEditorOutlinePanel.title = open ? '收起标题栏' : '展开标题栏';
+  btnEditorOutlinePanel.title = open ? '收起标题大纲' : '展开标题大纲';
+  if (open) {
+    renderOutline();
+    syncOutlineCurrent();
+  }
+  syncEditorDrawerBackdrop();
   requestAnimationFrame(() => contentEditor.layout());
+}
+
+function editorSelectControls() {
+  return EDITOR_SELECT_IDS
+    .map(id => document.querySelector(`[data-editor-select-control][data-select-id="${id}"]`))
+    .filter(Boolean);
+}
+
+function closeEditorSelectControl(control) {
+  if (!control) return;
+  control.classList.remove('open');
+  control.querySelector('.editor-select-trigger')?.setAttribute('aria-expanded', 'false');
+  const menu = control.querySelector('.editor-select-menu');
+  if (menu) menu.hidden = true;
+}
+
+function closeEditorSelectControls(except = null) {
+  editorSelectControls().forEach(control => {
+    if (control !== except) closeEditorSelectControl(control);
+  });
+}
+
+function selectFromEditorOption(control, optionButton) {
+  const select = document.getElementById(control.dataset.selectId);
+  if (!select || !optionButton) return;
+  select.value = optionButton.dataset.value || '';
+  closeEditorSelectControl(control);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+  syncEditorSelectControls();
+  control.querySelector('.editor-select-trigger')?.focus();
+}
+
+function focusEditorSelectOption(control, direction = 1) {
+  const options = [...control.querySelectorAll('.editor-select-option')];
+  if (!options.length) return;
+  const activeIndex = options.indexOf(document.activeElement);
+  const selectedIndex = options.findIndex(option => option.getAttribute('aria-selected') === 'true');
+  const baseIndex = activeIndex >= 0 ? activeIndex : (selectedIndex >= 0 ? selectedIndex : 0);
+  const nextIndex = (baseIndex + direction + options.length) % options.length;
+  options[nextIndex].focus();
+}
+
+function openEditorSelectControl(control, { focusSelected = false } = {}) {
+  const trigger = control.querySelector('.editor-select-trigger');
+  const menu = control.querySelector('.editor-select-menu');
+  if (!trigger || !menu) return;
+  syncEditorSelectControls();
+  closeEditorSelectControls(control);
+  control.classList.add('open');
+  trigger.setAttribute('aria-expanded', 'true');
+  menu.hidden = false;
+  if (focusSelected) {
+    const selected = menu.querySelector('.editor-select-option[aria-selected="true"]');
+    (selected || menu.querySelector('.editor-select-option'))?.focus();
+  }
+}
+
+function toggleEditorSelectControl(control) {
+  if (control.classList.contains('open')) {
+    closeEditorSelectControl(control);
+  } else {
+    openEditorSelectControl(control);
+  }
+}
+
+function syncEditorSelectControls() {
+  editorSelectControls().forEach(control => {
+    const select = document.getElementById(control.dataset.selectId);
+    const trigger = control.querySelector('.editor-select-trigger');
+    const value = control.querySelector('.editor-select-value');
+    const menu = control.querySelector('.editor-select-menu');
+    if (!select || !trigger || !value || !menu) return;
+
+    const hidden = select.style.display === 'none' || select.hidden;
+    control.style.display = hidden ? 'none' : '';
+    if (hidden) {
+      closeEditorSelectControl(control);
+      return;
+    }
+
+    const options = [...select.options];
+    const selected = select.selectedOptions[0] || options.find(option => option.value === select.value) || options[0];
+    const hasValue = Boolean(select.value);
+    value.textContent = selected?.textContent || '';
+    control.classList.toggle('has-value', hasValue);
+    trigger.setAttribute('aria-label', `${select.labels?.[0]?.textContent || '选择'}：${selected?.textContent || '未选择'}`);
+    menu.innerHTML = options.map(option => `
+      <button
+        class="editor-select-option${option.value === select.value ? ' selected' : ''}"
+        type="button"
+        role="option"
+        data-value="${escHtml(option.value)}"
+        aria-selected="${option.value === select.value}"
+        tabindex="-1"
+      >${escHtml(option.textContent)}</button>
+    `).join('');
+  });
+}
+
+function initEditorSelectControls() {
+  editorSelectControls().forEach(control => {
+    const trigger = control.querySelector('.editor-select-trigger');
+    const menu = control.querySelector('.editor-select-menu');
+    trigger?.addEventListener('click', () => toggleEditorSelectControl(control));
+    trigger?.addEventListener('keydown', (event) => {
+      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
+      event.preventDefault();
+      openEditorSelectControl(control, { focusSelected: true });
+      if (event.key === 'ArrowUp') focusEditorSelectOption(control, -1);
+    });
+    menu?.addEventListener('click', (event) => {
+      const option = event.target.closest('.editor-select-option');
+      if (option) selectFromEditorOption(control, option);
+    });
+    menu?.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        focusEditorSelectOption(control, 1);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        focusEditorSelectOption(control, -1);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectFromEditorOption(control, event.target.closest('.editor-select-option'));
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        closeEditorSelectControl(control);
+        trigger?.focus();
+      }
+    });
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-editor-select-control]')) closeEditorSelectControls();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeEditorSelectControls();
+  });
+  syncEditorSelectControls();
+}
+
+function setEditorToolbarMoreOpen(open) {
+  if (!btnEditorToolbarMore || !editorToolbarMoreMenu) return;
+  btnEditorToolbarMore.setAttribute('aria-expanded', String(open));
+  editorToolbarMoreMenu.hidden = !open;
 }
 
 function normalizeEditorAiConversations(items) {
@@ -596,11 +790,17 @@ function updateEditorAiSendState() {
   editorAiSending.style.display = editorAiIsSending ? '' : 'none';
 }
 
-async function setEditorAiPanelOpen(open) {
+async function setEditorAiPanelOpen(open, { closeOutline = true, focusInput = true } = {}) {
+  if (open && closeOutline && isOutlinePanelOpen()) {
+    setOutlinePanelOpen(false, { closeAi: false });
+  }
+  editorView.classList.toggle('editor-ai-open', open);
   editorOutlineLayout.classList.toggle('editor-ai-open', open);
   editorAiPanel.setAttribute('aria-hidden', String(!open));
+  editorAiPanel.inert = !open;
   btnEditorAiPanel.setAttribute('aria-expanded', String(open));
   btnEditorAiPanel.title = open ? '收起编辑器 AI' : '打开编辑器 AI';
+  syncEditorDrawerBackdrop();
   if (open && !editorAiAllConversations.length) await loadEditorAiConversations();
   if (open) {
     renderEditorAiMessages();
@@ -608,7 +808,7 @@ async function setEditorAiPanelOpen(open) {
     updateEditorAiSendState();
     requestAnimationFrame(() => {
       contentEditor.layout();
-      editorAiInput.focus();
+      if (focusInput) editorAiInput.focus();
     });
   } else {
     setEditorAiHistoryOpen(false);
@@ -830,18 +1030,40 @@ function renderOutline() {
       <span class="editor-outline-text">${escHtml(heading.text)}</span>
     </button>
   `).join('');
+  syncOutlineCurrent();
+}
+
+function syncOutlineCurrent(cursor = contentEditor.getSelection().start) {
+  const items = [...editorOutlineList.querySelectorAll('.editor-outline-item')];
+  if (!items.length) return;
+  let current = items[0];
+  items.forEach(item => {
+    const pos = parseInt(item.dataset.pos, 10);
+    if (Number.isFinite(pos) && pos <= cursor) current = item;
+  });
+  items.forEach(item => {
+    const active = item === current;
+    item.classList.toggle('is-current', active);
+    if (active) {
+      item.setAttribute('aria-current', 'true');
+    } else {
+      item.removeAttribute('aria-current');
+    }
+  });
 }
 
 function setEditorFullscreen(enabled) {
   document.body.classList.toggle('editor-fullscreen', enabled);
-  btnEditorFullscreen.setAttribute('aria-pressed', String(enabled));
-  btnEditorFullscreen.textContent = enabled ? '退出全屏' : '全屏编辑';
-  btnEditorFullscreen.title = enabled ? '退出全屏编辑' : '进入全屏编辑';
+  renderEditorFullscreenButton(enabled);
+  setEditorToolbarMoreOpen(false);
   requestAnimationFrame(() => contentEditor.layout());
 }
 
 export function showListView() {
   setEditorFullscreen(false);
+  setOutlinePanelOpen(false);
+  setEditorAiPanelOpen(false);
+  setEditorToolbarMoreOpen(false);
   listView.style.display = 'flex';
   editorView.style.display = 'none';
   categoryView.style.display = 'none';
@@ -949,12 +1171,16 @@ export async function openEditor(id) {
       editCategory.value = '其他';
     }
     populateEditorSubCategory(editCategory.value);
+    syncEditorSelectControls();
     if (sub) {
       setTimeout(() => {
         if ([...editSubcategory.options].some(o => o.value === sub)) {
           editSubcategory.value = sub;
         }
+        syncEditorSelectControls();
       }, 0);
+    } else {
+      syncEditorSelectControls();
     }
 
     isDirty = false;
@@ -963,7 +1189,7 @@ export async function openEditor(id) {
 
     switchTab(editorTab);
     editorAiActiveConversationId = '';
-    if (editorOutlineLayout.classList.contains('editor-ai-open')) renderEditorAiMessages();
+    if (editorView.classList.contains('editor-ai-open')) renderEditorAiMessages();
     if (editorTab !== 'preview') contentEditor.focus();
     return true;
   } catch (err) {
@@ -993,12 +1219,13 @@ export function newLog() {
   editCategory.value = defaultCategory.parent;
   populateEditorSubCategory(defaultCategory.parent);
   editSubcategory.value = defaultCategory.sub;
+  syncEditorSelectControls();
   saveStatus.textContent = '';
   isDirty = false;
   document.title = '工作日志';
   showEditorView();
   switchTab(editorTab);
-  if (editorOutlineLayout.classList.contains('editor-ai-open')) renderEditorAiMessages();
+  if (editorView.classList.contains('editor-ai-open')) renderEditorAiMessages();
   if (editorTab !== 'preview') contentEditor.focus();
 }
 
@@ -1074,6 +1301,17 @@ btnCloseEditorAiPanel.addEventListener('click', () => {
   setEditorAiPanelOpen(false);
   btnEditorAiPanel.focus();
 });
+editorAiBackdrop?.addEventListener('click', () => {
+  if (isEditorAiPanelOpen()) {
+    setEditorAiPanelOpen(false);
+    btnEditorAiPanel.focus();
+    return;
+  }
+  if (isOutlinePanelOpen()) {
+    setOutlinePanelOpen(false);
+    btnEditorOutlinePanel.focus();
+  }
+});
 
 btnEditorAiNew.addEventListener('click', newEditorAiConversation);
 btnEditorAiHistory.addEventListener('click', () => {
@@ -1142,8 +1380,20 @@ editorOutlineList.addEventListener('click', (e) => {
   const pos = parseInt(item.dataset.pos, 10);
   if (!Number.isFinite(pos)) return;
   if (editorTab === 'preview') switchTab('write');
+  syncOutlineCurrent(pos);
   contentEditor.setSelection(pos, pos);
   contentEditor.focus();
+});
+
+btnEditorToolbarMore?.addEventListener('click', (event) => {
+  event.preventDefault();
+  const open = btnEditorToolbarMore.getAttribute('aria-expanded') !== 'true';
+  setEditorToolbarMoreOpen(open);
+});
+
+document.addEventListener('click', (event) => {
+  if (!editorToolbarMoreMenu || !btnEditorToolbarMore) return;
+  if (!event.target.closest('.toolbar-group-more')) setEditorToolbarMoreOpen(false);
 });
 
 // Auto-save with dirty detection
@@ -1304,7 +1554,19 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault(); closeCategoryManager();
       } else if (inEditor) {
         if (focusedOnContent && contentEditor.hasOpenWidget()) return;
-        if (btnEditorOutlinePanel.getAttribute('aria-expanded') === 'true') {
+        if (btnEditorToolbarMore?.getAttribute('aria-expanded') === 'true') {
+          e.preventDefault();
+          setEditorToolbarMoreOpen(false);
+          btnEditorToolbarMore.focus();
+          return;
+        }
+        if (isEditorAiPanelOpen()) {
+          e.preventDefault();
+          setEditorAiPanelOpen(false);
+          btnEditorAiPanel.focus();
+          return;
+        }
+        if (isOutlinePanelOpen()) {
           e.preventDefault();
           setOutlinePanelOpen(false);
           btnEditorOutlinePanel.focus();
@@ -1514,6 +1776,7 @@ async function searchLogLinks() {
 }
 
 function openLogLinkPicker() {
+  setEditorToolbarMoreOpen(false);
   openModal($('#logLinkOverlay'), '#logLinkSearch');
   $('#logLinkSearch').value = '';
   $('#logLinkResults').innerHTML = '<div class="log-link-loading">加载中...</div>';
@@ -1640,6 +1903,7 @@ $('#editorToolbar').addEventListener('click', (e) => {
   if (emojiButton) {
     e.preventDefault();
     contentEditor.insertAtSelection(emojiButton.dataset.emoji);
+    setEditorToolbarMoreOpen(false);
     contentEditor.focus();
     return;
   }
@@ -1647,6 +1911,7 @@ $('#editorToolbar').addEventListener('click', (e) => {
   if (!btn) return;
   e.preventDefault();
   insertMarkdown(btn.dataset.action);
+  if (editorToolbarMoreMenu?.contains(btn)) setEditorToolbarMoreOpen(false);
 });
 
 // Template insertion and management
@@ -1854,9 +2119,13 @@ editHours.addEventListener('change', autoSave);
 editCategory.addEventListener('change', () => {
   populateEditorSubCategory(editCategory.value);
   editSubcategory.value = '';
+  syncEditorSelectControls();
   autoSave();
 });
-editSubcategory.addEventListener('change', autoSave);
+editSubcategory.addEventListener('change', () => {
+  syncEditorSelectControls();
+  autoSave();
+});
 
 // Tab switching
 function nextEditorTab() {
@@ -1869,6 +2138,8 @@ export function switchTab(tab) {
   if (!['write', 'preview', 'split'].includes(tab)) tab = 'write';
   editorTab = tab;
   localStorage.setItem(EDITOR_TAB_STORAGE_KEY, tab);
+  setEditorToolbarMoreOpen(false);
+  editorToolbar.classList.toggle('preview-mode', tab === 'preview');
   $$('.editor-tab').forEach(t => {
     const selected = t.dataset.tab === tab;
     t.classList.toggle('active', selected);
@@ -1880,28 +2151,25 @@ export function switchTab(tab) {
   if (tab === 'write') {
     contentEditor.setVisible(true);
     editPreview.style.display = 'none';
-    $('#editorToolbar').style.display = 'flex';
   } else if (tab === 'preview') {
     renderPreview();
     contentEditor.setVisible(false);
     editPreview.style.display = 'block';
-    $('#editorToolbar').style.display = 'none';
   } else {
     renderPreview();
     contentEditor.setVisible(true);
     editPreview.style.display = 'block';
-    $('#editorToolbar').style.display = 'flex';
   }
   requestAnimationFrame(() => contentEditor.layout());
 }
 
-document.querySelector('.editor-tabs').addEventListener('click', (e) => {
+editorModeTabs.addEventListener('click', (e) => {
   const tab = e.target.closest('.editor-tab');
   if (!tab) return;
   switchTab(tab.dataset.tab);
 });
 
-document.querySelector('.editor-tabs').addEventListener('keydown', (e) => {
+editorModeTabs.addEventListener('keydown', (e) => {
   const tab = e.target.closest('.editor-tab');
   if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
   const tabs = [...$$('.editor-tab')];
@@ -1915,6 +2183,9 @@ document.querySelector('.editor-tabs').addEventListener('keydown', (e) => {
   switchTab(tabs[targetIndex].dataset.tab);
   tabs[targetIndex].focus();
 });
+
+initEditorSelectControls();
+document.addEventListener('editor-category-options-changed', syncEditorSelectControls);
 
 // Image upload
 $('#btnUploadImg').addEventListener('click', () => {

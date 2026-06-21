@@ -21,6 +21,18 @@ npm test
 
 `npm start` 和 `npm test` 会自动构建编辑器资源；如果直接运行 `node server.js`，请先执行 `npm run build`。
 
+待办提醒测试命令：
+
+```bash
+npm run todo:reminder:test -- --to your@email.com --all-open
+```
+
+只预览正文、不真正发送：
+
+```bash
+npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
+```
+
 ## Main Areas
 
 ### 日志
@@ -42,6 +54,11 @@ npm test
 - 任务可设置标题、截止日期、优先级和备注。
 - 支持勾选完成、点击编辑、删除和清除已完成；无日期任务继续保留手动拖拽排序。
 - 进入待办主页面时左侧保留默认日志侧栏，不再显示重复的待办小面板。
+- 待办页右侧表单区内置“邮件提醒”设置，可保存启用状态、收件邮箱和每日发送时间。
+- 每日提醒按香港业务日期运行；到达设定时间后，只汇总“当天到期且未完成”的待办。
+- 若服务错过了当天设定时间，会在恢复运行后的首次检查补发一次；若当天没有符合条件的待办，则不会发邮件。
+- 当天提醒建立快照后，后续重试会复用同一份内容，不会因设定时间之后新增或修改待办而改变当天邮件。
+- 提醒邮件当前为 UTF-8 纯文本摘要，只包含标题、截止日期和备注。
 
 ### 分类
 
@@ -133,6 +150,29 @@ AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不�
 | `SEEDREAM_BASE_URL` | Seedream API 基础地址 | `https://ark.cn-beijing.volces.com/api/v3` |
 | `SEEDREAM_DEFAULT_MODEL` | 默认 Seedream 模型 | `doubao-seedream-5-0-260128` |
 | `WESTOCK_NPX_COMMAND` | WeStock CLI 启动命令 | `npx -y westock-data-clawhub@1.0.4` |
+| `QQ_EMAIL_ACCOUNT` | QQ 发信邮箱账号；默认也可作为提醒收件邮箱初始值 | empty |
+| `QQ_EMAIL_AUTH_CODE` | QQ 邮箱 SMTP 授权码，不是登录密码 | empty |
+
+### 待办邮件提醒配置
+
+1. 在 QQ 邮箱中开启 SMTP，并获取授权码。
+2. 在 `.env` 中填写：
+
+```bash
+QQ_EMAIL_ACCOUNT=your@qq.com
+QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
+```
+
+3. 重启服务。
+4. 打开待办页面，在“邮件提醒”卡片中设置启用状态、收件邮箱和发送时间，默认时间是 `08:00`。
+5. 保存后，服务会每 60 秒检查一次是否需要发送。
+
+提醒发送边界：
+
+- 只有启用状态为开且 QQ 发信配置可用时，提醒设置才能保存成功。
+- 只提醒“当天到期且未完成”的待办。
+- 当天无符合条件的待办时不发邮件。
+- SMTP 失败会重试同一份当天快照，直到成功或服务停止。
 
 生成日记密码哈希：
 
@@ -150,6 +190,8 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 | --- | --- |
 | `logs.json` | 日志 |
 | `todos.json` | 待办 |
+| `todo-reminder-settings.json` | 待办提醒开关、收件邮箱和发送时间 |
+| `todo-reminder-state.json` | 当天提醒快照、发送状态和错误信息 |
 | `categories.json` | 父分类、子分类和日历显示设置 |
 | `ai-settings.json` | AI、Tavily、Perplexity、Seedream、WeStock 设置和本地 API Key |
 | `ai-chats.json` | 独立 AI 和日志内 AI 历史 |
@@ -218,6 +260,8 @@ http://<电脑局域网 IP>:<PORT>
 | `PUT` | `/api/todos/:id` | 更新待办 |
 | `DELETE` | `/api/todos/:id` | 删除待办 |
 | `PUT` | `/api/todos/reorder` | 待办拖拽排序 |
+| `GET` | `/api/todo-reminder-settings` | 读取待办邮件提醒设置与状态 |
+| `PUT` | `/api/todo-reminder-settings` | 保存待办邮件提醒设置 |
 | `GET` | `/api/categories` | 获取分类树 |
 | `PUT` | `/api/categories/:parent/subcategories/reorder` | 重排父分类下的子分类 |
 | `POST` | `/api/upload` | 上传日志图片 |
