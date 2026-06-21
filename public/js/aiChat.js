@@ -538,6 +538,13 @@ function updateAiChatHeader() {
   }
 }
 
+function scrollMessagesToBottom() {
+  const list = $('#aiChatMessages');
+  if (!list) return;
+  const scroller = list.closest('.ai-chat-body') || list;
+  scroller.scrollTop = scroller.scrollHeight;
+}
+
 function renderMessages() {
   const list = $('#aiChatMessages');
   const messages = activeMessages();
@@ -588,7 +595,7 @@ function renderMessages() {
       </div>
     </div>
   ` : '');
-  list.scrollTop = list.scrollHeight;
+  scrollMessagesToBottom();
   renderHistory();
 }
 
