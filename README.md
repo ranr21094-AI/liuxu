@@ -35,6 +35,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open
 npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 ```
 
+<<<<<<< HEAD
 ## Recent Updates
 
 - AI 对话页现在是更简洁的聊天工作台：顶部状态头已移除，消息阅读区更大，历史栏和输入器也统一成更轻的样式。
@@ -42,6 +43,8 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 - 日志归档页已收成“工具区 + 卡片区”的结构：搜索和筛选保留在上方，日志卡片不再被整块大白框包裹。
 - 日志编辑器内 AI 面板改成更紧凑的头部和输入区，历史、设置、新对话、生图、发送入口都还保留。
 
+=======
+>>>>>>> fbdf4692ad342e2617b2be1aae23b97ba4a6dfd5
 ## Main Areas
 
 ### 日志
