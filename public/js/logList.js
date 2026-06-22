@@ -10,6 +10,8 @@ import { formatShortDateLabel, getBusinessDateParts } from './businessDate.js';
 let lastData = null;
 const CARD_WIDTH_KEY = 'logCardWidth';
 const CARD_NAV_COLLAPSED_KEY = 'cardNavCollapsed';
+const CARD_SCROLL_TAP_SLOP = 8;
+const CARD_SCROLL_SUPPRESS_MS = 420;
 
 const logList = $('#logList');
 const logCount = $('#logCount');
@@ -22,6 +24,8 @@ const cardNavToggle = $('#cardNavToggle');
 const cardNavCount = $('#cardNavCount');
 const cardNavList = $('#cardNavList');
 let cardNavPageInfo = null;
+let previewTouchState = null;
+let suppressCardOpenUntil = 0;
 const ARCHIVE_FILTER_IDS = ['filterCategory', 'filterSubcategory', 'filterMonth', 'filterPage'];
 
 function archiveFilterControls() {
@@ -406,6 +410,10 @@ logList.addEventListener('click', async (e) => {
     return;
   }
   if (await handleInternalLogLinkClick(e)) return;
+  if (Date.now() < suppressCardOpenUntil && e.target.closest('.log-card-preview')) {
+    e.preventDefault();
+    return;
+  }
   if (e.target.closest('.markdown-body a[href]')) {
     e.stopPropagation();
     return;
@@ -416,6 +424,42 @@ logList.addEventListener('click', async (e) => {
   if (!card) return;
   openEditor(parseInt(card.dataset.id));
 });
+
+logList.addEventListener('touchstart', (event) => {
+  const preview = event.target.closest('.log-card-preview');
+  if (!preview) {
+    previewTouchState = null;
+    return;
+  }
+  const touch = event.touches[0];
+  if (!touch) return;
+  previewTouchState = {
+    preview,
+    startY: touch.clientY,
+    moved: false,
+  };
+}, { passive: true });
+
+logList.addEventListener('touchmove', (event) => {
+  if (!previewTouchState) return;
+  const touch = event.touches[0];
+  if (!touch) return;
+  if (Math.abs(touch.clientY - previewTouchState.startY) > CARD_SCROLL_TAP_SLOP) {
+    previewTouchState.moved = true;
+    suppressCardOpenUntil = Date.now() + CARD_SCROLL_SUPPRESS_MS;
+  }
+}, { passive: true });
+
+logList.addEventListener('touchend', () => {
+  if (previewTouchState?.moved) {
+    suppressCardOpenUntil = Date.now() + CARD_SCROLL_SUPPRESS_MS;
+  }
+  previewTouchState = null;
+}, { passive: true });
+
+logList.addEventListener('touchcancel', () => {
+  previewTouchState = null;
+}, { passive: true });
 
 logList.addEventListener('keydown', (e) => {
   if (e.target.closest('a[href^="#log/"]')) return;

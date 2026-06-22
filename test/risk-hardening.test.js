@@ -2914,15 +2914,17 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.doesNotMatch(styleSource, /\.btn-preview-toggle\s*\{/);
   assert.doesNotMatch(styleSource, /\.item-order-controls\s*\{/);
   assert.doesNotMatch(styleSource, /\.btn-order\s*\{/);
-  assert.match(styleSource, /\.log-card\s*\{[\s\S]*height:\s*352px;/);
+  assert.match(styleSource, /\.log-card\s*\{[\s\S]*height:\s*400px;/);
   assert.match(styleSource, /\.log-card-content\s*\{[\s\S]*overflow:\s*hidden;/);
-  assert.match(styleSource, /\.log-card-content::after\s*\{[\s\S]*height:\s*34px;/);
+  assert.match(styleSource, /\.log-card-content::after\s*\{[\s\S]*height:\s*42px;/);
+  assert.match(styleSource, /\.log-card-preview\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(styleSource, /\.log-card-preview \.preview-md\s*\{[\s\S]*min-height:\s*100%;[\s\S]*overflow:\s*visible;/);
   assert.match(styleSource, /\.pagination\s*\{\s*display:\s*none;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-archive-toolbar\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-archive-panel\s*\{[\s\S]*padding:\s*0;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-filter-row\s*\{[\s\S]*flex-wrap:\s*wrap;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-archive-searchbar\s*\{[\s\S]*padding:\s*12px;/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-card\s*\{[\s\S]*height:\s*280px;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-card\s*\{[\s\S]*height:\s*312px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-card-top\s*\{[\s\S]*grid-template-areas:[\s\S]*"title";/);
 });
 
@@ -3706,7 +3708,6 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(editorSource, /function syncEditorSelectControls\(\)/);
   assert.match(editorSource, /document\.addEventListener\('editor-category-options-changed', syncEditorSelectControls\);/);
   assert.doesNotMatch(editorSource, /window\.(prompt|confirm)/);
-<<<<<<< HEAD
   assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*flex-basis:\s*min\(388px, 30vw\);/);
   assert.match(styleSource, /\.editor-ai-panel\s*\{[\s\S]*width:\s*0;[\s\S]*min-width:\s*0;/);
   assert.match(styleSource, /\.editor-ai-history-popover\s*\{[\s\S]*position:\s*absolute;[\s\S]*top:\s*62px;/);
@@ -3714,19 +3715,11 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(styleSource, /\.editor-ai-header\s*\{[\s\S]*display:\s*flex;[\s\S]*justify-content:\s*space-between;/);
   assert.match(styleSource, /\.editor-ai-header-main\s*\{[\s\S]*display:\s*flex;[\s\S]*gap:\s*10px;/);
   assert.match(styleSource, /\.editor-ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 24px 24px;[\s\S]*min-height:\s*68px;/);
-=======
-  assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*flex-basis:\s*min\(420px, 33vw\);/);
-  assert.match(styleSource, /\.editor-ai-panel\s*\{[\s\S]*width:\s*0;[\s\S]*flex:\s*0 0 0;/);
-  assert.match(styleSource, /\.editor-ai-history-popover\s*\{[\s\S]*position:\s*static;/);
-  assert.match(styleSource, /\.editor-ai-backdrop\s*\{[\s\S]*position:\s*fixed;/);
-  assert.match(styleSource, /\.editor-ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 28px 28px;[\s\S]*height:\s*58px;/);
->>>>>>> fbdf4692ad342e2617b2be1aae23b97ba4a6dfd5
   assert.match(styleSource, /\.ai-image-card\s*\{[\s\S]*display:\s*grid;/);
   assert.match(styleSource, /\.editor-ai-assistant-bubble\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*280px;[\s\S]*overflow-y:\s*auto;/);
   assert.match(styleSource, /\.editor-ai-suggestion-card\.collapsed \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*132px;/);
   assert.match(styleSource, /\.editor-ai-suggestion-card\.expanded \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*360px;/);
-<<<<<<< HEAD
   assert.match(styleSource, /\.editor-ai-empty\s*\{[\s\S]*background:\s*transparent;/);
   assert.match(styleSource, /\.editor-ai-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*max-width:\s*260px;/);
   assert.match(styleSource, /\.editor-ai-composer textarea\s*\{[\s\S]*min-height:\s*76px;[\s\S]*padding:\s*12px 96px 14px 14px;/);
@@ -3736,12 +3729,6 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*left:\s*10px;[\s\S]*max-height:\s*min\(78vh, 700px\);/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-history-popover\s*\{[\s\S]*max-height:\s*190px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-history-popover\s*\{[\s\S]*top:\s*64px;/);
-=======
-  assert.match(styleSource, /\.editor-ai-composer textarea\s*\{[\s\S]*min-height:\s*112px;/);
-  assert.match(styleSource, /\.editor-ai-icon-action svg,[\s\S]*\.editor-ai-close svg\s*\{[\s\S]*stroke-width:\s*1\.6;/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*left:\s*10px;[\s\S]*max-height:\s*min\(78vh, 700px\);/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-history-popover\s*\{[\s\S]*max-height:\s*190px;/);
->>>>>>> fbdf4692ad342e2617b2be1aae23b97ba4a6dfd5
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-suggestion-card\.expanded \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*260px;/);
 });
 

@@ -2135,7 +2135,7 @@ body.sidebar-ai-mode .main {
   position: relative;
   min-width: 260px;
   width: var(--card-width, 340px);
-  height: 352px;
+  height: 400px;
   flex-shrink: 0;
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
 }
@@ -2199,7 +2199,7 @@ body.sidebar-ai-mode .main {
   right: 0;
   bottom: 0;
   left: 0;
-  height: 34px;
+  height: 42px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.94));
   pointer-events: none;
 }
@@ -7442,6 +7442,9 @@ body.editor-fullscreen .codemirror-content-editor {
 /* Log card preview truncation */
 .log-card-preview {
   overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .preview-plain {
@@ -9434,12 +9437,8 @@ body.editor-fullscreen .codemirror-content-editor {
 }
 
 .log-card-preview .preview-md {
-  height: 100%;
-  overflow: hidden;
-}
-
-.log-card-preview {
-  overflow: hidden;
+  min-height: 100%;
+  overflow: visible;
 }
 
 [data-theme="dark"] .log-card-content::after {
@@ -10160,11 +10159,11 @@ body.editor-fullscreen .codemirror-content-editor {
   }
 
   .log-card {
-    height: 280px;
+    height: 312px;
   }
 
   .log-card-content::after {
-    height: 30px;
+    height: 34px;
   }
 }
 
