@@ -278,7 +278,6 @@ body.desktop-narrow-sidebar .btn-sidebar-tools {
   display: flex;
 }
 
-body.desktop-narrow-sidebar:not(.sidebar-tools-mode) .stats-panel,
 body.desktop-narrow-sidebar:not(.sidebar-tools-mode) .diary-lock-panel,
 body.desktop-narrow-sidebar:not(.sidebar-tools-mode) .backup-buttons {
   display: none;
@@ -722,16 +721,19 @@ body.desktop-narrow-sidebar .card-nav-page-btn {
 }
 
 body.sidebar-todo-mode .ai-sidebar-history-panel,
-body.sidebar-todo-mode .category-sidebar-panel {
+body.sidebar-todo-mode .category-sidebar-panel,
+body.sidebar-todo-mode .card-nav-panel,
+body.sidebar-todo-mode .diary-lock-panel,
+body.sidebar-todo-mode .backup-buttons {
   display: none;
 }
 
 body.sidebar-ai-mode .calendar-widget,
 body.sidebar-ai-mode .card-nav-panel,
 body.sidebar-ai-mode .todo-full-panel,
-body.sidebar-ai-mode .stats-panel,
 body.sidebar-ai-mode .diary-lock-panel,
 body.sidebar-ai-mode .backup-buttons,
+body.sidebar-ai-mode .todo-reminder-card,
 body.sidebar-ai-mode .category-sidebar-panel {
   display: none;
 }
@@ -739,9 +741,9 @@ body.sidebar-ai-mode .category-sidebar-panel {
 body.sidebar-category-mode .calendar-widget,
 body.sidebar-category-mode .card-nav-panel,
 body.sidebar-category-mode .todo-full-panel,
-body.sidebar-category-mode .stats-panel,
 body.sidebar-category-mode .diary-lock-panel,
 body.sidebar-category-mode .backup-buttons,
+body.sidebar-category-mode .todo-reminder-card,
 body.sidebar-category-mode .ai-sidebar-history-panel {
   display: none;
 }
@@ -750,13 +752,9 @@ body.sidebar-tools-mode .calendar-widget,
 body.sidebar-tools-mode .card-nav-panel,
 body.sidebar-tools-mode .todo-full-panel,
 body.sidebar-tools-mode .ai-sidebar-history-panel,
-body.sidebar-tools-mode .category-sidebar-panel {
+body.sidebar-tools-mode .category-sidebar-panel,
+body.sidebar-tools-mode .todo-reminder-card {
   display: none;
-}
-
-body.sidebar-tools-mode .stats-panel {
-  display: block;
-  flex: none;
 }
 
 body.sidebar-tools-mode .diary-lock-panel,
@@ -1348,7 +1346,7 @@ body.sidebar-ai-mode .main {
 }
 
 .todo-reminder-card {
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 10px;
   margin-top: 4px;
@@ -1357,6 +1355,10 @@ body.sidebar-ai-mode .main {
   border-radius: 10px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.94));
+}
+
+body.sidebar-todo-mode .todo-reminder-card {
+  display: flex;
 }
 
 .todo-reminder-header {
@@ -1436,6 +1438,24 @@ body.sidebar-ai-mode .main {
   color: var(--color-text-secondary);
   font-size: 0.75rem;
   font-weight: 700;
+}
+
+.todo-reminder-field input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.84rem;
+  outline: none;
+  padding: 8px 9px;
+}
+
+.todo-reminder-field input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(var(--color-primary-rgb), 0.1);
 }
 
 .todo-reminder-status {
@@ -1535,34 +1555,6 @@ body.sidebar-ai-mode .main {
 .todo-view .todo-due.due-future {
   background: var(--color-bg);
 }
-
-/* Stats */
-.stats-panel {
-  background: var(--sidebar-bg-subtle);
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 12px;
-  flex: 1;
-  display: none;
-}
-
-.stats-panel h3 {
-  color: var(--color-sidebar-heading);
-  font-size: 0.85rem;
-  margin-bottom: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.stat-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 5px 0;
-  font-size: 0.8rem;
-  border-bottom: 1px solid var(--sidebar-border);
-}
-.stat-row:last-child { border-bottom: none; }
-.stat-row span:last-child { font-weight: 600; color: var(--color-sidebar-heading); }
 
 .category-chart {
   margin-top: 10px;
@@ -5046,11 +5038,19 @@ kbd {
   .calendar-widget.mobile-show { display: block; }
 
   .card-nav-panel,
-  .stats-panel,
   .diary-lock-panel,
   .backup-buttons,
+  .todo-reminder-card,
   .ai-sidebar-history-panel,
   .category-sidebar-panel { display: none; }
+  body.sidebar-todo-mode .calendar-widget,
+  body.sidebar-todo-mode .todo-reminder-card {
+    display: flex;
+    width: 100%;
+  }
+  body.sidebar-todo-mode .calendar-widget {
+    display: block;
+  }
   .card-nav-panel { width: 100%; }
   .card-nav-list {
     max-height: 180px;
@@ -5085,11 +5085,6 @@ kbd {
     max-height: 72vh;
     overflow-y: auto;
   }
-  body.sidebar-tools-mode .stats-panel {
-    display: block;
-    width: 100%;
-    flex: none;
-  }
   body.sidebar-tools-mode .diary-lock-panel {
     display: block;
     width: 100%;
@@ -5116,7 +5111,6 @@ kbd {
   .todo-page-clear {
     width: 100%;
   }
-  .stats-panel { width: 100%; }
   .main {
     margin-left: 0 !important;
     max-width: 100%;
@@ -6542,6 +6536,7 @@ body.editor-fullscreen .main {
 }
 
 .calendar-day {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6577,15 +6572,30 @@ body.editor-fullscreen .main {
   box-shadow: 0 10px 20px rgba(var(--color-primary-rgb), 0.24);
 }
 
-.calendar-day.has-logs::after {
+.calendar-day.has-logs::after,
+.calendar-day.has-todos::after {
+  content: "";
+  position: absolute;
   bottom: 4px;
+  border-radius: 999px;
+}
+
+.calendar-day.has-logs::after {
   width: 5px;
   height: 5px;
   background: #f59e0b;
 }
 
+.calendar-day.has-todos::after {
+  width: 10px;
+  height: 4px;
+  background: #14b8a6;
+}
+
 .calendar-day.today.has-logs::after,
-.calendar-day.selected.has-logs::after {
+.calendar-day.selected.has-logs::after,
+.calendar-day.today.has-todos::after,
+.calendar-day.selected.has-todos::after {
   background: currentColor;
 }
 
@@ -10006,6 +10016,7 @@ body.editor-fullscreen .codemirror-content-editor {
 @media (max-width: 1100px) {
   .log-archive-hero {
     align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .log-archive-actions {

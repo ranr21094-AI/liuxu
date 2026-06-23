@@ -2633,7 +2633,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
     'ai',
   ]);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="nav"]'), null);
-  assert.equal(document.querySelector('#sidebarModeMenu [data-mode="todo"]').textContent, '待办面板');
+  assert.equal(document.querySelector('#sidebarModeMenu [data-mode="todo"]').textContent, '待办事项');
   assert.doesNotMatch(document.querySelector('#sidebarModeMenu').textContent, /代办/);
   assert.equal(document.querySelector('#cardNavPanel').closest('.sidebar') !== null, true);
   assert.equal(document.querySelector('#calendarCollapseToggle').getAttribute('aria-expanded'), 'true');
@@ -3108,7 +3108,11 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-select-option:hover,\s*\.todo-select-option:focus-visible\s*\{[\s\S]*background:\s*var\(--archive-mint-soft\);/);
   assert.match(styleSource, /\.todo-section-clear\s*\{[\s\S]*width:\s*auto;[\s\S]*min-height:\s*24px;[\s\S]*font-size:\s*0\.68rem;/);
   assert.match(styleSource, /\.todo-page-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(300px, 360px\);/);
-  assert.doesNotMatch(styleSource, /body\.sidebar-todo-mode \.todo-panel|body\.sidebar-todo-mode \.calendar-widget|todo-sidebar-stats/);
+  assert.match(todoSource, /state\.datesWithTodos = \[\.\.\.new Set\(allTodos\.map\(todo => todo\.due_date\)\.filter\(Boolean\)\)\];/);
+  assert.match(todoSource, /refreshTodoCalendarDates\(\);[\s\S]*renderTodos\(\);/);
+  assert.match(styleSource, /body\.sidebar-todo-mode \.calendar-widget/);
+  assert.match(styleSource, /\.calendar-day\.has-todos::after\s*\{[\s\S]*background:\s*#14b8a6;/);
+  assert.doesNotMatch(styleSource, /body\.sidebar-todo-mode \.todo-panel|todo-sidebar-stats/);
   assert.match(styleSource, /\.todo-full-form textarea\s*\{[\s\S]*min-height:\s*200px;/);
 });
 
@@ -3193,7 +3197,7 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   assert.match(styleSource, /\.calendar-widget\.collapsed ~ \.diary-lock-panel,[\s\S]*\.calendar-widget\.collapsed ~ \.backup-buttons\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /body\.sidebar-tools-mode \.calendar-widget\.collapsed ~ \.diary-lock-panel\s*\{[\s\S]*display:\s*block;/);
   assert.match(styleSource, /body\.sidebar-tools-mode \.calendar-widget\.collapsed ~ \.backup-buttons\s*\{[\s\S]*display:\s*flex;/);
-  assert.match(styleSource, /body\.desktop-narrow-sidebar:not\(\.sidebar-tools-mode\) \.stats-panel,[\s\S]*body\.desktop-narrow-sidebar:not\(\.sidebar-tools-mode\) \.backup-buttons\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /body\.desktop-narrow-sidebar:not\(\.sidebar-tools-mode\) \.diary-lock-panel,[\s\S]*body\.desktop-narrow-sidebar:not\(\.sidebar-tools-mode\) \.backup-buttons\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /body\.desktop-narrow-sidebar \.btn-sidebar-tools\s*\{[\s\S]*display:\s*flex;/);
   assert.match(styleSource, /body\.desktop-narrow-sidebar \.card-nav-page-actions\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
   assert.match(styleSource, /\.calendar-selects\s*\{[\s\S]*grid-template-columns:\s*minmax\(108px, 1\.25fr\) minmax\(82px, 0\.95fr\);/);
@@ -3212,9 +3216,13 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   assert.match(styleSource, /\.card-nav-body\s*\{[\s\S]*flex:\s*1;[\s\S]*min-height:\s*0;[\s\S]*display:\s*flex;/);
   assert.match(styleSource, /\.card-nav-list\s*\{[\s\S]*max-height:\s*none;/);
   assert.doesNotMatch(styleSource, /\.todo-panel\s*\{/);
-  assert.match(styleSource, /\.stats-panel\s*\{[\s\S]*display:\s*none;/);
-  assert.doesNotMatch(styleSource, /body\.sidebar-todo-mode \.todo-panel|body\.sidebar-todo-mode \.calendar-widget|body\.sidebar-todo-mode \.card-nav-panel/);
-  assert.match(styleSource, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
+  assert.doesNotMatch(htmlSource, /id="statsPanel"|id="statWeekHours"|id="statMonthHours"|id="statDailyAvg"|id="statTotalLogs"/);
+  assert.doesNotMatch(styleSource, /\.stats-panel\s*\{/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'public', 'js', 'stats.js'), 'utf8'), /if \(weekHours\) weekHours\.textContent/);
+  assert.match(styleSource, /body\.sidebar-todo-mode \.card-nav-panel/);
+  assert.match(styleSource, /body\.sidebar-todo-mode \.calendar-widget/);
+  assert.doesNotMatch(styleSource, /body\.sidebar-todo-mode \.todo-panel/);
+  assert.doesNotMatch(styleSource, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
   assert.doesNotMatch(styleSource, /sidebar-nav-mode/);
 });
 
@@ -3240,7 +3248,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(appSource, /\$\('#sidebarModeMenu'\)\.addEventListener\('click'/);
   assert.match(appSource, /function closeSidebarModeMenu\(\)/);
   assert.match(appSource, /function toggleSidebarModeMenu\(\)/);
-  assert.match(appSource, /mode === 'todo'[\s\S]*title\.textContent = '工作日志';[\s\S]*当前为待办页面，侧栏为默认日志导航/);
+  assert.match(appSource, /mode === 'todo'[\s\S]*title\.textContent = '待办事项';[\s\S]*当前为待办事项/);
   assert.match(appSource, /mode === 'todo'[\s\S]*showTodoView\(\)/);
   assert.match(appSource, /function syncMainViewWithSidebarMode\(\)[\s\S]*activeSidebarMode\(\) === 'ai'[\s\S]*showAiChatView\(\)[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*openCategoryManager\(\)[\s\S]*activeSidebarMode\(\) === 'todo'[\s\S]*showTodoView\(\)/);
   assert.match(editorSource, /const aiSettingsView = \$\('#aiSettingsView'\);/);
@@ -3748,7 +3756,8 @@ test('mobile layout uses compact on-demand sidebar panels and retains collapse c
   assert.match(mobileStyles, /\.card-nav-panel,[\s\S]*\.category-sidebar-panel\s*\{\s*display:\s*none;/);
   assert.match(mobileStyles, /body\.sidebar-ai-mode \.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*flex;/);
   assert.match(mobileStyles, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;/);
-  assert.match(mobileStyles, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
+  assert.doesNotMatch(mobileStyles, /\.stats-panel\s*\{/);
+  assert.doesNotMatch(mobileStyles, /body\.sidebar-tools-mode \.stats-panel\s*\{[\s\S]*display:\s*block;/);
   assert.doesNotMatch(mobileStyles, /sidebar-nav-mode/);
   assert.match(mobileStyles, /body\.sidebar-collapsed \.sidebar\s*\{\s*display:\s*none;/);
   assert.match(appSource, /function collapseSidebar\(\)\s*\{\s*document\.body\.classList\.toggle\('sidebar-collapsed'\);\s*\}/);

@@ -7,14 +7,19 @@ export async function loadStats() {
   try {
     const res = await apiFetch('/api/stats');
     const stats = await res.json();
-    $('#statWeekHours').textContent = `${stats.weekHours}h`;
-    $('#statMonthHours').textContent = `${stats.monthHours}h`;
-    $('#statDailyAvg').textContent = `${stats.dailyAvg}h`;
-    $('#statTotalLogs').textContent = stats.totalLogs;
+    const weekHours = $('#statWeekHours');
+    const monthHours = $('#statMonthHours');
+    const dailyAvg = $('#statDailyAvg');
+    const totalLogs = $('#statTotalLogs');
+    if (weekHours) weekHours.textContent = `${stats.weekHours}h`;
+    if (monthHours) monthHours.textContent = `${stats.monthHours}h`;
+    if (dailyAvg) dailyAvg.textContent = `${stats.dailyAvg}h`;
+    if (totalLogs) totalLogs.textContent = stats.totalLogs;
     state.datesWithLogs = stats.datesWithLogs;
     renderCalendar();
 
     const chart = $('#categoryChart');
+    if (!chart) return;
     if (stats.categoryBreakdown.length === 0) {
       chart.innerHTML = '<span style="font-size:0.75rem;opacity:0.6;">暂无数据</span>';
     } else {

@@ -15,6 +15,7 @@ export const state = {
   category: '',
   month: currentMonthValue,
   datesWithLogs: [],
+  datesWithTodos: [],
   categories: [],
   listScrollY: null,
   diaryLockEnabled: false,

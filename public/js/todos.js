@@ -1,6 +1,8 @@
 import { apiFetch } from './auth.js';
 import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { businessDateString } from './businessDate.js';
+import { state } from './state.js';
+import { renderCalendar } from './calendar.js';
 
 const DEFAULT_TODO_CATEGORY = '待办';
 const TODO_SELECT_IDS = ['todoFullCategory', 'todoFullPriority'];
@@ -106,6 +108,7 @@ export async function loadTodos() {
     todoReminderUiMessage = '';
     if (activeFilter !== 'done' && !todoCategories.includes(activeFilter)) activeFilter = DEFAULT_TODO_CATEGORY;
     if (selectedTodoId && !allTodos.some(t => t.id === selectedTodoId)) resetTodoForm();
+    refreshTodoCalendarDates();
     renderTodos();
   } catch (err) {
     console.error('Todo load failed:', err);
@@ -131,6 +134,11 @@ function todoStats() {
   const overdue = pending.filter(t => t.due_date && t.due_date < today);
   const dueToday = pending.filter(t => t.due_date === today);
   return { pending, done, overdue, dueToday };
+}
+
+function refreshTodoCalendarDates() {
+  state.datesWithTodos = [...new Set(allTodos.map(todo => todo.due_date).filter(Boolean))];
+  renderCalendar();
 }
 
 function manualTodoOrder(a, b) {
@@ -401,6 +409,7 @@ export function showTodoView() {
   $('#aiChatView').style.display = 'none';
   $('#aiSettingsView').style.display = 'none';
   $('#todoView').style.display = 'flex';
+  refreshTodoCalendarDates();
   renderTodos();
   requestAnimationFrame(() => $('#todoSearchInput')?.focus());
 }

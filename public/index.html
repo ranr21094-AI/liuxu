@@ -26,7 +26,7 @@
         </button>
         <div class="sidebar-mode-menu" id="sidebarModeMenu" role="menu" style="display:none;">
           <button type="button" role="menuitem" data-mode="normal">默认侧栏</button>
-          <button type="button" role="menuitem" data-mode="todo">待办面板</button>
+          <button type="button" role="menuitem" data-mode="todo">待办事项</button>
           <button type="button" role="menuitem" data-mode="categories">管理分类</button>
           <button type="button" role="menuitem" data-mode="ai">AI 对话</button>
         </div>
@@ -88,14 +88,33 @@
       </div>
     </div>
 
-    <div class="stats-panel" id="statsPanel">
-      <h3>统计</h3>
-      <div class="stat-row"><span>本周工时</span><span id="statWeekHours">0h</span></div>
-      <div class="stat-row"><span>本月工时</span><span id="statMonthHours">0h</span></div>
-      <div class="stat-row"><span>日均</span><span id="statDailyAvg">0h</span></div>
-      <div class="stat-row"><span>总记录</span><span id="statTotalLogs">0</span></div>
-      <div class="category-chart" id="categoryChart"></div>
-    </div>
+    <section class="todo-reminder-card" aria-labelledby="todoReminderHeading">
+      <div class="todo-reminder-header">
+        <div>
+          <h3 id="todoReminderHeading">邮件提醒</h3>
+          <p class="todo-reminder-subtitle">当天到期的未完成待办会按固定时间汇总发邮件</p>
+        </div>
+        <span class="todo-reminder-chip" id="todoReminderMailState">未配置</span>
+      </div>
+      <label class="todo-reminder-toggle" for="todoReminderEnabled">
+        <input type="checkbox" id="todoReminderEnabled">
+        <span>启用每日提醒</span>
+      </label>
+      <div class="todo-reminder-grid">
+        <div class="todo-reminder-field">
+          <label for="todoReminderRecipient">收件邮箱</label>
+          <input type="email" id="todoReminderRecipient" placeholder="name@example.com" maxlength="320">
+        </div>
+        <div class="todo-reminder-field">
+          <label for="todoReminderTime">提醒时间</label>
+          <input type="time" id="todoReminderTime" value="08:00" step="60">
+        </div>
+      </div>
+      <p class="todo-reminder-status" id="todoReminderStatusText" role="status" aria-live="polite">加载提醒状态中...</p>
+      <div class="todo-reminder-actions">
+        <button class="btn-secondary btn-sm" id="btnTodoReminderSave" type="button">保存提醒</button>
+      </div>
+    </section>
 
     <div class="diary-lock-panel" id="diaryLockPanel">
       <button class="btn-diary-unlock" id="btnDiaryUnlock" title="解锁日记分类">🔒 解锁日记</button>
@@ -313,33 +332,6 @@
             <button class="btn-secondary btn-sm" id="btnTodoFormCancel" type="button">取消</button>
             <button class="btn-primary btn-sm" id="btnTodoFullSave" type="button">保存任务</button>
           </div>
-          <section class="todo-reminder-card" aria-labelledby="todoReminderHeading">
-            <div class="todo-reminder-header">
-              <div>
-                <h3 id="todoReminderHeading">邮件提醒</h3>
-                <p class="todo-reminder-subtitle">当天到期的未完成待办会按固定时间汇总发邮件</p>
-              </div>
-              <span class="todo-reminder-chip" id="todoReminderMailState">未配置</span>
-            </div>
-            <label class="todo-reminder-toggle" for="todoReminderEnabled">
-              <input type="checkbox" id="todoReminderEnabled">
-              <span>启用每日提醒</span>
-            </label>
-            <div class="todo-reminder-grid">
-              <div class="todo-reminder-field">
-                <label for="todoReminderRecipient">收件邮箱</label>
-                <input type="email" id="todoReminderRecipient" placeholder="name@example.com" maxlength="320">
-              </div>
-              <div class="todo-reminder-field">
-                <label for="todoReminderTime">提醒时间</label>
-                <input type="time" id="todoReminderTime" value="08:00" step="60">
-              </div>
-            </div>
-            <p class="todo-reminder-status" id="todoReminderStatusText" role="status" aria-live="polite">加载提醒状态中...</p>
-            <div class="todo-reminder-actions">
-              <button class="btn-secondary btn-sm" id="btnTodoReminderSave" type="button">保存提醒</button>
-            </div>
-          </section>
         </aside>
       </div>
     </div>

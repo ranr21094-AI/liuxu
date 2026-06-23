@@ -51,8 +51,8 @@ function isCompactDesktopSidebar() {
 function setSidebarTitle(mode) {
   const title = $('#sidebarTitle');
   if (mode === 'todo') {
-    title.textContent = '工作日志';
-    $('#sidebarModeTrigger').title = '当前为待办页面，侧栏为默认日志导航';
+    title.textContent = '待办事项';
+    $('#sidebarModeTrigger').title = '当前为待办事项';
   } else if (mode === 'ai') {
     title.textContent = 'AI 对话';
     $('#sidebarModeTrigger').title = '当前为 AI 历史对话';

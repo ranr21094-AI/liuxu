@@ -225,16 +225,22 @@ function updateCalendarFromSelects() {
   renderCalendar();
 }
 
+function isTodoCalendarMode() {
+  return document.body.classList.contains('sidebar-todo-mode');
+}
+
 calYearSelect.addEventListener('change', updateCalendarFromSelects);
 calMonthSelect.addEventListener('change', updateCalendarFromSelects);
 
 export function renderCalendar() {
   const { currentYear, currentMonth, selectedDate } = state;
+  const todoMode = isTodoCalendarMode();
   const today = businessDateString();
   const firstDay = new Date(Date.UTC(currentYear, currentMonth, 1)).getUTCDay();
   const monthDays = new Date(Date.UTC(currentYear, currentMonth + 1, 0)).getUTCDate();
   const prevMonthDays = new Date(Date.UTC(currentYear, currentMonth, 0)).getUTCDate();
   const visibleMonth = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+  const markedDates = todoMode ? state.datesWithTodos : state.datesWithLogs;
 
   calYearSelect.value = currentYear;
   calMonthSelect.value = currentMonth;
@@ -251,18 +257,18 @@ export function renderCalendar() {
   }
   for (let day = 1; day <= monthDays; day++) {
     const value = dateString(currentYear, currentMonth, day);
-    const hasLogs = state.datesWithLogs.includes(value);
+    const hasMarkedItem = markedDates.includes(value);
     let cls = 'calendar-day';
     if (value === today) cls += ' today';
-    if (value === selectedDate) cls += ' selected';
-    if (hasLogs) cls += ' has-logs';
+    if (!todoMode && value === selectedDate) cls += ' selected';
+    if (hasMarkedItem) cls += todoMode ? ' has-todos' : ' has-logs';
     const status = [
       value === today ? '今天' : '',
-      value === selectedDate ? '已选择' : '',
-      hasLogs ? '有日志' : '',
+      !todoMode && value === selectedDate ? '已选择' : '',
+      hasMarkedItem ? (todoMode ? '有待办' : '有日志') : '',
     ].filter(Boolean).join('，');
     const label = `${formatDateLabel(value)}${status ? `，${status}` : ''}`;
-    html += `<button type="button" class="${cls}" data-date="${value}" role="gridcell" aria-label="${label}" aria-pressed="${value === selectedDate}" tabindex="${value === calendarFocusDate ? '0' : '-1'}">${day}</button>`;
+    html += `<button type="button" class="${cls}" data-date="${value}" role="gridcell" aria-label="${label}" aria-pressed="${!todoMode && value === selectedDate}" tabindex="${value === calendarFocusDate ? '0' : '-1'}">${day}</button>`;
   }
   const remaining = 7 - ((firstDay + monthDays) % 7);
   if (remaining < 7) {
@@ -274,6 +280,11 @@ export function renderCalendar() {
 }
 
 function selectDate(value) {
+  if (isTodoCalendarMode()) {
+    calendarFocusDate = value;
+    renderCalendar();
+    return;
+  }
   calendarFocusDate = value;
   if (state.selectedDate === value) {
     state.selectedDate = null;
