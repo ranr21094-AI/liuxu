@@ -1,5 +1,5 @@
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
+import { showToast, escHtml, setupDragAndDrop, confirmDialog, openModal, closeModal, $ } from './helpers.js';
 import { businessDateString } from './businessDate.js';
 import { state } from './state.js';
 import { renderCalendar } from './calendar.js';
@@ -349,15 +349,33 @@ function renderTodoFilterTabs() {
     const selected = activeFilter === category;
     const removable = category !== DEFAULT_TODO_CATEGORY;
     return `
-      <button class="${selected ? 'active' : ''}" data-filter="${escHtml(category)}" role="tab" aria-selected="${selected}">
-        <span>${escHtml(category)}</span>
-        ${removable ? `<span class="todo-category-remove" data-action="delete-category" data-category="${escHtml(category)}" aria-label="删除分类：${escHtml(category)}" title="删除分类">×</span>` : ''}
+      <button class="todo-filter-pill${selected ? ' active' : ''}" data-filter="${escHtml(category)}" role="tab" aria-selected="${selected}">
+        <span class="todo-filter-label">${escHtml(category)}</span>
+        ${removable ? `
+          <span
+            class="todo-category-remove"
+            role="button"
+            tabindex="0"
+            data-action="delete-category"
+            data-category="${escHtml(category)}"
+            aria-label="删除分类：${escHtml(category)}"
+            title="删除分类"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16"></path>
+              <path d="M10 11v6"></path>
+              <path d="M14 11v6"></path>
+              <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path>
+              <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"></path>
+            </svg>
+          </span>
+        ` : ''}
       </button>
     `;
   }).join('');
   const doneSelected = activeFilter === 'done';
   tabs.innerHTML = `${categoryButtons}
-    <button class="${doneSelected ? 'active' : ''}" data-filter="done" role="tab" aria-selected="${doneSelected}">已完成</button>`;
+    <button class="todo-filter-pill${doneSelected ? ' active' : ''}" data-filter="done" role="tab" aria-selected="${doneSelected}"><span class="todo-filter-label">已完成</span></button>`;
 }
 
 function sectionHtml(title, todos, { action = '' } = {}) {
@@ -477,6 +495,16 @@ async function saveTodoFromFullForm() {
   }
 }
 
+function openTodoCategoryModal() {
+  $('#todoCategoryInput').value = '';
+  openModal($('#todoCategoryOverlay'), '#todoCategoryInput');
+}
+
+function closeTodoCategoryModal() {
+  $('#todoCategoryInput').value = '';
+  closeModal($('#todoCategoryOverlay'));
+}
+
 async function addTodoCategoryFromForm(event) {
   event.preventDefault();
   const input = $('#todoCategoryInput');
@@ -493,6 +521,7 @@ async function addTodoCategoryFromForm(event) {
     activeFilter = body.category || name;
     localStorage.setItem('todoFilter', activeFilter);
     input.value = '';
+    closeTodoCategoryModal();
     renderTodos();
     showToast('待办分类已添加', 'success');
   } catch (err) {
@@ -664,10 +693,27 @@ $('#todoFilterTabs').addEventListener('click', (e) => {
   renderFullTodos();
 });
 
+$('#todoFilterTabs').addEventListener('keydown', (e) => {
+  const deleteAction = e.target.closest('[data-action="delete-category"]');
+  if (!deleteAction || (e.key !== 'Enter' && e.key !== ' ')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  deleteTodoCategory(deleteAction.dataset.category);
+});
+
 $('#todoSearchInput').addEventListener('input', (e) => {
   todoSearchQuery = e.target.value || '';
   renderFullTodos();
 });
 
+$('#btnTodoCategoryOpen').addEventListener('click', openTodoCategoryModal);
+$('#btnTodoCategoryClose').addEventListener('click', closeTodoCategoryModal);
+$('#btnTodoCategoryCancel').addEventListener('click', closeTodoCategoryModal);
+$('#todoCategoryOverlay').addEventListener('click', (e) => {
+  if (e.target === $('#todoCategoryOverlay')) closeTodoCategoryModal();
+});
+$('#todoCategoryOverlay').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeTodoCategoryModal();
+});
 $('#todoCategoryAddForm').addEventListener('submit', addTodoCategoryFromForm);
 initTodoSelectControls();

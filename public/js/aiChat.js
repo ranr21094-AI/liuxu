@@ -662,17 +662,25 @@ function selectedSkill() {
 function skillMeta(skillId) {
   const skill = availableSkills.find(item => item.id === skillId) || {};
   const fallback = {
-    westock: { name: 'WeStock Data', label: 'WeStock', icon: 'W', runningText: '正在查询市场数据', errorText: 'WeStock 查询失败' },
-    perplexity: { name: 'Perplexity Search', label: 'Perplexity', icon: 'P', runningText: '正在搜索网页', errorText: 'Perplexity 搜索失败' },
-    logs: { name: '日志管理', label: '日志', icon: 'L', runningText: '正在执行日志操作', errorText: '日志操作失败' },
-  }[skillId] || { name: 'AI Skill', label: 'Skill', icon: 'S', runningText: '正在执行技能', errorText: '技能执行失败' };
+    westock: { name: 'WeStock Data', label: 'WeStock', runningText: '正在查询市场数据', errorText: 'WeStock 查询失败' },
+    perplexity: { name: 'Perplexity Search', label: 'Perplexity', runningText: '正在搜索网页', errorText: 'Perplexity 搜索失败' },
+    logs: { name: '日志管理', label: '日志', runningText: '正在执行日志操作', errorText: '日志操作失败' },
+  }[skillId] || { name: 'AI Skill', label: 'Skill', runningText: '正在执行技能', errorText: '技能执行失败' };
   return {
     ...fallback,
     ...skill,
-    icon: skill.icon || fallback.icon,
     label: skill.label || fallback.label,
     name: skill.name || fallback.name,
   };
+}
+
+function skillIconSvg(skillId) {
+  const icons = {
+    westock: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17.5 9 12l3.2 3.2L20 6.5"></path><path d="M4 20h16"></path><path d="M4 4v16"></path></svg>',
+    perplexity: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 0 4.95 11.95"></path><path d="m15 15 5 5"></path><path d="M8.5 10.5h5"></path><path d="M11 8v5"></path></svg>',
+    logs: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h9l3 3v13H6z"></path><path d="M14 4v4h4"></path><path d="M9 12h6"></path><path d="M9 16h4"></path></svg>',
+  };
+  return icons[skillId] || '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.85 5.05L19 9.9l-4.12 3.15L16.15 18 12 15.2 7.85 18l1.27-4.95L5 9.9l5.15-1.85L12 3Z"></path></svg>';
 }
 
 function renderSelectedSkillChip() {
@@ -682,7 +690,7 @@ function renderSelectedSkillChip() {
   const meta = skill ? skillMeta(skill.id) : null;
   row.innerHTML = skill ? `
     <span class="ai-skill-chip" data-skill-id="${escHtml(skill.id)}">
-      <span class="ai-skill-chip-icon">${escHtml(meta.icon)}</span>
+      <span class="ai-skill-chip-icon">${skillIconSvg(skill.id)}</span>
       <span>${escHtml(meta.label || meta.name)}</span>
       <button type="button" id="btnAiSkillClear" aria-label="移除技能">&times;</button>
     </span>
@@ -706,7 +714,7 @@ function renderSkillPicker() {
         const meta = skillMeta(skill.id);
         return `
         <button type="button" class="ai-skill-option${skill.id === selectedSkillId ? ' active' : ''}" data-skill-id="${escHtml(skill.id)}" role="option" aria-selected="${skill.id === selectedSkillId ? 'true' : 'false'}">
-          <span class="ai-skill-option-icon">${escHtml(meta.icon)}</span>
+          <span class="ai-skill-option-icon">${skillIconSvg(skill.id)}</span>
           <span>
             <strong>${escHtml(meta.name)}</strong>
             <small>${escHtml(meta.description || 'AI 技能')}</small>
