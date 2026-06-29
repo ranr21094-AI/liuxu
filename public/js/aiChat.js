@@ -2,6 +2,8 @@ import { apiFetch } from './auth.js';
 import { showToast, escHtml, openModal, closeModal, confirmDialog, $ } from './helpers.js';
 import { renderToHtml } from './markdown.js';
 import { handleInternalLogLinkClick } from './editor.js';
+import { businessDateString } from './businessDate.js';
+import { dailyQuoteForDate } from './aiDailyQuotes.js';
 
 const DEFAULT_MODEL = 'deepseek-v4-flash';
 const DEFAULT_REASONING = 'high';
@@ -25,6 +27,8 @@ let renameConversationId = '';
 let availableSkills = [];
 let selectedSkillId = '';
 let aiAccessCategories = [];
+let historySearchQuery = '';
+let historySearchScope = 'title';
 let settings = {
   apiKey: '',
   model: DEFAULT_MODEL,
@@ -495,22 +499,84 @@ async function copyText(text) {
   copyTextFallback(text);
 }
 
+function aiUserAvatarSvg() {
+  return `
+    <svg class="ai-avatar-user" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="8.2" r="3.4"></circle>
+      <path d="M5.6 20a6.4 6.4 0 0 1 12.8 0"></path>
+    </svg>
+  `;
+}
+
+function aiMessageAvatar() {
+  return aiUserAvatarSvg();
+}
+
+function historyActionIcon(action) {
+  if (action === 'rename') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 20h4.6L18.7 9.9a2.1 2.1 0 0 0 0-3L17.1 5.3a2.1 2.1 0 0 0-3 0L4 15.4V20Z"></path>
+        <path d="m12.8 6.6 4.6 4.6"></path>
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h16"></path>
+      <path d="M10 11v6"></path>
+      <path d="M14 11v6"></path>
+      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path>
+      <path d="M9 7V4h6v3"></path>
+    </svg>
+  `;
+}
+
 function renderHistory() {
   const list = $('#aiSidebarHistoryList');
   if (!list) return;
   const sorted = [...conversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  const filtered = sorted.filter(chat => historyMatchesSearch(chat));
   const summary = $('#aiSidebarHistorySummary');
-  if (summary) summary.textContent = `${sorted.length} 个对话`;
-  list.innerHTML = sorted.map(chat => `
+  if (summary) {
+    summary.textContent = historySearchQuery.trim()
+      ? `${filtered.length} / ${sorted.length} 个对话`
+      : `${sorted.length} 个对话`;
+  }
+  syncHistorySearchControls();
+  if (!filtered.length) {
+    list.innerHTML = `<div class="ai-history-empty">${historySearchQuery.trim() ? '没有匹配的历史对话' : '暂无历史对话'}</div>`;
+    return;
+  }
+  list.innerHTML = filtered.map(chat => `
     <div class="ai-history-item${chat.id === activeConversationId ? ' active' : ''}" data-id="${escHtml(chat.id)}">
       <button type="button" class="ai-history-open" title="${escHtml(chat.title || '新对话')}">
         <span class="ai-history-title">${escHtml(chat.title || '新对话')}</span>
-        <span class="ai-history-meta">${chat.messages.length} 条 · ${escHtml(formatChatTime(chat.updatedAt))}</span>
+        <span class="ai-history-meta">${escHtml(formatChatTime(chat.updatedAt))}</span>
       </button>
-      <button type="button" class="ai-history-action" data-action="rename" title="重命名对话" aria-label="重命名对话">✎</button>
-      <button type="button" class="ai-history-action danger" data-action="delete" title="删除对话" aria-label="删除对话">×</button>
+      <button type="button" class="ai-history-action" data-action="rename" title="重命名对话" aria-label="重命名对话">${historyActionIcon('rename')}</button>
+      <button type="button" class="ai-history-action danger" data-action="delete" title="删除对话" aria-label="删除对话">${historyActionIcon('delete')}</button>
     </div>
   `).join('');
+}
+
+function historyMatchesSearch(chat) {
+  const query = historySearchQuery.trim().toLowerCase();
+  if (!query) return true;
+  const title = String(chat?.title || '新对话').toLowerCase();
+  if (title.includes(query)) return true;
+  if (historySearchScope !== 'full') return false;
+  return (chat?.messages || []).some(message => String(message?.content || '').toLowerCase().includes(query));
+}
+
+function syncHistorySearchControls() {
+  const input = $('#aiHistorySearchInput');
+  if (input && input.value !== historySearchQuery) input.value = historySearchQuery;
+  document.querySelectorAll('[data-ai-history-search-scope]').forEach(button => {
+    const active = button.dataset.aiHistorySearchScope === historySearchScope;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
 }
 
 function updateAiChatHeader() {
@@ -550,10 +616,14 @@ function renderMessages() {
   const messages = activeMessages();
   updateAiChatHeader();
   if (!messages.length) {
+    const dailyQuote = dailyQuoteForDate(businessDateString());
     list.innerHTML = `
       <div class="ai-chat-empty">
         <div class="ai-chat-empty-copy">
-          <strong>AI 对话助手</strong>
+          <blockquote class="ai-daily-quote">
+            <p>${escHtml(dailyQuote.text)}</p>
+            <cite>${escHtml(dailyQuote.source || dailyQuote.author || '佚名')}</cite>
+          </blockquote>
           <span>输入你想讨论的问题。日志访问会遵守 AI 设置里的访问范围。</span>
         </div>
       </div>
@@ -564,7 +634,7 @@ function renderMessages() {
 
   list.innerHTML = messages.map((message, index) => `
     <div class="ai-message ${message.role}" data-message-index="${index}">
-      <div class="ai-message-role">${message.role === 'user' ? '你' : 'AI'}</div>
+      ${message.role === 'user' ? `<div class="ai-message-role">${aiMessageAvatar()}</div>` : ''}
       <div class="ai-message-bubble">
         <button type="button" class="ai-message-copy" data-action="copy-message" aria-label="复制${message.role === 'user' ? '问题' : '回答'}" title="复制${message.role === 'user' ? '问题' : '回答'}">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -588,7 +658,6 @@ function renderMessages() {
     </div>
   `).join('') + (sending && !messages.at(-1)?.streaming ? `
     <div class="ai-message assistant ai-message-thinking" aria-live="polite">
-      <div class="ai-message-role">AI</div>
       <div class="ai-message-content">
         <span class="ai-thinking-text">正在思考</span>
         <span class="ai-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -1541,6 +1610,17 @@ export async function initAiChat() {
     if (action === 'rename') return openRenameModal(item.dataset.id);
     if (action === 'delete') return deleteConversation(item.dataset.id);
     switchConversation(item.dataset.id);
+  });
+  $('#aiHistorySearchInput')?.addEventListener('input', (event) => {
+    historySearchQuery = event.target.value;
+    renderHistory();
+  });
+  document.querySelectorAll('[data-ai-history-search-scope]').forEach(button => {
+    button.addEventListener('click', () => {
+      historySearchScope = button.dataset.aiHistorySearchScope === 'full' ? 'full' : 'title';
+      renderHistory();
+      $('#aiHistorySearchInput')?.focus();
+    });
   });
   $('#btnAiSend').addEventListener('click', sendMessage);
   $('#btnAiImage')?.addEventListener('click', () => sendMessage({ forceImage: true }));

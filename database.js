@@ -166,6 +166,7 @@ function normalizeTodoReminderSnapshotItem(item) {
     title: normalizeString(item.title, '').trim().slice(0, 200),
     category: normalizeTodoCategoryName(item.category),
     priority: normalizeTodoPriority(item.priority),
+    recurrence: normalizeTodoRecurrence(item.recurrence),
     due_date: isValidDate(item.due_date) ? item.due_date : '',
     notes: normalizeString(item.notes, '').slice(0, 1000),
     sort_order: Number.isFinite(Number(item.sort_order)) ? Number(item.sort_order) : 0,
@@ -876,6 +877,7 @@ function getAllTodos(query = {}) {
     ...t,
     notes: typeof t.notes === 'string' ? t.notes : '',
     priority: normalizeTodoPriority(t.priority),
+    recurrence: normalizeTodoRecurrence(t.recurrence),
     category: normalizeTodoCategoryName(t.category),
     due_date: t.due_date || null,
   }));
@@ -886,6 +888,71 @@ function normalizeTodoPriority(priority) {
   const legacy = { low: 'normal', high: 'important' };
   const normalized = legacy[value] || value;
   return ['none', 'normal', 'important', 'urgent'].includes(normalized) ? normalized : 'none';
+}
+
+function normalizeTodoRecurrence(recurrence) {
+  const value = typeof recurrence === 'string' && recurrence ? recurrence : 'none';
+  return ['none', 'daily', 'weekly', 'monthly', 'yearly'].includes(value) ? value : 'none';
+}
+
+function formatTodoDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function daysInTodoMonth(year, monthIndex) {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+function addTodoRecurrenceDate(dueDate, recurrence) {
+  if (!isValidDate(dueDate)) return null;
+  const [, yearRaw, monthRaw, dayRaw] = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueDate);
+  const year = Number(yearRaw);
+  const monthIndex = Number(monthRaw) - 1;
+  const day = Number(dayRaw);
+
+  if (recurrence === 'daily') return formatTodoDate(new Date(year, monthIndex, day + 1));
+  if (recurrence === 'weekly') return formatTodoDate(new Date(year, monthIndex, day + 7));
+
+  if (recurrence === 'monthly') {
+    const target = new Date(year, monthIndex + 1, 1);
+    const targetDay = Math.min(day, daysInTodoMonth(target.getFullYear(), target.getMonth()));
+    return formatTodoDate(new Date(target.getFullYear(), target.getMonth(), targetDay));
+  }
+
+  if (recurrence === 'yearly') {
+    const targetYear = year + 1;
+    const targetDay = Math.min(day, daysInTodoMonth(targetYear, monthIndex));
+    return formatTodoDate(new Date(targetYear, monthIndex, targetDay));
+  }
+
+  return null;
+}
+
+function createNextRecurringTodo(todos, source) {
+  const recurrence = normalizeTodoRecurrence(source.recurrence);
+  if (recurrence === 'none') return null;
+  const nextDueDate = addTodoRecurrenceDate(source.due_date, recurrence);
+  if (!nextDueDate) return null;
+
+  cache.maxTodoId++;
+  const entry = {
+    id: cache.maxTodoId,
+    title: source.title || '',
+    done: false,
+    sort_order: source.sort_order !== undefined ? source.sort_order : 0,
+    due_date: nextDueDate,
+    priority: normalizeTodoPriority(source.priority),
+    recurrence,
+    category: normalizeTodoCategoryName(source.category),
+    notes: typeof source.notes === 'string' ? source.notes : '',
+    created_at: nowTimestamp(),
+  };
+  todos.push(entry);
+  addTodoCategory(entry.category);
+  return entry;
 }
 
 function createTodo(data) {
@@ -899,6 +966,7 @@ function createTodo(data) {
     sort_order: data.sort_order !== undefined ? data.sort_order : 0,
     due_date: data.due_date || null,
     priority: normalizeTodoPriority(data.priority),
+    recurrence: normalizeTodoRecurrence(data.recurrence),
     category: normalizeTodoCategoryName(data.category),
     notes: typeof data.notes === 'string' ? data.notes : '',
     created_at: now,
@@ -915,21 +983,25 @@ function updateTodo(id, data) {
   if (index === -1) return null;
 
   const entry = todos[index];
+  const wasDone = !!entry.done;
   if (data.title !== undefined) entry.title = data.title;
   if (data.done !== undefined) entry.done = !!data.done;
   if (data.due_date !== undefined) entry.due_date = data.due_date;
   if (data.priority !== undefined) entry.priority = normalizeTodoPriority(data.priority);
+  if (data.recurrence !== undefined) entry.recurrence = normalizeTodoRecurrence(data.recurrence);
   if (data.category !== undefined) {
     entry.category = normalizeTodoCategoryName(data.category);
     addTodoCategory(entry.category);
   }
   if (data.notes !== undefined) entry.notes = typeof data.notes === 'string' ? data.notes : '';
+  if (!wasDone && entry.done) createNextRecurringTodo(todos, entry);
 
   writeTodos(todos);
   return {
     ...entry,
     notes: typeof entry.notes === 'string' ? entry.notes : '',
     priority: normalizeTodoPriority(entry.priority),
+    recurrence: normalizeTodoRecurrence(entry.recurrence),
     category: normalizeTodoCategoryName(entry.category),
     due_date: entry.due_date || null,
   };
@@ -1372,6 +1444,7 @@ function normalizeTodosForRestore(todos) {
       return { error: `Invalid priority for todo id ${id}` };
     }
     const priority = normalizeTodoPriority(rawPriority);
+    const recurrence = normalizeTodoRecurrence(item.recurrence);
 
     const notes = item.notes === undefined ? '' : item.notes;
     if (typeof notes !== 'string') return { error: `Invalid notes for todo id ${id}` };
@@ -1384,6 +1457,7 @@ function normalizeTodosForRestore(todos) {
       sort_order: sortOrder,
       due_date: dueDate,
       priority,
+      recurrence,
       category,
       notes,
       created_at: normalizeString(item.created_at, now),

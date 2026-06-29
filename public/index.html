@@ -129,7 +129,6 @@
     <div class="ai-sidebar-history-panel" id="aiSidebarHistoryPanel">
       <div class="ai-sidebar-history-header">
         <div class="ai-sidebar-history-heading">
-          <span class="ai-sidebar-kicker">AI 工作台</span>
           <h3>历史对话</h3>
           <p class="ai-sidebar-history-summary" id="aiSidebarHistorySummary">0 个对话</p>
         </div>
@@ -145,6 +144,14 @@
               <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
             </svg>
           </button>
+        </div>
+      </div>
+      <div class="ai-history-search" id="aiHistorySearch">
+        <label class="sr-only" for="aiHistorySearchInput">搜索历史对话</label>
+        <input type="search" id="aiHistorySearchInput" placeholder="搜索历史..." autocomplete="off">
+        <div class="ai-history-search-scope" role="group" aria-label="搜索范围">
+          <button type="button" class="active" data-ai-history-search-scope="title" aria-pressed="true">标题</button>
+          <button type="button" data-ai-history-search-scope="full" aria-pressed="false">全文</button>
         </div>
       </div>
       <div class="ai-history-list" id="aiSidebarHistoryList"></div>
@@ -328,6 +335,21 @@
                 <span class="todo-select-caret" aria-hidden="true">⌄</span>
               </button>
               <div class="todo-select-menu" id="todoFullPriorityMenu" role="listbox" hidden></div>
+            </div>
+            <div class="todo-select-control" data-todo-select-control data-select-id="todoFullRecurrence">
+              <label class="sr-only" for="todoFullRecurrence">重复</label>
+              <select class="todo-native-select" id="todoFullRecurrence" title="重复" tabindex="-1" aria-hidden="true">
+                <option value="none">不重复</option>
+                <option value="daily">每日</option>
+                <option value="weekly">每周</option>
+                <option value="monthly">每月</option>
+                <option value="yearly">每年</option>
+              </select>
+              <button class="todo-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="todoFullRecurrenceMenu">
+                <span class="todo-select-value">不重复</span>
+                <span class="todo-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="todo-select-menu" id="todoFullRecurrenceMenu" role="listbox" hidden></div>
             </div>
           </div>
           <label class="sr-only" for="todoFullNotes">任务备注</label>

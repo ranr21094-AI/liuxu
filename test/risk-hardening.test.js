@@ -2003,12 +2003,13 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
 
   assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'] }).success, true);
   assert.equal(db.getAllTodos()[0].notes, '');
+  assert.equal(db.getAllTodos()[0].recurrence, 'none');
   assert.deepEqual(db.backup().privateUploads, ['secret.png']);
   assert.deepEqual(db.restore(base).success, true);
   assert.deepEqual(db.backup().privateUploads, []);
 });
 
-test('todo API stores due date, priority, and notes', async (t) => {
+test('todo API stores due date, priority, recurrence, and notes', async (t) => {
   const { baseUrl } = loadFreshApp(t);
 
   const created = await fetch(`${baseUrl}/api/todos`, {
@@ -2019,6 +2020,7 @@ test('todo API stores due date, priority, and notes', async (t) => {
       category: '待学习',
       due_date: '2026-05-18',
       priority: 'important',
+      recurrence: 'weekly',
       notes: 'bring context',
     }),
   });
@@ -2027,6 +2029,7 @@ test('todo API stores due date, priority, and notes', async (t) => {
   assert.equal(createdBody.category, '待学习');
   assert.equal(createdBody.due_date, '2026-05-18');
   assert.equal(createdBody.priority, 'important');
+  assert.equal(createdBody.recurrence, 'weekly');
   assert.equal(createdBody.notes, 'bring context');
 
   const updated = await fetch(`${baseUrl}/api/todos/${createdBody.id}`, {
@@ -2034,6 +2037,7 @@ test('todo API stores due date, priority, and notes', async (t) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       priority: 'urgent',
+      recurrence: 'monthly',
       category: '待办',
       notes: 'updated note',
     }),
@@ -2042,6 +2046,7 @@ test('todo API stores due date, priority, and notes', async (t) => {
   const updatedBody = await updated.json();
   assert.equal(updatedBody.category, '待办');
   assert.equal(updatedBody.priority, 'urgent');
+  assert.equal(updatedBody.recurrence, 'monthly');
   assert.equal(updatedBody.notes, 'updated note');
 
   const listed = await fetch(`${baseUrl}/api/todos`);
@@ -2049,7 +2054,41 @@ test('todo API stores due date, priority, and notes', async (t) => {
   const items = await listed.json();
   assert.equal(items[0].category, '待办');
   assert.equal(items[0].priority, 'urgent');
+  assert.equal(items[0].recurrence, 'monthly');
   assert.equal(items[0].notes, 'updated note');
+});
+
+test('recurring todos generate the next pending occurrence only once when completed', (t) => {
+  const db = loadFreshDb(t);
+  const cases = [
+    ['daily task', 'daily', '2026-01-31', '2026-02-01'],
+    ['weekly task', 'weekly', '2026-01-31', '2026-02-07'],
+    ['monthly task', 'monthly', '2026-01-31', '2026-02-28'],
+    ['yearly task', 'yearly', '2024-02-29', '2025-02-28'],
+  ];
+
+  for (const [title, recurrence, dueDate, nextDueDate] of cases) {
+    const created = db.createTodo({ title, due_date: dueDate, recurrence, category: '待办', priority: 'normal', notes: 'keep me' });
+    const completed = db.updateTodo(created.id, { done: true });
+    assert.equal(completed.done, true);
+
+    const generated = db.getAllTodos().filter(todo => todo.title === title && !todo.done);
+    assert.equal(generated.length, 1);
+    assert.equal(generated[0].due_date, nextDueDate);
+    assert.equal(generated[0].recurrence, recurrence);
+    assert.equal(generated[0].priority, 'normal');
+    assert.equal(generated[0].notes, 'keep me');
+
+    db.updateTodo(created.id, { done: true });
+    assert.equal(db.getAllTodos().filter(todo => todo.title === title && !todo.done).length, 1);
+  }
+
+  const invalid = db.createTodo({ title: 'invalid recurrence', due_date: '2026-05-18', recurrence: 'hourly' });
+  assert.equal(db.getAllTodos().find(todo => todo.id === invalid.id).recurrence, 'none');
+
+  const undated = db.createTodo({ title: 'undated recurrence', recurrence: 'daily' });
+  db.updateTodo(undated.id, { done: true });
+  assert.equal(db.getAllTodos().filter(todo => todo.title === 'undated recurrence').length, 1);
 });
 
 test('todo categories can be added and deleted while preserving tasks under default', async (t) => {
@@ -2746,6 +2785,15 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnAiHistory'), null);
   assert.equal(document.querySelector('#aiHistoryOverlay'), null);
   assert.equal(document.querySelector('#aiSidebarHistoryList').closest('#aiSidebarHistoryPanel') !== null, true);
+  assert.equal(document.querySelector('.ai-sidebar-kicker'), null);
+  assert.doesNotMatch(document.querySelector('#aiSidebarHistoryPanel').textContent, /AI 工作台/);
+  assert.equal(document.querySelector('#aiHistorySearchInput').closest('#aiSidebarHistoryPanel') !== null, true);
+  assert.equal(document.querySelector('#aiHistorySearchInput').getAttribute('type'), 'search');
+  assert.equal(document.querySelector('#aiHistorySearchInput').getAttribute('autocomplete'), 'off');
+  assert.equal(document.querySelector('label[for="aiHistorySearchInput"]').textContent, '搜索历史对话');
+  assert.deepEqual([...document.querySelectorAll('[data-ai-history-search-scope]')].map(button => button.dataset.aiHistorySearchScope), ['title', 'full']);
+  assert.equal(document.querySelector('[data-ai-history-search-scope="title"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(document.querySelector('[data-ai-history-search-scope="full"]').getAttribute('aria-pressed'), 'false');
   assert.equal(document.querySelector('#btnAiSidebarNewChat').classList.contains('btn-sidebar-mode'), true);
   assert.equal(document.querySelector('#btnAiSidebarNewChat').classList.contains('ai-sidebar-new'), true);
   assert.equal(document.querySelector('#btnAiSidebarNewChat').getAttribute('aria-label'), '新建对话');
@@ -2825,6 +2873,13 @@ test('primary controls expose accessible names and editor tab semantics', () => 
     ['normal', '普通'],
     ['important', '重要'],
     ['urgent', '紧急'],
+  ]);
+  assert.deepEqual([...document.querySelectorAll('#todoFullRecurrence option')].map(option => [option.value, option.textContent]), [
+    ['none', '不重复'],
+    ['daily', '每日'],
+    ['weekly', '每周'],
+    ['monthly', '每月'],
+    ['yearly', '每年'],
   ]);
   assert.match(document.querySelector('.cat-calendar-toggle').getAttribute('title'), /月份筛选仍可查看/);
   assert.equal(document.querySelector('.cat-calendar-toggle-label'), null);
@@ -3050,9 +3105,11 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   const priorityStyleBlock = styleSource.match(/\.todo-priority\s*\{[\s\S]*?\n\}/)?.[0] || '';
 
   assert.match(htmlSource, /<option value="none">无<\/option>[\s\S]*<option value="normal">普通<\/option>[\s\S]*<option value="important">重要<\/option>[\s\S]*<option value="urgent">紧急<\/option>/);
+  assert.match(htmlSource, /id="todoFullRecurrence"[\s\S]*<option value="none">不重复<\/option>[\s\S]*<option value="daily">每日<\/option>[\s\S]*<option value="weekly">每周<\/option>[\s\S]*<option value="monthly">每月<\/option>[\s\S]*<option value="yearly">每年<\/option>/);
   assert.match(htmlSource, /id="todoFullCategory"/);
   assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullCategory"[\s\S]*id="todoFullCategoryMenu" role="listbox"/);
   assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullPriority"[\s\S]*id="todoFullPriorityMenu" role="listbox"/);
+  assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullRecurrence"[\s\S]*id="todoFullRecurrenceMenu" role="listbox"/);
   assert.match(htmlSource, /id="btnTodoCategoryOpen"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
   assert.match(htmlSource, /id="todoCategoryOverlay"[\s\S]*id="todoCategoryAddForm"[\s\S]*id="todoCategoryInput"[\s\S]*id="btnTodoCategoryAdd"/);
   assert.match(htmlSource, /id="btnTodoCategoryCancel"/);
@@ -3066,7 +3123,9 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.doesNotMatch(todoSource, /todo-notes-preview/);
   assert.doesNotMatch(styleSource, /todo-notes-preview/);
   assert.match(todoSource, /priority: todo\.priority \|\| 'none'/);
+  assert.match(todoSource, /recurrence: todo\.recurrence \|\| 'none'/);
   assert.match(todoSource, /const DEFAULT_TODO_CATEGORY = '待办';/);
+  assert.match(todoSource, /const TODO_RECURRENCE_LABELS = \{[\s\S]*daily: '每日'[\s\S]*weekly: '每周'[\s\S]*monthly: '每月'[\s\S]*yearly: '每年'/);
   assert.match(todoSource, /category: todo\.category \|\| DEFAULT_TODO_CATEGORY/);
   assert.match(todoSource, /apiFetch\('\/api\/todo-categories'\)/);
   assert.match(todoSource, /function renderTodoFilterTabs\(\)/);
@@ -3084,6 +3143,8 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.doesNotMatch(todoSource, /#todoCategoryClose/);
   assert.match(todoSource, /\$\('#todoCategoryOverlay'\)\.addEventListener\('keydown'[\s\S]*Escape[\s\S]*closeTodoCategoryModal/);
   assert.match(todoSource, /function priorityBadge\(todo\)/);
+  assert.match(todoSource, /function recurrenceBadge\(todo\)/);
+  assert.match(todoSource, /title="重复：\$\{label\}"/);
   assert.match(todoSource, /const labels = \{ normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' \};/);
   assert.match(todoSource, /const codes = \{ normal: 'P2', important: 'P1', urgent: 'P0' \};/);
   assert.match(todoSource, /if \(activeFilter === 'all' \|\| activeFilter === 'undated' \|\| activeFilter === 'pending'\) activeFilter = DEFAULT_TODO_CATEGORY;/);
@@ -3096,7 +3157,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(todoSource, /\$\('#todoView'\)\.style\.display = 'flex';/);
   assert.match(todoSource, /let todoSearchQuery = '';/);
   assert.match(todoSource, /\$\('#todoSearchInput'\)\.addEventListener\('input'/);
-  assert.match(todoSource, /const TODO_SELECT_IDS = \['todoFullCategory', 'todoFullPriority'\];/);
+  assert.match(todoSource, /const TODO_SELECT_IDS = \['todoFullCategory', 'todoFullPriority', 'todoFullRecurrence'\];/);
   assert.match(todoSource, /function syncTodoSelectControls\(\)/);
   assert.match(todoSource, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/);
   assert.match(todoSource, /todo-select-option/);
@@ -3104,6 +3165,8 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(todoSource, /message: '清除所有已完成待办，此操作不可撤销。'/);
   assert.doesNotMatch(todoSource, /todoFullSummary|btnTodoFullClear/);
   assert.match(todoSource, /String\(t\.notes \|\| ''\)\.toLowerCase\(\)\.includes\(query\)/);
+  assert.match(todoSource, /重复待办需要先填写截止日期/);
+  assert.match(todoSource, /recurrence,\s*[\r\n]\s*notes: \$\('#todoFullNotes'\)\.value/);
   assert.match(todoSource, /\$\('#todoStatOverdue'\)\.textContent = overdue\.length;/);
   assert.doesNotMatch(todoSource, /priorityDot/);
   assert.match(priorityStyleBlock, /min-width:\s*22px;/);
@@ -3112,6 +3175,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-priority\.prio-normal\s*\{[\s\S]*background: var\(--color-primary\);/);
   assert.match(styleSource, /\.todo-priority\.prio-important\s*\{[\s\S]*background: var\(--color-warning\);/);
   assert.match(styleSource, /\.todo-priority\.prio-urgent\s*\{ background: var\(--color-danger\); \}/);
+  assert.match(styleSource, /\.todo-recurrence\s*\{[\s\S]*border:\s*1px solid rgba\(20, 184, 166, 0\.28\);/);
   assert.match(styleSource, /\.todo-view\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.todo-page-header\s*\{[\s\S]*align-items:\s*center;/);
   assert.match(styleSource, /\.todo-page-stats\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(84px, 1fr\)\);/);
@@ -3256,6 +3320,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
   const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const quoteSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiDailyQuotes.js'), 'utf8');
 
   assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
   assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
@@ -3401,6 +3466,37 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /function deleteConversation\(id\)/);
   assert.match(aiSource, /\$\('#btnAiSidebarNewChat'\)\.addEventListener\('click', newConversation\);/);
   assert.match(aiSource, /const list = \$\('#aiSidebarHistoryList'\);/);
+  assert.match(aiSource, /import \{ businessDateString \} from '\.\/businessDate\.js';/);
+  assert.match(aiSource, /import \{ dailyQuoteForDate \} from '\.\/aiDailyQuotes\.js';/);
+  assert.doesNotMatch(aiSource, /function aiAssistantAvatarSvg\(\)/);
+  assert.doesNotMatch(aiSource, /class="ai-avatar-spark"/);
+  assert.match(aiSource, /function aiUserAvatarSvg\(\)/);
+  assert.match(aiSource, /class="ai-avatar-user"/);
+  assert.match(aiSource, /const dailyQuote = dailyQuoteForDate\(businessDateString\(\)\);/);
+  assert.match(aiSource, /<blockquote class="ai-daily-quote">[\s\S]*dailyQuote\.text[\s\S]*dailyQuote\.source/);
+  assert.match(aiSource, /let historySearchQuery = '';/);
+  assert.match(aiSource, /let historySearchScope = 'title';/);
+  assert.match(aiSource, /function historyMatchesSearch\(chat\)/);
+  assert.match(aiSource, /historySearchScope !== 'full'/);
+  assert.match(aiSource, /chat\?\.messages \|\| \[\][\s\S]*message\?\.content/);
+  assert.match(aiSource, /function syncHistorySearchControls\(\)/);
+  assert.match(aiSource, /\$\('#aiHistorySearchInput'\)\?\.addEventListener\('input'/);
+  assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-history-search-scope\]'\)\.forEach/);
+  assert.match(aiSource, /function historyActionIcon\(action\)/);
+  assert.match(aiSource, /data-action="rename"[\s\S]*\$\{historyActionIcon\('rename'\)\}/);
+  assert.doesNotMatch(aiSource, /chat\.messages\.length\} 条/);
+  assert.doesNotMatch(aiSource, /<div class="ai-message-role">AI<\/div>/);
+  assert.doesNotMatch(aiSource, /message\.role === 'assistant' \? aiAssistantAvatarSvg/);
+  assert.match(aiSource, /message\.role === 'user' \? `<div class="ai-message-role">/);
+  assert.match(aiSource, /<div class="ai-message assistant ai-message-thinking"[\s\S]*<div class="ai-message-content">/);
+  assert.doesNotMatch(aiSource, /: '你';/);
+  assert.match(quoteSource, /export const AI_DAILY_QUOTES = \[/);
+  assert.equal((quoteSource.match(/\n    text:/g) || []).length >= 1000, true);
+  assert.equal((quoteSource.match(/\n    author:/g) || []).length >= 1000, true);
+  assert.equal((quoteSource.match(/\n    source:/g) || []).length >= 1000, true);
+  assert.match(quoteSource, /export function dailyQuoteIndex\(dateString\)/);
+  assert.match(quoteSource, /export function dailyQuoteForDate\(dateString\)/);
+  assert.match(quoteSource, /hash % AI_DAILY_QUOTES\.length/);
   assert.match(aiSource, /\$\('#aiSidebarHistoryList'\)\.addEventListener\('click'/);
   assert.doesNotMatch(aiSource, /btnAiBack|btnAiHistory|aiHistoryOverlay|aiChatHistoryList/);
   assert.doesNotMatch(aiSource, /localStorage\.setItem\(API_KEY_STORAGE_KEY/);
@@ -3441,32 +3537,46 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border-radius:\s*18px;/);
   assert.match(styleSource, /body\s*\{[\s\S]*background:\s*#fff;/);
   assert.match(styleSource, /\.main\s*\{[\s\S]*background:\s*#fff;/);
-  assert.match(styleSource, /\.ai-chat-view\s*\{[\s\S]*background:\s*linear-gradient\(180deg, #f4faff 0%, #ffffff 52%\);/);
-  assert.match(styleSource, /\.ai-chat-shell\s*\{[\s\S]*width:\s*min\(1320px, 100%\);[\s\S]*grid-template-rows:\s*minmax\(0, 1fr\) auto;/);
+  assert.doesNotMatch(styleSource, /background:\s*linear-gradient\(180deg, #f4faff 0%, #ffffff 52%\);/);
+  assert.match(styleSource, /\.ai-chat-view\s*\{[\s\S]*background:\s*#fff;/);
+  assert.match(styleSource, /\.ai-chat-shell\s*\{[\s\S]*width:\s*100%;[\s\S]*grid-template-rows:\s*minmax\(0, 1fr\) auto;/);
   assert.match(styleSource, /\.sidebar-title-trigger\s*\{[\s\S]*color:\s*var\(--color-sidebar-heading\);[\s\S]*font-size:\s*1\.25rem;/);
   assert.match(styleSource, /\.sidebar-mode-menu\s*\{[\s\S]*position:\s*absolute;/);
   assert.match(styleSource, /\.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /body\.sidebar-ai-mode \.ai-sidebar-history-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\.ai-sidebar-history-panel\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*padding:\s*0;/);
+  assert.doesNotMatch(styleSource, /\.ai-sidebar-kicker\s*\{/);
   assert.match(styleSource, /\.ai-sidebar-new,[\s\S]*\.ai-sidebar-settings\s*\{[\s\S]*width:\s*32px;[\s\S]*height:\s*32px;/);
   assert.match(styleSource, /\.ai-sidebar-actions\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /\.ai-sidebar-settings\s*\{[\s\S]*color:\s*var\(--color-text-secondary\);/);
-  assert.match(styleSource, /\.ai-sidebar-settings\.has-key\s*\{[\s\S]*color:\s*#000;[\s\S]*background:\s*transparent;/);
+  assert.match(styleSource, /\.ai-sidebar-settings\.has-key\s*\{[\s\S]*color:\s*#111827;[\s\S]*background:\s*transparent;/);
   assert.match(styleSource, /\.ai-sidebar-new svg,[\s\S]*\.ai-sidebar-settings svg\s*\{[\s\S]*width:\s*15px;[\s\S]*height:\s*15px;/);
-  assert.match(styleSource, /\.ai-history-list\s*\{[\s\S]*gap:\s*6px;/);
-  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 24px 24px;[\s\S]*height:\s*60px;/);
+  assert.match(styleSource, /\.ai-history-search\s*\{[\s\S]*display:\s*grid;[\s\S]*border-bottom:\s*1px solid rgba\(229, 231, 235, 0\.58\);/);
+  assert.match(styleSource, /\.ai-history-search input\s*\{[\s\S]*height:\s*32px;[\s\S]*border-radius:\s*8px;/);
+  assert.match(styleSource, /\.ai-history-search-scope\s*\{[\s\S]*grid-template-columns:\s*1fr 1fr;/);
+  assert.match(styleSource, /\.ai-history-search-scope button\.active\s*\{[\s\S]*background:\s*#fff;[\s\S]*color:\s*#111827;/);
+  assert.match(styleSource, /\.ai-history-list\s*\{[\s\S]*gap:\s*2px;/);
+  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 24px 24px;[\s\S]*height:\s*46px;/);
+  assert.match(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*box-shadow:\s*inset 1px 0 0 rgba\(209, 213, 219, 0\.85\);/);
+  assert.doesNotMatch(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*box-shadow:\s*inset 2px 0 0 #111827;/);
   assert.match(styleSource, /\.ai-history-action\s*\{[\s\S]*width:\s*24px;[\s\S]*height:\s*24px;/);
-  assert.match(styleSource, /\.ai-chat-composer-actions\s*\{[\s\S]*gap:\s*8px;/);
-  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border:\s*1px solid rgba\(226, 232, 240, 0\.86\);[\s\S]*background:\s*rgba\(255, 255, 255, 0\.94\);/);
+  assert.match(styleSource, /\.ai-history-action svg\s*\{[\s\S]*stroke:\s*currentColor;/);
+  assert.match(styleSource, /\.ai-history-action:hover,[\s\S]*\.ai-history-action\.danger:focus-visible\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
+  assert.match(styleSource, /\.ai-history-empty\s*\{[\s\S]*place-items:\s*center;/);
+  assert.match(styleSource, /\.ai-chat-composer-actions\s*\{[\s\S]*gap:\s*6px;/);
+  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border:\s*1px solid rgba\(209, 213, 219, 0\.96\);[\s\S]*background:\s*#fff;/);
   assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*72px;[\s\S]*max-height:\s*152px;/);
   assert.match(styleSource, /\.ai-chat-composer-footer\s*\{[\s\S]*border-top:\s*0;/);
-  assert.match(styleSource, /\.ai-chat-web-toggle\s*\{[\s\S]*min-height:\s*34px;[\s\S]*background:\s*rgba\(248, 250, 252, 0\.76\);/);
-  assert.match(styleSource, /\.ai-chat-web-toggle\.active\s*\{[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.ai-chat-web-toggle\s*\{[\s\S]*min-height:\s*32px;[\s\S]*background:\s*#f9fafb;/);
+  assert.match(styleSource, /\.ai-chat-web-toggle\.active\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
+  assert.match(styleSource, /\.ai-chat-web-toggle\.active span\s*\{[\s\S]*background:\s*#111827;/);
   assert.match(styleSource, /\.ai-chat-web-toggle\.active span::after\s*\{[\s\S]*transform:\s*translateX\(12px\);/);
   assert.match(styleSource, /\.btn-ai-skill\s*\{[\s\S]*display:\s*inline-grid;[\s\S]*place-items:\s*center;/);
+  assert.match(styleSource, /\.btn-ai-skill\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#111827;/);
   assert.match(styleSource, /\.btn-ai-skill svg\s*\{[\s\S]*width:\s*17px;[\s\S]*height:\s*17px;/);
-  assert.match(styleSource, /\.ai-round-action\s*\{[\s\S]*width:\s*36px;[\s\S]*height:\s*36px;[\s\S]*border-radius:\s*50%;/);
+  assert.match(styleSource, /\.ai-chat-composer-actions \.btn-secondary,[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*34px;[\s\S]*height:\s*34px;/);
   assert.match(styleSource, /\.ai-send-action\s*\{[\s\S]*background:\s*#111827;[\s\S]*color:\s*#fff;/);
-  assert.match(styleSource, /\.ai-image-action\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.1\);/);
+  assert.match(styleSource, /\.ai-image-action\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#111827;/);
   assert.doesNotMatch(styleSource, /fab-capture|ai-send-split|ai-send-menu|ai-send-menu-trigger|ai-send-main/);
   assert.match(styleSource, /\.ai-chat-composer-footer\s*\{[\s\S]*display:\s*flex;[\s\S]*justify-content:\s*space-between;/);
   assert.match(styleSource, /body\.sidebar-collapsed:not\(\.editor-fullscreen\) \.main\s*\{[\s\S]*padding-left:\s*72px;/);
@@ -3476,18 +3586,25 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-body,[\s\S]*body\.sidebar-collapsed \.ai-chat-body\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
   assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-composer,[\s\S]*body\.sidebar-collapsed \.ai-chat-composer\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
   assert.match(styleSource, /\.ai-chat-view::after\s*\{[\s\S]*content:\s*none;/);
-  assert.match(styleSource, /\.ai-chat-body\s*\{[\s\S]*border-radius:\s*16px;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(styleSource, /\.ai-chat-body\s*\{[\s\S]*border-radius:\s*12px;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
   assert.match(styleSource, /\.ai-chat-body:has\(\.ai-chat-empty\)\s*\{[\s\S]*flex:\s*1 1 auto;/);
   assert.match(styleSource, /\.ai-chat-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*gap:\s*8px;/);
-  assert.match(styleSource, /\.ai-message\.user\s*\{[\s\S]*margin-top:\s*26px;/);
-  assert.match(styleSource, /\.ai-message\.user \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(620px, 78%\);/);
+  assert.match(styleSource, /\.ai-daily-quote\s*\{[\s\S]*display:\s*grid;[\s\S]*background:\s*transparent;/);
+  assert.match(styleSource, /\.ai-daily-quote p\s*\{[\s\S]*font-size:\s*1\.08rem;[\s\S]*line-height:\s*1\.72;/);
+  assert.match(styleSource, /\.ai-daily-quote cite\s*\{[\s\S]*font-style:\s*normal;/);
+  assert.match(styleSource, /\.ai-message\.user\s*\{[\s\S]*margin-top:\s*20px;/);
+  assert.match(styleSource, /\.ai-message\.user \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(620px, 76%\);/);
   assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*width:\s*min\(388px, 30vw\);[\s\S]*min-width:\s*320px;/);
   assert.match(styleSource, /\.editor-ai-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*max-width:\s*260px;/);
-  assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*max-width:\s*1080px;[\s\S]*padding:\s*24px 28px 30px;/);
-  assert.match(styleSource, /\.ai-message\.assistant \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(960px, 100%\);/);
-  assert.match(styleSource, /\.ai-message\.assistant \.ai-message-content\s*\{[\s\S]*border-radius:\s*16px;[\s\S]*background:\s*rgba\(255, 255, 255, 0\.96\);/);
-  assert.match(styleSource, /\.ai-message\.user \.ai-message-content\s*\{[\s\S]*background:\s*rgba\(239, 246, 255, 0\.94\);[\s\S]*color:\s*#0f172a;/);
-  assert.match(styleSource, /\.ai-message\.user \.ai-message-copy\s*\{[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*max-width:\s*1120px;[\s\S]*padding:\s*22px 28px 28px;/);
+  assert.match(styleSource, /\.ai-message\.assistant\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(styleSource, /\.ai-message\.assistant \.ai-message-bubble\s*\{[\s\S]*grid-column:\s*1;[\s\S]*max-width:\s*min\(100%, 980px\);/);
+  assert.doesNotMatch(styleSource, /\.ai-message\.assistant \.ai-message-role/);
+  assert.doesNotMatch(styleSource, /\.ai-avatar-spark\s*\{/);
+  assert.match(styleSource, /\.ai-avatar-user\s*\{[\s\S]*stroke:\s*currentColor;/);
+  assert.match(styleSource, /\.ai-message\.assistant \.ai-message-content\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/);
+  assert.match(styleSource, /\.ai-message\.user \.ai-message-content\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
+  assert.match(styleSource, /\.ai-message\.user \.ai-message-copy\s*\{[\s\S]*color:\s*#6b7280;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body\s*\{[\s\S]*line-height:\s*1\.78;[\s\S]*white-space:\s*normal;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body pre\s*\{[\s\S]*overflow-x:\s*auto;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body table\s*\{[\s\S]*display:\s*block;[\s\S]*overflow-x:\s*auto;/);
@@ -3495,8 +3612,11 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-message-content\.markdown-body a\s*\{[\s\S]*overflow-wrap:\s*anywhere;/);
   assert.match(styleSource, /\.ai-message-bubble\s*\{[\s\S]*position:\s*relative;/);
   assert.match(styleSource, /\.ai-message-copy\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*4px;/);
+  assert.match(styleSource, /\.ai-message-copy:hover\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
   assert.match(styleSource, /\.ai-message:hover \.ai-message-copy,[\s\S]*\.ai-message-copy:focus-visible\s*\{[\s\S]*opacity:\s*1;/);
-  assert.match(styleSource, /\.ai-message-sources\s*\{[\s\S]*grid-column:\s*2;/);
+  const sourceStyleBlocks = styleSource.match(/\.ai-message-sources\s*\{[^}]*\}/g) || [];
+  assert.equal(sourceStyleBlocks.some(block => /grid-column:\s*1(?:\s|;|\/)/.test(block)), true);
+  assert.equal(sourceStyleBlocks.some(block => /grid-column:\s*2;/.test(block)), false);
   assert.match(styleSource, /\.ai-message-sources a\s*\{[\s\S]*border:\s*1px solid rgba\(226, 232, 240, 0\.88\);[\s\S]*border-radius:\s*999px;/);
   assert.match(styleSource, /\.ai-message-thinking \.ai-message-content\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /@keyframes ai-thinking-pulse/);

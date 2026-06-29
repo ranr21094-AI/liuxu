@@ -5,7 +5,13 @@ import { state } from './state.js';
 import { renderCalendar } from './calendar.js';
 
 const DEFAULT_TODO_CATEGORY = '待办';
-const TODO_SELECT_IDS = ['todoFullCategory', 'todoFullPriority'];
+const TODO_SELECT_IDS = ['todoFullCategory', 'todoFullPriority', 'todoFullRecurrence'];
+const TODO_RECURRENCE_LABELS = {
+  daily: '每日',
+  weekly: '每周',
+  monthly: '每月',
+  yearly: '每年',
+};
 let allTodos = [];
 let todoCategories = [DEFAULT_TODO_CATEGORY];
 let activeFilter = localStorage.getItem('todoFilter') || DEFAULT_TODO_CATEGORY;
@@ -32,6 +38,7 @@ function normalizeTodo(todo) {
     ...todo,
     due_date: todo.due_date || '',
     priority: todo.priority || 'none',
+    recurrence: todo.recurrence || 'none',
     category: todo.category || DEFAULT_TODO_CATEGORY,
     notes: typeof todo.notes === 'string' ? todo.notes : '',
   };
@@ -304,6 +311,15 @@ function priorityBadge(todo) {
     : '';
 }
 
+function recurrenceBadge(todo) {
+  const recurrence = todo.recurrence || 'none';
+  if (recurrence === 'none') return '';
+  const label = TODO_RECURRENCE_LABELS[recurrence] || '';
+  return label
+    ? `<span class="todo-recurrence recur-${recurrence}" title="重复：${label}">${label}</span>`
+    : '';
+}
+
 function todoItemHtml(todo, { full = false } = {}) {
   const selected = full && selectedTodoId === todo.id ? ' selected' : '';
   const title = escHtml(todo.title);
@@ -314,7 +330,7 @@ function todoItemHtml(todo, { full = false } = {}) {
     <div class="todo-item${selected}" data-id="${todo.id}" draggable="true">
       <div class="todo-drag" data-action="drag" title="拖动排序">⠿</div>
       <button type="button" class="todo-checkbox ${todo.done ? 'done' : ''}" data-action="toggle" role="checkbox" aria-checked="${todo.done}" aria-label="${todo.done ? '标记为未完成' : '标记为已完成'}：${title}"></button>
-      <span class="todo-text ${todo.done ? 'done' : ''}">${priorityBadge(todo)}${category}${title}${dueHtml(todo)}</span>
+      <span class="todo-text ${todo.done ? 'done' : ''}">${priorityBadge(todo)}${recurrenceBadge(todo)}${category}${title}${dueHtml(todo)}</span>
       <button type="button" class="todo-delete" data-action="delete" aria-label="删除任务：${title}" title="删除">×</button>
     </div>
   `;
@@ -439,6 +455,7 @@ function resetTodoForm() {
   renderTodoCategorySelect(DEFAULT_TODO_CATEGORY);
   $('#todoFullDueDate').value = '';
   $('#todoFullPriority').value = 'none';
+  $('#todoFullRecurrence').value = 'none';
   $('#todoFullNotes').value = '';
   $('#btnTodoFullSave').textContent = '保存任务';
   syncTodoSelectControls();
@@ -451,6 +468,7 @@ function fillTodoForm(todo) {
   renderTodoCategorySelect(todo.category || DEFAULT_TODO_CATEGORY);
   $('#todoFullDueDate').value = todo.due_date || '';
   $('#todoFullPriority').value = todo.priority || 'none';
+  $('#todoFullRecurrence').value = todo.recurrence || 'none';
   $('#todoFullNotes').value = todo.notes || '';
   $('#btnTodoFullSave').textContent = '更新任务';
   renderFullTodos();
@@ -464,12 +482,20 @@ async function saveTodoFromFullForm() {
     showToast('请输入任务标题', 'error');
     return;
   }
+  const dueDate = $('#todoFullDueDate').value || null;
+  const recurrence = $('#todoFullRecurrence').value || 'none';
+  if (recurrence !== 'none' && !dueDate) {
+    showToast('重复待办需要先填写截止日期', 'error');
+    $('#todoFullDueDate').focus();
+    return;
+  }
   const id = parseInt($('#todoEditId').value, 10);
   const body = {
     title,
     category: $('#todoFullCategory').value || DEFAULT_TODO_CATEGORY,
-    due_date: $('#todoFullDueDate').value || null,
+    due_date: dueDate,
     priority: $('#todoFullPriority').value || 'none',
+    recurrence,
     notes: $('#todoFullNotes').value,
   };
   try {
