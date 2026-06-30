@@ -301,13 +301,33 @@ function renderCategoryDetail() {
       <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
       <span class="cat-detail-sub-name">${escHtml(s)}</span>
       <div class="cat-detail-sub-actions">
-        <button class="cat-icon-action subcat-edit-btn" type="button" aria-label="重命名子分类：${escHtml(s)}" title="重命名子分类">✎</button>
-        <button class="cat-icon-action danger subcat-del-btn" type="button" aria-label="删除子分类：${escHtml(s)}" title="删除子分类">×</button>
+        <button class="cat-icon-action subcat-edit-btn" type="button" aria-label="重命名子分类：${escHtml(s)}" title="重命名子分类">${categoryIconSvg('edit')}</button>
+        <button class="cat-icon-action danger subcat-del-btn" type="button" aria-label="删除子分类：${escHtml(s)}" title="删除子分类">${categoryIconSvg('trash')}</button>
       </div>
     </div>
   `).join('');
   renderCategoryGraph(cat);
   setCategoryDetailViewMode(categoryDetailViewMode);
+}
+
+function categoryIconSvg(name) {
+  if (name === 'trash') {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16"></path>
+        <path d="M10 11v6"></path>
+        <path d="M14 11v6"></path>
+        <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path>
+        <path d="M9 7V4h6v3"></path>
+      </svg>
+    `;
+  }
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 20h4.6L18.7 9.9a2.1 2.1 0 0 0 0-3L17.1 5.3a2.1 2.1 0 0 0-3 0L4 15.4V20Z"></path>
+      <path d="m12.8 6.6 4.6 4.6"></path>
+    </svg>
+  `;
 }
 
 async function loadSubcategoryLogs(parent, sub) {
