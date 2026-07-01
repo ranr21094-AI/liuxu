@@ -1873,6 +1873,54 @@ test('image upload rejects svg and still accepts allowed extensions', async (t) 
   assert.equal((await fetch(`${baseUrl}${body.url}`)).status, 200);
 });
 
+test('photo wall API stores layout comments and leaves uploaded files intact on delete', async (t) => {
+  const { baseUrl, dataDir } = loadFreshApp(t);
+  const form = new FormData();
+  form.append('image', new Blob(['photo'], { type: 'image/png' }), 'wall.png');
+  const uploaded = await (await fetch(`${baseUrl}/api/upload`, {
+    method: 'POST',
+    body: form,
+  })).json();
+
+  const invalid = await fetch(`${baseUrl}/api/photo-wall/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: 'https://example.com/wall.png', filename: uploaded.filename, x: 0, y: 0, width: 320, height: 240 }),
+  });
+  assert.equal(invalid.status, 400);
+
+  const created = await fetch(`${baseUrl}/api/photo-wall/items`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: uploaded.url, filename: uploaded.filename, x: 12, y: 18, width: 320, height: 240 }),
+  });
+  assert.equal(created.status, 201);
+  const item = await created.json();
+  assert.equal(item.url, uploaded.url);
+  assert.equal(item.comment, '');
+
+  const updated = await fetch(`${baseUrl}/api/photo-wall/items/${item.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ x: 40.25, y: 60.5, width: 360, height: 270, comment: '旅行照片', z: 4 }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).comment, '旅行照片');
+
+  const reordered = await fetch(`${baseUrl}/api/photo-wall/items/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedIds: [item.id] }),
+  });
+  assert.equal(reordered.status, 200);
+  assert.equal((await (await fetch(`${baseUrl}/api/photo-wall`)).json()).items[0].z, 0);
+
+  const deleted = await fetch(`${baseUrl}/api/photo-wall/items/${item.id}`, { method: 'DELETE' });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual((await (await fetch(`${baseUrl}/api/photo-wall`)).json()).items, []);
+  assert.equal(fs.existsSync(path.join(dataDir, 'uploads', uploaded.filename)), true);
+});
+
 test('diary images require unlocked cookie and remain private after reclassification', async (t) => {
   const { baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
 
@@ -2000,13 +2048,17 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: 'not-array' }] }).error, /Invalid subcategories/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: [], calendar_day_visible: 'no' }] }).error, /Invalid calendar day visibility/);
   assert.match(db.restore({ ...base, privateUploads: ['../secret.png'] }).error, /Invalid private upload filename/);
+  assert.match(db.restore({ ...base, photoWall: { items: [{ id: 1, url: 'https://bad.test/a.png', filename: 'a.png' }] } }).error, /Invalid photo wall image URL/);
+  assert.match(db.restore({ ...base, photoWall: { items: [{ id: 1, url: '/uploads/a.png', filename: 'a.png', width: 10 }] } }).error, /Invalid photo wall geometry/);
 
-  assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'] }).success, true);
+  assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'], photoWall: { items: [{ id: 1, url: '/uploads/wall.png', filename: 'wall.png', x: 1, y: 2, width: 320, height: 240, comment: 'ok' }] } }).success, true);
   assert.equal(db.getAllTodos()[0].notes, '');
   assert.equal(db.getAllTodos()[0].recurrence, 'none');
   assert.deepEqual(db.backup().privateUploads, ['secret.png']);
+  assert.equal(db.backup().photoWall.items[0].comment, 'ok');
   assert.deepEqual(db.restore(base).success, true);
   assert.deepEqual(db.backup().privateUploads, []);
+  assert.deepEqual(db.backup().photoWall.items, []);
 });
 
 test('todo API stores due date, priority, recurrence, and notes', async (t) => {
@@ -2669,11 +2721,26 @@ test('primary controls expose accessible names and editor tab semantics', () => 
     'normal',
     'todo',
     'categories',
+    'photo-wall',
     'ai',
   ]);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="nav"]'), null);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="todo"]').textContent, '待办事项');
+  assert.equal(document.querySelector('#sidebarModeMenu [data-mode="photo-wall"]').textContent, '照片墙');
   assert.doesNotMatch(document.querySelector('#sidebarModeMenu').textContent, /代办/);
+  assert.equal(document.querySelector('#photoWallSidebarPanel').closest('.sidebar') !== null, true);
+  assert.equal(document.querySelector('#photoWallZoomLabel').closest('#photoWallSidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#btnPhotoWallUpload').textContent.trim(), '上传图片');
+  assert.equal(document.querySelector('#photoWallFileInput').getAttribute('multiple'), '');
+  assert.equal(document.querySelector('#btnPhotoWallZoomOut').getAttribute('aria-label'), '缩小照片墙');
+  assert.equal(document.querySelector('#btnPhotoWallZoomIn').getAttribute('aria-label'), '放大照片墙');
+  assert.equal(document.querySelector('#btnPhotoWallFit').getAttribute('aria-label'), '适应全部图片');
+  assert.equal(document.querySelector('#btnPhotoWallReset').getAttribute('aria-label'), '重置照片墙视图');
+  assert.equal(document.querySelector('#btnPhotoWallDelete').disabled, true);
+  assert.equal(document.querySelector('#photoWallView').style.display, 'none');
+  assert.equal(document.querySelector('#photoWallView .photo-wall-topbar'), null);
+  assert.equal(document.querySelector('#photoWallStage').closest('#photoWallCanvasShell') !== null, true);
+  assert.equal(document.querySelector('#photoWallEmpty').textContent.includes('还没有图片'), true);
   assert.equal(document.querySelector('#cardNavPanel').closest('.sidebar') !== null, true);
   assert.equal(document.querySelector('#calendarCollapseToggle').getAttribute('aria-expanded'), 'true');
   assert.equal(document.querySelector('#calendarCollapseToggle').getAttribute('aria-controls'), 'calendarBody');
@@ -2839,7 +2906,9 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnCategoryBack'), null);
   assert.equal(document.querySelector('#categoryView .category-page-title h2')?.textContent, '分类控制台');
   assert.equal(document.querySelector('#categoryView .category-page-kicker')?.textContent, '分类管理');
-  assert.equal(document.querySelector('#catManagerSummary').closest('.category-page-header') !== null, true);
+  assert.equal(document.querySelector('#catManagerSummary').closest('.category-sidebar-header') !== null, true);
+  assert.equal(document.querySelector('#categorySidebarPanel .category-sidebar-header h3')?.textContent, '一级分类');
+  assert.equal(document.querySelector('#catSearchInput').getAttribute('placeholder'), '搜索一级分类或二级分类...');
   assert.equal(document.querySelector('#catSearchInput').closest('.category-page-header') !== null, true);
   assert.equal(document.querySelector('#catSearchInput').closest('#categorySidebarPanel'), null);
   assert.equal(document.querySelector('#catNewInput').closest('#categorySidebarPanel') !== null, true);
@@ -2847,33 +2916,35 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#catAddToggle').closest('.category-sidebar-header') !== null, true);
   assert.equal(document.querySelector('#catAddPanel').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('#catList').closest('#categorySidebarPanel') !== null, true);
-  assert.equal(document.querySelector('#catAddToggle').getAttribute('aria-label'), '添加父分类');
+  assert.equal(document.querySelector('#catAddToggle').getAttribute('aria-label'), '添加一级分类');
   assert.equal(document.querySelector('#catAddToggle').getAttribute('aria-expanded'), 'false');
-  assert.equal(document.querySelector('#catAddBtn').getAttribute('aria-label'), '确认添加父分类');
-  assert.equal(document.querySelector('#catAddCancelBtn').getAttribute('aria-label'), '取消添加父分类');
+  assert.equal(document.querySelector('#catAddBtn').getAttribute('aria-label'), '确认添加一级分类');
+  assert.equal(document.querySelector('#catAddCancelBtn').getAttribute('aria-label'), '取消添加一级分类');
+  assert.equal(document.querySelector('#catNewInput').getAttribute('placeholder'), '新一级分类名称...');
   assert.equal(document.querySelector('#catAddToggle svg') !== null, true);
   assert.equal(document.querySelector('#catAddBtn svg') !== null, true);
   assert.equal(document.querySelector('#catAddCancelBtn svg') !== null, true);
-  assert.equal(document.querySelector('.cat-detail-actions #catCalendarDayVisible') !== null, true);
-  assert.equal(document.querySelector('#catSubNewInput').closest('.cat-detail-actions') !== null, true);
-  assert.equal(document.querySelector('#catSubAddBtn').closest('.cat-detail-actions') !== null, true);
-  assert.equal(document.querySelector('#catSubAddBtn').getAttribute('aria-label'), '添加子分类');
-  assert.equal(document.querySelector('#btnCatRename').getAttribute('aria-label'), '重命名分类');
-  assert.equal(document.querySelector('#btnCatDelete').getAttribute('aria-label'), '删除分类');
+  assert.equal(document.querySelector('#catCalendarDayVisible').closest('#catSubBrowseSidebar') !== null, true);
+  assert.equal(document.querySelector('#catSubNewInput').closest('#catSubBrowseSidebar') !== null, true);
+  assert.equal(document.querySelector('#catSubAddBtn').closest('#catSubBrowseSidebar') !== null, true);
+  assert.equal(document.querySelector('#catSubNewInput').getAttribute('placeholder'), '新二级分类...');
+  assert.equal(document.querySelector('#catSubAddBtn').getAttribute('aria-label'), '添加二级分类');
+  assert.equal(document.querySelector('#catRenameRow').closest('#categorySidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#catRenameInput').previousElementSibling.textContent, '新的一级分类名称');
+  assert.equal(document.querySelector('#btnCatRenameSave').getAttribute('aria-label'), '保存一级分类名称');
+  assert.equal(document.querySelector('#btnCatRenameCancel').getAttribute('aria-label'), '取消重命名一级分类');
   assert.equal(document.querySelector('#catSubAddBtn svg') !== null, true);
-  assert.equal(document.querySelector('#btnCatRename svg') !== null, true);
-  assert.equal(document.querySelector('#btnCatDelete svg') !== null, true);
-  assert.equal(document.querySelector('#catDetailLogCount').closest('.cat-detail-heading') !== null, true);
-  assert.equal(document.querySelector('#catViewListBtn').closest('.cat-view-toggle') !== null, true);
-  assert.equal(document.querySelector('#catViewGraphBtn').closest('.cat-view-toggle') !== null, true);
-  assert.equal(document.querySelector('#catViewListBtn').textContent.trim(), '列表');
-  assert.equal(document.querySelector('#catViewGraphBtn').textContent.trim(), '图谱');
-  assert.equal(document.querySelector('#catViewListBtn').getAttribute('aria-pressed'), 'true');
-  assert.equal(document.querySelector('#catViewGraphBtn').getAttribute('aria-pressed'), 'false');
-  assert.equal(document.querySelector('#catGraphView').closest('#catDetailContent') !== null, true);
+  assert.equal(document.querySelector('#btnCatRenameSave svg') !== null, true);
+  assert.equal(document.querySelector('#btnCatRenameCancel svg') !== null, true);
+  assert.equal(document.querySelector('#catSubBrowseLogCount').closest('.cat-sub-browse-header') !== null, true);
+  assert.equal(document.querySelector('#catSubBrowseParent').closest('.cat-sub-browse-toolbar') !== null, true);
+  assert.equal(document.querySelector('#catDetailSubCount').closest('.cat-sub-browse-toolbar') !== null, true);
   assert.equal(document.querySelector('#catSubBrowseSidebar').closest('.category-parent-panel') !== null, true);
   assert.equal(document.querySelector('#catSubBrowseContent').closest('.category-detail-panel') !== null, true);
-  assert.equal(document.querySelector('#btnSubBrowseBack').textContent.trim(), '← 父分类');
+  assert.equal(document.querySelector('#catViewListBtn'), null);
+  assert.equal(document.querySelector('#catViewGraphBtn'), null);
+  assert.equal(document.querySelector('#catGraphView'), null);
+  assert.equal(document.querySelector('#btnSubBrowseBack'), null);
   assert.deepEqual([...document.querySelectorAll('#todoFullPriority option')].map(option => [option.value, option.textContent]), [
     ['none', '无'],
     ['normal', '普通'],
@@ -2889,7 +2960,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   ]);
   assert.match(document.querySelector('.cat-calendar-toggle').getAttribute('title'), /月份筛选仍可查看/);
   assert.equal(document.querySelector('.cat-calendar-toggle-label'), null);
-  assert.equal(document.querySelector('#catManagerSummary').getAttribute('title'), '父分类数量');
+  assert.equal(document.querySelector('#catManagerSummary').getAttribute('title'), '一级分类数量');
   assert.match(document.querySelector('.template-token-hint').textContent, /\{\{上一周:MM月DD日\}\}/);
 });
 
@@ -2998,21 +3069,33 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.log-card-top\s*\{[\s\S]*grid-template-areas:[\s\S]*"title";/);
 });
 
-test('category manager uses drag sorting and log count badges without move buttons', () => {
+test('category manager opens directly into subcategory log browsing', () => {
   const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const codexCategoryStyles = styleSource.match(/\/\* Codex-style category workspace refinements \*\/[\s\S]*$/)?.[0] || '';
 
-  assert.doesNotMatch(categorySource, /<span class="cat-log-count" title="日志数量">\$\{c\.log_count \|\| 0\}<\/span>/);
-  assert.match(categorySource, /<span class="cat-sub-count" title="子分类数量">\$\{\(c\.sub \|\| \[\]\)\.length\}<\/span>/);
-  assert.match(categorySource, /\$\('#catDetailLogCount'\)\.textContent = cat\.log_count \|\| 0;/);
+  assert.doesNotMatch(categorySource, /cat-parent-log-count/);
+  assert.doesNotMatch(categorySource, /<span class="cat-sub-count" title="子分类数量">\$\{\(c\.sub \|\| \[\]\)\.length\}<\/span>/);
+  assert.doesNotMatch(categorySource, /class="cat-parent-meta"/);
+  assert.doesNotMatch(htmlSource, /id="catDetailContent"|id="catSubList"|id="catGraphView"|id="catViewListBtn"|id="catViewGraphBtn"|id="btnSubBrowseBack"|id="btnCatRename"|id="btnCatDelete"/);
+  assert.doesNotMatch(categorySource, /CATEGORY_DETAIL_VIEW_STORAGE_KEY|renderCategoryGraph|graphPath|graphPoint|setCategoryDetailViewMode|catGraphView|catViewListBtn|catViewGraphBtn|btnSubBrowseBack|\$\('#catSubList'\)/);
+  assert.doesNotMatch(styleSource, /cat-graph-|cat-view-toggle/);
   assert.match(categorySource, /<span class="cat-log-count" title="日志数量">\$\{cat\.sub_log_counts\?\.\[s\] \|\| 0\}<\/span>/);
-  assert.match(categorySource, /async function openSubcategoryBrowse\(subName\)/);
-  assert.match(categorySource, /syncMainCategoryFilter\(fullSubcategoryName\(parent, subName\)\)/);
-  assert.match(categorySource, /function selectParentCategory\(parentName\)[\s\S]*selectedCategoryName = parentName \|\| null;[\s\S]*subcategoryBrowseParent = null;[\s\S]*selectedSubcategoryName = null;[\s\S]*syncMainCategoryFilter\(selectedCategoryName \|\| ''\);[\s\S]*renderParentList\(\);/);
-  assert.match(categorySource, /\$\('#btnSubBrowseBack'\)\.addEventListener\('click'[\s\S]*selectParentCategory\(parent \|\| selectedCategoryName\)/);
+  assert.match(categorySource, /async function openSubcategoryBrowse\(subName = ''\)/);
+  assert.match(categorySource, /const targetSub = subs\.includes\(subName\) \? subName : \(subs\[0\] \|\| ''\);/);
+  assert.match(categorySource, /syncMainCategoryFilter\(targetSub \? fullSubcategoryName\(parent, targetSub\) : parent\);/);
+  assert.match(categorySource, /renderSubcategoryWorkspace\(cat, targetSub\);[\s\S]*if \(!targetSub\) \{[\s\S]*renderSubcategoryEmpty\(parent\);/);
+  assert.match(categorySource, /async function selectParentCategory\(parentName\)[\s\S]*selectedCategoryName = parentName \|\| null;[\s\S]*selectedSubcategoryName = null;[\s\S]*await openSubcategoryBrowse\(\);/);
   assert.match(categorySource, /\$\('#catList'\)\.addEventListener\('click'[\s\S]*selectParentCategory\(select\.dataset\.cat\)/);
+  assert.match(categorySource, /data-cat-parent-action="rename"[\s\S]*aria-label="重命名一级分类：\$\{escHtml\(c\.name\)\}"/);
+  assert.match(categorySource, /data-cat-parent-action="delete"[\s\S]*aria-label="删除一级分类：\$\{escHtml\(c\.name\)\}"/);
+  assert.match(categorySource, /if \(parentAction\.dataset\.catParentAction === 'rename'\) return openParentRename\(\);/);
+  assert.match(categorySource, /if \(parentAction\.dataset\.catParentAction === 'delete'\) return deleteSelectedParentCategory\(\);/);
+  assert.match(categorySource, /function openParentRename\(\)/);
+  assert.match(categorySource, /async function deleteSelectedParentCategory\(\)/);
+  assert.match(categorySource, /name === '日记' \? '' : `<button class="cat-icon-action cat-parent-rename-btn"/);
+  assert.match(categorySource, /isProtectedRootCategory\(c\.name\) \? '' : `<button class="cat-icon-action danger cat-parent-delete-btn"/);
   assert.doesNotMatch(categorySource, /selectedCategoryName = select\.dataset\.cat;\s*renderParentList\(\);/);
   assert.match(categorySource, /apiFetch\(`\/api\/logs\?\$\{params\}`\)/);
   assert.match(categorySource, /const \{ openEditor \} = await import\('\.\/editor\.js'\);/);
@@ -3023,73 +3106,48 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.match(categorySource, /<span class="cat-sub-log-arrow" aria-hidden="true">›<\/span>/);
   assert.doesNotMatch(categorySource, /cat-sub-log-preview/);
   assert.doesNotMatch(categorySource, /cat-sub-log-meta/);
-  assert.match(categorySource, /class="cat-icon-action subcat-edit-btn"[\s\S]*aria-label="重命名子分类：\$\{escHtml\(s\)\}"/);
-  assert.match(categorySource, /class="cat-icon-action danger subcat-del-btn"[\s\S]*aria-label="删除子分类：\$\{escHtml\(s\)\}"/);
+  assert.match(categorySource, /class="cat-icon-action subcat-edit-btn"[\s\S]*aria-label="重命名二级分类：\$\{escHtml\(s\)\}"/);
+  assert.match(categorySource, /class="cat-icon-action danger subcat-del-btn"[\s\S]*aria-label="删除二级分类：\$\{escHtml\(s\)\}"/);
   assert.match(categorySource, /function categoryIconSvg\(name\)/);
   assert.match(categorySource, /subcat-edit-btn[\s\S]*\$\{categoryIconSvg\('edit'\)\}/);
   assert.match(categorySource, /subcat-del-btn[\s\S]*\$\{categoryIconSvg\('trash'\)\}/);
-  assert.match(categorySource, /class="cat-detail-sub-item"[\s\S]*draggable="true"/);
-  assert.match(categorySource, /setupDragAndDrop\(\{[\s\S]*container: \$\('#catSubList'\),[\s\S]*itemSelector: '\.cat-detail-sub-item'/);
+  assert.match(categorySource, /function renderSubcategoryWorkspace\(cat, subName\)/);
+  assert.match(categorySource, /class="cat-sub-browse-item \$\{s === subName \? 'active' : ''\}"[\s\S]*draggable="true"/);
+  assert.match(categorySource, /function renderSubcategoryEmpty\(parent\)/);
+  assert.match(categorySource, /先新增二级分类，再浏览对应日志。/);
+  assert.match(categorySource, /setupDragAndDrop\(\{[\s\S]*container: \$\('#catSubBrowseList'\),[\s\S]*itemSelector: '\.cat-sub-browse-item'/);
   assert.match(categorySource, /apiFetch\(`\/api\/categories\/\$\{encodeURIComponent\(selectedCategoryName\)\}\/subcategories\/reorder`/);
   assert.match(categorySource, /cat\.sub\.map\(s => `<option value="\$\{escHtml\(s\)\}">\$\{escHtml\(s\)\}<\/option>`\)\.join\(''\)/);
-  assert.match(categorySource, /const CATEGORY_DETAIL_VIEW_STORAGE_KEY = 'categoryDetailViewMode';/);
-  assert.match(categorySource, /import \{ showToast, escHtml, setupDragAndDrop, confirmDialog, \$, \$\$ \} from '\.\/helpers\.js';/);
-  assert.match(categorySource, /localStorage\.getItem\(CATEGORY_DETAIL_VIEW_STORAGE_KEY\)/);
-  assert.match(categorySource, /localStorage\.setItem\(CATEGORY_DETAIL_VIEW_STORAGE_KEY, mode\)/);
-  assert.match(categorySource, /function renderCategoryGraph\(cat\)/);
-  assert.match(categorySource, /const subs = cat\.sub \|\| \[\];/);
-  assert.match(categorySource, /class="cat-graph-lines"/);
-  assert.match(categorySource, /function graphPath\(point, index\)/);
-  assert.match(categorySource, /class="cat-graph-orbit"[\s\S]*d="\$\{graphPath\(point, index\)\}"/);
-  assert.match(categorySource, /class="cat-graph-node cat-graph-parent"/);
-  assert.match(categorySource, /class="cat-graph-node cat-graph-sub[^"]*"[\s\S]*data-sub="\$\{escHtml\(point\.sub\)\}"/);
-  assert.match(categorySource, /title="\$\{escHtml\(point\.sub\)\}，日志 \$\{cat\.sub_log_counts\?\.\[point\.sub\] \|\| 0\} 条"/);
-  assert.match(categorySource, /aria-label="浏览子分类：\$\{escHtml\(point\.sub\)\}，日志 \$\{cat\.sub_log_counts\?\.\[point\.sub\] \|\| 0\} 条"/);
-  assert.doesNotMatch(categorySource, /cat-graph-node-count/);
-  assert.match(categorySource, /setActiveGraphSub\(node\.dataset\.sub\)/);
-  assert.match(categorySource, /\.classList\.toggle\('active', Boolean\(subName\) && line\.dataset\.sub === subName\)/);
-  assert.match(categorySource, /\$\('#catGraphView'\)\.addEventListener\('click'[\s\S]*openSubcategoryBrowse\(node\.dataset\.sub\)/);
-  assert.match(categorySource, /setCategoryDetailViewMode\(categoryDetailViewMode\)/);
-  assert.match(htmlSource, /id="catViewListBtn"[\s\S]*aria-pressed="true"[\s\S]*>列表<\/button>/);
-  assert.match(htmlSource, /id="catViewGraphBtn"[\s\S]*aria-pressed="false"[\s\S]*>图谱<\/button>/);
-  assert.match(htmlSource, /<div class="cat-graph-view" id="catGraphView" style="display:none;"><\/div>/);
+  assert.match(categorySource, /import \{ showToast, escHtml, setupDragAndDrop, confirmDialog, \$ \} from '\.\/helpers\.js';/);
+  assert.match(categorySource, /await refreshCategoryViews\(parent, name\);[\s\S]*showToast\('二级分类已添加'/);
+  assert.match(categorySource, /await refreshCategoryViews\(selectedCategoryName, newName\);[\s\S]*showToast\('二级分类已重命名'/);
+  assert.match(categorySource, /await refreshCategoryViews\(selectedCategoryName, ''\);[\s\S]*showToast\('二级分类已删除'/);
   assert.match(htmlSource, /id="catAddToggle"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
   assert.match(htmlSource, /id="catAddBtn"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
   assert.match(htmlSource, /id="catAddCancelBtn"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
   assert.match(htmlSource, /id="catSubAddBtn"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
-  assert.match(htmlSource, /id="btnCatRename"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
-  assert.match(htmlSource, /id="btnCatDelete"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
+  assert.match(htmlSource, /id="btnCatRenameSave"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
+  assert.match(htmlSource, /id="btnCatRenameCancel"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
+  assert.match(htmlSource, /id="catSubBrowseSidebar"[\s\S]*id="catSubBrowseParent"[\s\S]*id="catDetailSubCount"[\s\S]*id="catCalendarDayVisible"[\s\S]*id="catSubNewInput"[\s\S]*id="catSubBrowseList"/);
   assert.match(codexCategoryStyles, /\.category-view\s*\{[\s\S]*background:\s*#fff;/);
   assert.match(codexCategoryStyles, /\.category-page-header\s*\{[\s\S]*border-bottom:\s*1px solid rgba\(229, 231, 235, 0\.95\);/);
   assert.match(codexCategoryStyles, /\.category-detail-panel,\s*\.cat-sub-browse-sidebar\s*\{[\s\S]*border:\s*1px solid rgba\(229, 231, 235, 0\.96\);[\s\S]*background:\s*#fff;[\s\S]*box-shadow:\s*none;/);
   assert.match(codexCategoryStyles, /\.cat-icon-action\s*\{[\s\S]*width:\s*30px;[\s\S]*height:\s*30px;[\s\S]*background:\s*#fff;[\s\S]*color:\s*#374151;/);
   assert.match(codexCategoryStyles, /\.cat-icon-action svg\s*\{[\s\S]*stroke-width:\s*1\.9;/);
   assert.match(codexCategoryStyles, /\.cat-icon-action\.primary\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#111827;/);
-  assert.match(styleSource, /\.cat-view-toggle\s*\{[\s\S]*display:\s*inline-flex;/);
-  assert.match(codexCategoryStyles, /\.cat-view-toggle button\[aria-pressed="true"\]\s*\{[\s\S]*background:\s*#fff;[\s\S]*color:\s*#111827;/);
-  assert.match(codexCategoryStyles, /\.cat-graph-view\s*\{[\s\S]*min-height:\s*min\(500px, 58vh\);[\s\S]*background:\s*#fff;[\s\S]*box-shadow:\s*none;/);
-  assert.match(codexCategoryStyles, /\.cat-graph-view::before\s*\{[\s\S]*background-image:[\s\S]*linear-gradient/);
-  assert.match(styleSource, /\.cat-graph-lines\s*\{[\s\S]*pointer-events:\s*none;/);
-  assert.match(codexCategoryStyles, /\.cat-graph-orbit\s*\{[\s\S]*stroke:\s*#d1d5db;[\s\S]*stroke-dasharray:\s*4 6;/);
-  assert.match(codexCategoryStyles, /\.cat-graph-orbit\.active\s*\{[\s\S]*stroke:\s*#111827;[\s\S]*stroke-width:\s*1\.8;/);
-  assert.match(styleSource, /\.cat-graph-view:has\(\.cat-graph-sub:hover\) \.cat-graph-orbit:not\(\.active\)/);
-  assert.match(styleSource, /\.cat-graph-node\s*\{[\s\S]*position:\s*absolute;[\s\S]*transform:\s*translate\(-50%, -50%\);/);
-  assert.match(codexCategoryStyles, /\.cat-graph-node\s*\{[\s\S]*background:\s*#fff;[\s\S]*color:\s*#111827;/);
-  assert.match(codexCategoryStyles, /\.cat-graph-parent,\s*\.cat-graph-parent:hover\s*\{[\s\S]*background:\s*#111827;[\s\S]*color:\s*#fff;/);
-  assert.match(styleSource, /\.cat-graph-empty\s*\{[\s\S]*justify-content:\s*center;/);
-  assert.doesNotMatch(styleSource, /background-size:\s*34px 34px|\.cat-graph-lines line|\.cat-graph-node-count/);
-  assert.match(styleSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.cat-graph-node,[\s\S]*\.cat-graph-orbit[\s\S]*transition:\s*none;/);
-  assert.match(styleSource, /@media[\s\S]*\.cat-graph-view\s*\{[\s\S]*min-width:\s*560px;[\s\S]*min-height:\s*380px;/);
   assert.match(styleSource, /\.category-sidebar-panel\s*\{[\s\S]*display:\s*none;[\s\S]*border:\s*1px solid var\(--sidebar-border\);/);
   assert.match(styleSource, /body\.sidebar-category-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1;/);
   assert.doesNotMatch(styleSource, /category-sidebar-search|category-sidebar-toolbar/);
   assert.match(htmlSource, /class="category-page-kicker">分类管理<\/span>[\s\S]*<h2>分类控制台<\/h2>/);
-  assert.match(styleSource, /\.category-page-search\s*\{[\s\S]*justify-content:\s*center;/);
+  assert.match(styleSource, /\.category-page-search\s*\{[\s\S]*justify-content:\s*flex-end;/);
   assert.match(styleSource, /\.cat-search-input\.cat-page-search-input\s*\{[\s\S]*width:\s*min\(560px, 48vw\);/);
   assert.match(styleSource, /\.category-sidebar-add\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 30px 30px;/);
   assert.match(styleSource, /\.category-sidebar-add\[hidden\]\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /\.cat-add-row\.category-sidebar-add\[hidden\]\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.category-sidebar-rename\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 30px 30px;/);
   assert.match(styleSource, /\.category-sidebar-panel \.cat-list\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /\.category-sidebar-header \.cat-manager-summary\s*\{[\s\S]*height:\s*24px;[\s\S]*min-width:\s*34px;/);
+  assert.match(styleSource, /\.category-sidebar-header \.category-add-toggle\s*\{[\s\S]*margin-left:\s*auto;/);
   assert.match(styleSource, /\.category-page-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(360px, 1fr\);/);
   assert.match(styleSource, /\.category-view\.sub-browse-mode \.category-page-grid\s*\{[\s\S]*grid-template-columns:\s*minmax\(280px, 340px\) minmax\(360px, 1fr\);/);
   assert.match(styleSource, /\.category-parent-panel\s*\{[\s\S]*display:\s*none;/);
@@ -3097,27 +3155,81 @@ test('category manager uses drag sorting and log count badges without move butto
   assert.match(codexCategoryStyles, /\.cat-manager-summary\s*\{[\s\S]*border-color:\s*#e5e7eb;[\s\S]*background:\s*#fff;[\s\S]*box-shadow:\s*none;/);
   assert.match(codexCategoryStyles, /\.cat-manager-summary::before\s*\{[\s\S]*background:\s*#6b7280;/);
   assert.match(categorySource, /summary\.textContent = total;/);
-  assert.doesNotMatch(categorySource, /个父分类，/);
-  assert.doesNotMatch(categorySource, /个子分类/);
+  assert.match(categorySource, /summary\.setAttribute\('aria-label', `一级分类数量：\$\{total\}`\);/);
+  assert.doesNotMatch(categorySource, /个父分类，|个子分类|父分类数量|子分类数量/);
   assert.doesNotMatch(htmlSource, /拖动父分类排序/);
   assert.doesNotMatch(htmlSource, /<span class="cat-calendar-toggle-label">日历显示<\/span>/);
   assert.match(categorySource, /setupDragAndDrop\(\{[\s\S]*itemSelector: '\.cat-parent-item'/);
   assert.doesNotMatch(categorySource, /data-cat-action/);
   assert.doesNotMatch(categorySource, /moveCategory/);
-  assert.match(categorySource, /class="cat-parent-log-count"[\s\S]*\$\{c\.log_count \|\| 0\} 日志/);
+  assert.doesNotMatch(categorySource, /class="cat-parent-log-count"[\s\S]*\$\{c\.log_count \|\| 0\} 日志/);
   assert.match(categorySource, /class="cat-sub-drag-handle"/);
   assert.match(codexCategoryStyles, /\.cat-log-count,\s*\.cat-detail-log-count\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#374151;/);
   assert.match(codexCategoryStyles, /\.cat-parent-item:hover,\s*\.cat-parent-item\.active\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*box-shadow:\s*inset 1px 0 0 #d1d5db;/);
-  assert.match(codexCategoryStyles, /\.cat-detail-sub-list\s*\{[\s\S]*border-color:\s*#e5e7eb;[\s\S]*background:\s*#fff;/);
   assert.match(styleSource, /\.cat-detail-log-count\s*\{[\s\S]*min-width:\s*30px;/);
   assert.match(codexCategoryStyles, /\.cat-default-tag,\s*\.cat-parent-select \.cat-sub-count,\s*\.cat-sub-log-date\s*\{[\s\S]*border-color:\s*#e5e7eb;[\s\S]*background:\s*#f9fafb;/);
   assert.match(styleSource, /\.cat-sub-browse-sidebar\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.cat-sub-browse-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto auto;/);
+  assert.match(styleSource, /\.cat-sub-browse-item\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*18px minmax\(0, 1fr\) auto auto;/);
+  assert.match(styleSource, /\.cat-sub-browse-item:hover,\s*\.cat-sub-browse-item\.active\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.055\);/);
+  assert.match(styleSource, /\.cat-sub-empty\s*\{[\s\S]*place-items:\s*center;/);
   assert.match(styleSource, /\.cat-sub-log-list\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(codexCategoryStyles, /\.cat-sub-log-card\s*\{[\s\S]*min-height:\s*46px;[\s\S]*border-color:\s*#e5e7eb;[\s\S]*background:\s*#fff;/);
   assert.match(codexCategoryStyles, /\.cat-sub-log-index\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#374151;/);
   assert.match(styleSource, /\.cat-sub-log-date\s*\{[\s\S]*border-radius:\s*999px;/);
   assert.match(styleSource, /\.cat-sub-log-card:hover \.cat-sub-log-arrow/);
-  assert.match(styleSource, /\.cat-parent-item\s*\{[\s\S]*grid-template-columns:\s*24px minmax\(0, 1fr\);/);
+  assert.match(styleSource, /\.cat-parent-item\s*\{[\s\S]*grid-template-columns:\s*24px minmax\(0, 1fr\) auto;/);
+  assert.match(styleSource, /\.cat-parent-actions\s*\{[\s\S]*display:\s*inline-flex;/);
+});
+
+test('photo wall frontend supports sidebar mode, upload, canvas transform, and comments', () => {
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
+  const photoWallSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'photoWall.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+
+  assert.match(htmlSource, /data-mode="photo-wall">照片墙<\/button>/);
+  assert.match(htmlSource, /class="photo-wall-sidebar-panel" id="photoWallSidebarPanel"/);
+  assert.match(htmlSource, /class="photo-wall-sidebar-panel" id="photoWallSidebarPanel"[\s\S]*id="photoWallZoomLabel"/);
+  assert.doesNotMatch(htmlSource, /class="photo-wall-topbar"/);
+  assert.doesNotMatch(htmlSource, /class="photo-wall-kicker"/);
+  assert.doesNotMatch(htmlSource, />无界画布</);
+  assert.match(htmlSource, /id="photoWallFileInput"[\s\S]*accept="image\/png,image\/jpeg,image\/gif,image\/webp,image\/bmp"[\s\S]*multiple/);
+  assert.match(htmlSource, /id="btnPhotoWallUpload"[\s\S]*上传图片/);
+  assert.match(htmlSource, /id="btnPhotoWallZoomOut"[\s\S]*id="btnPhotoWallZoomIn"[\s\S]*id="btnPhotoWallFit"[\s\S]*id="btnPhotoWallReset"/);
+  assert.match(htmlSource, /id="btnPhotoWallDelete"[\s\S]*disabled/);
+  assert.match(htmlSource, /class="photo-wall-view" id="photoWallView"[\s\S]*id="photoWallCanvasShell"[\s\S]*id="photoWallStage"/);
+
+  assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-photo-wall-mode', mode === 'photo-wall'\);/);
+  assert.match(appSource, /activeSidebarMode\(\) === 'photo-wall'[\s\S]*showPhotoWallView\(\)/);
+  assert.match(photoWallSource, /const PHOTO_WALL_ENDPOINT = '\/api\/photo-wall';/);
+  assert.match(photoWallSource, /const VIEWPORT_STORAGE_KEY = 'photoWallViewport';/);
+  assert.match(photoWallSource, /apiFetch\(PHOTO_WALL_ENDPOINT\)/);
+  assert.match(photoWallSource, /form\.append\('image', file\);[\s\S]*apiFetch\('\/api\/upload', \{ method: 'POST', body: form \}\)/);
+  assert.match(photoWallSource, /apiFetch\('\/api\/photo-wall\/items', \{[\s\S]*method: 'POST'[\s\S]*body: JSON\.stringify\(item\)/);
+  assert.match(photoWallSource, /apiFetch\(`\/api\/photo-wall\/items\/\$\{item\.id\}`,[\s\S]*body: JSON\.stringify\(itemPatch\(item\)\)/);
+  assert.match(photoWallSource, /comment: item\.comment \|\| ''/);
+  assert.match(photoWallSource, /data-action="resize-photo"/);
+  assert.match(photoWallSource, /data-action="edit-comment"/);
+  assert.match(photoWallSource, /screenToWorld\(clientX, clientY\)/);
+  assert.match(photoWallSource, /viewport\.scale = clampScale\(nextScale\);/);
+  assert.match(photoWallSource, /localStorage\.setItem\(VIEWPORT_STORAGE_KEY, JSON\.stringify\(viewport\)\)/);
+  assert.match(photoWallSource, /confirmDialog\(\{[\s\S]*只会从照片墙移除这张图片，不会删除上传文件/);
+  assert.match(photoWallSource, /apiFetch\(`\/api\/photo-wall\/items\/\$\{item\.id\}`, \{ method: 'DELETE' \}\)/);
+
+  assert.match(styleSource, /\.photo-wall-sidebar-panel\s*\{[\s\S]*display:\s*none;[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.photo-wall-sidebar-metrics\s*\{[\s\S]*display:\s*inline-flex;/);
+  assert.match(styleSource, /body\.sidebar-photo-wall-mode \.photo-wall-sidebar-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /body\.sidebar-photo-wall-mode \.calendar-widget,[\s\S]*body\.sidebar-photo-wall-mode \.category-sidebar-panel\s*\{[\s\S]*display:\s*none;/);
+  assert.match(styleSource, /\.photo-wall-view\s*\{[\s\S]*display:\s*flex;[\s\S]*padding:\s*0;[\s\S]*background:\s*#fff;/);
+  assert.doesNotMatch(styleSource, /\.photo-wall-topbar\s*\{/);
+  assert.doesNotMatch(styleSource, /\.photo-wall-kicker\s*\{/);
+  assert.match(styleSource, /\.photo-wall-canvas-shell\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*background:[\s\S]*linear-gradient/);
+  assert.match(styleSource, /\.photo-wall-stage\s*\{[\s\S]*transform-origin:\s*0 0;/);
+  assert.match(styleSource, /\.photo-wall-item\.selected\s*\{[\s\S]*border-color:\s*#111827;/);
+  assert.match(styleSource, /\.photo-wall-resize-handle\s*\{[\s\S]*cursor:\s*nwse-resize;/);
+  assert.match(styleSource, /\.photo-wall-comment\s*\{[\s\S]*resize:\s*vertical;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.photo-wall-canvas-shell\s*\{[\s\S]*min-height:\s*420px;/);
 });
 
 test('todo UI uses drag sorting, new priorities, and hides notes previews', () => {
@@ -3198,12 +3310,15 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-priority\.prio-important\s*\{[\s\S]*background: var\(--color-warning\);/);
   assert.match(styleSource, /\.todo-priority\.prio-urgent\s*\{ background: var\(--color-danger\); \}/);
   assert.match(styleSource, /\.todo-recurrence\s*\{[\s\S]*border:\s*1px solid rgba\(20, 184, 166, 0\.28\);/);
-  assert.match(styleSource, /\.todo-view\s*\{[\s\S]*flex-direction:\s*column;/);
+  assert.match(styleSource, /\.todo-view\s*\{[\s\S]*--todo-form-column:\s*minmax\(300px, 360px\);[\s\S]*--todo-layout-gap:\s*14px;[\s\S]*--todo-category-button-size:\s*42px;[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.todo-page-header\s*\{[\s\S]*align-items:\s*center;/);
   assert.match(styleSource, /\.todo-page-stats\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(84px, 1fr\)\);/);
   assert.match(styleSource, /\.todo-stat-card\s*\{[\s\S]*min-height:\s*44px;[\s\S]*border-radius:\s*8px;/);
   assert.match(styleSource, /\.todo-stat-card::before\s*\{[\s\S]*linear-gradient\(90deg, rgba\(47, 125, 244, 0\.58\), rgba\(20, 184, 166, 0\.34\)\);/);
-  assert.match(styleSource, /\.todo-category-open\s*\{[\s\S]*width:\s*42px;[\s\S]*height:\s*42px;/);
+  assert.match(styleSource, /\.todo-page-controls\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) var\(--todo-form-column\);[\s\S]*gap:\s*var\(--todo-layout-gap\);/);
+  assert.match(styleSource, /\.todo-search-box\s*\{[\s\S]*grid-column:\s*2;[\s\S]*grid-row:\s*1;/);
+  assert.match(styleSource, /\.todo-filter-tabs\s*\{[\s\S]*grid-column:\s*1;[\s\S]*padding-right:\s*calc\(var\(--todo-category-button-size\) \+ 10px\);/);
+  assert.match(styleSource, /\.todo-category-open\s*\{[\s\S]*grid-column:\s*1;[\s\S]*justify-self:\s*end;[\s\S]*width:\s*var\(--todo-category-button-size\);[\s\S]*height:\s*var\(--todo-category-button-size\);/);
   assert.match(styleSource, /\.modal-todo-category\s*\{[\s\S]*width:\s*min\(420px, calc\(100vw - 28px\)\);/);
   assert.match(styleSource, /\.todo-category-remove\s*\{[\s\S]*border-radius:\s*7px;/);
   assert.match(styleSource, /\.todo-category-remove svg\s*\{[\s\S]*stroke-width:\s*1\.9;/);
@@ -3215,7 +3330,9 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.doesNotMatch(styleSource, /\.todo-select-control\.has-value \.todo-select-trigger\s*\{[^}]*linear-gradient\(135deg/);
   assert.match(styleSource, /\.todo-select-option:hover,\s*\.todo-select-option:focus-visible\s*\{[\s\S]*background:\s*var\(--archive-mint-soft\);/);
   assert.match(styleSource, /\.todo-section-clear\s*\{[\s\S]*width:\s*auto;[\s\S]*min-height:\s*24px;[\s\S]*font-size:\s*0\.68rem;/);
-  assert.match(styleSource, /\.todo-page-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) minmax\(300px, 360px\);/);
+  assert.match(styleSource, /\.todo-page-layout\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) var\(--todo-form-column\);[\s\S]*gap:\s*var\(--todo-layout-gap\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.todo-category-open\s*\{[\s\S]*grid-column:\s*2;[\s\S]*justify-self:\s*end;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.todo-search-box\s*\{[\s\S]*grid-column:\s*1 \/ -1;[\s\S]*grid-row:\s*auto;/);
   assert.match(todoSource, /state\.datesWithTodos = \[\.\.\.new Set\(allTodos\.map\(todo => todo\.due_date\)\.filter\(Boolean\)\)\];/);
   assert.match(todoSource, /refreshTodoCalendarDates\(\);[\s\S]*renderTodos\(\);/);
   assert.match(styleSource, /body\.sidebar-todo-mode \.calendar-widget/);
@@ -3284,6 +3401,10 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 
+  assert.match(styleSource, /:root\s*\{[\s\S]*--color-sidebar:\s*#f0fdfa;[\s\S]*--color-sidebar-text:\s*#475569;[\s\S]*--color-sidebar-heading:\s*#0f766e;/);
+  assert.match(styleSource, /:root\s*\{[\s\S]*--sidebar-hover:\s*rgba\(20, 184, 166, 0\.10\);[\s\S]*--sidebar-hover-strong:\s*rgba\(20, 184, 166, 0\.16\);[\s\S]*--sidebar-bg-subtle:\s*rgba\(20, 184, 166, 0\.07\);[\s\S]*--sidebar-border:\s*rgba\(20, 184, 166, 0\.18\);[\s\S]*--sidebar-faint:\s*rgba\(20, 184, 166, 0\.24\);/);
+  assert.match(styleSource, /\[data-theme="dark"\]\s*\{[\s\S]*--color-sidebar:\s*#102a2a;[\s\S]*--color-sidebar-text:\s*#b6e4dc;[\s\S]*--color-sidebar-heading:\s*#e8fff8;/);
+  assert.match(styleSource, /\[data-theme="dark"\]\s*\{[\s\S]*--sidebar-hover:\s*rgba\(94, 234, 212, 0\.10\);[\s\S]*--sidebar-hover-strong:\s*rgba\(94, 234, 212, 0\.16\);[\s\S]*--sidebar-bg-subtle:\s*rgba\(94, 234, 212, 0\.07\);[\s\S]*--sidebar-border:\s*rgba\(94, 234, 212, 0\.16\);[\s\S]*--sidebar-faint:\s*rgba\(94, 234, 212, 0\.22\);/);
   assert.match(appSource, /const COMPACT_DESKTOP_SIDEBAR_QUERY = '\(max-width: 1100px\)';/);
   assert.match(appSource, /const DESKTOP_POINTER_QUERY = '\(hover: hover\) and \(pointer: fine\)';/);
   assert.match(appSource, /function isCompactDesktopSidebar\(\) \{[\s\S]*compactDesktopSidebarMedia\.matches && desktopPointerMedia\.matches;/);
@@ -3340,16 +3461,22 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
+  const photoWallSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'photoWall.js'), 'utf8');
   const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const quoteSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiDailyQuotes.js'), 'utf8');
+  const aiCleanupStyles = styleSource.match(/\/\* AI cleanup pass \*\/[\s\S]*?\/\* AI message footer and grouped history refinements \*\//)?.[0] || '';
+  const aiChatBodyCleanupBlock = aiCleanupStyles.match(/\.ai-chat-body\s*\{[^}]*\}/)?.[0] || '';
+  const aiMessageFooterStyles = styleSource.match(/\/\* AI message footer and grouped history refinements \*\/[\s\S]*?\/\* Codex-style category workspace refinements \*\//)?.[0] || '';
 
   assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
+  assert.match(appSource, /import \{ showPhotoWallView \} from '\.\/photoWall\.js';/);
   assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
   assert.match(appSource, /function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
-  assert.match(appSource, /if \(!\['normal', 'todo', 'categories', 'ai'\]\.includes\(mode\)\) mode = 'normal';/);
+  assert.match(appSource, /if \(!\['normal', 'todo', 'categories', 'photo-wall', 'ai'\]\.includes\(mode\)\) mode = 'normal';/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-ai-mode', mode === 'ai'\);/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-category-mode', mode === 'categories'\);/);
+  assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-photo-wall-mode', mode === 'photo-wall'\);/);
   assert.doesNotMatch(appSource, /sidebar-nav-mode|mode === 'nav'|当前为日志导航/);
   assert.match(appSource, /import \{ loadCategories, openCategoryManager \} from '\.\/categories\.js';/);
   assert.match(appSource, /import \{ loadTodos, showTodoView \} from '\.\/todos\.js';/);
@@ -3359,18 +3486,23 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(appSource, /function toggleSidebarModeMenu\(\)/);
   assert.match(appSource, /mode === 'todo'[\s\S]*title\.textContent = '待办事项';[\s\S]*当前为待办事项/);
   assert.match(appSource, /mode === 'todo'[\s\S]*showTodoView\(\)/);
-  assert.match(appSource, /function syncMainViewWithSidebarMode\(\)[\s\S]*activeSidebarMode\(\) === 'ai'[\s\S]*showAiChatView\(\)[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*openCategoryManager\(\)[\s\S]*activeSidebarMode\(\) === 'todo'[\s\S]*showTodoView\(\)/);
+  assert.match(appSource, /mode === 'photo-wall'[\s\S]*title\.textContent = '照片墙';[\s\S]*当前为照片墙/);
+  assert.match(appSource, /mode === 'photo-wall'[\s\S]*showPhotoWallView\(\)/);
+  assert.match(appSource, /function syncMainViewWithSidebarMode\(\)[\s\S]*activeSidebarMode\(\) === 'ai'[\s\S]*showAiChatView\(\)[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*openCategoryManager\(\)[\s\S]*activeSidebarMode\(\) === 'photo-wall'[\s\S]*showPhotoWallView\(\)[\s\S]*activeSidebarMode\(\) === 'todo'[\s\S]*showTodoView\(\)/);
   assert.match(editorSource, /const aiSettingsView = \$\('#aiSettingsView'\);/);
-  assert.match(editorSource, /export function showListView\(\)[\s\S]*if \(aiSettingsView\) aiSettingsView\.style\.display = 'none';/);
-  assert.match(editorSource, /function showEditorView\(\)[\s\S]*if \(aiSettingsView\) aiSettingsView\.style\.display = 'none';/);
-  assert.match(todoSource, /export function showTodoView\(\)[\s\S]*\$\('#aiSettingsView'\)\.style\.display = 'none';/);
-  assert.match(categorySource, /export async function openCategoryManager\(\)[\s\S]*\$\('#aiSettingsView'\)\.style\.display = 'none';/);
-  assert.match(categorySource, /export function closeCategoryManager\(\)[\s\S]*\$\('#aiSettingsView'\)\.style\.display = 'none';/);
+  assert.match(editorSource, /const photoWallView = \$\('#photoWallView'\);/);
+  assert.match(editorSource, /export function showListView\(\)[\s\S]*if \(photoWallView\) photoWallView\.style\.display = 'none';/);
+  assert.match(editorSource, /function showEditorView\(\)[\s\S]*if \(photoWallView\) photoWallView\.style\.display = 'none';/);
+  assert.match(todoSource, /export function showTodoView\(\)[\s\S]*\$\('#photoWallView'\)\.style\.display = 'none';/);
+  assert.match(categorySource, /export async function openCategoryManager\(\)[\s\S]*\$\('#photoWallView'\)\.style\.display = 'none';/);
+  assert.match(categorySource, /export function closeCategoryManager\(\)[\s\S]*\$\('#photoWallView'\)\.style\.display = 'none';/);
+  assert.match(photoWallSource, /export async function showPhotoWallView\(\)/);
+  assert.match(photoWallSource, /for \(const id of \['listView', 'editorView', 'categoryView', 'todoView', 'aiChatView', 'aiSettingsView', 'photoWallView'\]\)/);
   assert.match(appSource, /window\.addEventListener\('category-manager-closed'/);
   assert.match(appSource, /window\.addEventListener\('category-log-opened'[\s\S]*activeSidebarMode\(\) === 'categories'[\s\S]*setSidebarMode\('normal', \{ updateMain: false \}\)/);
   assert.doesNotMatch(appSource, /btnCategoryBack/);
-  assert.match(aiSource, /for \(const id of \['aiSettingsView', 'aiChatView', 'editorView', 'categoryView', 'todoView', 'listView'\]\)/);
-  assert.match(aiSource, /for \(const viewId of \['listView', 'editorView', 'categoryView', 'todoView', 'aiChatView', 'aiSettingsView'\]\)/);
+  assert.match(aiSource, /for \(const id of \['aiSettingsView', 'aiChatView', 'photoWallView', 'editorView', 'categoryView', 'todoView', 'listView'\]\)/);
+  assert.match(aiSource, /for \(const viewId of \['listView', 'editorView', 'categoryView', 'todoView', 'photoWallView', 'aiChatView', 'aiSettingsView'\]\)/);
   assert.doesNotMatch(fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8'), /btnManageCats/);
   assert.match(appSource, /if \(!diarySelected\) await refreshAll\(\);[\s\S]*syncMainViewWithSidebarMode\(\);/);
   assert.doesNotMatch(appSource, /fabCapture/);
@@ -3475,6 +3607,18 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /promptMode: 'original'/);
   assert.match(aiSource, /data-action="generate-image"/);
   assert.match(aiSource, /data-action="copy-image-markdown"/);
+  assert.match(aiSource, /data-action="open-image-preview"/);
+  assert.match(aiSource, /data-preview-url="\$\{escHtml\(imageGeneration\.url\)\}"/);
+  assert.match(aiSource, /aria-label="双击放大 AI 生成图片"/);
+  assert.match(aiSource, /title="双击放大图片"/);
+  assert.match(aiSource, /function ensureAiImagePreviewOverlay\(\)/);
+  assert.match(aiSource, /overlay\.id = 'aiImagePreviewOverlay';/);
+  assert.match(aiSource, /function openAiImagePreview\(url, alt = 'AI 生成图片'\)/);
+  assert.match(aiSource, /function closeAiImagePreview\(\)/);
+  assert.match(aiSource, /openModal\(overlay, '#aiImagePreviewClose'\)/);
+  assert.match(aiSource, /closeModal\(overlay\)/);
+  assert.match(aiSource, /overlay\.addEventListener\('click', event => \{[\s\S]*if \(event\.target === overlay\) closeAiImagePreview\(\);/);
+  assert.match(aiSource, /if \(event\.key === 'Escape'\) closeAiImagePreview\(\);/);
   assert.match(aiSource, /function imagePromptFrom\(text\)\s*\{\s*return String\(text \|\| ''\)\.trim\(\)\.slice\(0, 800\);/);
   assert.match(aiSource, /if \(forceImage\) \{[\s\S]*imageGeneration: \{[\s\S]*status: 'optimizing'/);
   assert.match(aiSource, /await apiFetch\(AI_CONVERSATIONS_ENDPOINT,[\s\S]*method: 'PUT'/);
@@ -3492,8 +3636,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /import \{ dailyQuoteForDate \} from '\.\/aiDailyQuotes\.js';/);
   assert.doesNotMatch(aiSource, /function aiAssistantAvatarSvg\(\)/);
   assert.doesNotMatch(aiSource, /class="ai-avatar-spark"/);
-  assert.match(aiSource, /function aiUserAvatarSvg\(\)/);
-  assert.match(aiSource, /class="ai-avatar-user"/);
+  assert.doesNotMatch(aiSource, /function aiUserAvatarSvg\(\)|function aiMessageAvatar\(\)|class="ai-avatar-user"/);
   assert.match(aiSource, /const dailyQuote = dailyQuoteForDate\(businessDateString\(\)\);/);
   assert.match(aiSource, /<blockquote class="ai-daily-quote">[\s\S]*dailyQuote\.text[\s\S]*dailyQuote\.source/);
   assert.match(aiSource, /let historySearchQuery = '';/);
@@ -3506,10 +3649,23 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-history-search-scope\]'\)\.forEach/);
   assert.match(aiSource, /function historyActionIcon\(action\)/);
   assert.match(aiSource, /data-action="rename"[\s\S]*\$\{historyActionIcon\('rename'\)\}/);
+  assert.match(aiSource, /function historyGroupLabel\(timestamp\)/);
+  assert.match(aiSource, /if \(date >= today\) return '今天';[\s\S]*if \(date >= sevenDaysAgo\) return '一周内';[\s\S]*return '更久以前';/);
+  assert.match(aiSource, /const group = historyGroupLabel\(chat\.updatedAt\);/);
+  assert.match(aiSource, /<div class="ai-history-group-title">\$\{escHtml\(group\)\}<\/div>/);
+  assert.doesNotMatch(aiSource, /ai-history-meta|formatChatTime\(chat\.updatedAt\)/);
   assert.doesNotMatch(aiSource, /chat\.messages\.length\} 条/);
   assert.doesNotMatch(aiSource, /<div class="ai-message-role">AI<\/div>/);
   assert.doesNotMatch(aiSource, /message\.role === 'assistant' \? aiAssistantAvatarSvg/);
-  assert.match(aiSource, /message\.role === 'user' \? `<div class="ai-message-role">/);
+  assert.doesNotMatch(aiSource, /<div class="ai-message-role"|message\.role === 'user' \? `<div class="ai-message-role">/);
+  assert.match(aiSource, /function messageTimeLabel\(message, fallbackTimestamp\)/);
+  assert.match(aiSource, /return formatChatTime\(message\?\.createdAt \|\| fallbackTimestamp\);/);
+  assert.match(aiSource, /<div class="ai-message-footer">[\s\S]*class="ai-message-copy"[\s\S]*data-action="copy-message"[\s\S]*<span class="ai-message-time">\$\{escHtml\(messageTimeLabel\(message, current\?\.updatedAt\)\)\}<\/span>/);
+  assert.match(aiSource, /\{ role: 'user', content, createdAt: Date\.now\(\) \}/);
+  assert.match(aiSource, /\{ role: 'assistant', content: data\.message\.content, createdAt: Date\.now\(\), sources:/);
+  assert.match(aiSource, /\{ role: 'assistant', content: '', createdAt: Date\.now\(\), streaming: true \}/);
+  assert.match(aiSource, /role: 'assistant',[\s\S]*content: '正在优化生图 prompt，请稍等\.\.\.',[\s\S]*createdAt: Date\.now\(\)/);
+  assert.match(aiSource, /\{ role: 'assistant', content: `请求失败：\$\{err\.message\}`, createdAt: Date\.now\(\) \}/);
   assert.match(aiSource, /<div class="ai-message assistant ai-message-thinking"[\s\S]*<div class="ai-message-content">/);
   assert.doesNotMatch(aiSource, /: '你';/);
   assert.match(quoteSource, /export const AI_FEATURED_DAILY_QUOTES = \[/);
@@ -3552,6 +3708,10 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /data-action="copy-message"/);
   assert.match(aiSource, /copyMessageByIndex\(index\)/);
   assert.match(aiSource, /\$\('#aiChatMessages'\)\.addEventListener\('click'/);
+  assert.match(aiSource, /if \(action === 'open-image-preview'\) return;/);
+  assert.match(aiSource, /\$\('#aiChatMessages'\)\.addEventListener\('dblclick'/);
+  assert.match(aiSource, /event\.target\.closest\('\.ai-image-preview\[data-action="open-image-preview"\]'\)/);
+  assert.match(aiSource, /openAiImagePreview\(preview\.dataset\.previewUrl \|\| preview\.src, preview\.alt \|\| 'AI 生成图片'\)/);
   assert.match(aiSource, /问题已复制/);
   assert.match(aiSource, /回答已复制/);
   assert.match(aiSource, /ai-message-sources/);
@@ -3592,6 +3752,8 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-history-search-scope\s*\{[\s\S]*grid-template-columns:\s*1fr 1fr;/);
   assert.match(styleSource, /\.ai-history-search-scope button\.active\s*\{[\s\S]*background:\s*#fff;[\s\S]*color:\s*#111827;/);
   assert.match(styleSource, /\.ai-history-list\s*\{[\s\S]*gap:\s*2px;/);
+  assert.match(aiMessageFooterStyles, /\.ai-history-group-title\s*\{[\s\S]*font-size:\s*0\.72rem;[\s\S]*font-weight:\s*760;/);
+  assert.match(aiMessageFooterStyles, /\.ai-history-meta\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 24px 24px;[\s\S]*height:\s*46px;/);
   assert.match(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*box-shadow:\s*inset 1px 0 0 rgba\(209, 213, 219, 0\.85\);/);
   assert.doesNotMatch(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*box-shadow:\s*inset 2px 0 0 #111827;/);
@@ -3601,7 +3763,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-history-empty\s*\{[\s\S]*place-items:\s*center;/);
   assert.match(styleSource, /\.ai-chat-composer-actions\s*\{[\s\S]*gap:\s*6px;/);
   assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border:\s*1px solid rgba\(209, 213, 219, 0\.96\);[\s\S]*background:\s*#fff;/);
-  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*72px;[\s\S]*max-height:\s*152px;/);
+  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*56px;[\s\S]*max-height:\s*128px;/);
   assert.match(styleSource, /\.ai-chat-composer-footer\s*\{[\s\S]*border-top:\s*0;/);
   assert.match(styleSource, /\.ai-chat-web-toggle\s*\{[\s\S]*min-height:\s*32px;[\s\S]*background:\s*#f9fafb;/);
   assert.match(styleSource, /\.ai-chat-web-toggle\.active\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
@@ -3622,7 +3784,9 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-body,[\s\S]*body\.sidebar-collapsed \.ai-chat-body\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
   assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-composer,[\s\S]*body\.sidebar-collapsed \.ai-chat-composer\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
   assert.match(styleSource, /\.ai-chat-view::after\s*\{[\s\S]*content:\s*none;/);
-  assert.match(styleSource, /\.ai-chat-body\s*\{[\s\S]*border-radius:\s*12px;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
+  assert.match(aiChatBodyCleanupBlock, /border:\s*0;[\s\S]*border-radius:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
+  assert.doesNotMatch(aiChatBodyCleanupBlock, /border:\s*1px solid|border-radius:\s*12px/);
+  assert.match(aiCleanupStyles, /\[data-theme="dark"\] \.ai-chat-body\s*\{[\s\S]*background:\s*transparent;[\s\S]*border-color:\s*transparent;/);
   assert.match(styleSource, /\.ai-chat-body:has\(\.ai-chat-empty\)\s*\{[\s\S]*flex:\s*1 1 auto;/);
   assert.match(styleSource, /\.ai-chat-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*gap:\s*8px;/);
   assert.match(styleSource, /\.ai-daily-quote\s*\{[\s\S]*display:\s*grid;[\s\S]*background:\s*transparent;/);
@@ -3633,23 +3797,31 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*width:\s*min\(388px, 30vw\);[\s\S]*min-width:\s*320px;/);
   assert.match(styleSource, /\.editor-ai-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*max-width:\s*260px;/);
   assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*max-width:\s*1120px;[\s\S]*padding:\s*22px 28px 28px;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message,\s*\.ai-message\.user,\s*\.ai-message\.assistant\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(aiMessageFooterStyles, /\.ai-message-role,\s*\.ai-message\.user \.ai-message-role\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /\.ai-message\.assistant\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
-  assert.match(styleSource, /\.ai-message\.assistant \.ai-message-bubble\s*\{[\s\S]*grid-column:\s*1;[\s\S]*max-width:\s*min\(100%, 980px\);/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.assistant \.ai-message-bubble\s*\{[\s\S]*grid-column:\s*1;[\s\S]*max-width:\s*min\(100%, 980px\);/);
   assert.doesNotMatch(styleSource, /\.ai-message\.assistant \.ai-message-role/);
   assert.doesNotMatch(styleSource, /\.ai-avatar-spark\s*\{/);
-  assert.match(styleSource, /\.ai-avatar-user\s*\{[\s\S]*stroke:\s*currentColor;/);
   assert.match(styleSource, /\.ai-message\.assistant \.ai-message-content\s*\{[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/);
   assert.match(styleSource, /\.ai-message\.user \.ai-message-content\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
-  assert.match(styleSource, /\.ai-message\.user \.ai-message-copy\s*\{[\s\S]*color:\s*#6b7280;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.user \.ai-message-content\s*\{[\s\S]*padding:\s*10px 14px;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message-footer\s*\{[\s\S]*display:\s*flex;[\s\S]*margin-top:\s*6px;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.user \.ai-message-footer\s*\{[\s\S]*justify-content:\s*flex-end;[\s\S]*opacity:\s*0;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.user:hover \.ai-message-footer,[\s\S]*\.ai-message\.user:focus-within \.ai-message-footer\s*\{[\s\S]*opacity:\s*1;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.assistant \.ai-message-footer\s*\{[\s\S]*justify-content:\s*flex-start;/);
+  assert.doesNotMatch(aiMessageFooterStyles, /\.ai-message\.assistant \.ai-message-footer\s*\{[\s\S]*justify-content:\s*space-between;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.user \.ai-message-time\s*\{[\s\S]*order:\s*1;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message\.user \.ai-message-copy\s*\{[\s\S]*order:\s*2;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message-copy,\s*\.ai-message\.user \.ai-message-copy\s*\{[\s\S]*position:\s*static;[\s\S]*color:\s*#6b7280;[\s\S]*opacity:\s*1;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body\s*\{[\s\S]*line-height:\s*1\.78;[\s\S]*white-space:\s*normal;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body pre\s*\{[\s\S]*overflow-x:\s*auto;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body table\s*\{[\s\S]*display:\s*block;[\s\S]*overflow-x:\s*auto;/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body blockquote\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.045\);/);
   assert.match(styleSource, /\.ai-message-content\.markdown-body a\s*\{[\s\S]*overflow-wrap:\s*anywhere;/);
   assert.match(styleSource, /\.ai-message-bubble\s*\{[\s\S]*position:\s*relative;/);
-  assert.match(styleSource, /\.ai-message-copy\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*4px;/);
-  assert.match(styleSource, /\.ai-message-copy:hover\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
-  assert.match(styleSource, /\.ai-message:hover \.ai-message-copy,[\s\S]*\.ai-message-copy:focus-visible\s*\{[\s\S]*opacity:\s*1;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message-copy:hover,[\s\S]*\.ai-message-copy:focus-visible\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
+  assert.match(aiMessageFooterStyles, /\.ai-message-time\s*\{[\s\S]*white-space:\s*nowrap;/);
   const sourceStyleBlocks = styleSource.match(/\.ai-message-sources\s*\{[^}]*\}/g) || [];
   assert.equal(sourceStyleBlocks.some(block => /grid-column:\s*1(?:\s|;|\/)/.test(block)), true);
   assert.equal(sourceStyleBlocks.some(block => /grid-column:\s*2;/.test(block)), false);
@@ -3683,8 +3855,12 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-image-prompt-choice\.active\s*\{[\s\S]*background:\s*var\(--color-primary\);/);
   assert.match(styleSource, /\.ai-image-prompt-text\s*\{[\s\S]*max-height:\s*120px;[\s\S]*overflow-y:\s*auto;/);
   assert.match(styleSource, /\.ai-image-preview\s*\{[\s\S]*max-height:\s*360px;/);
+  assert.match(styleSource, /\.ai-image-preview\[data-action="open-image-preview"\]\s*\{[\s\S]*cursor:\s*zoom-in;/);
+  assert.match(styleSource, /\.ai-image-preview-overlay\s*\{[\s\S]*padding:\s*20px;[\s\S]*background:\s*rgba\(17, 24, 39, 0\.78\);/);
+  assert.match(styleSource, /\.ai-image-lightbox-img\s*\{[\s\S]*max-width:\s*min\(96vw, 1280px\);[\s\S]*max-height:\s*min\(88vh, 900px\);[\s\S]*object-fit:\s*contain;/);
+  assert.match(styleSource, /\.ai-image-lightbox-close\s*\{[\s\S]*border:\s*1px solid rgba\(229, 231, 235, 0\.9\);[\s\S]*background:\s*#fff;/);
   assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*width:\s*100%;[\s\S]*margin:\s*0;/);
-  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*72px;[\s\S]*max-height:\s*152px;[\s\S]*resize:\s*none;/);
+  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*56px;[\s\S]*max-height:\s*128px;[\s\S]*resize:\s*none;/);
   assert.match(styleSource, /\.ai-settings-body\s*\{[\s\S]*overflow-y:\s*auto;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-settings-view\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-settings-tabs\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
@@ -3692,7 +3868,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer\s*\{[\s\S]*position:\s*sticky;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-message\.user \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(86%, 520px\);/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-message-content\.markdown-body pre,[\s\S]*\.ai-message-content\.markdown-body table\s*\{[\s\S]*max-width:\s*calc\(100vw - 82px\);/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*64px;[\s\S]*max-height:\s*132px;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*52px;[\s\S]*max-height:\s*112px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*34px;[\s\S]*height:\s*34px;/);
 });
 

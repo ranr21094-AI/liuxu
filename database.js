@@ -11,6 +11,7 @@ const AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
 const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
 const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
+const PHOTO_WALL_FILE = path.join(DATA_DIR, 'photo-wall.json');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   model: 'deepseek-v4-flash',
@@ -45,8 +46,10 @@ const cache = {
   aiSettings: null,
   todoReminderSettings: null,
   todoReminderState: null,
+  photoWall: null,
   maxLogId: 0,
   maxTodoId: 0,
+  maxPhotoWallId: 0,
 };
 
 const DEFAULT_TODO_REMINDER_SETTINGS = {
@@ -269,6 +272,180 @@ function writePrivateUploads(filenames) {
   const tmp = PRIVATE_UPLOADS_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(cache.privateUploads, null, 2), 'utf-8');
   fs.renameSync(tmp, PRIVATE_UPLOADS_FILE);
+}
+
+function emptyPhotoWall() {
+  return { items: [] };
+}
+
+function normalizePhotoWallFilenameFromUrl(url) {
+  if (typeof url !== 'string') return null;
+  const match = /^\/uploads\/([^/?#]+)$/.exec(url.trim());
+  if (!match) return null;
+  return normalizeUploadFilename(match[1]);
+}
+
+function normalizePhotoWallNumber(value, fallback, { min, max } = {}) {
+  const normalized = normalizeFiniteNumber(value, fallback, { min, max });
+  return normalized === null ? null : Math.round(normalized * 100) / 100;
+}
+
+function normalizePhotoWallItem(item, { requireId = true, fallbackId = 0, now = nowTimestamp() } = {}) {
+  if (!isPlainObject(item)) return { error: 'Invalid photo wall item' };
+
+  const id = requireId ? toPositiveInteger(item.id) : (fallbackId || toPositiveInteger(item.id));
+  if (!id) return { error: 'Photo wall item id must be a positive integer' };
+
+  const filename = normalizeString(item.filename, '').trim() || normalizePhotoWallFilenameFromUrl(item.url);
+  if (!isSafeUploadFilename(filename)) return { error: `Invalid photo wall filename for item ${id}` };
+
+  const url = normalizeString(item.url, '').trim() || `/uploads/${filename}`;
+  if (normalizePhotoWallFilenameFromUrl(url) !== filename) {
+    return { error: `Invalid photo wall image URL for item ${id}` };
+  }
+
+  const x = normalizePhotoWallNumber(item.x, 0, { min: -1000000, max: 1000000 });
+  const y = normalizePhotoWallNumber(item.y, 0, { min: -1000000, max: 1000000 });
+  const width = normalizePhotoWallNumber(item.width, 320, { min: 40, max: 5000 });
+  const height = normalizePhotoWallNumber(item.height, 240, { min: 40, max: 5000 });
+  const z = normalizeFiniteNumber(item.z, 0, { min: 0, max: 1000000 });
+  if ([x, y, width, height, z].some(value => value === null)) {
+    return { error: `Invalid photo wall geometry for item ${id}` };
+  }
+
+  return {
+    item: {
+      id,
+      url,
+      filename,
+      x,
+      y,
+      width,
+      height,
+      comment: normalizeString(item.comment, '').slice(0, 1000),
+      z: Math.round(z),
+      created_at: normalizeString(item.created_at, now),
+      updated_at: normalizeString(item.updated_at, normalizeString(item.created_at, now)),
+    },
+  };
+}
+
+function normalizePhotoWallData(value, { requireIds = true } = {}) {
+  if (value === undefined) return emptyPhotoWall();
+  const sourceItems = Array.isArray(value) ? value : value?.items;
+  if (!Array.isArray(sourceItems)) return { error: 'Invalid photoWall data' };
+  const ids = new Set();
+  const now = nowTimestamp();
+  const items = [];
+  let fallbackId = 0;
+  for (const raw of sourceItems) {
+    fallbackId += 1;
+    const normalized = normalizePhotoWallItem(raw, { requireId: requireIds, fallbackId, now });
+    if (normalized.error) return normalized;
+    if (ids.has(normalized.item.id)) return { error: `Duplicate photo wall item id: ${normalized.item.id}` };
+    ids.add(normalized.item.id);
+    items.push(normalized.item);
+  }
+  return { items: items.sort((a, b) => a.z - b.z || a.id - b.id) };
+}
+
+function readPhotoWall() {
+  if (cache.photoWall !== null) return cache.photoWall;
+  ensureDataDir();
+  if (!fs.existsSync(PHOTO_WALL_FILE)) {
+    cache.photoWall = emptyPhotoWall();
+    cache.maxPhotoWallId = 0;
+    return cache.photoWall;
+  }
+  try {
+    const saved = JSON.parse(fs.readFileSync(PHOTO_WALL_FILE, 'utf-8'));
+    const normalized = normalizePhotoWallData(saved);
+    if (normalized.error) throw new Error(normalized.error);
+    cache.photoWall = normalized;
+    cache.maxPhotoWallId = normalized.items.length ? Math.max(...normalized.items.map(item => item.id)) : 0;
+    return cache.photoWall;
+  } catch (err) {
+    console.error('Failed to parse photo-wall.json:', err.message);
+    cache.photoWall = emptyPhotoWall();
+    cache.maxPhotoWallId = 0;
+    return cache.photoWall;
+  }
+}
+
+function writePhotoWall(photoWall) {
+  ensureDataDir();
+  const normalized = normalizePhotoWallData(photoWall);
+  if (normalized.error) return normalized;
+  cache.photoWall = normalized;
+  cache.maxPhotoWallId = normalized.items.length ? Math.max(...normalized.items.map(item => item.id)) : 0;
+  const tmp = PHOTO_WALL_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), 'utf-8');
+  fs.renameSync(tmp, PHOTO_WALL_FILE);
+  return normalized;
+}
+
+function getPhotoWall() {
+  const photoWall = readPhotoWall();
+  return { items: photoWall.items.map(item => ({ ...item })) };
+}
+
+function createPhotoWallItem(data) {
+  readPhotoWall();
+  const now = nowTimestamp();
+  const nextId = cache.maxPhotoWallId + 1;
+  const normalized = normalizePhotoWallItem(
+    { ...data, id: nextId, z: data?.z ?? readPhotoWall().items.length, created_at: now, updated_at: now },
+    { requireId: true, now }
+  );
+  if (normalized.error) return { error: normalized.error };
+  const photoWall = readPhotoWall();
+  photoWall.items.push(normalized.item);
+  writePhotoWall(photoWall);
+  return normalized.item;
+}
+
+function updatePhotoWallItem(id, patch) {
+  const itemId = toPositiveInteger(id);
+  if (!itemId) return null;
+  const photoWall = readPhotoWall();
+  const index = photoWall.items.findIndex(item => item.id === itemId);
+  if (index === -1) return null;
+  const normalized = normalizePhotoWallItem(
+    { ...photoWall.items[index], ...patch, id: itemId, updated_at: nowTimestamp() },
+    { requireId: true }
+  );
+  if (normalized.error) return { error: normalized.error };
+  photoWall.items[index] = normalized.item;
+  writePhotoWall(photoWall);
+  return normalized.item;
+}
+
+function deletePhotoWallItem(id) {
+  const itemId = toPositiveInteger(id);
+  if (!itemId) return false;
+  const photoWall = readPhotoWall();
+  const next = photoWall.items.filter(item => item.id !== itemId);
+  if (next.length === photoWall.items.length) return false;
+  writePhotoWall({ items: next });
+  return true;
+}
+
+function reorderPhotoWallItems(orderedIds) {
+  if (!Array.isArray(orderedIds)) return { error: 'orderedIds array required' };
+  const photoWall = readPhotoWall();
+  const order = new Map();
+  orderedIds.forEach((id, index) => {
+    const itemId = toPositiveInteger(id);
+    if (itemId && !order.has(itemId)) order.set(itemId, index);
+  });
+  const sorted = [...photoWall.items].sort((a, b) => {
+    const ai = order.has(a.id) ? order.get(a.id) : Number.MAX_SAFE_INTEGER;
+    const bi = order.has(b.id) ? order.get(b.id) : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return a.z - b.z || a.id - b.id;
+  }).map((item, index) => ({ ...item, z: index, updated_at: nowTimestamp() }));
+  writePhotoWall({ items: sorted });
+  return { items: sorted };
 }
 
 function normalizeAiChatMessage(message) {
@@ -1311,6 +1488,7 @@ function backup() {
     todoCategories: getTodoCategories(),
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
+    photoWall: getPhotoWall(),
     exportedAt: new Date().toISOString(),
   };
 }
@@ -1481,6 +1659,12 @@ function normalizeTodoCategoriesForRestore(todoCategories, todos) {
   return { todoCategories: [...names] };
 }
 
+function normalizePhotoWallForRestore(photoWall) {
+  const normalized = normalizePhotoWallData(photoWall);
+  if (normalized.error) return normalized;
+  return { photoWall: normalized };
+}
+
 function normalizeRestoreData(data) {
   if (!data || typeof data !== 'object') return { error: 'Invalid backup data' };
   if (!Array.isArray(data.logs)) return { error: 'Missing logs data' };
@@ -1502,12 +1686,16 @@ function normalizeRestoreData(data) {
   const privateUploads = normalizePrivateUploadsForRestore(data.privateUploads);
   if (privateUploads.error) return privateUploads;
 
+  const photoWall = normalizePhotoWallForRestore(data.photoWall);
+  if (photoWall.error) return photoWall;
+
   return {
     logs: logs.logs,
     todos: todos.todos,
     todoCategories: todoCategories.todoCategories,
     categories: categories.categories,
     privateUploads: privateUploads.privateUploads,
+    photoWall: photoWall.photoWall,
   };
 }
 
@@ -1552,12 +1740,21 @@ function restore(data, mode = 'replace') {
     const mergedCats = mergeCategoryTrees(existingCats, restoreCats);
     const mergedPrivateUploads = [...new Set([...readPrivateUploads(), ...data.privateUploads])];
     const mergedTodoCategories = [...new Set([...readTodoCategories(), ...data.todoCategories])];
+    const photoWallMap = new Map(readPhotoWall().items.map(item => [item.id, item]));
+    data.photoWall.items.forEach(item => {
+      const existing = photoWallMap.get(item.id);
+      if (!existing || new Date(item.updated_at || 0) > new Date(existing.updated_at || 0)) {
+        photoWallMap.set(item.id, item);
+      }
+    });
+    const mergedPhotoWall = { items: [...photoWallMap.values()].sort((a, b) => a.z - b.z || a.id - b.id) };
 
     writeLogs(mergedLogs);
     writeTodos(mergedTodos);
     writeTodoCategories(mergedTodoCategories);
     writeCategories(mergedCats);
     writePrivateUploads(mergedPrivateUploads);
+    writePhotoWall(mergedPhotoWall);
     mergedLogs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
     return { success: true, logs: mergedLogs.length, todos: mergedTodos.length, categories: mergedCats.length };
   }
@@ -1569,6 +1766,7 @@ function restore(data, mode = 'replace') {
     ? migrateToTree(data.categories)
     : data.categories);
   writePrivateUploads(data.privateUploads);
+  writePhotoWall(data.photoWall);
   data.logs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
   return { success: true, logs: data.logs.length, todos: data.todos.length, categories: data.categories.length };
 }
@@ -1666,6 +1864,11 @@ module.exports = {
   saveAiChats: writeAiChats,
   getAiSettings: readAiSettings,
   saveAiSettings: writeAiSettings,
+  getPhotoWall,
+  createPhotoWallItem,
+  updatePhotoWallItem,
+  deletePhotoWallItem,
+  reorderPhotoWallItems,
   backup,
   restore,
   checkDataIntegrity,

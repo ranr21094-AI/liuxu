@@ -401,7 +401,7 @@ function activeMessages() {
 }
 
 function visibleMainViewId() {
-  for (const id of ['aiSettingsView', 'aiChatView', 'editorView', 'categoryView', 'todoView', 'listView']) {
+  for (const id of ['aiSettingsView', 'aiChatView', 'photoWallView', 'editorView', 'categoryView', 'todoView', 'listView']) {
     const el = document.getElementById(id);
     if (el && el.style.display !== 'none') return id;
   }
@@ -409,7 +409,7 @@ function visibleMainViewId() {
 }
 
 function setMainView(id) {
-  for (const viewId of ['listView', 'editorView', 'categoryView', 'todoView', 'aiChatView', 'aiSettingsView']) {
+  for (const viewId of ['listView', 'editorView', 'categoryView', 'todoView', 'photoWallView', 'aiChatView', 'aiSettingsView']) {
     const el = document.getElementById(viewId);
     if (!el) continue;
     el.style.display = viewId === id ? 'flex' : 'none';
@@ -417,7 +417,7 @@ function setMainView(id) {
 }
 
 function syncAiSidebarChrome() {
-  document.body.classList.remove('sidebar-todo-mode', 'sidebar-category-mode', 'sidebar-tools-mode');
+  document.body.classList.remove('sidebar-todo-mode', 'sidebar-category-mode', 'sidebar-photo-wall-mode', 'sidebar-tools-mode');
   document.body.classList.add('sidebar-ai-mode');
   localStorage.setItem('sidebarMode', 'ai');
   const title = $('#sidebarTitle');
@@ -444,6 +444,21 @@ function formatChatTime(timestamp) {
   if (!timestamp) return '';
   const date = new Date(timestamp);
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function messageTimeLabel(message, fallbackTimestamp) {
+  return formatChatTime(message?.createdAt || fallbackTimestamp);
+}
+
+function historyGroupLabel(timestamp) {
+  const date = timestamp ? new Date(timestamp) : new Date(0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const sevenDaysAgo = new Date(today);
+  sevenDaysAgo.setDate(today.getDate() - 6);
+  if (date >= today) return '今天';
+  if (date >= sevenDaysAgo) return '一周内';
+  return '更久以前';
 }
 
 function imagePromptFrom(text) {
@@ -499,17 +514,65 @@ async function copyText(text) {
   copyTextFallback(text);
 }
 
-function aiUserAvatarSvg() {
-  return `
-    <svg class="ai-avatar-user" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="8.2" r="3.4"></circle>
-      <path d="M5.6 20a6.4 6.4 0 0 1 12.8 0"></path>
-    </svg>
+let aiImagePreviewKeydown = null;
+
+function ensureAiImagePreviewOverlay() {
+  let overlay = $('#aiImagePreviewOverlay');
+  if (overlay) return overlay;
+  overlay = document.createElement('div');
+  overlay.id = 'aiImagePreviewOverlay';
+  overlay.className = 'modal-overlay ai-image-preview-overlay';
+  overlay.style.display = 'none';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'aiImagePreviewTitle');
+  overlay.innerHTML = `
+    <div class="ai-image-lightbox">
+      <button class="ai-image-lightbox-close" id="aiImagePreviewClose" type="button" aria-label="关闭图片预览" title="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <h2 id="aiImagePreviewTitle" class="sr-only">AI 生成图片预览</h2>
+      <div class="ai-image-lightbox-frame">
+        <img class="ai-image-lightbox-img" id="aiImagePreviewImage" alt="">
+      </div>
+    </div>
   `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', event => {
+    if (event.target === overlay) closeAiImagePreview();
+  });
+  overlay.querySelector('#aiImagePreviewClose')?.addEventListener('click', closeAiImagePreview);
+  return overlay;
 }
 
-function aiMessageAvatar() {
-  return aiUserAvatarSvg();
+function openAiImagePreview(url, alt = 'AI 生成图片') {
+  if (!url) return;
+  const overlay = ensureAiImagePreviewOverlay();
+  const image = overlay.querySelector('#aiImagePreviewImage');
+  if (image) {
+    image.src = url;
+    image.alt = alt || 'AI 生成图片';
+  }
+  if (aiImagePreviewKeydown) document.removeEventListener('keydown', aiImagePreviewKeydown);
+  aiImagePreviewKeydown = event => {
+    if (event.key === 'Escape') closeAiImagePreview();
+  };
+  document.addEventListener('keydown', aiImagePreviewKeydown);
+  openModal(overlay, '#aiImagePreviewClose');
+}
+
+function closeAiImagePreview() {
+  const overlay = $('#aiImagePreviewOverlay');
+  if (!overlay) return;
+  closeModal(overlay);
+  const image = overlay.querySelector('#aiImagePreviewImage');
+  if (image) image.removeAttribute('src');
+  if (aiImagePreviewKeydown) {
+    document.removeEventListener('keydown', aiImagePreviewKeydown);
+    aiImagePreviewKeydown = null;
+  }
 }
 
 function historyActionIcon(action) {
@@ -548,16 +611,24 @@ function renderHistory() {
     list.innerHTML = `<div class="ai-history-empty">${historySearchQuery.trim() ? '没有匹配的历史对话' : '暂无历史对话'}</div>`;
     return;
   }
-  list.innerHTML = filtered.map(chat => `
-    <div class="ai-history-item${chat.id === activeConversationId ? ' active' : ''}" data-id="${escHtml(chat.id)}">
-      <button type="button" class="ai-history-open" title="${escHtml(chat.title || '新对话')}">
-        <span class="ai-history-title">${escHtml(chat.title || '新对话')}</span>
-        <span class="ai-history-meta">${escHtml(formatChatTime(chat.updatedAt))}</span>
-      </button>
-      <button type="button" class="ai-history-action" data-action="rename" title="重命名对话" aria-label="重命名对话">${historyActionIcon('rename')}</button>
-      <button type="button" class="ai-history-action danger" data-action="delete" title="删除对话" aria-label="删除对话">${historyActionIcon('delete')}</button>
-    </div>
-  `).join('');
+  let currentGroup = '';
+  list.innerHTML = filtered.map(chat => {
+    const group = historyGroupLabel(chat.updatedAt);
+    const heading = group !== currentGroup
+      ? `<div class="ai-history-group-title">${escHtml(group)}</div>`
+      : '';
+    currentGroup = group;
+    return `
+      ${heading}
+      <div class="ai-history-item${chat.id === activeConversationId ? ' active' : ''}" data-id="${escHtml(chat.id)}">
+        <button type="button" class="ai-history-open" title="${escHtml(chat.title || '新对话')}">
+          <span class="ai-history-title">${escHtml(chat.title || '新对话')}</span>
+        </button>
+        <button type="button" class="ai-history-action" data-action="rename" title="重命名对话" aria-label="重命名对话">${historyActionIcon('rename')}</button>
+        <button type="button" class="ai-history-action danger" data-action="delete" title="删除对话" aria-label="删除对话">${historyActionIcon('delete')}</button>
+      </div>
+    `;
+  }).join('');
 }
 
 function historyMatchesSearch(chat) {
@@ -614,6 +685,7 @@ function scrollMessagesToBottom() {
 function renderMessages() {
   const list = $('#aiChatMessages');
   const messages = activeMessages();
+  const current = activeConversation();
   updateAiChatHeader();
   if (!messages.length) {
     const dailyQuote = dailyQuoteForDate(businessDateString());
@@ -634,17 +706,19 @@ function renderMessages() {
 
   list.innerHTML = messages.map((message, index) => `
     <div class="ai-message ${message.role}" data-message-index="${index}">
-      ${message.role === 'user' ? `<div class="ai-message-role">${aiMessageAvatar()}</div>` : ''}
       <div class="ai-message-bubble">
-        <button type="button" class="ai-message-copy" data-action="copy-message" aria-label="复制${message.role === 'user' ? '问题' : '回答'}" title="复制${message.role === 'user' ? '问题' : '回答'}">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="2"/>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
         <div class="ai-message-content${message.role === 'assistant' ? ' markdown-body' : ''}">${message.role === 'assistant' ? renderToHtml(message.content) : escHtml(message.content)}</div>
         ${message.role === 'assistant' && message.imageGeneration ? renderImageGenerationCard(message.imageGeneration, index, { insertable: false }) : ''}
         ${message.role === 'assistant' && message.toolCall ? renderToolCallCard(message.toolCall, message.toolResult, index) : ''}
+        <div class="ai-message-footer">
+          <button type="button" class="ai-message-copy" data-action="copy-message" aria-label="复制${message.role === 'user' ? '问题' : '回答'}" title="复制${message.role === 'user' ? '问题' : '回答'}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" stroke-width="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <span class="ai-message-time">${escHtml(messageTimeLabel(message, current?.updatedAt))}</span>
+        </div>
       </div>
       ${message.role === 'assistant' && Array.isArray(message.sources) && message.sources.length ? `
         <div class="ai-message-sources" aria-label="联网搜索来源">
@@ -707,7 +781,7 @@ function renderImageGenerationCard(imageGeneration, index, { insertable = false 
         <div class="ai-image-prompt">${escHtml(originalPrompt)}</div>
       ` : promptOptions}
       ${status === 'done' && imageGeneration.url ? `
-        <img class="ai-image-preview" src="${escHtml(imageGeneration.url)}" alt="AI 生成图片">
+        <img class="ai-image-preview" src="${escHtml(imageGeneration.url)}" alt="AI 生成图片" data-action="open-image-preview" data-preview-url="${escHtml(imageGeneration.url)}" aria-label="双击放大 AI 生成图片" title="双击放大图片">
         <code class="ai-image-markdown">${escHtml(markdown)}</code>
       ` : ''}
       ${status === 'error' ? `<div class="ai-image-error">${escHtml(imageGeneration.error || '生图失败')}</div>` : ''}
@@ -1366,7 +1440,7 @@ async function sendJsonMessage(chat, requestSettings) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'AI 请求失败');
   if (!data.message?.content) throw new Error('AI 没有返回内容');
-  const assistantMessage = { role: 'assistant', content: data.message.content, sources: Array.isArray(data.sources) ? data.sources : [] };
+  const assistantMessage = { role: 'assistant', content: data.message.content, createdAt: Date.now(), sources: Array.isArray(data.sources) ? data.sources : [] };
   if (['westock', 'logs'].includes(data.toolCall?.skillId)) assistantMessage.toolCall = data.toolCall;
   chat.messages.push(assistantMessage);
 }
@@ -1430,7 +1504,7 @@ async function executeSkillTool(index) {
 }
 
 async function sendStreamingMessage(chat, requestSettings) {
-  const assistantMessage = { role: 'assistant', content: '', streaming: true };
+  const assistantMessage = { role: 'assistant', content: '', createdAt: Date.now(), streaming: true };
   chat.messages.push(assistantMessage);
   renderMessages();
   const res = await apiFetch('/api/ai/chat', {
@@ -1449,7 +1523,7 @@ async function sendMessage({ forceImage = false } = {}) {
   const chat = activeConversation();
   if (!content || !chat) return;
 
-  chat.messages.push({ role: 'user', content });
+  chat.messages.push({ role: 'user', content, createdAt: Date.now() });
   if (chat.title === '新对话') chat.title = conversationTitleFrom(content);
   if (chat.messages.length > MAX_MESSAGES) chat.messages = chat.messages.slice(-MAX_MESSAGES);
   chat.updatedAt = Date.now();
@@ -1459,6 +1533,7 @@ async function sendMessage({ forceImage = false } = {}) {
     const assistantMessage = {
       role: 'assistant',
       content: '正在优化生图 prompt，请稍等...',
+      createdAt: Date.now(),
       imageGeneration: {
         status: 'optimizing',
         originalPrompt: prompt,
@@ -1522,7 +1597,7 @@ async function sendMessage({ forceImage = false } = {}) {
       delete last.streaming;
       if (!last.content) last.content = `请求失败：${err.message}`;
     } else {
-      chat.messages.push({ role: 'assistant', content: `请求失败：${err.message}` });
+      chat.messages.push({ role: 'assistant', content: `请求失败：${err.message}`, createdAt: Date.now() });
     }
     chat.updatedAt = Date.now();
     await saveConversations();
@@ -1656,6 +1731,7 @@ export async function initAiChat() {
       const index = Number(item?.dataset.messageIndex);
       if (!Number.isInteger(index)) return;
       const action = imageAction.dataset.action;
+      if (action === 'open-image-preview') return;
       if (action === 'choose-image-prompt') return chooseImagePrompt(index, imageAction.dataset.promptMode);
       if (action === 'generate-image') return generateImageForMessage(index);
       if (action === 'cancel-image') return cancelImageGeneration(index);
@@ -1666,6 +1742,12 @@ export async function initAiChat() {
     const item = copyButton.closest('.ai-message');
     const index = Number(item?.dataset.messageIndex);
     if (Number.isInteger(index)) copyMessageByIndex(index);
+  });
+  $('#aiChatMessages').addEventListener('dblclick', (event) => {
+    const preview = event.target.closest('.ai-image-preview[data-action="open-image-preview"]');
+    if (!preview) return;
+    event.preventDefault();
+    openAiImagePreview(preview.dataset.previewUrl || preview.src, preview.alt || 'AI 生成图片');
   });
   $('#aiChatInput').addEventListener('input', updateSendState);
   $('#aiChatInput').addEventListener('keydown', (event) => {

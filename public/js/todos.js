@@ -442,6 +442,7 @@ export function showTodoView() {
   $('#categoryView').style.display = 'none';
   $('#aiChatView').style.display = 'none';
   $('#aiSettingsView').style.display = 'none';
+  $('#photoWallView').style.display = 'none';
   $('#todoView').style.display = 'flex';
   refreshTodoCalendarDates();
   renderTodos();

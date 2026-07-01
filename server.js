@@ -2404,6 +2404,55 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
+app.get('/api/photo-wall', (_req, res) => {
+  try {
+    res.json(db.getPhotoWall());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/photo-wall/items', (req, res) => {
+  try {
+    const item = db.createPhotoWallItem(req.body);
+    if (item.error) return res.status(400).json({ error: item.error });
+    res.status(201).json(item);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/photo-wall/items/reorder', (req, res) => {
+  try {
+    const result = db.reorderPhotoWallItems(req.body?.orderedIds);
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/photo-wall/items/:id', (req, res) => {
+  try {
+    const item = db.updatePhotoWallItem(parseInt(req.params.id, 10), req.body);
+    if (!item) return res.status(404).json({ error: 'Photo wall item not found' });
+    if (item.error) return res.status(400).json({ error: item.error });
+    res.json(item);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/photo-wall/items/:id', (req, res) => {
+  try {
+    const ok = db.deletePhotoWallItem(parseInt(req.params.id, 10));
+    if (!ok) return res.status(404).json({ error: 'Photo wall item not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function resolveUploadPath(filename) {
   if (!db.isSafeUploadFilename(filename)) return null;
   const filePath = path.join(UPLOADS_DIR, filename);

@@ -17,6 +17,7 @@ const categoryView = $('#categoryView');
 const aiChatView = $('#aiChatView');
 const aiSettingsView = $('#aiSettingsView');
 const todoView = $('#todoView');
+const photoWallView = $('#photoWallView');
 const editTitle = $('#editTitle');
 const editContent = $('#editContent');
 const codeMirrorContentEditor = $('#codeMirrorContentEditor');
@@ -1079,6 +1080,7 @@ export function showListView() {
   if (aiChatView) aiChatView.style.display = 'none';
   if (aiSettingsView) aiSettingsView.style.display = 'none';
   if (todoView) todoView.style.display = 'none';
+  if (photoWallView) photoWallView.style.display = 'none';
   state.editingId = null;
   clearAutoSave();
   contentEditor.setVisible(false);
@@ -1095,6 +1097,7 @@ function showEditorView() {
   if (aiChatView) aiChatView.style.display = 'none';
   if (aiSettingsView) aiSettingsView.style.display = 'none';
   if (todoView) todoView.style.display = 'none';
+  if (photoWallView) photoWallView.style.display = 'none';
   editorView.style.display = 'flex';
 }
 

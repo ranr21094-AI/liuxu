@@ -1,11 +1,9 @@
 import { state } from './state.js';
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, setupDragAndDrop, confirmDialog, $, $$ } from './helpers.js';
+import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { loadLogs, syncArchiveFilterControls } from './logList.js';
 import { loadStats } from './stats.js';
 import { formatShortDateLabel } from './businessDate.js';
-
-const CATEGORY_DETAIL_VIEW_STORAGE_KEY = 'categoryDetailViewMode';
 
 export async function loadCategories() {
   try {
@@ -78,24 +76,6 @@ let selectedCategoryName = null;
 let editingSubcategory = null;
 let subcategoryBrowseParent = null;
 let selectedSubcategoryName = null;
-let categoryDetailViewMode = loadCategoryDetailViewMode();
-
-function loadCategoryDetailViewMode() {
-  try {
-    const mode = localStorage.getItem(CATEGORY_DETAIL_VIEW_STORAGE_KEY);
-    return ['list', 'graph'].includes(mode) ? mode : 'list';
-  } catch (err) {
-    return 'list';
-  }
-}
-
-function saveCategoryDetailViewMode(mode) {
-  try {
-    localStorage.setItem(CATEGORY_DETAIL_VIEW_STORAGE_KEY, mode);
-  } catch (err) {
-    // View preference is nice-to-have; blocked storage should not break category management.
-  }
-}
 
 function parentFromFilter() {
   return (state.category || '').split('/')[0] || null;
@@ -124,8 +104,8 @@ function updateCategorySummary() {
   const total = state.categories.length;
   const summary = $('#catManagerSummary');
   summary.textContent = total;
-  summary.setAttribute('aria-label', `父分类数量：${total}`);
-  summary.setAttribute('title', `父分类数量：${total}`);
+  summary.setAttribute('aria-label', `一级分类数量：${total}`);
+  summary.setAttribute('title', `一级分类数量：${total}`);
 }
 
 function isProtectedRootCategory(name) {
@@ -134,65 +114,6 @@ function isProtectedRootCategory(name) {
 
 function fullSubcategoryName(parent, sub) {
   return `${parent}/${sub}`;
-}
-
-function graphPoint(index, total) {
-  if (total === 1) return { x: 50, y: 20, ring: 'single' };
-  const multiRing = total > 8;
-  const innerCount = multiRing ? Math.min(7, Math.max(4, Math.ceil(total * 0.42))) : total;
-  const ringIndex = multiRing && index >= innerCount ? index - innerCount : index;
-  const ringTotal = multiRing && index >= innerCount ? total - innerCount : innerCount;
-  const ringOffset = multiRing && index >= innerCount ? 0.5 : 0;
-  const angle = -Math.PI / 2 + (Math.PI * 2 * (ringIndex + ringOffset)) / ringTotal;
-  const radiusX = multiRing && index >= innerCount ? 41 : (total <= 4 ? 28 : 35);
-  const radiusY = multiRing && index >= innerCount ? 34 : (total <= 4 ? 23 : 29);
-  return {
-    x: Math.round((50 + Math.cos(angle) * radiusX) * 100) / 100,
-    y: Math.round((50 + Math.sin(angle) * radiusY) * 100) / 100,
-    ring: multiRing && index >= innerCount ? 'outer' : 'inner',
-  };
-}
-
-function graphPath(point, index) {
-  const dx = point.x - 50;
-  const dy = point.y - 50;
-  const curve = index % 2 === 0 ? 3 : -3;
-  const length = Math.max(1, Math.hypot(dx, dy));
-  const controlX = Math.round((50 + dx * 0.52 - (dy / length) * curve) * 100) / 100;
-  const controlY = Math.round((50 + dy * 0.52 + (dx / length) * curve) * 100) / 100;
-  return `M 50 50 Q ${controlX} ${controlY} ${point.x} ${point.y}`;
-}
-
-function renderCategoryGraph(cat) {
-  const subs = cat.sub || [];
-  const graph = $('#catGraphView');
-  if (!subs.length) {
-    graph.innerHTML = '<div class="cat-graph-empty"><span>暂无子分类</span></div>';
-    return;
-  }
-  const points = subs.map((sub, index) => ({ sub, ...graphPoint(index, subs.length) }));
-  graph.innerHTML = `
-    <svg class="cat-graph-lines" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      ${points.map((point, index) => `<path class="cat-graph-orbit" data-sub="${escHtml(point.sub)}" d="${graphPath(point, index)}" vector-effect="non-scaling-stroke"></path>`).join('')}
-    </svg>
-    <button type="button" class="cat-graph-node cat-graph-parent" style="--x:50;--y:50" disabled title="${escHtml(cat.name)}，日志 ${cat.log_count || 0} 条" aria-label="父分类：${escHtml(cat.name)}，日志 ${cat.log_count || 0} 条">
-      <span class="cat-graph-node-title">${escHtml(cat.name)}</span>
-    </button>
-    ${points.map(point => `
-      <button type="button" class="cat-graph-node cat-graph-sub cat-graph-${point.ring}" data-sub="${escHtml(point.sub)}" style="--x:${point.x};--y:${point.y}" title="${escHtml(point.sub)}，日志 ${cat.sub_log_counts?.[point.sub] || 0} 条" aria-label="浏览子分类：${escHtml(point.sub)}，日志 ${cat.sub_log_counts?.[point.sub] || 0} 条">
-        <span class="cat-graph-node-title">${escHtml(point.sub)}</span>
-      </button>
-    `).join('')}
-  `;
-}
-
-function setCategoryDetailViewMode(mode) {
-  categoryDetailViewMode = mode === 'graph' ? 'graph' : 'list';
-  saveCategoryDetailViewMode(categoryDetailViewMode);
-  $('#catViewListBtn').setAttribute('aria-pressed', String(categoryDetailViewMode === 'list'));
-  $('#catViewGraphBtn').setAttribute('aria-pressed', String(categoryDetailViewMode === 'graph'));
-  $('#catSubList').style.display = categoryDetailViewMode === 'list' ? '' : 'none';
-  $('#catGraphView').style.display = categoryDetailViewMode === 'graph' ? '' : 'none';
 }
 
 function syncMainCategoryFilter(category) {
@@ -210,8 +131,7 @@ function setSubcategoryBrowseMode(enabled) {
   $('#categoryView').classList.toggle('sub-browse-mode', enabled);
   $('#catList').style.display = '';
   $('#catSubBrowseSidebar').style.display = enabled ? 'flex' : 'none';
-  $('#catDetailEmpty').style.display = enabled ? 'none' : $('#catDetailEmpty').style.display;
-  $('#catDetailContent').style.display = enabled ? 'none' : $('#catDetailContent').style.display;
+  $('#catDetailEmpty').style.display = enabled ? 'none' : '';
   $('#catSubBrowseContent').style.display = enabled ? 'flex' : 'none';
 }
 
@@ -228,18 +148,20 @@ function setCategoryAddPanel(open) {
   }
 }
 
-function selectParentCategory(parentName) {
+async function selectParentCategory(parentName) {
   selectedCategoryName = parentName || null;
   subcategoryBrowseParent = null;
   selectedSubcategoryName = null;
-  syncMainCategoryFilter(selectedCategoryName || '');
   renderParentList();
+  if (!selectedCategoryName) {
+    syncMainCategoryFilter('');
+    renderNoCategoryState();
+    return;
+  }
+  await openSubcategoryBrowse();
 }
 
 function renderParentList() {
-  subcategoryBrowseParent = null;
-  selectedSubcategoryName = null;
-  setSubcategoryBrowseMode(false);
   const cats = getVisibleCategories();
   const isSearching = Boolean($('#catSearchInput').value.trim());
   ensureSelectedCategory(cats);
@@ -247,8 +169,7 @@ function renderParentList() {
   if (!cats.length) {
     $('#catList').innerHTML = state.categories.length
       ? '<div class="cat-empty">没有匹配的分类</div>'
-      : '<div class="cat-empty">暂无分类，先添加一个父分类。</div>';
-    renderCategoryDetail();
+      : '<div class="cat-empty">暂无分类，先添加一个一级分类。</div>';
     return;
   }
   $('#catList').innerHTML = cats.map(c => `
@@ -259,55 +180,20 @@ function renderParentList() {
           <span class="cat-parent-name">${escHtml(c.name)}</span>
           ${isProtectedRootCategory(c.name) ? '<span class="cat-default-tag">不可删除</span>' : ''}
         </span>
-        <span class="cat-parent-meta">
-          <span class="cat-parent-log-count" title="日志数量">${c.log_count || 0} 日志</span>
-          <span class="cat-sub-count" title="子分类数量">${(c.sub || []).length}</span>
-        </span>
       </button>
+      ${c.name === selectedCategoryName ? `
+        <span class="cat-parent-actions">
+          ${c.name === '日记' ? '' : `<button class="cat-icon-action cat-parent-rename-btn" type="button" data-cat-parent-action="rename" aria-label="重命名一级分类：${escHtml(c.name)}" title="重命名一级分类">${categoryIconSvg('edit')}</button>`}
+          ${isProtectedRootCategory(c.name) ? '' : `<button class="cat-icon-action danger cat-parent-delete-btn" type="button" data-cat-parent-action="delete" aria-label="删除一级分类：${escHtml(c.name)}" title="删除一级分类">${categoryIconSvg('trash')}</button>`}
+        </span>
+      ` : ''}
     </div>
   `).join('');
-  renderCategoryDetail();
 }
 
-function renderCategoryDetail() {
-  const cat = state.categories.find(c => c.name === selectedCategoryName);
-  const empty = $('#catDetailEmpty');
-  const content = $('#catDetailContent');
-  if (!cat) {
-    empty.style.display = '';
-    content.style.display = 'none';
-    return;
-  }
-  empty.style.display = 'none';
-  content.style.display = '';
-  $('#catDetailName').textContent = cat.name;
-  $('#catDetailLogCount').textContent = cat.log_count || 0;
-  $('#catDetailLogCount').setAttribute('aria-label', `${cat.name} 日志数量：${cat.log_count || 0}`);
-  $('#catDetailFallback').style.display = isProtectedRootCategory(cat.name) ? '' : 'none';
-  $('#btnCatRename').style.display = cat.name === '日记' ? 'none' : '';
-  $('#btnCatDelete').style.display = isProtectedRootCategory(cat.name) ? 'none' : '';
-  $('#catCalendarDayVisible').checked = cat.calendar_day_visible !== false;
-  $('#catCalendarDayVisible').setAttribute(
-    'aria-label',
-    `${cat.name}：点击日历日期时显示日志`
-  );
-  $('#catDetailSubCount').textContent = `${(cat.sub || []).length} 个`;
-  $('#catRenameRow').style.display = 'none';
-  $('#catSubNewInput').value = '';
-  editingSubcategory = null;
-  $('#catSubList').innerHTML = (cat.sub || []).map(s => `
-    <div class="cat-detail-sub-item" data-sub="${escHtml(s)}" tabindex="0" role="button" draggable="true" aria-label="浏览子分类：${escHtml(s)}">
-      <span class="cat-sub-drag-handle" aria-hidden="true">⋮⋮</span>
-      <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
-      <span class="cat-detail-sub-name">${escHtml(s)}</span>
-      <div class="cat-detail-sub-actions">
-        <button class="cat-icon-action subcat-edit-btn" type="button" aria-label="重命名子分类：${escHtml(s)}" title="重命名子分类">${categoryIconSvg('edit')}</button>
-        <button class="cat-icon-action danger subcat-del-btn" type="button" aria-label="删除子分类：${escHtml(s)}" title="删除子分类">${categoryIconSvg('trash')}</button>
-      </div>
-    </div>
-  `).join('');
-  renderCategoryGraph(cat);
-  setCategoryDetailViewMode(categoryDetailViewMode);
+function renderNoCategoryState(message = '选择一个一级分类进行管理') {
+  setSubcategoryBrowseMode(false);
+  $('#catDetailEmpty').textContent = message;
 }
 
 function categoryIconSvg(name) {
@@ -347,7 +233,7 @@ async function loadSubcategoryLogs(parent, sub) {
     $('#catSubBrowseLogCount').setAttribute('aria-label', `${sub} 日志数量：${data.total || 0}`);
 
     if (!data.items.length) {
-      list.innerHTML = `<div class="cat-sub-log-empty">子分类「${escHtml(sub)}」暂无日志</div>`;
+      list.innerHTML = `<div class="cat-sub-log-empty">二级分类「${escHtml(sub)}」暂无日志</div>`;
       return;
     }
 
@@ -364,40 +250,80 @@ async function loadSubcategoryLogs(parent, sub) {
   }
 }
 
-async function openSubcategoryBrowse(subName) {
-  const parent = selectedCategoryName;
-  const cat = state.categories.find(c => c.name === parent);
-  if (!parent || !cat || !(cat.sub || []).includes(subName)) return;
-
-  subcategoryBrowseParent = parent;
-  selectedSubcategoryName = subName;
-  syncMainCategoryFilter(fullSubcategoryName(parent, subName));
+function renderSubcategoryWorkspace(cat, subName) {
+  const subs = cat.sub || [];
   setSubcategoryBrowseMode(true);
-
-  $('#catSubBrowseParent').textContent = parent;
-  $('#catSubBrowseCrumb').textContent = parent;
-  $('#catSubBrowseTitle').textContent = subName;
-  $('#catSubBrowseList').innerHTML = (cat.sub || []).map(s => `
-    <button class="cat-sub-browse-item ${s === selectedSubcategoryName ? 'active' : ''}" type="button" data-sub="${escHtml(s)}">
-      <span>${escHtml(s)}</span>
+  $('#catSubBrowseParent').textContent = cat.name;
+  $('#catSubBrowseCrumb').textContent = cat.name;
+  $('#catDetailSubCount').textContent = `${subs.length} 个`;
+  $('#catCalendarDayVisible').checked = cat.calendar_day_visible !== false;
+  $('#catCalendarDayVisible').setAttribute(
+    'aria-label',
+    `${cat.name}：点击日历日期时显示日志`
+  );
+  $('#catSubNewInput').value = '';
+  $('#catSubBrowseList').innerHTML = subs.length ? subs.map(s => `
+    <div class="cat-sub-browse-item ${s === subName ? 'active' : ''}" tabindex="0" role="button" draggable="true" data-sub="${escHtml(s)}" aria-label="浏览二级分类：${escHtml(s)}">
+      <span class="cat-sub-drag-handle" aria-hidden="true">⋮⋮</span>
+      <span class="cat-sub-browse-name">${escHtml(s)}</span>
       <span class="cat-log-count" title="日志数量">${cat.sub_log_counts?.[s] || 0}</span>
-    </button>
-  `).join('');
-  await loadSubcategoryLogs(parent, subName);
+      <span class="cat-detail-sub-actions">
+        <button class="cat-icon-action subcat-edit-btn" type="button" aria-label="重命名二级分类：${escHtml(s)}" title="重命名二级分类">${categoryIconSvg('edit')}</button>
+        <button class="cat-icon-action danger subcat-del-btn" type="button" aria-label="删除二级分类：${escHtml(s)}" title="删除二级分类">${categoryIconSvg('trash')}</button>
+      </span>
+    </div>
+  `).join('') : '<div class="cat-sub-empty">暂无二级分类，先在上方新增一个。</div>';
 }
 
-async function refreshCategoryViews(preferredName = selectedCategoryName) {
+function renderSubcategoryEmpty(parent) {
+  $('#catSubBrowseTitle').textContent = '暂无二级分类';
+  $('#catSubBrowseLogCount').textContent = '0';
+  $('#catSubBrowseLogCount').setAttribute('aria-label', `${parent} 二级分类日志数量：0`);
+  $('#catSubLogList').innerHTML = '<div class="cat-sub-log-empty">先新增二级分类，再浏览对应日志。</div>';
+}
+
+async function openSubcategoryBrowse(subName = '') {
+  const parent = selectedCategoryName;
+  const cat = state.categories.find(c => c.name === parent);
+  if (!parent || !cat) {
+    renderNoCategoryState();
+    return;
+  }
+
+  subcategoryBrowseParent = parent;
+  const subs = cat.sub || [];
+  const targetSub = subs.includes(subName) ? subName : (subs[0] || '');
+  selectedSubcategoryName = targetSub || null;
+  syncMainCategoryFilter(targetSub ? fullSubcategoryName(parent, targetSub) : parent);
+  renderParentList();
+  renderSubcategoryWorkspace(cat, targetSub);
+  if (!targetSub) {
+    renderSubcategoryEmpty(parent);
+    return;
+  }
+  $('#catSubBrowseTitle').textContent = targetSub;
+  await loadSubcategoryLogs(parent, targetSub);
+}
+
+async function refreshCategoryViews(preferredName = selectedCategoryName, preferredSub = selectedSubcategoryName) {
   await loadCategories();
   selectedCategoryName = state.categories.some(c => c.name === preferredName) ? preferredName : null;
   renderParentList();
+  if (selectedCategoryName) {
+    await openSubcategoryBrowse(preferredSub || '');
+  } else {
+    renderNoCategoryState();
+  }
   await Promise.all([loadLogs(), loadStats()]);
 }
 
 export async function openCategoryManager() {
   await loadCategories();
-  selectedCategoryName = parentFromFilter();
+  const activeCategory = state.category || '';
+  const [activeParent = '', ...activeSubParts] = activeCategory.split('/');
+  selectedCategoryName = state.categories.some(c => c.name === activeParent) ? activeParent : parentFromFilter();
   subcategoryBrowseParent = null;
-  selectedSubcategoryName = null;
+  selectedSubcategoryName = activeSubParts.join('/') || null;
   $('#catSearchInput').value = '';
   setCategoryAddPanel(false);
   $('#listView').style.display = 'none';
@@ -405,8 +331,14 @@ export async function openCategoryManager() {
   $('#aiChatView').style.display = 'none';
   $('#aiSettingsView').style.display = 'none';
   $('#todoView').style.display = 'none';
+  $('#photoWallView').style.display = 'none';
   $('#categoryView').style.display = 'flex';
   renderParentList();
+  if (selectedCategoryName) {
+    await openSubcategoryBrowse(selectedSubcategoryName || '');
+  } else {
+    renderNoCategoryState();
+  }
   $('#catSearchInput').focus();
 }
 
@@ -415,6 +347,7 @@ export function closeCategoryManager() {
   $('#aiChatView').style.display = 'none';
   $('#aiSettingsView').style.display = 'none';
   $('#todoView').style.display = 'none';
+  $('#photoWallView').style.display = 'none';
   $('#listView').style.display = 'flex';
   loadLogs();
   loadStats();
@@ -432,7 +365,11 @@ function clearFilterOnDelete(name) {
   }
 }
 
-$('#catSearchInput').addEventListener('input', renderParentList);
+$('#catSearchInput').addEventListener('input', async () => {
+  renderParentList();
+  if (selectedCategoryName) await openSubcategoryBrowse(selectedSubcategoryName || '');
+  else renderNoCategoryState();
+});
 
 $('#catAddToggle').addEventListener('click', () => {
   setCategoryAddPanel($('#catAddPanel').hidden);
@@ -442,15 +379,17 @@ $('#catAddCancelBtn').addEventListener('click', () => {
   setCategoryAddPanel(false);
 });
 
-$('#btnSubBrowseBack').addEventListener('click', () => {
-  const parent = subcategoryBrowseParent;
-  selectParentCategory(parent || selectedCategoryName);
-});
-
 $('#catList').addEventListener('click', async (e) => {
+  const parentAction = e.target.closest('[data-cat-parent-action]');
+  if (parentAction) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (parentAction.dataset.catParentAction === 'rename') return openParentRename();
+    if (parentAction.dataset.catParentAction === 'delete') return deleteSelectedParentCategory();
+  }
   const select = e.target.closest('.cat-parent-select');
   if (!select) return;
-  selectParentCategory(select.dataset.cat);
+  await selectParentCategory(select.dataset.cat);
 });
 
 $('#catAddBtn').addEventListener('click', async () => {
@@ -475,12 +414,13 @@ $('#catNewInput').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); setCategoryAddPanel(false); }
 });
 
-$('#btnCatRename').addEventListener('click', () => {
+function openParentRename() {
   $('#catRenameInput').value = selectedCategoryName || '';
-  $('#catRenameRow').style.display = 'flex';
+  $('#catRenameRow').style.display = 'grid';
   $('#catRenameInput').focus();
   $('#catRenameInput').select();
-});
+}
+
 $('#btnCatRenameCancel').addEventListener('click', () => {
   $('#catRenameRow').style.display = 'none';
 });
@@ -499,7 +439,7 @@ $('#btnCatRenameSave').addEventListener('click', async () => {
     });
     if (!res.ok) { const err = await res.json(); showToast(err.error, 'error'); return; }
     updateFilterOnRename(oldName, newName);
-    await refreshCategoryViews(newName);
+    await refreshCategoryViews(newName, selectedSubcategoryName);
     showToast('分类已重命名', 'success');
   } catch (err) { showToast(err.message, 'error'); }
 });
@@ -530,12 +470,12 @@ $('#catCalendarDayVisible').addEventListener('change', async (e) => {
   }
 });
 
-$('#btnCatDelete').addEventListener('click', async () => {
+async function deleteSelectedParentCategory() {
   const name = selectedCategoryName;
   if (!name || name === '其他') return;
   const confirmed = await confirmDialog({
     title: '删除分类',
-    message: `删除分类「${name}」及其所有子分类？已有日志将归为「其他」。`,
+    message: `删除分类「${name}」及其所有二级分类？已有日志将归为「其他」。`,
     confirmText: '删除',
   });
   if (!confirmed) return;
@@ -547,7 +487,7 @@ $('#btnCatDelete').addEventListener('click', async () => {
     await refreshCategoryViews();
     showToast('分类已删除', 'success');
   } catch (err) { showToast(err.message, 'error'); }
-});
+}
 
 $('#catSubAddBtn').addEventListener('click', async () => {
   const parent = selectedCategoryName;
@@ -561,18 +501,19 @@ $('#catSubAddBtn').addEventListener('click', async () => {
       body: JSON.stringify({ name, parent }),
     });
     if (!res.ok) { const err = await res.json(); showToast(err.error, 'error'); return; }
-    await refreshCategoryViews(parent);
-    showToast('子分类已添加', 'success');
+    await refreshCategoryViews(parent, name);
+    showToast('二级分类已添加', 'success');
   } catch (err) { showToast('添加失败: ' + err.message, 'error'); }
 });
 $('#catSubNewInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); $('#catSubAddBtn').click(); }
 });
 
-$('#catSubList').addEventListener('click', async (e) => {
-  const item = e.target.closest('.cat-detail-sub-item');
+$('#catSubBrowseList').addEventListener('click', async (e) => {
+  const item = e.target.closest('.cat-sub-browse-item');
   if (!item) return;
   const subName = item.dataset.sub;
+  if (e.target.closest('.cat-detail-sub-input')) return;
   if (e.target.closest('.subcat-edit-btn')) {
     editingSubcategory = subName;
     item.draggable = false;
@@ -588,12 +529,12 @@ $('#catSubList').addEventListener('click', async (e) => {
     return;
   }
   if (e.target.closest('.subcat-cancel-btn')) {
-    renderCategoryDetail();
+    await openSubcategoryBrowse(selectedSubcategoryName || subName);
     return;
   }
   if (e.target.closest('.subcat-save-btn')) {
     const newName = item.querySelector('input').value.trim();
-    if (!newName || newName === subName) { renderCategoryDetail(); return; }
+    if (!newName || newName === subName) { await openSubcategoryBrowse(selectedSubcategoryName || subName); return; }
     try {
       const fullName = selectedCategoryName + '/' + subName;
       const res = await apiFetch(`/api/categories/${encodeURIComponent(fullName)}`, {
@@ -603,15 +544,15 @@ $('#catSubList').addEventListener('click', async (e) => {
       });
       if (!res.ok) { const err = await res.json(); showToast(err.error, 'error'); return; }
       if (state.category === fullName) state.category = selectedCategoryName + '/' + newName;
-      await refreshCategoryViews(selectedCategoryName);
-      showToast('子分类已重命名', 'success');
+      await refreshCategoryViews(selectedCategoryName, newName);
+      showToast('二级分类已重命名', 'success');
     } catch (err) { showToast(err.message, 'error'); }
     return;
   }
   if (e.target.closest('.subcat-del-btn')) {
     const confirmed = await confirmDialog({
-      title: '删除子分类',
-      message: `删除子分类「${subName}」？已有日志将归为「${selectedCategoryName}」。`,
+      title: '删除二级分类',
+      message: `删除二级分类「${subName}」？已有日志将归为「${selectedCategoryName}」。`,
       confirmText: '删除',
     });
     if (!confirmed) return;
@@ -620,67 +561,26 @@ $('#catSubList').addEventListener('click', async (e) => {
       const res = await apiFetch(`/api/categories/${encodeURIComponent(fullName)}`, { method: 'DELETE' });
       if (!res.ok) { showToast('删除失败', 'error'); return; }
       if (state.category === fullName) state.category = selectedCategoryName;
-      await refreshCategoryViews(selectedCategoryName);
-      showToast('子分类已删除', 'success');
+      await refreshCategoryViews(selectedCategoryName, '');
+      showToast('二级分类已删除', 'success');
     } catch (err) { showToast(err.message, 'error'); }
     return;
   }
   await openSubcategoryBrowse(subName);
 });
 
-$('#catSubList').addEventListener('keydown', (e) => {
+$('#catSubBrowseList').addEventListener('keydown', async (e) => {
   const input = e.target.closest('.cat-detail-sub-input');
   if (input) {
-    if (e.key === 'Enter') { e.preventDefault(); input.closest('.cat-detail-sub-item').querySelector('.subcat-save-btn').click(); }
-    if (e.key === 'Escape') { e.preventDefault(); renderCategoryDetail(); }
+    if (e.key === 'Enter') { e.preventDefault(); input.closest('.cat-sub-browse-item').querySelector('.subcat-save-btn').click(); }
+    if (e.key === 'Escape') { e.preventDefault(); await openSubcategoryBrowse(selectedSubcategoryName || ''); }
     return;
   }
-  const item = e.target.closest('.cat-detail-sub-item');
+  const item = e.target.closest('.cat-sub-browse-item');
   if (item && (e.key === 'Enter' || e.key === ' ')) {
     e.preventDefault();
-    openSubcategoryBrowse(item.dataset.sub);
+    await openSubcategoryBrowse(item.dataset.sub);
   }
-});
-
-$('#catViewListBtn').addEventListener('click', () => setCategoryDetailViewMode('list'));
-$('#catViewGraphBtn').addEventListener('click', () => setCategoryDetailViewMode('graph'));
-
-$('#catGraphView').addEventListener('click', async (e) => {
-  const node = e.target.closest('.cat-graph-sub');
-  if (!node) return;
-  await openSubcategoryBrowse(node.dataset.sub);
-});
-
-function setActiveGraphSub(subName) {
-  $$('#catGraphView .cat-graph-orbit').forEach(line => {
-    line.classList.toggle('active', Boolean(subName) && line.dataset.sub === subName);
-  });
-}
-
-$('#catGraphView').addEventListener('pointerover', (e) => {
-  const node = e.target.closest('.cat-graph-sub');
-  if (node) setActiveGraphSub(node.dataset.sub);
-});
-
-$('#catGraphView').addEventListener('pointerout', (e) => {
-  const node = e.target.closest('.cat-graph-sub');
-  if (node && !node.contains(e.relatedTarget)) setActiveGraphSub(null);
-});
-
-$('#catGraphView').addEventListener('focusin', (e) => {
-  const node = e.target.closest('.cat-graph-sub');
-  if (node) setActiveGraphSub(node.dataset.sub);
-});
-
-$('#catGraphView').addEventListener('focusout', (e) => {
-  const node = e.target.closest('.cat-graph-sub');
-  if (node && !node.contains(e.relatedTarget)) setActiveGraphSub(null);
-});
-
-$('#catSubBrowseList').addEventListener('click', async (e) => {
-  const item = e.target.closest('.cat-sub-browse-item');
-  if (!item || !subcategoryBrowseParent) return;
-  await openSubcategoryBrowse(item.dataset.sub);
 });
 
 $('#catSubLogList').addEventListener('click', async (e) => {
@@ -708,8 +608,8 @@ setupDragAndDrop({
 });
 
 setupDragAndDrop({
-  container: $('#catSubList'),
-  itemSelector: '.cat-detail-sub-item',
+  container: $('#catSubBrowseList'),
+  itemSelector: '.cat-sub-browse-item',
   getId: (el) => el.dataset.sub,
   onReorder: async (subs) => {
     if (!selectedCategoryName || editingSubcategory) return;
@@ -719,6 +619,6 @@ setupDragAndDrop({
       body: JSON.stringify({ orderedSubs: subs }),
     });
     await loadCategories();
-    renderCategoryDetail();
+    await openSubcategoryBrowse(selectedSubcategoryName || '');
   }
 });

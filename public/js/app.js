@@ -7,6 +7,7 @@ import { populateCalendarSelects, renderCalendar } from './calendar.js';
 import { loadLogs, populateMonthFilter, syncArchiveFilterControls } from './logList.js';
 import { showListView } from './editor.js';
 import { initAiChat, showAiChatView } from './aiChat.js';
+import { showPhotoWallView } from './photoWall.js';
 import { loadStats } from './stats.js';
 import { loadCategories, openCategoryManager } from './categories.js';
 import { loadTodos, showTodoView } from './todos.js';
@@ -59,6 +60,9 @@ function setSidebarTitle(mode) {
   } else if (mode === 'categories') {
     title.textContent = '管理分类';
     $('#sidebarModeTrigger').title = '当前为分类管理';
+  } else if (mode === 'photo-wall') {
+    title.textContent = '照片墙';
+    $('#sidebarModeTrigger').title = '当前为照片墙';
   } else if (mode === 'tools') {
     title.textContent = '更多工具';
     $('#sidebarModeTrigger').title = '当前为统计与数据工具';
@@ -90,6 +94,7 @@ function resetToolsMode() {
 function activeSidebarMode() {
   if (document.body.classList.contains('sidebar-ai-mode')) return 'ai';
   if (document.body.classList.contains('sidebar-category-mode')) return 'categories';
+  if (document.body.classList.contains('sidebar-photo-wall-mode')) return 'photo-wall';
   if (document.body.classList.contains('sidebar-todo-mode')) return 'todo';
   if (document.body.classList.contains('sidebar-tools-mode')) return 'tools';
   return 'normal';
@@ -109,9 +114,10 @@ function syncSidebarViewportMode() {
 }
 
 function setSidebarMode(mode, { updateMain = true } = {}) {
-  if (!['normal', 'todo', 'categories', 'ai'].includes(mode)) mode = 'normal';
+  if (!['normal', 'todo', 'categories', 'photo-wall', 'ai'].includes(mode)) mode = 'normal';
   document.body.classList.toggle('sidebar-todo-mode', mode === 'todo');
   document.body.classList.toggle('sidebar-category-mode', mode === 'categories');
+  document.body.classList.toggle('sidebar-photo-wall-mode', mode === 'photo-wall');
   document.body.classList.toggle('sidebar-ai-mode', mode === 'ai');
   resetToolsMode();
   closeMobileCalendar();
@@ -127,6 +133,8 @@ function setSidebarMode(mode, { updateMain = true } = {}) {
     showAiChatView();
   } else if (mode === 'categories') {
     openCategoryManager();
+  } else if (mode === 'photo-wall') {
+    showPhotoWallView();
   } else if (mode === 'todo') {
     showTodoView();
   } else {
@@ -138,7 +146,7 @@ function setSidebarToolsMode(enabled) {
   document.body.classList.toggle('sidebar-tools-mode', enabled);
   if (enabled) {
     document.body.classList.remove('sidebar-todo-mode', 'sidebar-ai-mode');
-    document.body.classList.remove('sidebar-category-mode');
+    document.body.classList.remove('sidebar-category-mode', 'sidebar-photo-wall-mode');
     closeMobileCalendar();
     localStorage.setItem(SIDEBAR_MODE_KEY, 'normal');
     showListView();
@@ -394,6 +402,8 @@ function syncMainViewWithSidebarMode() {
     showAiChatView();
   } else if (activeSidebarMode() === 'categories') {
     openCategoryManager();
+  } else if (activeSidebarMode() === 'photo-wall') {
+    showPhotoWallView();
   } else if (activeSidebarMode() === 'todo') {
     showTodoView();
   } else {

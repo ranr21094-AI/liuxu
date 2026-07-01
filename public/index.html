@@ -28,6 +28,7 @@
           <button type="button" role="menuitem" data-mode="normal">默认侧栏</button>
           <button type="button" role="menuitem" data-mode="todo">待办事项</button>
           <button type="button" role="menuitem" data-mode="categories">管理分类</button>
+          <button type="button" role="menuitem" data-mode="photo-wall">照片墙</button>
           <button type="button" role="menuitem" data-mode="ai">AI 对话</button>
         </div>
       </div>
@@ -159,24 +160,72 @@
 
     <div class="category-sidebar-panel" id="categorySidebarPanel">
       <div class="category-sidebar-header">
-        <h3>父分类</h3>
-        <button class="cat-icon-action primary category-add-toggle" id="catAddToggle" type="button" aria-label="添加父分类" title="添加父分类" aria-expanded="false">
+        <h3>一级分类</h3>
+        <div class="cat-manager-summary" id="catManagerSummary" title="一级分类数量" aria-label="一级分类数量">...</div>
+        <button class="cat-icon-action primary category-add-toggle" id="catAddToggle" type="button" aria-label="添加一级分类" title="添加一级分类" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         </button>
       </div>
       <div class="category-sidebar-tools">
         <div class="cat-add-row category-sidebar-add" id="catAddPanel" hidden>
-          <label class="sr-only" for="catNewInput">新父分类名称</label>
-          <input type="text" id="catNewInput" placeholder="新父分类名称..." maxlength="20">
-          <button class="cat-icon-action primary" id="catAddBtn" type="button" aria-label="确认添加父分类" title="确认添加">
+          <label class="sr-only" for="catNewInput">新一级分类名称</label>
+          <input type="text" id="catNewInput" placeholder="新一级分类名称..." maxlength="20">
+          <button class="cat-icon-action primary" id="catAddBtn" type="button" aria-label="确认添加一级分类" title="确认添加">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
           </button>
-          <button class="cat-icon-action category-add-cancel" id="catAddCancelBtn" type="button" aria-label="取消添加父分类" title="取消">
+          <button class="cat-icon-action category-add-cancel" id="catAddCancelBtn" type="button" aria-label="取消添加一级分类" title="取消">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </button>
+        </div>
+        <div class="cat-rename-row category-sidebar-rename" id="catRenameRow" style="display:none;">
+          <label class="sr-only" for="catRenameInput">新的一级分类名称</label>
+          <input type="text" id="catRenameInput" maxlength="20">
+          <button class="cat-icon-action primary" id="btnCatRenameSave" type="button" aria-label="保存一级分类名称" title="保存">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+          </button>
+          <button class="cat-icon-action" id="btnCatRenameCancel" type="button" aria-label="取消重命名一级分类" title="取消">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
           </button>
         </div>
       </div>
       <div class="cat-list" id="catList"></div>
+    </div>
+
+    <div class="photo-wall-sidebar-panel" id="photoWallSidebarPanel">
+      <div class="photo-wall-sidebar-header">
+        <h3>照片墙</h3>
+        <div class="photo-wall-sidebar-metrics">
+          <span class="photo-wall-count" id="photoWallCount">0</span>
+          <span class="photo-wall-zoom" id="photoWallZoomLabel">100%</span>
+        </div>
+      </div>
+      <div class="photo-wall-sidebar-actions">
+        <button class="photo-wall-tool primary" id="btnPhotoWallUpload" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span>上传图片</span>
+        </button>
+        <input type="file" id="photoWallFileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" multiple hidden>
+        <div class="photo-wall-tool-grid">
+          <button class="photo-wall-tool" id="btnPhotoWallZoomOut" type="button" aria-label="缩小照片墙" title="缩小">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg>
+          </button>
+          <button class="photo-wall-tool" id="btnPhotoWallZoomIn" type="button" aria-label="放大照片墙" title="放大">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <button class="photo-wall-tool" id="btnPhotoWallFit" type="button" aria-label="适应全部图片" title="适应全部">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9V5h4M15 5h4v4M19 15v4h-4M9 19H5v-4"/></svg>
+          </button>
+          <button class="photo-wall-tool" id="btnPhotoWallReset" type="button" aria-label="重置照片墙视图" title="重置视图">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.35-5.65"/><path d="M4 5v5h5"/></svg>
+          </button>
+        </div>
+        <button class="photo-wall-tool danger" id="btnPhotoWallDelete" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>
+          <span>删除选中图片</span>
+        </button>
+      </div>
+      <p class="photo-wall-sidebar-hint">拖动画布可平移，滚轮可缩放；图片右下角手柄可等比缩放。</p>
+      <p class="photo-wall-upload-status" id="photoWallUploadStatus" role="status" aria-live="polite"></p>
     </div>
   </aside>
 
@@ -885,64 +934,35 @@
         </div>
         <div class="category-page-search">
           <label class="sr-only" for="catSearchInput">搜索分类</label>
-          <input type="search" id="catSearchInput" class="cat-search-input cat-page-search-input" placeholder="搜索父分类或子分类...">
+          <input type="search" id="catSearchInput" class="cat-search-input cat-page-search-input" placeholder="搜索一级分类或二级分类...">
         </div>
-        <div class="cat-manager-summary" id="catManagerSummary" title="父分类数量" aria-label="父分类数量">...</div>
       </div>
       <div class="category-page-grid">
         <section class="category-parent-panel">
           <div class="cat-sub-browse-sidebar" id="catSubBrowseSidebar" style="display:none;">
-            <button class="btn-secondary btn-sm" id="btnSubBrowseBack" type="button">← 父分类</button>
-            <div class="cat-sub-browse-parent" id="catSubBrowseParent"></div>
+            <div class="cat-sub-browse-toolbar">
+              <div>
+                <span>一级分类</span>
+                <strong id="catSubBrowseParent"></strong>
+              </div>
+              <span id="catDetailSubCount"></span>
+              <label class="cat-calendar-toggle" title="开启时，点击日历中的某一天可查看此分类及其二级分类日志；关闭后按日隐藏，但月份筛选仍可查看。">
+                <input type="checkbox" id="catCalendarDayVisible">
+                <span class="cat-calendar-toggle-track" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="subcat-add-row category-sub-add">
+              <label class="sr-only" for="catSubNewInput">新二级分类名称</label>
+              <input type="text" id="catSubNewInput" placeholder="新二级分类..." maxlength="20">
+              <button class="cat-icon-action primary" id="catSubAddBtn" type="button" aria-label="添加二级分类" title="添加二级分类">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
             <div class="cat-sub-browse-list" id="catSubBrowseList"></div>
           </div>
         </section>
         <section class="category-detail-panel" id="catDetailPanel">
-          <div class="cat-detail-empty" id="catDetailEmpty">选择一个父分类进行管理</div>
-          <div class="cat-detail-content" id="catDetailContent" style="display:none;">
-            <div class="cat-detail-header">
-              <div class="cat-detail-heading">
-                <span class="cat-log-count cat-detail-log-count" id="catDetailLogCount" title="日志数量">0</span>
-                <h3 id="catDetailName"></h3>
-                <span class="cat-default-tag" id="catDetailFallback" style="display:none;">不可删除</span>
-              </div>
-              <div class="cat-detail-actions">
-                <label class="cat-calendar-toggle" title="开启时，点击日历中的某一天可查看此分类及其子分类日志；关闭后按日隐藏，但月份筛选仍可查看。">
-                  <input type="checkbox" id="catCalendarDayVisible">
-                  <span class="cat-calendar-toggle-track" aria-hidden="true"></span>
-                </label>
-                <div class="subcat-add-row category-sub-add">
-                  <label class="sr-only" for="catSubNewInput">新子分类名称</label>
-                  <input type="text" id="catSubNewInput" placeholder="新子分类..." maxlength="20">
-                  <button class="cat-icon-action primary" id="catSubAddBtn" type="button" aria-label="添加子分类" title="添加子分类">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-                  </button>
-                </div>
-                <button class="cat-icon-action" id="btnCatRename" type="button" aria-label="重命名分类" title="重命名分类">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4.6L18.7 9.9a2.1 2.1 0 0 0 0-3L17.1 5.3a2.1 2.1 0 0 0-3 0L4 15.4V20Z"/><path d="m12.8 6.6 4.6 4.6"/></svg>
-                </button>
-                <button class="cat-icon-action danger" id="btnCatDelete" type="button" aria-label="删除分类" title="删除分类">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>
-                </button>
-              </div>
-            </div>
-            <div class="cat-rename-row" id="catRenameRow" style="display:none;">
-              <label class="sr-only" for="catRenameInput">新的分类名称</label>
-              <input type="text" id="catRenameInput" maxlength="20">
-              <button class="btn-primary btn-sm" id="btnCatRenameSave">保存</button>
-              <button class="btn-secondary btn-sm" id="btnCatRenameCancel">取消</button>
-            </div>
-            <div class="cat-subsection-header">
-              <h4>子分类</h4>
-              <span id="catDetailSubCount"></span>
-              <div class="cat-view-toggle" role="group" aria-label="子分类视图">
-                <button type="button" id="catViewListBtn" data-cat-view="list" aria-pressed="true">列表</button>
-                <button type="button" id="catViewGraphBtn" data-cat-view="graph" aria-pressed="false">图谱</button>
-              </div>
-            </div>
-            <div class="cat-detail-sub-list" id="catSubList"></div>
-            <div class="cat-graph-view" id="catGraphView" style="display:none;"></div>
-          </div>
+          <div class="cat-detail-empty" id="catDetailEmpty">选择一个一级分类进行管理</div>
           <div class="cat-sub-browse-content" id="catSubBrowseContent" style="display:none;">
             <div class="cat-sub-browse-header">
               <div>
@@ -954,6 +974,17 @@
             <div class="cat-sub-log-list" id="catSubLogList"></div>
           </div>
         </section>
+      </div>
+    </div>
+
+    <!-- Photo Wall View -->
+    <div class="photo-wall-view" id="photoWallView" style="display:none;">
+      <div class="photo-wall-canvas-shell" id="photoWallCanvasShell">
+        <div class="photo-wall-empty" id="photoWallEmpty">
+          <strong>还没有图片</strong>
+          <span>从左侧上传图片，开始布置你的照片墙。</span>
+        </div>
+        <div class="photo-wall-stage" id="photoWallStage" aria-label="照片墙画布"></div>
       </div>
     </div>
 
