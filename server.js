@@ -257,6 +257,13 @@ function sortTodosForReminder(todos) {
     }));
 }
 
+function getDueTodosForReminder(reminderDb, businessDate, { allOpen = false } = {}) {
+  return reminderDb.getAllTodos({ status: 'pending' }).filter(todo => {
+    if (todo.done) return false;
+    return allOpen ? true : todo.due_date === businessDate;
+  });
+}
+
 function buildTodoReminderMail({ businessDate, snapshot }) {
   const lines = [
     `日期: ${businessDate}`,
@@ -264,7 +271,8 @@ function buildTodoReminderMail({ businessDate, snapshot }) {
     '',
   ];
   snapshot.forEach((todo, index) => {
-    lines.push(`${index + 1}. ${todo.title || '未命名任务'}`);
+    const category = todo.category || '\u5f85\u529e';
+    lines.push(`${index + 1}. [${category}] ${todo.title || '未命名任务'}`);
     lines.push(`截止日期: ${todo.due_date || businessDate}`);
     if (todo.notes) lines.push(`备注: ${todo.notes}`);
     lines.push('');
@@ -362,8 +370,7 @@ function createTodoReminderService({
 
       if (current.time < settings.sendTime) return false;
 
-      const dueToday = reminderDb.getAllTodos({ status: 'pending' })
-        .filter(todo => !todo.done && todo.due_date === current.businessDate);
+      const dueToday = getDueTodosForReminder(reminderDb, current.businessDate);
       const snapshot = sortTodosForReminder(dueToday);
       const nextState = {
         businessDate: current.businessDate,
@@ -2625,4 +2632,5 @@ module.exports = {
   sendTodoReminderEmail,
   getBusinessClockParts,
   sortTodosForReminder,
+  getDueTodosForReminder,
 };

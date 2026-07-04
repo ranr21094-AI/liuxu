@@ -4,6 +4,7 @@ require('dotenv').config({ quiet: true });
 const db = require('../database');
 const {
   createTodoReminderEmailMessage,
+  getDueTodosForReminder,
   getBusinessClockParts,
   sendTodoReminderEmail,
   sortTodosForReminder,
@@ -55,10 +56,7 @@ async function main() {
     throw new Error('Missing recipient email. Pass --to or set TODO_REMINDER_TEST_TO.');
   }
 
-  const todos = db.getAllTodos({ status: 'pending' }).filter(todo => {
-    if (todo.done) return false;
-    return options.allOpen ? true : todo.due_date === businessDate;
-  });
+  const todos = getDueTodosForReminder(db, businessDate, { allOpen: options.allOpen });
   const snapshot = sortTodosForReminder(todos);
   if (!snapshot.length) {
     throw new Error(options.allOpen

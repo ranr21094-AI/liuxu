@@ -2327,7 +2327,7 @@ test('todo reminder settings API validates mail readiness and persists across re
   assert.match((await rejected.json()).error, /QQ mail credentials/);
 });
 
-test('todo reminder mail builder keeps only title due date and notes in a utf-8 text mail', (t) => {
+test('todo reminder mail builder includes category titles due dates and notes in utf-8 text', (t) => {
   process.env.QQ_EMAIL_ACCOUNT = 'sender@qq.com';
   process.env.QQ_EMAIL_AUTH_CODE = 'auth-code';
   clearAppModules();
@@ -2370,12 +2370,12 @@ test('todo reminder mail builder keeps only title due date and notes in a utf-8 
   assert.equal(mail.subject, '待办到期提醒 (2026-05-18)');
   assert.match(mail.text, /日期: 2026-05-18/);
   assert.match(mail.text, /待办数: 2/);
-  assert.match(mail.text, /1\. 提交周报/);
+  assert.match(mail.text, /1\. \[开发\] 提交周报/);
   assert.match(mail.text, /截止日期: 2026-05-18/);
   assert.match(mail.text, /备注: 带上会议纪要/);
-  assert.match(mail.text, /2\. 空备注任务/);
+  assert.match(mail.text, /2\. \[测试\] 空备注任务/);
   assert.equal((mail.text.match(/备注:/g) || []).length, 1);
-  assert.doesNotMatch(mail.text, /分类|优先级|紧急|重要|普通/);
+  assert.doesNotMatch(mail.text, /优先级|紧急|重要|普通/);
 
   const message = createTodoReminderEmailMessage({
     to: 'notify@example.com',
@@ -2408,6 +2408,26 @@ test('todo reminder service sends once per day and records empty days after the 
     category: '待办',
     notes: 'Bring context',
   });
+  db.createTodo({
+    title: 'Review vocabulary',
+    due_date: '2026-05-18',
+    priority: 'normal',
+    category: '学习',
+    notes: 'custom category should be included',
+  });
+  db.createTodo({
+    title: 'Already done',
+    due_date: '2026-05-18',
+    priority: 'urgent',
+    category: '了解',
+  });
+  db.updateTodo(3, { done: true });
+  db.createTodo({
+    title: 'Tomorrow task',
+    due_date: '2026-05-20',
+    priority: 'urgent',
+    category: '了解',
+  });
 
   const service = createTodoReminderService({
     db,
@@ -2424,13 +2444,17 @@ test('todo reminder service sends once per day and records empty days after the 
   await service.tick();
   assert.equal(sent.length, 1);
   assert.match(sent[0].subject, /待办到期提醒 \(2026-05-18\)/);
-  assert.match(sent[0].text, /Submit report/);
+  assert.match(sent[0].text, /\[待办\] Submit report/);
+  assert.match(sent[0].text, /\[学习\] Review vocabulary/);
+  assert.doesNotMatch(sent[0].text, /Already done|Tomorrow task/);
   assert.match(sent[0].text, /截止日期: 2026-05-18/);
   assert.match(sent[0].text, /Bring context/);
+  assert.match(sent[0].text, /custom category should be included/);
   assert.equal(sent[0].textEncoding, 'base64');
   assert.equal(sent[0].html, undefined);
-  assert.doesNotMatch(sent[0].text, /分类|优先级/);
+  assert.doesNotMatch(sent[0].text, /优先级/);
   assert.equal(db.getTodoReminderState().status, 'sent');
+  assert.deepEqual(db.getTodoReminderState().snapshot.map(todo => todo.category), ['待办', '学习']);
 
   await service.tick();
   assert.equal(sent.length, 1);
@@ -2496,7 +2520,7 @@ test('todo reminder service retries the same snapshot after failure and ignores 
   assert.match(delivered[0].text, /First task/);
   assert.doesNotMatch(delivered[0].text, /Second task/);
   assert.equal(delivered[0].textEncoding, 'base64');
-  assert.doesNotMatch(delivered[0].text, /分类|优先级/);
+  assert.doesNotMatch(delivered[0].text, /优先级/);
   assert.equal(db.getTodoReminderState().status, 'sent');
 
   await service.tick();
@@ -2536,10 +2560,10 @@ test('todo reminder dry-run script reuses the reminder text format', (t) => {
   assert.equal(preview.to, 'notify@example.com');
   assert.equal(preview.subject, '待办到期提醒 (2026-05-18)');
   assert.equal(preview.textEncoding, 'base64');
-  assert.match(preview.text, /中文待办/);
+  assert.match(preview.text, /\[开发\] 中文待办/);
   assert.match(preview.text, /截止日期: 2026-05-18/);
   assert.match(preview.text, /备注: 中文备注/);
-  assert.doesNotMatch(preview.text, /分类|优先级/);
+  assert.doesNotMatch(preview.text, /优先级/);
 });
 
 test('undated logs are saved and searchable from all months only', async (t) => {
@@ -3347,6 +3371,7 @@ test('todo reminder UI loads, saves, and displays reminder status in the todo pa
   const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
   assert.match(htmlSource, /id="todoReminderHeading">邮件提醒/);
+  assert.match(htmlSource, /所有分类中当天到期的未完成待办/);
   assert.match(htmlSource, /id="todoReminderEnabled"/);
   assert.match(htmlSource, /id="todoReminderRecipient"/);
   assert.match(htmlSource, /id="todoReminderTime"/);
