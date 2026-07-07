@@ -51,7 +51,6 @@ const editorAiHistoryPopover = $('#editorAiHistoryPopover');
 const editorAiHistoryList = $('#editorAiHistoryList');
 const btnCloseEditorAiPanel = $('#btnCloseEditorAiPanel');
 const editorAiBackdrop = $('#editorAiBackdrop');
-const editorAiSending = $('#editorAiSending');
 const editorAiScopeLabel = $('#editorAiScopeLabel');
 const editorAiConversationMeta = $('#editorAiConversationMeta');
 const editorAiRenameOverlay = $('#editorAiRenameOverlay');
@@ -84,6 +83,7 @@ const DEFAULT_SEEDREAM_SIZE = '2K';
 const EDITOR_AI_MAX_MESSAGES = 20;
 let editorTab = localStorage.getItem(EDITOR_TAB_STORAGE_KEY) || 'write';
 if (!['write', 'preview', 'split'].includes(editorTab)) editorTab = 'write';
+let editorFullscreenPreviousTab = '';
 let autoSaveTimer = null;
 let lastSavedContent = '';
 let lastSavedTitle = '';
@@ -96,7 +96,7 @@ let currentSavePromise = null;
 let editorAiAllConversations = [];
 let editorAiActiveConversationId = '';
 let editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-let editorAiIsSending = false;
+const editorAiPendingByConversationId = new Set();
 let editorAiRenameConversationId = '';
 const EDITOR_SELECT_IDS = ['editCategory', 'editSubcategory'];
 
@@ -323,6 +323,24 @@ function activeEditorAiConversation() {
   return chat;
 }
 
+function isEditorAiConversationPending(chatId = editorAiActiveConversationId) {
+  return Boolean(chatId && editorAiPendingByConversationId.has(chatId));
+}
+
+function setEditorAiConversationPending(chatId, pending) {
+  if (!chatId) return;
+  if (pending) editorAiPendingByConversationId.add(chatId);
+  else editorAiPendingByConversationId.delete(chatId);
+}
+
+function isEditorAiConversationVisible(chatId, logKey) {
+  return editorAiActiveConversationId === chatId && currentEditorLogKey() === logKey;
+}
+
+function findEditorAiConversationById(id) {
+  return editorAiAllConversations.find(item => item.scope === 'editor' && item.id === id) || null;
+}
+
 async function loadEditorAiConversations() {
   try {
     const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT);
@@ -481,6 +499,7 @@ async function switchEditorAiConversation(id) {
   await saveEditorAiConversations();
   setEditorAiHistoryOpen(false);
   renderEditorAiMessages();
+  updateEditorAiSendState();
   editorAiInput.focus();
 }
 
@@ -522,11 +541,13 @@ async function deleteEditorAiConversation(id) {
   });
   if (!confirmed) return;
   editorAiAllConversations = editorAiAllConversations.filter(item => item.id !== id);
+  setEditorAiConversationPending(id, false);
   if (editorAiActiveConversationId === id) editorAiActiveConversationId = '';
   activeEditorAiConversation();
   await saveEditorAiConversations();
   renderEditorAiHistory();
   renderEditorAiMessages();
+  updateEditorAiSendState();
 }
 
 function getEditorAiSuggestion(message) {
@@ -682,7 +703,7 @@ async function generateEditorImageForMessage(index) {
   const message = chat.messages[index];
   const imageGeneration = message?.imageGeneration;
   const prompt = selectedEditorImagePrompt(imageGeneration);
-  if (!prompt || editorAiIsSending) return;
+  if (!prompt || isEditorAiConversationPending(chat.id)) return;
   imageGeneration.status = 'generating';
   imageGeneration.selectedPrompt = prompt;
   imageGeneration.prompt = prompt;
@@ -760,6 +781,7 @@ function insertEditorGeneratedImage(index) {
 function renderEditorAiMessages() {
   if (!editorAiMessages) return;
   const chat = activeEditorAiConversation();
+  const isPending = isEditorAiConversationPending(chat.id);
   editorAiScopeLabel.textContent = state.editingId ? `日志 #${state.editingId}` : '未保存草稿';
   if (editorAiConversationMeta) editorAiConversationMeta.textContent = `${chat.messages.length} 条消息`;
   if (!chat.messages.length) {
@@ -783,7 +805,7 @@ function renderEditorAiMessages() {
         </div>
       ` : ''}
     </div>
-  `).join('') + (editorAiIsSending ? `
+  `).join('') + (isPending ? `
     <div class="editor-ai-message assistant editor-ai-thinking">
       <div class="editor-ai-role">AI</div>
       <div class="editor-ai-bubble">正在思考<span class="ai-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
@@ -794,10 +816,10 @@ function renderEditorAiMessages() {
 
 function updateEditorAiSendState() {
   if (!btnEditorAiSend || !editorAiInput) return;
-  const disabled = editorAiIsSending || !editorAiInput.value.trim();
+  const isPending = isEditorAiConversationPending(editorAiActiveConversationId);
+  const disabled = isPending || !editorAiInput.value.trim();
   btnEditorAiSend.disabled = disabled;
   if (btnEditorAiImage) btnEditorAiImage.disabled = disabled;
-  editorAiSending.style.display = editorAiIsSending ? '' : 'none';
 }
 
 async function setEditorAiPanelOpen(open, { closeOutline = true, focusInput = true } = {}) {
@@ -842,10 +864,11 @@ function getEditorAiContext() {
 }
 
 async function sendEditorAiMessage({ forceImage = false } = {}) {
-  if (editorAiIsSending || !editorAiInput) return;
+  if (!editorAiInput) return;
   const content = editorAiInput.value.trim();
   if (!content) return;
   const chat = activeEditorAiConversation();
+  if (isEditorAiConversationPending(chat.id)) return;
   chat.messages.push({ role: 'user', content });
   if (!chat.title || chat.title === '日志对话' || chat.title === '当前日志') chat.title = conversationTitleFrom(content);
   if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
@@ -897,47 +920,57 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
     editorAiInput.focus();
     return;
   }
+  const requestChatId = chat.id;
+  const requestLogKey = chat.logKey;
+  const requestMessages = chat.messages.map(message => ({ ...message }));
+  const requestContext = getEditorAiContext();
+  setEditorAiConversationPending(requestChatId, true);
   await saveEditorAiConversations();
-  renderEditorAiMessages();
+  if (isEditorAiConversationVisible(requestChatId, requestLogKey)) renderEditorAiMessages();
   renderEditorAiHistory();
   updateEditorAiSendState();
 
-  editorAiIsSending = true;
-  updateEditorAiSendState();
-  renderEditorAiMessages();
   try {
     const res = await apiFetch('/api/ai/editor', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: chat.messages,
-        editorContext: getEditorAiContext(),
+        messages: requestMessages,
+        editorContext: requestContext,
       }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'AI 请求失败');
     if (!data.message?.content) throw new Error('AI 没有返回内容');
-    chat.messages.push({
-      role: 'assistant',
-      content: data.message.content,
-      editorSuggestion: data.editorSuggestion || {},
-      sources: Array.isArray(data.sources) ? data.sources : [],
-    });
-    if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
-    chat.updatedAt = Date.now();
-    await saveEditorAiConversations();
-    renderEditorAiHistory();
+    const targetChat = findEditorAiConversationById(requestChatId);
+    if (targetChat) {
+      targetChat.messages.push({
+        role: 'assistant',
+        content: data.message.content,
+        editorSuggestion: data.editorSuggestion || {},
+        sources: Array.isArray(data.sources) ? data.sources : [],
+      });
+      if (targetChat.messages.length > EDITOR_AI_MAX_MESSAGES) targetChat.messages = targetChat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
+      targetChat.updatedAt = Date.now();
+      await saveEditorAiConversations();
+      renderEditorAiHistory();
+    }
   } catch (err) {
     showToast('编辑器 AI 请求失败：' + err.message, 'error');
-    chat.messages.push({ role: 'assistant', content: `请求失败：${err.message}` });
-    chat.updatedAt = Date.now();
-    await saveEditorAiConversations();
-    renderEditorAiHistory();
+    const targetChat = findEditorAiConversationById(requestChatId);
+    if (targetChat) {
+      targetChat.messages.push({ role: 'assistant', content: `请求失败：${err.message}` });
+      targetChat.updatedAt = Date.now();
+      await saveEditorAiConversations();
+      renderEditorAiHistory();
+    }
   } finally {
-    editorAiIsSending = false;
-    renderEditorAiMessages();
+    setEditorAiConversationPending(requestChatId, false);
+    if (isEditorAiConversationVisible(requestChatId, requestLogKey)) {
+      renderEditorAiMessages();
+      editorAiInput.focus();
+    }
     updateEditorAiSendState();
-    editorAiInput.focus();
   }
 }
 
@@ -948,6 +981,7 @@ async function newEditorAiConversation() {
   await saveEditorAiConversations();
   renderEditorAiMessages();
   renderEditorAiHistory();
+  updateEditorAiSendState();
   editorAiInput.focus();
 }
 
@@ -1063,9 +1097,21 @@ function syncOutlineCurrent(cursor = contentEditor.getSelection().start) {
 }
 
 function setEditorFullscreen(enabled) {
+  const wasEnabled = document.body.classList.contains('editor-fullscreen');
+  if (enabled && !wasEnabled) {
+    editorFullscreenPreviousTab = editorTab;
+    if (editorTab !== 'write') switchTab('write');
+    setOutlinePanelOpen(false, { closeAi: false });
+    void setEditorAiPanelOpen(false, { closeOutline: false, focusInput: false });
+  }
   document.body.classList.toggle('editor-fullscreen', enabled);
   renderEditorFullscreenButton(enabled);
   setEditorToolbarMoreOpen(false);
+  if (!enabled && wasEnabled) {
+    const tabToRestore = editorFullscreenPreviousTab;
+    editorFullscreenPreviousTab = '';
+    if (tabToRestore && tabToRestore !== editorTab) switchTab(tabToRestore);
+  }
   requestAnimationFrame(() => contentEditor.layout());
 }
 
@@ -1201,7 +1247,10 @@ export async function openEditor(id) {
 
     switchTab(editorTab);
     editorAiActiveConversationId = '';
-    if (editorView.classList.contains('editor-ai-open')) renderEditorAiMessages();
+    if (editorView.classList.contains('editor-ai-open')) {
+      renderEditorAiMessages();
+      updateEditorAiSendState();
+    }
     if (editorTab !== 'preview') contentEditor.focus();
     return true;
   } catch (err) {
@@ -1237,7 +1286,10 @@ export function newLog() {
   document.title = '工作日志';
   showEditorView();
   switchTab(editorTab);
-  if (editorView.classList.contains('editor-ai-open')) renderEditorAiMessages();
+  if (editorView.classList.contains('editor-ai-open')) {
+    renderEditorAiMessages();
+    updateEditorAiSendState();
+  }
   if (editorTab !== 'preview') contentEditor.focus();
 }
 

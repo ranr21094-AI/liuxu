@@ -2707,6 +2707,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#editorAiBackdrop').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('#editorAiMessages').getAttribute('aria-live'), 'polite');
   assert.equal(document.querySelector('#editorAiInput').getAttribute('maxlength'), '4000');
+  assert.equal(document.querySelector('#editorAiSending'), null);
   assert.equal(document.querySelector('#btnEditorAiSend').disabled, true);
   assert.equal(document.querySelector('#btnEditorAiNew').getAttribute('aria-label'), '新对话');
   assert.equal(document.querySelector('#btnEditorAiHistory').getAttribute('aria-controls'), 'editorAiHistoryPopover');
@@ -3977,12 +3978,14 @@ test('new logs default to the selected calendar day or today and inherit the act
   assert.match(editorSource, /editDate\.value = defaultDate;[\s\S]*editCategory\.value = defaultCategory\.parent;[\s\S]*populateEditorSubCategory\(defaultCategory\.parent\);[\s\S]*editSubcategory\.value = defaultCategory\.sub;/);
 });
 
-test('editor fullscreen mode keeps navigation, preview tabs, shortcuts, and content surface visible', () => {
+test('editor fullscreen mode keeps only title and writing surface visible', () => {
   const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 
   assert.match(editorSource, /function setEditorFullscreen\(enabled\)[\s\S]*document\.body\.classList\.toggle\('editor-fullscreen', enabled\)/);
-  assert.doesNotMatch(editorSource, /if \(enabled && editorTab !== 'write'\)/);
+  assert.match(editorSource, /let editorFullscreenPreviousTab = '';/);
+  assert.match(editorSource, /if \(enabled && !wasEnabled\) \{[\s\S]*editorFullscreenPreviousTab = editorTab;[\s\S]*if \(editorTab !== 'write'\) switchTab\('write'\);[\s\S]*setOutlinePanelOpen\(false, \{ closeAi: false \}\);[\s\S]*setEditorAiPanelOpen\(false, \{ closeOutline: false, focusInput: false \}\)/);
+  assert.match(editorSource, /if \(!enabled && wasEnabled\) \{[\s\S]*const tabToRestore = editorFullscreenPreviousTab;[\s\S]*editorFullscreenPreviousTab = '';[\s\S]*if \(tabToRestore && tabToRestore !== editorTab\) switchTab\(tabToRestore\);/);
   assert.match(editorSource, /btnEditorFullscreen\.addEventListener\('click',[\s\S]*setEditorFullscreen\(!document\.body\.classList\.contains\('editor-fullscreen'\)\)/);
   assert.match(editorSource, /function setOutlinePanelOpen\(open[\s\S]*btnEditorOutlinePanel\.setAttribute\('aria-expanded', String\(open\)\);[\s\S]*renderOutline\(\);[\s\S]*syncOutlineCurrent\(\);/);
   assert.match(editorSource, /function extractMarkdownHeadings\(markdown\)[\s\S]*#\{1,6\}/);
@@ -3997,9 +4000,12 @@ test('editor fullscreen mode keeps navigation, preview tabs, shortcuts, and cont
   assert.match(styleSource, /body\.editor-fullscreen \.sidebar,[\s\S]*body\.editor-fullscreen \.btn-sidebar-expand\s*\{[\s\S]*display:\s*none !important;/);
   assert.doesNotMatch(styleSource, /fab-capture/);
   assert.match(styleSource, /body\.editor-fullscreen \.main\s*\{[\s\S]*position:\s*fixed;[\s\S]*inset:\s*0;/);
-  assert.match(styleSource, /body\.editor-fullscreen \.editor-header-card\s*\{[\s\S]*display:\s*grid;/);
-  assert.match(styleSource, /body\.editor-fullscreen \.editor-meta\s*\{[\s\S]*display:\s*grid;/);
-  assert.match(styleSource, /body\.editor-fullscreen \.edit-title\s*\{[\s\S]*display:\s*block;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-header-card\s*\{[\s\S]*display:\s*block;[\s\S]*background:\s*transparent;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-title-row\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) auto;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-title-back,[\s\S]*body\.editor-fullscreen \.editor-meta,[\s\S]*body\.editor-fullscreen \.editor-toolbar,[\s\S]*body\.editor-fullscreen \.editor-outline-panel,[\s\S]*body\.editor-fullscreen \.editor-ai-panel,[\s\S]*body\.editor-fullscreen \.editor-ai-backdrop,[\s\S]*body\.editor-fullscreen \.editor-title-actions button:not\(#btnEditorFullscreen\)\s*\{[\s\S]*display:\s*none !important;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.edit-title\s*\{[\s\S]*display:\s*block;[\s\S]*border-radius:\s*14px;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.editor-content-area\s*\{[\s\S]*flex:\s*1;[\s\S]*border-radius:\s*16px;/);
+  assert.match(styleSource, /body\.editor-fullscreen \.edit-content,[\s\S]*body\.editor-fullscreen \.codemirror-content-editor\s*\{[\s\S]*border:\s*0;[\s\S]*border-radius:\s*16px;/);
   assert.match(styleSource, /\.editor-title-action svg,[\s\S]*stroke-width:\s*1\.5;/);
   assert.match(styleSource, /\.editor-title-actions\s*\{[\s\S]*display:\s*inline-flex;[\s\S]*border-left:/);
   assert.match(styleSource, /\.editor-title-row\s*\{[\s\S]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto;/);
@@ -4054,7 +4060,21 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(editorSource, /function editorImagePromptContext\(\)/);
   assert.match(editorSource, /function editorImagePromptFrom\(text\)\s*\{\s*return String\(text \|\| ''\)\.trim\(\)\.slice\(0, 800\);/);
   assert.match(editorSource, /const btnEditorAiImage = \$\('#btnEditorAiImage'\);/);
+  assert.doesNotMatch(editorSource, /editorAiSending/);
+  assert.doesNotMatch(html, /editorAiSending|editor-ai-sending/);
+  assert.doesNotMatch(styleSource, /\.editor-ai-sending/);
   assert.match(editorSource, /async function sendEditorAiMessage\(\{ forceImage = false \} = \{\}\)/);
+  assert.doesNotMatch(editorSource, /editorAiIsSending/);
+  assert.match(editorSource, /const editorAiPendingByConversationId = new Set\(\);/);
+  assert.match(editorSource, /function isEditorAiConversationPending\(chatId = editorAiActiveConversationId\)[\s\S]*editorAiPendingByConversationId\.has\(chatId\)/);
+  assert.match(editorSource, /function setEditorAiConversationPending\(chatId, pending\)[\s\S]*editorAiPendingByConversationId\.add\(chatId\)[\s\S]*editorAiPendingByConversationId\.delete\(chatId\)/);
+  assert.match(editorSource, /function isEditorAiConversationVisible\(chatId, logKey\)[\s\S]*editorAiActiveConversationId === chatId[\s\S]*currentEditorLogKey\(\) === logKey/);
+  assert.match(editorSource, /function renderEditorAiMessages\(\)[\s\S]*const isPending = isEditorAiConversationPending\(chat\.id\);[\s\S]*\+ \(isPending \? `/);
+  assert.match(editorSource, /function updateEditorAiSendState\(\)[\s\S]*const isPending = isEditorAiConversationPending\(editorAiActiveConversationId\);[\s\S]*const disabled = isPending \|\| !editorAiInput\.value\.trim\(\);/);
+  assert.match(editorSource, /const requestChatId = chat\.id;[\s\S]*const requestLogKey = chat\.logKey;[\s\S]*const requestMessages = chat\.messages\.map\(message => \(\{ \.\.\.message \}\)\);[\s\S]*const requestContext = getEditorAiContext\(\);/);
+  assert.match(editorSource, /setEditorAiConversationPending\(requestChatId, true\);[\s\S]*setEditorAiConversationPending\(requestChatId, false\);/);
+  assert.match(editorSource, /if \(isEditorAiConversationVisible\(requestChatId, requestLogKey\)\) renderEditorAiMessages\(\);/);
+  assert.match(editorSource, /if \(isEditorAiConversationVisible\(requestChatId, requestLogKey\)\) \{[\s\S]*renderEditorAiMessages\(\);[\s\S]*editorAiInput\.focus\(\);[\s\S]*\}/);
   assert.match(editorSource, /if \(forceImage\) \{/);
   assert.match(editorSource, /btnEditorAiImage\?\.addEventListener\('click', \(\) => sendEditorAiMessage\(\{ forceImage: true \}\)\);/);
   assert.match(editorSource, /data-action="choose-editor-image-prompt"/);
@@ -4068,14 +4088,14 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(editorSource, /function renderEditorAiHistory\(\)/);
   assert.match(editorSource, /function setEditorAiHistoryOpen\(open\)/);
   assert.match(editorSource, /function openEditorAiSettings\(\)[\s\S]*\$\('#btnAiApiKey'\)[\s\S]*settingsButton\.click\(\)/);
-  assert.match(editorSource, /async function switchEditorAiConversation\(id\)[\s\S]*editorAiActiveConversationId = id;[\s\S]*renderEditorAiMessages\(\);/);
+  assert.match(editorSource, /async function switchEditorAiConversation\(id\)[\s\S]*editorAiActiveConversationId = id;[\s\S]*renderEditorAiMessages\(\);[\s\S]*updateEditorAiSendState\(\);/);
   assert.match(editorSource, /function openEditorAiRenameModal\(id\)/);
   assert.match(editorSource, /async function saveEditorAiRename\(\)[\s\S]*chat\.title = title\.slice\(0, 40\);/);
   assert.match(editorSource, /async function deleteEditorAiConversation\(id\)[\s\S]*confirmDialog\(\{[\s\S]*删除日志内对话/);
   assert.match(editorSource, /function getEditorAiContext\(\)[\s\S]*title: editTitle\.value,[\s\S]*content,[\s\S]*selection:/);
   assert.match(editorSource, /contentEditor\.getSelection\(\)/);
   assert.match(editorSource, /apiFetch\('\/api\/ai\/editor'/);
-  assert.match(editorSource, /body: JSON\.stringify\(\{[\s\S]*messages: chat\.messages,[\s\S]*editorContext: getEditorAiContext\(\),[\s\S]*\}\)/);
+  assert.match(editorSource, /body: JSON\.stringify\(\{[\s\S]*messages: requestMessages,[\s\S]*editorContext: requestContext,[\s\S]*\}\)/);
   assert.match(editorSource, /function renderEditorAiSuggestionPreview\(message, index\)/);
   assert.match(editorSource, /class="editor-ai-answer markdown-body"/);
   assert.match(editorSource, /class="editor-ai-suggestion-card\$\{expandable \? ' collapsed' : ' expanded'\}"/);
