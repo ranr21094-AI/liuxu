@@ -160,8 +160,10 @@
 
     <div class="category-sidebar-panel" id="categorySidebarPanel">
       <div class="category-sidebar-header">
-        <h3>一级分类</h3>
-        <div class="cat-manager-summary" id="catManagerSummary" title="一级分类数量" aria-label="一级分类数量">...</div>
+        <div class="category-sidebar-search">
+          <label class="sr-only" for="catSearchInput">搜索分类</label>
+          <input type="search" id="catSearchInput" class="cat-search-input category-sidebar-search-input" placeholder="搜索分类...">
+        </div>
         <button class="cat-icon-action primary category-add-toggle" id="catAddToggle" type="button" aria-label="添加一级分类" title="添加一级分类" aria-expanded="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         </button>
@@ -930,10 +932,6 @@
         <div class="category-page-title">
           <span class="category-page-kicker">分类管理</span>
           <h2>分类控制台</h2>
-        </div>
-        <div class="category-page-search">
-          <label class="sr-only" for="catSearchInput">搜索分类</label>
-          <input type="search" id="catSearchInput" class="cat-search-input cat-page-search-input" placeholder="搜索一级分类或二级分类...">
         </div>
       </div>
       <div class="category-page-grid">

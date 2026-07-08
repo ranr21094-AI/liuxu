@@ -100,14 +100,6 @@ function ensureSelectedCategory(cats) {
   }
 }
 
-function updateCategorySummary() {
-  const total = state.categories.length;
-  const summary = $('#catManagerSummary');
-  summary.textContent = total;
-  summary.setAttribute('aria-label', `一级分类数量：${total}`);
-  summary.setAttribute('title', `一级分类数量：${total}`);
-}
-
 function isProtectedRootCategory(name) {
   return name === '其他' || name === '日记';
 }
@@ -165,7 +157,6 @@ function renderParentList() {
   const cats = getVisibleCategories();
   const isSearching = Boolean($('#catSearchInput').value.trim());
   ensureSelectedCategory(cats);
-  updateCategorySummary();
   if (!cats.length) {
     $('#catList').innerHTML = state.categories.length
       ? '<div class="cat-empty">没有匹配的分类</div>'
