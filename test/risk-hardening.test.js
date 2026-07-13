@@ -17,6 +17,10 @@ const ROOT = path.resolve(__dirname, '..');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
 
+function validPngBlob() {
+  return new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' });
+}
+
 function sha256(text) {
   return crypto.createHash('sha256').update(text).digest('hex');
 }
@@ -375,6 +379,21 @@ test('category API reorders subcategories while preserving omitted items', async
   assert.deepEqual(categories.find(category => category.name === 'Ordered').sub, ['Gamma', 'Alpha', 'Beta']);
 });
 
+test('category route parameters are decoded exactly once', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+  const literalName = 'Literal%2FCategory';
+  const created = await fetch(`${baseUrl}/api/categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: literalName }),
+  });
+  assert.equal(created.status, 201);
+  const deleted = await fetch(`${baseUrl}/api/categories/${encodeURIComponent(literalName)}`, { method: 'DELETE' });
+  assert.equal(deleted.status, 200);
+  const categories = await (await fetch(`${baseUrl}/api/categories`)).json();
+  assert.equal(categories.some(category => category.name === literalName), false);
+});
+
 test('diary routes remain compatible when diary lock is disabled', async (t) => {
   const { db, baseUrl } = loadFreshApp(t);
   const diary = db.create({
@@ -415,6 +434,30 @@ test('backup accepts bearer authentication when site auth is enabled', async (t)
     authorized.headers.get('content-disposition') || '',
     /^attachment; filename=work-log-backup-\d{4}-\d{2}-\d{2}\.json$/,
   );
+});
+
+test('site authentication also protects uploaded files and supports an HttpOnly session cookie', async (t) => {
+  const { baseUrl } = loadFreshApp(t, { authToken: 'site-secret' });
+  const authCheck = await fetch(`${baseUrl}/api/auth/check`, {
+    headers: { Authorization: 'Bearer site-secret' },
+  });
+  assert.equal(authCheck.status, 200);
+  const cookieHeader = authCheck.headers.get('set-cookie') || '';
+  assert.match(cookieHeader, /^site_session=/);
+  assert.match(cookieHeader, /HttpOnly/);
+  const cookie = cookieHeader.split(';')[0];
+
+  const form = new FormData();
+  form.append('image', validPngBlob(), 'protected.png');
+  const upload = await fetch(`${baseUrl}/api/upload`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer site-secret' },
+    body: form,
+  });
+  assert.equal(upload.status, 200);
+  const image = await upload.json();
+  assert.equal((await fetch(`${baseUrl}${image.url}`)).status, 401);
+  assert.equal((await fetch(`${baseUrl}${image.url}`, { headers: { Cookie: cookie } })).status, 200);
 });
 
 test('AI chat requires DeepSeek configuration and validates request options', async (t) => {
@@ -511,6 +554,7 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.equal(defaults.status, 200);
   assert.deepEqual(await defaults.json(), {
     apiKey: '',
+    apiKeyConfigured: false,
     model: 'deepseek-v4-flash',
     reasoningEffort: 'high',
     stream: false,
@@ -518,10 +562,13 @@ test('AI settings persist to local data storage and validate options', async (t)
     logContextEnabled: false,
     diaryContextEnabled: false,
     tavilyApiKey: '',
+    tavilyApiKeyConfigured: false,
     perplexityApiKey: '',
+    perplexityApiKeyConfigured: false,
     webSearchEnabled: false,
     webSearchDepth: 'basic',
     seedreamApiKey: '',
+    seedreamApiKeyConfigured: false,
     seedreamModel: 'doubao-seedream-5-0-260128',
     seedreamSize: '2K',
     seedreamWatermark: true,
@@ -563,18 +610,22 @@ test('AI settings persist to local data storage and validate options', async (t)
   });
   assert.equal(saved.status, 200);
   assert.deepEqual(await saved.json(), {
-    apiKey: 'sk-local-settings',
+    apiKey: '',
+    apiKeyConfigured: true,
     model: 'deepseek-v4-pro',
     reasoningEffort: 'max',
     stream: true,
     userProfile: 'I prefer concise Chinese replies.',
     logContextEnabled: true,
     diaryContextEnabled: true,
-    tavilyApiKey: 'tvly-local-settings',
-    perplexityApiKey: 'pplx-local-settings',
+    tavilyApiKey: '',
+    tavilyApiKeyConfigured: true,
+    perplexityApiKey: '',
+    perplexityApiKeyConfigured: true,
     webSearchEnabled: true,
     webSearchDepth: 'advanced',
-    seedreamApiKey: 'seedream-local-settings',
+    seedreamApiKey: '',
+    seedreamApiKeyConfigured: true,
     seedreamModel: 'doubao-seedream-4-5-251128',
     seedreamSize: '2848x1600',
     seedreamWatermark: false,
@@ -592,6 +643,24 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /tvly-local-settings/);
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /pplx-local-settings/);
   assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /seedream-local-settings/);
+
+  const preserved = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey: '', tavilyApiKey: '', perplexityApiKey: '', seedreamApiKey: '' }),
+  });
+  assert.equal(preserved.status, 200);
+  assert.equal((await preserved.json()).apiKeyConfigured, true);
+  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings/);
+
+  const cleared = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clearApiKeys: true }),
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal((await cleared.json()).apiKeyConfigured, false);
+  assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
 
   for (const body of [
     { model: 'bad-model' },
@@ -1835,6 +1904,7 @@ test('AI conversations persist to local data storage separate from logs', async 
       updatedAt: 1780628000000,
       scope: 'global',
       logKey: '',
+      diarySensitive: false,
       messages: [
         { role: 'user', content: 'hello' },
         { role: 'assistant', content: 'hi' },
@@ -1845,6 +1915,7 @@ test('AI conversations persist to local data storage separate from logs', async 
       updatedAt: 1780628000100,
       scope: 'editor',
       logKey: 'log:7',
+      diarySensitive: false,
       messages: [
         { role: 'user', content: 'edit this' },
         { role: 'assistant', content: 'ok', editorSuggestion: { suggestedTitle: 'new title', insertText: 'insert me' } },
@@ -1856,6 +1927,46 @@ test('AI conversations persist to local data storage separate from logs', async 
   assert.equal(fs.readFileSync(path.join(dataDir, 'logs.json'), 'utf8'), '[]');
 });
 
+test('diary lock hides diary-sensitive AI conversations', async (t) => {
+  const { baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const cookie = await unlockDiary(baseUrl);
+  const saved = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({
+      activeConversationId: 'private-chat',
+      conversations: [
+        { id: 'safe-editor', title: 'safe', scope: 'editor', logKey: 'log:1', messages: [] },
+        { id: 'private-chat', title: 'private', scope: 'editor', logKey: 'draft:diary', diarySensitive: true, messages: [{ role: 'user', content: 'secret' }] },
+        { id: 'global-chat', title: 'global', scope: 'global', logKey: '', messages: [] },
+      ],
+    }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/auth/diary/lock`, { method: 'POST', headers: { Cookie: cookie } })).status, 200);
+
+  const locked = await (await fetch(`${baseUrl}/api/ai/conversations`)).json();
+  assert.deepEqual(locked.conversations.map(item => item.id), ['safe-editor']);
+  assert.equal(locked.activeConversationId, 'safe-editor');
+});
+
+test('log and todo APIs reject malformed field types without poisoning persisted data', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+  const badLog = await fetch(`${baseUrl}/api/logs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: { nested: true }, content: [], category: OTHER_CATEGORY, hours: 'many' }),
+  });
+  assert.equal(badLog.status, 400);
+  const badTodo = await fetch(`${baseUrl}/api/todos`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: ['bad'], done: 'false', due_date: '2026-02-31' }),
+  });
+  assert.equal(badTodo.status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/stats`)).status, 200);
+});
+
 test('image upload rejects svg and still accepts allowed extensions', async (t) => {
   const { baseUrl } = loadFreshApp(t);
 
@@ -1865,7 +1976,7 @@ test('image upload rejects svg and still accepts allowed extensions', async (t) 
   assert.equal(rejected.status, 400);
 
   const png = new FormData();
-  png.append('image', new Blob(['png-bytes'], { type: 'image/png' }), 'ok.png');
+  png.append('image', validPngBlob(), 'ok.png');
   const accepted = await fetch(`${baseUrl}/api/upload`, { method: 'POST', body: png });
   assert.equal(accepted.status, 200);
   const body = await accepted.json();
@@ -1876,7 +1987,7 @@ test('image upload rejects svg and still accepts allowed extensions', async (t) 
 test('photo wall API stores layout comments and leaves uploaded files intact on delete', async (t) => {
   const { baseUrl, dataDir } = loadFreshApp(t);
   const form = new FormData();
-  form.append('image', new Blob(['photo'], { type: 'image/png' }), 'wall.png');
+  form.append('image', validPngBlob(), 'wall.png');
   const uploaded = await (await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
     body: form,
@@ -1925,7 +2036,7 @@ test('diary images require unlocked cookie and remain private after reclassifica
   const { baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
 
   const rejectedPrivate = new FormData();
-  rejectedPrivate.append('image', new Blob(['private'], { type: 'image/png' }), 'locked.png');
+  rejectedPrivate.append('image', validPngBlob(), 'locked.png');
   rejectedPrivate.append('private', 'true');
   assert.equal((await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
@@ -1934,7 +2045,7 @@ test('diary images require unlocked cookie and remain private after reclassifica
 
   let cookie = await unlockDiary(baseUrl);
   const privateForm = new FormData();
-  privateForm.append('image', new Blob(['private'], { type: 'image/png' }), 'private.png');
+  privateForm.append('image', validPngBlob(), 'private.png');
   privateForm.append('private', 'true');
   const privateResponse = await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
@@ -1964,7 +2075,7 @@ test('diary images require unlocked cookie and remain private after reclassifica
   })).status, 200);
 
   const ordinaryForm = new FormData();
-  ordinaryForm.append('image', new Blob(['ordinary'], { type: 'image/png' }), 'ordinary.png');
+  ordinaryForm.append('image', validPngBlob(), 'ordinary.png');
   const ordinaryImage = await (await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
     body: ordinaryForm,
@@ -1999,13 +2110,13 @@ test('diary images require unlocked cookie and remain private after reclassifica
 test('historical diary image references are protected without a saved private marker', async (t) => {
   const { baseUrl, dataDir } = loadFreshApp(t, { diaryPassword: 'secret' });
   const markdownForm = new FormData();
-  markdownForm.append('image', new Blob(['markdown'], { type: 'image/png' }), 'markdown.png');
+  markdownForm.append('image', validPngBlob(), 'markdown.png');
   const markdownImage = await (await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
     body: markdownForm,
   })).json();
   const htmlForm = new FormData();
-  htmlForm.append('image', new Blob(['html'], { type: 'image/png' }), 'html.png');
+  htmlForm.append('image', validPngBlob(), 'html.png');
   const htmlImage = await (await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
     body: htmlForm,
@@ -2045,6 +2156,8 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, todos: [{ id: 1, due_date: '2026-02-31' }] }).error, /Invalid due_date/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, priority: 'critical' }] }).error, /Invalid priority/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, notes: { text: 'bad' } }] }).error, /Invalid notes/);
+  assert.match(db.restore({ ...base, countdowns: [{ id: 1, title: 'bad', target_date: '2026-02-31' }] }).error, /Invalid target_date/);
+  assert.match(db.restore({ ...base, countdowns: [{ id: 1, title: 'bad', target_date: '2026-05-18', repeat_yearly: 'yes' }] }).error, /Invalid repeat_yearly/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: 'not-array' }] }).error, /Invalid subcategories/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: [], calendar_day_visible: 'no' }] }).error, /Invalid calendar day visibility/);
   assert.match(db.restore({ ...base, privateUploads: ['../secret.png'] }).error, /Invalid private upload filename/);
@@ -2056,9 +2169,86 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.equal(db.getAllTodos()[0].recurrence, 'none');
   assert.deepEqual(db.backup().privateUploads, ['secret.png']);
   assert.equal(db.backup().photoWall.items[0].comment, 'ok');
+  db.createCountdown({ title: 'removed by old replace backup', target_date: '2026-08-20' });
   assert.deepEqual(db.restore(base).success, true);
   assert.deepEqual(db.backup().privateUploads, []);
   assert.deepEqual(db.backup().photoWall.items, []);
+  assert.deepEqual(db.getAllCountdowns(), []);
+  assert.equal(db.create({ title: 'next log', category: OTHER_CATEGORY }).id, 2);
+  assert.equal(db.createTodo({ title: 'next todo' }).id, 2);
+
+  assert.equal(db.restore({
+    ...base,
+    countdowns: [{ id: 1, title: 'birthday', target_date: '2020-02-29', repeat_yearly: true, notes: '' }],
+  }).success, true);
+  assert.equal(db.createCountdown({ title: 'next countdown', target_date: '2026-09-01' }).id, 2);
+  assert.equal(db.restore(base, 'merge').success, true);
+  assert.deepEqual(db.getAllCountdowns().map(item => item.id), [2, 1]);
+});
+
+test('corrupt JSON data fails closed and is preserved for recovery', (t) => {
+  const db = loadFreshDb(t);
+  const dataFile = path.join(process.env.DATA_DIR, 'logs.json');
+  fs.writeFileSync(dataFile, '{not-json', 'utf8');
+  assert.throws(() => db.getAll(), /Failed to read logs\.json/);
+  assert.equal(fs.readFileSync(dataFile, 'utf8'), '{not-json');
+  assert.equal(fs.readdirSync(process.env.DATA_DIR).some(name => /^logs\.json\.corrupt-.*\.bak$/.test(name)), true);
+});
+
+test('countdown API validates and persists independent countdown entries', async (t) => {
+  const { baseUrl, dataDir } = loadFreshApp(t);
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/countdowns`)).json(), []);
+
+  const created = await fetch(`${baseUrl}/api/countdowns`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: '旅行出发',
+      target_date: '2026-08-20',
+      repeat_yearly: false,
+      notes: '准备行李',
+    }),
+  });
+  assert.equal(created.status, 201);
+  const entry = await created.json();
+  assert.equal(entry.id, 1);
+  assert.equal(entry.title, '旅行出发');
+  assert.equal(entry.repeat_yearly, false);
+  assert.equal(fs.existsSync(path.join(dataDir, 'countdowns.json')), true);
+
+  const updated = await fetch(`${baseUrl}/api/countdowns/${entry.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '周年旅行', repeat_yearly: true }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).repeat_yearly, true);
+
+  for (const body of [
+    { title: '', target_date: '2026-08-20' },
+    { title: 'bad date', target_date: '2026-02-31' },
+    { title: 'bad repeat', target_date: '2026-08-20', repeat_yearly: 'yes' },
+    { title: 'long notes', target_date: '2026-08-20', notes: 'x'.repeat(1001) },
+  ]) {
+    const invalid = await fetch(`${baseUrl}/api/countdowns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal(invalid.status, 400);
+  }
+  assert.equal((await fetch(`${baseUrl}/api/countdowns/not-an-id`, { method: 'DELETE' })).status, 400);
+  assert.equal((await fetch(`${baseUrl}/api/countdowns/${entry.id}`, { method: 'DELETE' })).status, 200);
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/countdowns`)).json(), []);
+});
+
+test('corrupt countdown storage fails closed and preserves a recovery copy', (t) => {
+  const db = loadFreshDb(t);
+  const file = path.join(process.env.DATA_DIR, 'countdowns.json');
+  fs.writeFileSync(file, '{bad-countdowns', 'utf8');
+  assert.throws(() => db.getAllCountdowns(), /Failed to read countdowns\.json/);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{bad-countdowns');
+  assert.equal(fs.readdirSync(process.env.DATA_DIR).some(name => /^countdowns\.json\.corrupt-.*\.bak$/.test(name)), true);
 });
 
 test('todo API stores due date, priority, recurrence, and notes', async (t) => {
@@ -2602,6 +2792,26 @@ test('Hong Kong business dates stay stable across UTC day boundaries', () => {
   assert.equal(businessDate.businessDateString(new Date('2026-05-25T16:00:00.000Z')), '2026-05-26');
   assert.equal(businessDate.startOfWeekMonday('2026-05-25'), '2026-05-25');
   assert.equal(businessDate.shiftDateString('2026-05-25', 1), '2026-05-26');
+});
+
+test('countdown timing handles future, elapsed, annual, cross-year, and leap-day dates', async () => {
+  const moduleUrl = `${pathToFileURL(path.join(ROOT, 'public', 'js', 'countdownDate.js')).href}?test=${Date.now()}`;
+  const { countdownTiming } = await import(moduleUrl);
+
+  assert.deepEqual(countdownTiming({ target_date: '2026-06-01', repeat_yearly: false }, '2026-05-30'), {
+    effectiveDate: '2026-06-01', days: 2, state: 'future',
+  });
+  assert.equal(countdownTiming({ target_date: '2026-05-30', repeat_yearly: false }, '2026-05-30').state, 'today');
+  assert.deepEqual(countdownTiming({ target_date: '2026-05-20', repeat_yearly: false }, '2026-05-30'), {
+    effectiveDate: '2026-05-20', days: -10, state: 'elapsed',
+  });
+  assert.equal(countdownTiming({ target_date: '2026-01-01', repeat_yearly: false }, '2025-12-31').days, 1);
+
+  const annual = countdownTiming({ target_date: '2020-05-01', repeat_yearly: true }, '2026-05-02');
+  assert.equal(annual.effectiveDate, '2027-05-01');
+  assert.equal(annual.state, 'future');
+  const leapDay = countdownTiming({ target_date: '2020-02-29', repeat_yearly: true }, '2025-02-27');
+  assert.deepEqual(leapDay, { effectiveDate: '2025-02-28', days: 1, state: 'future' });
 });
 
 test('default log dates and stats use the Hong Kong business day', (t) => {
@@ -3336,7 +3546,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(todoSource, /String\(t\.notes \|\| ''\)\.toLowerCase\(\)\.includes\(query\)/);
   assert.match(todoSource, /重复待办需要先填写截止日期/);
   assert.match(todoSource, /recurrence,\s*[\r\n]\s*notes: \$\('#todoFullNotes'\)\.value/);
-  assert.match(todoSource, /\$\('#todoStatOverdue'\)\.textContent = overdue\.length;/);
+  assert.match(todoSource, /\[pending\.length, dueToday\.length, overdue\.length, done\.length\]/);
   assert.doesNotMatch(todoSource, /priorityDot/);
   assert.match(priorityStyleBlock, /min-width:\s*22px;/);
   assert.match(priorityStyleBlock, /border-radius:\s*5px;/);
@@ -3376,6 +3586,28 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(styleSource, /\.todo-full-form textarea\s*\{[\s\S]*min-height:\s*200px;/);
 });
 
+test('countdown UI provides a persistent independent card mode', () => {
+  const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+
+  assert.match(htmlSource, /id="todoModeTabs"[\s\S]*data-mode="todos"[\s\S]*data-mode="countdowns"/);
+  assert.match(htmlSource, /id="countdownPanel"[\s\S]*id="countdownGrid"/);
+  assert.match(htmlSource, /id="countdownForm"[\s\S]*id="countdownTitle"[\s\S]*id="countdownTargetDate"[\s\S]*id="countdownRepeatYearly"[\s\S]*id="countdownNotes"/);
+  assert.match(todoSource, /localStorage\.getItem\('todoPageMode'\)/);
+  assert.match(todoSource, /localStorage\.setItem\('todoPageMode', todoPageMode\)/);
+  assert.match(todoSource, /apiFetch\('\/api\/countdowns'\)/);
+  assert.match(todoSource, /function renderCountdowns\(\)/);
+  assert.match(todoSource, /function saveCountdownFromForm\(\)/);
+  assert.match(todoSource, /function deleteCountdown\(id\)/);
+  assert.match(todoSource, /\['总数', '今天', '30天内', '已过期'\]/);
+  assert.match(todoSource, /item\.title\.toLowerCase\(\)\.includes\(query\)[\s\S]*item\.notes\.toLowerCase\(\)\.includes\(query\)/);
+  assert.doesNotMatch(todoSource, /state\.datesWithTodos[^;]*allCountdowns/);
+  assert.match(styleSource, /\.countdown-grid\s*\{[\s\S]*repeat\(auto-fill, minmax\(210px, 1fr\)\)/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.countdown-grid\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
+  assert.match(styleSource, /body\.desktop-narrow-sidebar\.sidebar-collapsed \.main\s*\{[\s\S]*margin-left:\s*0 !important;[\s\S]*max-width:\s*100% !important;/);
+});
+
 test('todo reminder UI loads, saves, and displays reminder status in the todo page', () => {
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
@@ -3392,7 +3624,7 @@ test('todo reminder UI loads, saves, and displays reminder status in the todo pa
   assert.match(todoSource, /function renderTodoReminderSettings\(\)/);
   assert.match(todoSource, /function saveTodoReminderSettings\(\)/);
   assert.match(todoSource, /\$\('#btnTodoReminderSave'\)\.addEventListener\('click', saveTodoReminderSettings\);/);
-  assert.match(todoSource, /const \[todosRes, categoriesRes, reminderRes\] = await Promise\.all\(\[/);
+  assert.match(todoSource, /const \[todosRes, countdownsRes, categoriesRes, reminderRes\] = await Promise\.all\(\[/);
   assert.match(todoSource, /mailReady:\s*Boolean\(data\.mailReady\)/);
   assert.match(styleSource, /\.todo-reminder-card\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.todo-reminder-chip\.ready\s*\{[\s\S]*0f766e/);
@@ -3505,10 +3737,10 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   const aiChatBodyCleanupBlock = aiCleanupStyles.match(/\.ai-chat-body\s*\{[^}]*\}/)?.[0] || '';
   const aiMessageFooterStyles = styleSource.match(/\/\* AI message footer and grouped history refinements \*\/[\s\S]*?\/\* Codex-style category workspace refinements \*\//)?.[0] || '';
 
-  assert.match(appSource, /import \{ initAiChat, showAiChatView \} from '\.\/aiChat\.js';/);
+  assert.match(appSource, /import \{ initAiChat, showAiChatView, clearAiStateForDiaryLock \} from '\.\/aiChat\.js';/);
   assert.match(appSource, /import \{ showPhotoWallView \} from '\.\/photoWall\.js';/);
   assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
-  assert.match(appSource, /function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
+  assert.match(appSource, /async function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
   assert.match(appSource, /if \(!\['normal', 'todo', 'categories', 'photo-wall', 'ai'\]\.includes\(mode\)\) mode = 'normal';/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-ai-mode', mode === 'ai'\);/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-category-mode', mode === 'categories'\);/);
@@ -3557,7 +3789,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /westock: \{ \.\.\.settings\.skills\?\.westock \}/);
   assert.match(aiSource, /perplexity: \{ \.\.\.settings\.skills\?\.perplexity \}/);
   assert.match(aiSource, /服务端未保存 AI 设置，请重启应用后再试/);
-  assert.match(aiSource, /apiKey: settings\.apiKey/);
+  assert.doesNotMatch(aiSource, /apiKey: settings\.apiKey/);
   assert.match(aiSource, /model: settings\.model \|\| DEFAULT_MODEL/);
   assert.match(aiSource, /thinkingMode: 'enabled'/);
   assert.match(aiSource, /reasoningEffort: settings\.reasoningEffort \|\| DEFAULT_REASONING/);
@@ -3566,8 +3798,8 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /logContextEnabled: Boolean\(settings\.logContextEnabled\)/);
   assert.match(aiSource, /diaryContextEnabled: Boolean\(settings\.diaryContextEnabled\)/);
   assert.match(aiSource, /logAccessPolicy: settings\.logAccessPolicy/);
-  assert.match(aiSource, /tavilyApiKey: settings\.tavilyApiKey/);
-  assert.match(aiSource, /perplexityApiKey: settings\.perplexityApiKey/);
+  assert.doesNotMatch(aiSource, /tavilyApiKey: settings\.tavilyApiKey/);
+  assert.doesNotMatch(aiSource, /perplexityApiKey: settings\.perplexityApiKey/);
   assert.match(aiSource, /webSearchEnabled: Boolean\(settings\.webSearchEnabled\)/);
   assert.match(aiSource, /webSearchDepth: settings\.webSearchDepth \|\| 'basic'/);
   assert.match(aiSource, /const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';/);
@@ -3581,8 +3813,8 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /function collectLogAccessPolicyFromPage\(\)/);
   assert.match(aiSource, /logAccessPolicy: collectLogAccessPolicyFromPage\(\)/);
   assert.doesNotMatch(aiSource, /aiLogWriteToggle|logWriteEnabled/);
-  assert.match(aiSource, /\$\('#aiPerplexityApiKeyInput'\)\.value = settings\.perplexityApiKey;/);
-  assert.match(aiSource, /\$\('#aiSeedreamApiKeyInput'\)\.value = settings\.seedreamApiKey;/);
+  assert.match(aiSource, /\$\('#aiPerplexityApiKeyInput'\)\.value = '';/);
+  assert.match(aiSource, /\$\('#aiSeedreamApiKeyInput'\)\.value = '';/);
   assert.match(aiSource, /function setSettingsTab\(tab\)/);
   assert.match(aiSource, /\['access', 'image', 'skills'\]\.includes\(tab\)/);
   assert.match(aiSource, /access: '访问设置'/);
@@ -3908,6 +4140,20 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*34px;[\s\S]*height:\s*34px;/);
 });
 
+test('HTML escaping is safe in both text and quoted attribute contexts', async () => {
+  const previousDocument = global.document;
+  const dom = new JSDOM('<!doctype html><body></body>');
+  global.document = dom.window.document;
+  try {
+    const helpers = await import(`${pathToFileURL(path.join(ROOT, 'public', 'js', 'helpers.js')).href}?escape=${Date.now()}`);
+    assert.equal(helpers.escHtml(`\"'&<>`), '&quot;&#39;&amp;&lt;&gt;');
+  } finally {
+    dom.window.close();
+    if (previousDocument === undefined) delete global.document;
+    else global.document = previousDocument;
+  }
+});
+
 test('modal helper traps tab navigation and restores the trigger focus', async () => {
   const dom = new JSDOM(`
     <!doctype html><body>
@@ -3931,6 +4177,69 @@ test('modal helper traps tab navigation and restores the trigger focus', async (
   assert.equal(document.activeElement.id, 'first');
   helpers.closeModal(overlay);
   assert.equal(document.activeElement.id, 'trigger');
+});
+
+test('log card and editor markdown images share the double-click preview', () => {
+  const logListSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'logList.js'), 'utf8');
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+  const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+
+  assert.match(logListSource, /import \{ enableMarkdownImagePreview \} from '\.\/imagePreview\.js';/);
+  assert.match(logListSource, /enableMarkdownImagePreview\(logList\);/);
+  assert.match(logListSource, /closest\('\.log-card-preview \.markdown-body img'\)/);
+  assert.match(editorSource, /import \{ enableMarkdownImagePreview \} from '\.\/imagePreview\.js';/);
+  assert.match(editorSource, /enableMarkdownImagePreview\(editPreview\);/);
+  assert.match(styleSource, /\.modal-overlay\.markdown-image-preview-overlay\s*\{[\s\S]*z-index:\s*430;/);
+  assert.match(styleSource, /\.markdown-image-lightbox-img\s*\{[\s\S]*object-fit:\s*contain;/);
+});
+
+test('markdown image preview opens on double-click and closes with Escape or backdrop', async () => {
+  const previousDocument = globalThis.document;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const dom = new JSDOM(`
+    <!doctype html><body>
+      <div id="preview"><div class="markdown-body">
+        <img id="plain" src="/uploads/example.png" alt="示例图片">
+        <a href="https://example.com"><img id="linked" src="/uploads/linked.png" alt="链接图片"></a>
+      </div></div>
+    </body>
+  `, { pretendToBeVisual: true, url: 'http://localhost/' });
+
+  globalThis.document = dom.window.document;
+  globalThis.requestAnimationFrame = callback => callback();
+  try {
+    const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'imagePreview.js')).href + `?preview=${Date.now()}`;
+    const imagePreview = await import(moduleUrl);
+    const preview = document.getElementById('preview');
+    const disable = imagePreview.enableMarkdownImagePreview(preview);
+
+    document.getElementById('plain').dispatchEvent(new dom.window.MouseEvent('dblclick', {
+      bubbles: true,
+      cancelable: true,
+    }));
+    let overlay = document.getElementById('markdownImagePreviewOverlay');
+    assert.equal(overlay.style.display, 'flex');
+    assert.equal(overlay.querySelector('.markdown-image-lightbox-img').getAttribute('src'), '/uploads/example.png');
+    assert.equal(overlay.querySelector('.markdown-image-lightbox-img').alt, '示例图片');
+
+    document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(overlay.style.display, 'none');
+    assert.equal(overlay.querySelector('.markdown-image-lightbox-img').hasAttribute('src'), false);
+
+    document.getElementById('plain').dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true }));
+    overlay.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    assert.equal(overlay.style.display, 'none');
+
+    document.getElementById('linked').dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true }));
+    assert.equal(overlay.style.display, 'none');
+    disable();
+  } finally {
+    dom.window.close();
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousRequestAnimationFrame === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+  }
 });
 
 test('markdown preview renders normal markdown and latex with local globals', async () => {
@@ -3983,7 +4292,7 @@ test('new logs default to the selected calendar day or today and inherit the act
 
   assert.match(editorSource, /function getNewLogCategory\(\)[\s\S]*\(state\.category \|\| ''\)\.split\('\/'\)/);
   assert.match(editorSource, /matchingCategory && \(!filteredSub \|\| \(matchingCategory\.sub \|\| \[\]\)\.includes\(filteredSub\)\)/);
-  assert.match(editorSource, /export function newLog\(\) \{\s*const defaultDate = state\.selectedDate \|\| businessDateString\(\);\s*const defaultCategory = getNewLogCategory\(\);/);
+  assert.match(editorSource, /export async function newLog\(\) \{[\s\S]*const defaultDate = state\.selectedDate \|\| businessDateString\(\);\s*const defaultCategory = getNewLogCategory\(\);/);
   assert.match(editorSource, /lastSavedDate = defaultDate;[\s\S]*lastSavedCategory = defaultCategory\.value;/);
   assert.match(editorSource, /editDate\.value = defaultDate;[\s\S]*editCategory\.value = defaultCategory\.parent;[\s\S]*populateEditorSubCategory\(defaultCategory\.parent\);[\s\S]*editSubcategory\.value = defaultCategory\.sub;/);
 });

@@ -37,6 +37,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 ## Recent Updates
 
+- 待办页面新增独立“倒数日”模式，支持一次性或每年重复日期、倒数/已过天数、搜索、统计、备份与恢复。
 - 待办入口文案统一为“待办事项”；待办页左侧侧栏现在只显示待办日历和邮件提醒设置。
 - 待办页统计改为标题行右侧的小卡片，分类添加改为 SVG 图标按钮打开弹窗。
 - 待办侧栏邮件提醒改为上下两行输入，收件邮箱和提醒时间不再挤在同一行。
@@ -75,6 +76,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 ### 待办
 
 - 侧边栏下拉选择 `待办事项` 后，右侧主体会切换到完整待办工作区。
+- 页面可在“待办 / 倒数日”之间切换；倒数日独立保存标题、目标日期、每年重复和备注，并按香港业务日期显示剩余或已过天数。
 - 主界面包含待办、今日、逾期、已完成统计。
 - 支持按待办分类和已完成状态筛选，以及按标题和备注搜索；新增分类通过筛选栏的加号图标打开弹窗完成。
 - 自定义分类可在分类标签内部点击垃圾桶图标删除，默认“待办”和“已完成”不显示删除入口。
@@ -183,6 +185,7 @@ AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不�
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `PORT` | HTTP 服务端口 | `3000` |
+| `HOST` | 监听地址；仅在显式配置且启用 `AUTH_TOKEN` 时允许对外监听 | `127.0.0.1` |
 | `DATA_DIR` | JSON 数据、设置、历史和上传图片保存目录 | `./data` |
 | `AUTH_TOKEN` | 可选全站访问 token；留空则不启用 | disabled |
 | `DIARY_PASSWORD_HASH` | 可选日记分类密码 SHA-256 哈希；留空则不启用 | disabled |
@@ -264,7 +267,7 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 
 ## Mobile Access
 
-电脑和手机连接到同一局域网后，手机访问：
+电脑和手机连接到同一局域网后，先设置随机长字符串 `AUTH_TOKEN`，并将 `HOST` 设置为 `0.0.0.0`，然后手机访问：
 
 ```text
 http://<电脑局域网 IP>:<PORT>

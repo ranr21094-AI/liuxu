@@ -6,6 +6,7 @@ import { renderCalendar } from './calendar.js';
 import { handleInternalLogLinkClick, openEditor, openEditorFromNavigation } from './editor.js';
 import { populateFilterSubCategory } from './categories.js';
 import { formatShortDateLabel, getBusinessDateParts } from './businessDate.js';
+import { enableMarkdownImagePreview } from './imagePreview.js';
 
 let lastData = null;
 const CARD_WIDTH_KEY = 'logCardWidth';
@@ -27,6 +28,8 @@ let cardNavPageInfo = null;
 let previewTouchState = null;
 let suppressCardOpenUntil = 0;
 const ARCHIVE_FILTER_IDS = ['filterCategory', 'filterSubcategory', 'filterMonth', 'filterPage'];
+
+enableMarkdownImagePreview(logList);
 
 function archiveFilterControls() {
   return ARCHIVE_FILTER_IDS
@@ -415,6 +418,10 @@ logList.addEventListener('click', async (e) => {
     return;
   }
   if (e.target.closest('.markdown-body a[href]')) {
+    e.stopPropagation();
+    return;
+  }
+  if (e.target.closest('.log-card-preview .markdown-body img')) {
     e.stopPropagation();
     return;
   }

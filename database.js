@@ -12,6 +12,7 @@ const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
 const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
 const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
 const PHOTO_WALL_FILE = path.join(DATA_DIR, 'photo-wall.json');
+const COUNTDOWNS_FILE = path.join(DATA_DIR, 'countdowns.json');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   model: 'deepseek-v4-flash',
@@ -39,6 +40,7 @@ const DEFAULT_AI_SETTINGS = {
 const cache = {
   logs: null,
   todos: null,
+  countdowns: null,
   todoCategories: null,
   categories: null,
   privateUploads: null,
@@ -49,8 +51,72 @@ const cache = {
   photoWall: null,
   maxLogId: 0,
   maxTodoId: 0,
+  maxCountdownId: 0,
   maxPhotoWallId: 0,
 };
+
+function maxPositiveId(items) {
+  return items.reduce((max, item) => {
+    const id = Number(item?.id);
+    return Number.isSafeInteger(id) && id > max ? id : max;
+  }, 0);
+}
+
+function atomicWriteJson(file, value) {
+  ensureDataDir();
+  const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'wx', 0o600);
+    fs.writeFileSync(fd, JSON.stringify(value, null, 2), 'utf-8');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+    }
+    try { fs.unlinkSync(tmp); } catch {}
+    throw err;
+  }
+}
+
+function failCorruptData(label, file, err) {
+  let backup = '';
+  try {
+    if (fs.existsSync(file)) {
+      backup = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
+      fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+    }
+  } catch (backupError) {
+    console.error(`Failed to preserve corrupt ${label}:`, backupError.message);
+  }
+  const suffix = backup ? `; preserved at ${backup}` : '';
+  const wrapped = new Error(`Failed to read ${label}: ${err.message}${suffix}`);
+  wrapped.cause = err;
+  throw wrapped;
+}
+
+function cloneLogs(logs) {
+  return logs.map(log => ({ ...log }));
+}
+
+function cloneTodos(todos) {
+  return todos.map(todo => ({ ...todo }));
+}
+
+function cloneCountdowns(countdowns) {
+  return countdowns.map(countdown => ({ ...countdown }));
+}
+
+function cloneCategories(categories) {
+  return categories.map(category => ({ ...category, sub: [...(category.sub || [])] }));
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 const DEFAULT_TODO_REMINDER_SETTINGS = {
   enabled: false,
@@ -101,14 +167,11 @@ function normalizeUploadFilename(filename) {
 function extractLocalUploadFilenames(content) {
   if (typeof content !== 'string' || !content) return [];
   const names = new Set();
-  const markdownImage = /!\[[^\]]*\]\(\s*<?\/uploads\/([^)\s>"'?#]+)(?:[?#][^)\s>"']*)?>?(?:\s+["'][^)]*["'])?\s*\)/gi;
-  const htmlImage = /<img\b[^>]*\bsrc\s*=\s*["']\/uploads\/([^"'?#\s>]+)(?:[?#][^"']*)?["'][^>]*>/gi;
-  for (const pattern of [markdownImage, htmlImage]) {
-    let match;
-    while ((match = pattern.exec(content)) !== null) {
-      const filename = normalizeUploadFilename(match[1]);
-      if (filename) names.add(filename);
-    }
+  const pattern = /\/uploads\/([A-Za-z0-9._-]+)/gi;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const filename = normalizeUploadFilename(match[1]);
+    if (filename) names.add(filename);
   }
   return [...names];
 }
@@ -223,55 +286,48 @@ function normalizeTodoReminderState(data) {
 }
 
 function readLogs() {
-  if (cache.logs !== null) return cache.logs;
+  if (cache.logs !== null) return cloneLogs(cache.logs);
   ensureDataDir();
   try {
     const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    cache.logs = JSON.parse(raw);
-    cache.maxLogId = cache.logs.length > 0 ? Math.max(...cache.logs.map(l => l.id)) : 0;
-    return cache.logs;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('logs.json must contain an array');
+    cache.logs = parsed;
+    cache.maxLogId = maxPositiveId(cache.logs);
+    return cloneLogs(cache.logs);
   } catch (err) {
-    console.error('Failed to parse logs.json:', err.message);
-    cache.logs = [];
-    cache.maxLogId = 0;
-    return [];
+    return failCorruptData('logs.json', DATA_FILE, err);
   }
 }
 
 function writeLogs(logs) {
-  ensureDataDir();
-  cache.logs = logs;
-  const tmp = DATA_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(logs, null, 2), 'utf-8');
-  fs.renameSync(tmp, DATA_FILE);
+  const next = logs.map(log => ({ ...log }));
+  atomicWriteJson(DATA_FILE, next);
+  cache.logs = next;
+  cache.maxLogId = maxPositiveId(next);
 }
 
 function readPrivateUploads() {
-  if (cache.privateUploads !== null) return cache.privateUploads;
+  if (cache.privateUploads !== null) return [...cache.privateUploads];
   ensureDataDir();
   if (!fs.existsSync(PRIVATE_UPLOADS_FILE)) {
     cache.privateUploads = [];
-    return cache.privateUploads;
+    return [];
   }
   try {
     const saved = JSON.parse(fs.readFileSync(PRIVATE_UPLOADS_FILE, 'utf-8'));
-    cache.privateUploads = Array.isArray(saved)
-      ? [...new Set(saved.filter(isSafeUploadFilename))]
-      : [];
-    return cache.privateUploads;
+    if (!Array.isArray(saved)) throw new Error('private-uploads.json must contain an array');
+    cache.privateUploads = [...new Set(saved.filter(isSafeUploadFilename))];
+    return [...cache.privateUploads];
   } catch (err) {
-    console.error('Failed to parse private-uploads.json:', err.message);
-    cache.privateUploads = [];
-    return cache.privateUploads;
+    return failCorruptData('private-uploads.json', PRIVATE_UPLOADS_FILE, err);
   }
 }
 
 function writePrivateUploads(filenames) {
-  ensureDataDir();
-  cache.privateUploads = [...new Set(filenames.filter(isSafeUploadFilename))];
-  const tmp = PRIVATE_UPLOADS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache.privateUploads, null, 2), 'utf-8');
-  fs.renameSync(tmp, PRIVATE_UPLOADS_FILE);
+  const next = [...new Set(filenames.filter(isSafeUploadFilename))];
+  atomicWriteJson(PRIVATE_UPLOADS_FILE, next);
+  cache.privateUploads = next;
 }
 
 function emptyPhotoWall() {
@@ -350,37 +406,31 @@ function normalizePhotoWallData(value, { requireIds = true } = {}) {
 }
 
 function readPhotoWall() {
-  if (cache.photoWall !== null) return cache.photoWall;
+  if (cache.photoWall !== null) return { items: cache.photoWall.items.map(item => ({ ...item })) };
   ensureDataDir();
   if (!fs.existsSync(PHOTO_WALL_FILE)) {
     cache.photoWall = emptyPhotoWall();
     cache.maxPhotoWallId = 0;
-    return cache.photoWall;
+    return emptyPhotoWall();
   }
   try {
     const saved = JSON.parse(fs.readFileSync(PHOTO_WALL_FILE, 'utf-8'));
     const normalized = normalizePhotoWallData(saved);
     if (normalized.error) throw new Error(normalized.error);
     cache.photoWall = normalized;
-    cache.maxPhotoWallId = normalized.items.length ? Math.max(...normalized.items.map(item => item.id)) : 0;
-    return cache.photoWall;
+    cache.maxPhotoWallId = maxPositiveId(normalized.items);
+    return { items: normalized.items.map(item => ({ ...item })) };
   } catch (err) {
-    console.error('Failed to parse photo-wall.json:', err.message);
-    cache.photoWall = emptyPhotoWall();
-    cache.maxPhotoWallId = 0;
-    return cache.photoWall;
+    return failCorruptData('photo-wall.json', PHOTO_WALL_FILE, err);
   }
 }
 
 function writePhotoWall(photoWall) {
-  ensureDataDir();
   const normalized = normalizePhotoWallData(photoWall);
   if (normalized.error) return normalized;
-  cache.photoWall = normalized;
-  cache.maxPhotoWallId = normalized.items.length ? Math.max(...normalized.items.map(item => item.id)) : 0;
-  const tmp = PHOTO_WALL_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(normalized, null, 2), 'utf-8');
-  fs.renameSync(tmp, PHOTO_WALL_FILE);
+  atomicWriteJson(PHOTO_WALL_FILE, normalized);
+  cache.photoWall = { items: normalized.items.map(item => ({ ...item })) };
+  cache.maxPhotoWallId = maxPositiveId(normalized.items);
   return normalized;
 }
 
@@ -535,15 +585,16 @@ function normalizeAiConversation(item) {
     updatedAt,
     scope,
     logKey,
+    diarySensitive: item.diarySensitive === true,
   };
 }
 
 function readAiChats() {
-  if (cache.aiChats !== null) return cache.aiChats;
+  if (cache.aiChats !== null) return cloneJson(cache.aiChats);
   ensureDataDir();
   if (!fs.existsSync(AI_CHATS_FILE)) {
     cache.aiChats = { conversations: [], activeConversationId: '' };
-    return cache.aiChats;
+    return cloneJson(cache.aiChats);
   }
   try {
     const saved = JSON.parse(fs.readFileSync(AI_CHATS_FILE, 'utf-8'));
@@ -554,11 +605,9 @@ function readAiChats() {
       ? saved.activeConversationId
       : (conversations[0]?.id || '');
     cache.aiChats = { conversations, activeConversationId };
-    return cache.aiChats;
+    return cloneJson(cache.aiChats);
   } catch (err) {
-    console.error('Failed to parse ai-chats.json:', err.message);
-    cache.aiChats = { conversations: [], activeConversationId: '' };
-    return cache.aiChats;
+    return failCorruptData('ai-chats.json', AI_CHATS_FILE, err);
   }
 }
 
@@ -570,11 +619,10 @@ function writeAiChats(data) {
   const activeConversationId = conversations.some(item => item.id === data?.activeConversationId)
     ? data.activeConversationId
     : (conversations[0]?.id || '');
-  cache.aiChats = { conversations, activeConversationId };
-  const tmp = AI_CHATS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache.aiChats, null, 2), 'utf-8');
-  fs.renameSync(tmp, AI_CHATS_FILE);
-  return cache.aiChats;
+  const next = { conversations, activeConversationId };
+  atomicWriteJson(AI_CHATS_FILE, next);
+  cache.aiChats = cloneJson(next);
+  return cloneJson(next);
 }
 
 function normalizeAiSettings(data) {
@@ -645,46 +693,41 @@ function normalizeAiSettings(data) {
 }
 
 function readAiSettings() {
-  if (cache.aiSettings !== null) return cache.aiSettings;
+  if (cache.aiSettings !== null) return cloneJson(cache.aiSettings);
   ensureDataDir();
   if (!fs.existsSync(AI_SETTINGS_FILE)) {
     cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
-    return cache.aiSettings;
+    return cloneJson(cache.aiSettings);
   }
   try {
     cache.aiSettings = normalizeAiSettings(JSON.parse(fs.readFileSync(AI_SETTINGS_FILE, 'utf-8')));
-    return cache.aiSettings;
+    return cloneJson(cache.aiSettings);
   } catch (err) {
-    console.error('Failed to parse ai-settings.json:', err.message);
-    cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
-    return cache.aiSettings;
+    return failCorruptData('ai-settings.json', AI_SETTINGS_FILE, err);
   }
 }
 
 function writeAiSettings(data) {
-  ensureDataDir();
-  cache.aiSettings = normalizeAiSettings(data);
-  const tmp = AI_SETTINGS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache.aiSettings, null, 2), 'utf-8');
-  fs.renameSync(tmp, AI_SETTINGS_FILE);
-  return cache.aiSettings;
+  const next = normalizeAiSettings(data);
+  atomicWriteJson(AI_SETTINGS_FILE, next);
+  cache.aiSettings = cloneJson(next);
+  return cloneJson(next);
 }
 
 function readTodoReminderSettings() {
-  if (cache.todoReminderSettings !== null) return cache.todoReminderSettings;
+  if (cache.todoReminderSettings !== null) return { ...cache.todoReminderSettings };
   ensureDataDir();
   if (!fs.existsSync(TODO_REMINDER_SETTINGS_FILE)) {
     cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
-    return cache.todoReminderSettings;
+    return { ...cache.todoReminderSettings };
   }
   try {
     const normalized = normalizeTodoReminderSettings(JSON.parse(fs.readFileSync(TODO_REMINDER_SETTINGS_FILE, 'utf-8')));
-    cache.todoReminderSettings = normalized.error ? { ...DEFAULT_TODO_REMINDER_SETTINGS } : normalized;
-    return cache.todoReminderSettings;
+    if (normalized.error) throw new Error(normalized.error);
+    cache.todoReminderSettings = normalized;
+    return { ...cache.todoReminderSettings };
   } catch (err) {
-    console.error('Failed to parse todo-reminder-settings.json:', err.message);
-    cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
-    return cache.todoReminderSettings;
+    return failCorruptData('todo-reminder-settings.json', TODO_REMINDER_SETTINGS_FILE, err);
   }
 }
 
@@ -692,37 +735,31 @@ function writeTodoReminderSettings(data, options = {}) {
   ensureDataDir();
   const normalized = normalizeTodoReminderSettings(data, options);
   if (normalized.error) return normalized;
-  cache.todoReminderSettings = normalized;
-  const tmp = TODO_REMINDER_SETTINGS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache.todoReminderSettings, null, 2), 'utf-8');
-  fs.renameSync(tmp, TODO_REMINDER_SETTINGS_FILE);
-  return cache.todoReminderSettings;
+  atomicWriteJson(TODO_REMINDER_SETTINGS_FILE, normalized);
+  cache.todoReminderSettings = { ...normalized };
+  return { ...normalized };
 }
 
 function readTodoReminderState() {
-  if (cache.todoReminderState !== null) return cache.todoReminderState;
+  if (cache.todoReminderState !== null) return cloneJson(cache.todoReminderState);
   ensureDataDir();
   if (!fs.existsSync(TODO_REMINDER_STATE_FILE)) {
     cache.todoReminderState = { ...DEFAULT_TODO_REMINDER_STATE, snapshot: [] };
-    return cache.todoReminderState;
+    return cloneJson(cache.todoReminderState);
   }
   try {
     cache.todoReminderState = normalizeTodoReminderState(JSON.parse(fs.readFileSync(TODO_REMINDER_STATE_FILE, 'utf-8')));
-    return cache.todoReminderState;
+    return cloneJson(cache.todoReminderState);
   } catch (err) {
-    console.error('Failed to parse todo-reminder-state.json:', err.message);
-    cache.todoReminderState = { ...DEFAULT_TODO_REMINDER_STATE, snapshot: [] };
-    return cache.todoReminderState;
+    return failCorruptData('todo-reminder-state.json', TODO_REMINDER_STATE_FILE, err);
   }
 }
 
 function writeTodoReminderState(data) {
-  ensureDataDir();
-  cache.todoReminderState = normalizeTodoReminderState(data);
-  const tmp = TODO_REMINDER_STATE_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache.todoReminderState, null, 2), 'utf-8');
-  fs.renameSync(tmp, TODO_REMINDER_STATE_FILE);
-  return cache.todoReminderState;
+  const next = normalizeTodoReminderState(data);
+  atomicWriteJson(TODO_REMINDER_STATE_FILE, next);
+  cache.todoReminderState = cloneJson(next);
+  return cloneJson(next);
 }
 
 function markPrivateUpload(filename) {
@@ -812,8 +849,8 @@ function getAll(query = {}, diaryUnlocked = true) {
   });
 
   // Pagination
-  const page = parseInt(query.page) || 1;
-  const limit = parseInt(query.limit) || 50;
+  const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
+  const limit = Math.min(500, Math.max(1, Number.parseInt(query.limit, 10) || 50));
   const total = logs.length;
   const totalPages = Math.ceil(total / limit);
   const start = (page - 1) * limit;
@@ -943,48 +980,47 @@ function normalizeTodoCategoryName(value, fallback = DEFAULT_TODO_CATEGORY) {
 }
 
 function readTodos() {
-  if (cache.todos !== null) return cache.todos;
+  if (cache.todos !== null) return cloneTodos(cache.todos);
   ensureDataDir();
   if (!fs.existsSync(TODOS_FILE)) {
     fs.writeFileSync(TODOS_FILE, '[]', 'utf-8');
   }
   try {
-    cache.todos = JSON.parse(fs.readFileSync(TODOS_FILE, 'utf-8'));
-    cache.maxTodoId = cache.todos.length > 0 ? Math.max(...cache.todos.map(t => t.id)) : 0;
-    return cache.todos;
+    const parsed = JSON.parse(fs.readFileSync(TODOS_FILE, 'utf-8'));
+    if (!Array.isArray(parsed)) throw new Error('todos.json must contain an array');
+    cache.todos = parsed;
+    cache.maxTodoId = maxPositiveId(cache.todos);
+    return cloneTodos(cache.todos);
   } catch (err) {
-    console.error('Failed to parse todos.json:', err.message);
-    cache.todos = [];
-    cache.maxTodoId = 0;
-    return [];
+    return failCorruptData('todos.json', TODOS_FILE, err);
   }
 }
 
 function writeTodos(todos) {
-  ensureDataDir();
-  cache.todos = todos;
-  const tmp = TODOS_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(todos, null, 2), 'utf-8');
-  fs.renameSync(tmp, TODOS_FILE);
+  const next = cloneTodos(todos);
+  atomicWriteJson(TODOS_FILE, next);
+  cache.todos = next;
+  cache.maxTodoId = maxPositiveId(next);
 }
 
 function readTodoCategories() {
-  if (cache.todoCategories !== null) return cache.todoCategories;
+  if (cache.todoCategories !== null) return [...cache.todoCategories];
   ensureDataDir();
   let categories = [];
   if (fs.existsSync(TODO_CATEGORIES_FILE)) {
     try {
       const saved = JSON.parse(fs.readFileSync(TODO_CATEGORIES_FILE, 'utf-8'));
-      categories = Array.isArray(saved) ? saved : [];
+      if (!Array.isArray(saved)) throw new Error('todo-categories.json must contain an array');
+      categories = saved;
     } catch (err) {
-      console.error('Failed to parse todo-categories.json:', err.message);
+      return failCorruptData('todo-categories.json', TODO_CATEGORIES_FILE, err);
     }
   }
   const names = new Set([DEFAULT_TODO_CATEGORY]);
   categories.forEach(name => names.add(normalizeTodoCategoryName(name)));
   readTodos().forEach(todo => names.add(normalizeTodoCategoryName(todo.category)));
   cache.todoCategories = [...names];
-  return cache.todoCategories;
+  return [...cache.todoCategories];
 }
 
 function writeTodoCategories(categories) {
@@ -998,10 +1034,8 @@ function writeTodoCategories(categories) {
       names.push(normalized);
     }
   });
+  atomicWriteJson(TODO_CATEGORIES_FILE, names);
   cache.todoCategories = names;
-  const tmp = TODO_CATEGORIES_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(names, null, 2), 'utf-8');
-  fs.renameSync(tmp, TODO_CATEGORIES_FILE);
 }
 
 function getTodoCategories() {
@@ -1215,6 +1249,77 @@ function reorderTodos(orderedIds) {
   writeTodos(todos);
 }
 
+// Countdown CRUD
+
+function readCountdowns() {
+  if (cache.countdowns !== null) return cloneCountdowns(cache.countdowns);
+  ensureDataDir();
+  if (!fs.existsSync(COUNTDOWNS_FILE)) {
+    atomicWriteJson(COUNTDOWNS_FILE, []);
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(COUNTDOWNS_FILE, 'utf-8'));
+    if (!Array.isArray(parsed)) throw new Error('countdowns.json must contain an array');
+    cache.countdowns = parsed;
+    cache.maxCountdownId = maxPositiveId(parsed);
+    return cloneCountdowns(cache.countdowns);
+  } catch (err) {
+    return failCorruptData('countdowns.json', COUNTDOWNS_FILE, err);
+  }
+}
+
+function writeCountdowns(countdowns) {
+  const next = cloneCountdowns(countdowns);
+  atomicWriteJson(COUNTDOWNS_FILE, next);
+  cache.countdowns = next;
+  cache.maxCountdownId = maxPositiveId(next);
+}
+
+function getAllCountdowns() {
+  return readCountdowns().sort((a, b) => b.id - a.id);
+}
+
+function createCountdown(data) {
+  const countdowns = readCountdowns();
+  const now = nowTimestamp();
+  cache.maxCountdownId += 1;
+  const entry = {
+    id: cache.maxCountdownId,
+    title: data.title,
+    target_date: data.target_date,
+    repeat_yearly: data.repeat_yearly === true,
+    notes: data.notes || '',
+    created_at: now,
+    updated_at: now,
+  };
+  countdowns.push(entry);
+  writeCountdowns(countdowns);
+  return { ...entry };
+}
+
+function updateCountdown(id, data) {
+  const countdowns = readCountdowns();
+  const index = countdowns.findIndex(item => item.id === id);
+  if (index === -1) return null;
+  const entry = countdowns[index];
+  if (data.title !== undefined) entry.title = data.title;
+  if (data.target_date !== undefined) entry.target_date = data.target_date;
+  if (data.repeat_yearly !== undefined) entry.repeat_yearly = data.repeat_yearly;
+  if (data.notes !== undefined) entry.notes = data.notes;
+  entry.updated_at = nowTimestamp();
+  writeCountdowns(countdowns);
+  return { ...entry };
+}
+
+function removeCountdown(id) {
+  const countdowns = readCountdowns();
+  const index = countdowns.findIndex(item => item.id === id);
+  if (index === -1) return false;
+  countdowns.splice(index, 1);
+  writeCountdowns(countdowns);
+  return true;
+}
+
 const DEFAULT_CATEGORIES = [
   { name: '会议', sub: [], calendar_day_visible: true },
   { name: '开发', sub: [], calendar_day_visible: true },
@@ -1240,36 +1345,32 @@ function migrateToTree(cats) {
 }
 
 function readCategories() {
-  if (cache.categories !== null) return cache.categories;
+  if (cache.categories !== null) return cloneCategories(cache.categories);
   ensureDataDir();
   if (!fs.existsSync(CATEGORIES_FILE)) {
     fs.writeFileSync(CATEGORIES_FILE, JSON.stringify(DEFAULT_CATEGORIES, null, 2), 'utf-8');
-    cache.categories = DEFAULT_CATEGORIES;
-    return cache.categories;
+    cache.categories = cloneCategories(DEFAULT_CATEGORIES);
+    return cloneCategories(cache.categories);
   }
   try {
     let cats = JSON.parse(fs.readFileSync(CATEGORIES_FILE, 'utf-8'));
-    if (!Array.isArray(cats)) cats = [];
+    if (!Array.isArray(cats)) throw new Error('categories.json must contain an array');
     const normalizedCats = migrateToTree(cats);
     if (JSON.stringify(normalizedCats) !== JSON.stringify(cats)) {
       cats = normalizedCats;
       writeCategories(cats);
     }
     cache.categories = cats;
-    return cats;
+    return cloneCategories(cats);
   } catch (err) {
-    console.error('Failed to parse categories.json:', err.message);
-    cache.categories = [...DEFAULT_CATEGORIES];
-    return cache.categories;
+    return failCorruptData('categories.json', CATEGORIES_FILE, err);
   }
 }
 
 function writeCategories(cats) {
-  ensureDataDir();
-  cache.categories = cats;
-  const tmp = CATEGORIES_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cats, null, 2), 'utf-8');
-  fs.renameSync(tmp, CATEGORIES_FILE);
+  const next = cloneCategories(cats);
+  atomicWriteJson(CATEGORIES_FILE, next);
+  cache.categories = next;
 }
 
 function getCategoryLogCounts(diaryUnlocked = true) {
@@ -1297,9 +1398,11 @@ function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
     name: category.name,
     sub: !diaryUnlocked && category.name === DIARY_CATEGORY ? [] : [...(category.sub || [])],
     log_count: counts.get(category.name) || 0,
-    sub_log_counts: Object.fromEntries(
-      (category.sub || []).map(sub => [sub, subCounts.get(`${category.name}/${sub}`) || 0])
-    ),
+    sub_log_counts: !diaryUnlocked && category.name === DIARY_CATEGORY
+      ? {}
+      : Object.fromEntries(
+        (category.sub || []).map(sub => [sub, subCounts.get(`${category.name}/${sub}`) || 0])
+      ),
     calendar_day_visible: category.calendar_day_visible !== false,
   }));
   if (includeDiaryRoot && !categories.some(category => category.name === DIARY_CATEGORY)) {
@@ -1485,6 +1588,7 @@ function backup() {
   return {
     logs: readLogs(),
     todos: getAllTodos(),
+    countdowns: getAllCountdowns(),
     todoCategories: getTodoCategories(),
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
@@ -1659,6 +1763,45 @@ function normalizeTodoCategoriesForRestore(todoCategories, todos) {
   return { todoCategories: [...names] };
 }
 
+function normalizeCountdownsForRestore(countdowns) {
+  if (countdowns === undefined) return { countdowns: [] };
+  if (!Array.isArray(countdowns)) return { error: 'Invalid countdowns data' };
+  const ids = new Set();
+  const now = nowTimestamp();
+  const normalized = [];
+
+  for (const item of countdowns) {
+    if (!isPlainObject(item)) return { error: 'Invalid countdown entry' };
+    const id = toPositiveInteger(item.id);
+    if (!id) return { error: 'Countdown id must be a positive integer' };
+    if (ids.has(id)) return { error: `Duplicate countdown id: ${id}` };
+    ids.add(id);
+    if (typeof item.title !== 'string' || !item.title.trim() || item.title.length > 200) {
+      return { error: `Invalid title for countdown id ${id}` };
+    }
+    if (typeof item.target_date !== 'string' || !isValidDate(item.target_date)) {
+      return { error: `Invalid target_date for countdown id ${id}` };
+    }
+    if (item.repeat_yearly !== undefined && typeof item.repeat_yearly !== 'boolean') {
+      return { error: `Invalid repeat_yearly for countdown id ${id}` };
+    }
+    const notes = item.notes === undefined ? '' : item.notes;
+    if (typeof notes !== 'string' || notes.length > 1000) {
+      return { error: `Invalid notes for countdown id ${id}` };
+    }
+    normalized.push({
+      id,
+      title: item.title.trim(),
+      target_date: item.target_date,
+      repeat_yearly: item.repeat_yearly === true,
+      notes,
+      created_at: normalizeString(item.created_at, now),
+      updated_at: normalizeString(item.updated_at, normalizeString(item.created_at, now)),
+    });
+  }
+  return { countdowns: normalized };
+}
+
 function normalizePhotoWallForRestore(photoWall) {
   const normalized = normalizePhotoWallData(photoWall);
   if (normalized.error) return normalized;
@@ -1677,6 +1820,9 @@ function normalizeRestoreData(data) {
   const todos = normalizeTodosForRestore(data.todos);
   if (todos.error) return todos;
 
+  const countdowns = normalizeCountdownsForRestore(data.countdowns);
+  if (countdowns.error) return countdowns;
+
   const todoCategories = normalizeTodoCategoriesForRestore(data.todoCategories, todos.todos);
   if (todoCategories.error) return todoCategories;
 
@@ -1692,11 +1838,50 @@ function normalizeRestoreData(data) {
   return {
     logs: logs.logs,
     todos: todos.todos,
+    countdowns: countdowns.countdowns,
     todoCategories: todoCategories.todoCategories,
     categories: categories.categories,
     privateUploads: privateUploads.privateUploads,
     photoWall: photoWall.photoWall,
   };
+}
+
+function capturePersistentState() {
+  return {
+    logs: readLogs(),
+    todos: readTodos(),
+    countdowns: readCountdowns(),
+    todoCategories: readTodoCategories(),
+    categories: readCategories(),
+    privateUploads: readPrivateUploads(),
+    photoWall: readPhotoWall(),
+  };
+}
+
+function writePersistentState(next) {
+  const previous = capturePersistentState();
+  try {
+    writeLogs(next.logs);
+    writeTodos(next.todos);
+    writeCountdowns(next.countdowns);
+    writeTodoCategories(next.todoCategories);
+    writeCategories(next.categories);
+    writePrivateUploads(next.privateUploads);
+    writePhotoWall(next.photoWall);
+  } catch (err) {
+    try {
+      writeLogs(previous.logs);
+      writeTodos(previous.todos);
+      writeCountdowns(previous.countdowns);
+      writeTodoCategories(previous.todoCategories);
+      writeCategories(previous.categories);
+      writePrivateUploads(previous.privateUploads);
+      writePhotoWall(previous.photoWall);
+    } catch (rollbackError) {
+      err.message += `; rollback failed: ${rollbackError.message}`;
+    }
+    throw err;
+  }
 }
 
 function restore(data, mode = 'replace') {
@@ -1708,7 +1893,10 @@ function restore(data, mode = 'replace') {
   const normalized = normalizeRestoreData(data);
   if (normalized.error) return normalized;
   data = normalized;
-  readLogs().filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
+  const previous = capturePersistentState();
+  const historicalPrivateUploads = previous.logs
+    .filter(log => isDiaryCategory(log.category))
+    .flatMap(log => extractLocalUploadFilenames(log.content));
 
   if (mode === 'merge') {
     // Merge: upsert by ID, keeping newer data when conflicts
@@ -1732,6 +1920,15 @@ function restore(data, mode = 'replace') {
     });
     const mergedTodos = [...todoMap.values()].sort((a, b) => b.id - a.id);
 
+    const countdownMap = new Map(readCountdowns().map(item => [item.id, item]));
+    data.countdowns.forEach(item => {
+      const existing = countdownMap.get(item.id);
+      if (!existing || new Date(item.updated_at || 0) > new Date(existing.updated_at || 0)) {
+        countdownMap.set(item.id, item);
+      }
+    });
+    const mergedCountdowns = [...countdownMap.values()].sort((a, b) => b.id - a.id);
+
     const existingCats = readCategories();
     // Normalize restore data to tree format
     const restoreCats = (data.categories.length > 0 && typeof data.categories[0] === 'string')
@@ -1749,26 +1946,37 @@ function restore(data, mode = 'replace') {
     });
     const mergedPhotoWall = { items: [...photoWallMap.values()].sort((a, b) => a.z - b.z || a.id - b.id) };
 
-    writeLogs(mergedLogs);
-    writeTodos(mergedTodos);
-    writeTodoCategories(mergedTodoCategories);
-    writeCategories(mergedCats);
-    writePrivateUploads(mergedPrivateUploads);
-    writePhotoWall(mergedPhotoWall);
-    mergedLogs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
-    return { success: true, logs: mergedLogs.length, todos: mergedTodos.length, categories: mergedCats.length };
+    const diaryUploads = mergedLogs
+      .filter(log => isDiaryCategory(log.category))
+      .flatMap(log => extractLocalUploadFilenames(log.content));
+    writePersistentState({
+      logs: mergedLogs,
+      todos: mergedTodos,
+      countdowns: mergedCountdowns,
+      todoCategories: mergedTodoCategories,
+      categories: mergedCats,
+      privateUploads: [...new Set([...mergedPrivateUploads, ...historicalPrivateUploads, ...diaryUploads])],
+      photoWall: mergedPhotoWall,
+    });
+    return { success: true, logs: mergedLogs.length, todos: mergedTodos.length, countdowns: mergedCountdowns.length, categories: mergedCats.length };
   }
 
-  writeLogs(data.logs);
-  writeTodos(data.todos);
-  writeTodoCategories(data.todoCategories);
-  writeCategories((data.categories.length > 0 && typeof data.categories[0] === 'string')
+  const categories = (data.categories.length > 0 && typeof data.categories[0] === 'string')
     ? migrateToTree(data.categories)
-    : data.categories);
-  writePrivateUploads(data.privateUploads);
-  writePhotoWall(data.photoWall);
-  data.logs.filter(l => isDiaryCategory(l.category)).forEach(l => markPrivateUploadsFromContent(l.content));
-  return { success: true, logs: data.logs.length, todos: data.todos.length, categories: data.categories.length };
+    : data.categories;
+  const diaryUploads = data.logs
+    .filter(log => isDiaryCategory(log.category))
+    .flatMap(log => extractLocalUploadFilenames(log.content));
+  writePersistentState({
+    logs: data.logs,
+    todos: data.todos,
+    countdowns: data.countdowns,
+    todoCategories: data.todoCategories,
+    categories,
+    privateUploads: [...new Set([...data.privateUploads, ...historicalPrivateUploads, ...diaryUploads])],
+    photoWall: data.photoWall,
+  });
+  return { success: true, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };
 }
 
 function reorderCategories(orderedCats) {
@@ -1846,6 +2054,10 @@ module.exports = {
   removeTodo,
   removeCompletedTodos,
   reorderTodos,
+  getAllCountdowns,
+  createCountdown,
+  updateCountdown,
+  removeCountdown,
   getTodoCategories,
   addTodoCategory,
   deleteTodoCategory,

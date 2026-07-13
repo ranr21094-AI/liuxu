@@ -31,6 +31,7 @@ let historySearchQuery = '';
 let historySearchScope = 'title';
 let settings = {
   apiKey: '',
+  apiKeyConfigured: false,
   model: DEFAULT_MODEL,
   reasoningEffort: DEFAULT_REASONING,
   stream: false,
@@ -38,10 +39,13 @@ let settings = {
   logContextEnabled: false,
   diaryContextEnabled: false,
   tavilyApiKey: '',
+  tavilyApiKeyConfigured: false,
   perplexityApiKey: '',
+  perplexityApiKeyConfigured: false,
   webSearchEnabled: false,
   webSearchDepth: 'basic',
   seedreamApiKey: '',
+  seedreamApiKeyConfigured: false,
   seedreamModel: DEFAULT_SEEDREAM_MODEL,
   seedreamSize: DEFAULT_SEEDREAM_SIZE,
   seedreamWatermark: true,
@@ -51,6 +55,15 @@ let settings = {
     perplexity: { enabled: true },
   },
 };
+
+export function clearAiStateForDiaryLock() {
+  conversations = [];
+  allConversations = [];
+  activeConversationId = '';
+  sending = false;
+  const messages = $('#aiChatMessages');
+  if (messages) messages.textContent = '';
+}
 
 function aiSettingsSelectControls() {
   return AI_SETTINGS_SELECT_IDS
@@ -183,6 +196,7 @@ function createConversation(title = '新对话') {
     title,
     scope: 'global',
     logKey: '',
+    diarySensitive: false,
     messages: [],
     updatedAt: Date.now(),
   };
@@ -230,6 +244,7 @@ function normalizeSettings(value) {
   const perplexity = skills.perplexity && typeof skills.perplexity === 'object' ? skills.perplexity : {};
   return {
     apiKey: typeof value?.apiKey === 'string' ? value.apiKey : '',
+    apiKeyConfigured: value?.apiKeyConfigured === true || Boolean(value?.apiKey),
     model: ['deepseek-v4-flash', 'deepseek-v4-pro'].includes(value?.model) ? value.model : DEFAULT_MODEL,
     reasoningEffort: ['high', 'max'].includes(value?.reasoningEffort) ? value.reasoningEffort : DEFAULT_REASONING,
     stream: typeof value?.stream === 'boolean' ? value.stream : false,
@@ -237,10 +252,13 @@ function normalizeSettings(value) {
     logContextEnabled: typeof value?.logContextEnabled === 'boolean' ? value.logContextEnabled : false,
     diaryContextEnabled: typeof value?.diaryContextEnabled === 'boolean' ? value.diaryContextEnabled : false,
     tavilyApiKey: typeof value?.tavilyApiKey === 'string' ? value.tavilyApiKey : '',
+    tavilyApiKeyConfigured: value?.tavilyApiKeyConfigured === true || Boolean(value?.tavilyApiKey),
     perplexityApiKey: typeof value?.perplexityApiKey === 'string' ? value.perplexityApiKey : '',
+    perplexityApiKeyConfigured: value?.perplexityApiKeyConfigured === true || Boolean(value?.perplexityApiKey),
     webSearchEnabled: typeof value?.webSearchEnabled === 'boolean' ? value.webSearchEnabled : false,
     webSearchDepth: ['basic', 'advanced'].includes(value?.webSearchDepth) ? value.webSearchDepth : 'basic',
     seedreamApiKey: typeof value?.seedreamApiKey === 'string' ? value.seedreamApiKey : '',
+    seedreamApiKeyConfigured: value?.seedreamApiKeyConfigured === true || Boolean(value?.seedreamApiKey),
     seedreamModel: ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'].includes(value?.seedreamModel) ? value.seedreamModel : DEFAULT_SEEDREAM_MODEL,
     seedreamSize: typeof value?.seedreamSize === 'string' && value.seedreamSize ? value.seedreamSize : DEFAULT_SEEDREAM_SIZE,
     seedreamWatermark: typeof value?.seedreamWatermark === 'boolean' ? value.seedreamWatermark : true,
@@ -314,7 +332,7 @@ async function loadSettings() {
   }
 
   const legacyApiKey = localStorage.getItem(API_KEY_STORAGE_KEY) || '';
-  if (!settings.apiKey && legacyApiKey) {
+  if (!settings.apiKeyConfigured && legacyApiKey) {
     settings.apiKey = legacyApiKey;
     await saveSettings({ quiet: true });
     localStorage.removeItem(API_KEY_STORAGE_KEY);
@@ -351,7 +369,7 @@ async function loadSkills() {
   renderSelectedSkillChip();
 }
 
-async function saveSettings({ quiet = false } = {}) {
+async function saveSettings({ quiet = false, clearApiKeys = false } = {}) {
   const submitted = {
     ...settings,
     skills: {
@@ -359,6 +377,7 @@ async function saveSettings({ quiet = false } = {}) {
       westock: { ...settings.skills?.westock },
       perplexity: { ...settings.skills?.perplexity },
     },
+    clearApiKeys,
   };
   const res = await apiFetch(AI_SETTINGS_ENDPOINT, {
     method: 'PUT',
@@ -368,14 +387,11 @@ async function saveSettings({ quiet = false } = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'AI 设置保存失败');
   if (
-    data.tavilyApiKey !== submitted.tavilyApiKey ||
-    data.perplexityApiKey !== submitted.perplexityApiKey ||
     data.userProfile !== submitted.userProfile ||
     data.logContextEnabled !== submitted.logContextEnabled ||
     data.diaryContextEnabled !== submitted.diaryContextEnabled ||
     data.webSearchEnabled !== submitted.webSearchEnabled ||
     data.webSearchDepth !== submitted.webSearchDepth ||
-    data.seedreamApiKey !== submitted.seedreamApiKey ||
     data.seedreamModel !== submitted.seedreamModel ||
     data.seedreamSize !== submitted.seedreamSize ||
     data.seedreamWatermark !== submitted.seedreamWatermark ||
@@ -1065,7 +1081,6 @@ function updateSendState() {
 function currentSettings() {
   const skill = selectedSkill();
   const request = {
-    apiKey: settings.apiKey,
     model: settings.model || DEFAULT_MODEL,
     thinkingMode: 'enabled',
     reasoningEffort: settings.reasoningEffort || DEFAULT_REASONING,
@@ -1073,8 +1088,6 @@ function currentSettings() {
     userProfile: settings.userProfile || '',
     logContextEnabled: Boolean(settings.logContextEnabled),
     diaryContextEnabled: Boolean(settings.diaryContextEnabled),
-    tavilyApiKey: settings.tavilyApiKey,
-    perplexityApiKey: settings.perplexityApiKey,
     webSearchEnabled: Boolean(settings.webSearchEnabled),
     webSearchDepth: settings.webSearchDepth || 'basic',
     logAccessPolicy: settings.logAccessPolicy,
@@ -1086,8 +1099,8 @@ function currentSettings() {
 function updateSettingsButton() {
   const button = $('#btnAiApiKey');
   if (!button) return;
-  button.classList.toggle('has-key', Boolean(settings.apiKey));
-  button.title = settings.apiKey ? 'AI 设置（API Key 已保存）' : 'AI 设置';
+  button.classList.toggle('has-key', settings.apiKeyConfigured);
+  button.title = settings.apiKeyConfigured ? 'AI 设置（API Key 已保存）' : 'AI 设置';
   button.setAttribute('aria-label', button.title);
 }
 
@@ -1172,18 +1185,22 @@ function collectLogAccessPolicyFromPage() {
 function fillSettingsModal() {
   const apiKeyInput = $('#aiApiKeyInput');
   if (!apiKeyInput) return;
-  apiKeyInput.value = settings.apiKey;
+  apiKeyInput.value = '';
+  apiKeyInput.placeholder = settings.apiKeyConfigured ? '已配置；留空保持不变' : 'sk-...';
   $('#aiModelSelect').value = settings.model || DEFAULT_MODEL;
   $('#aiReasoningEffort').value = settings.reasoningEffort || DEFAULT_REASONING;
   $('#aiStreamToggle').checked = Boolean(settings.stream);
   $('#aiUserProfileInput').value = settings.userProfile || '';
   $('#aiLogContextToggle').checked = Boolean(settings.logContextEnabled);
   $('#aiDiaryContextToggle').checked = Boolean(settings.diaryContextEnabled);
-  $('#aiTavilyApiKeyInput').value = settings.tavilyApiKey;
-  $('#aiPerplexityApiKeyInput').value = settings.perplexityApiKey;
+  $('#aiTavilyApiKeyInput').value = '';
+  $('#aiTavilyApiKeyInput').placeholder = settings.tavilyApiKeyConfigured ? '已配置；留空保持不变' : 'tvly-...';
+  $('#aiPerplexityApiKeyInput').value = '';
+  $('#aiPerplexityApiKeyInput').placeholder = settings.perplexityApiKeyConfigured ? '已配置；留空保持不变' : 'pplx-...';
   syncWebSearchToggleUi();
   $('#aiWebSearchDepth').value = settings.webSearchDepth || 'basic';
-  $('#aiSeedreamApiKeyInput').value = settings.seedreamApiKey;
+  $('#aiSeedreamApiKeyInput').value = '';
+  $('#aiSeedreamApiKeyInput').placeholder = settings.seedreamApiKeyConfigured ? '已配置；留空保持不变' : '4b45...';
   $('#aiSeedreamModel').value = settings.seedreamModel || DEFAULT_SEEDREAM_MODEL;
   $('#aiSeedreamSize').value = settings.seedreamSize || DEFAULT_SEEDREAM_SIZE;
   $('#aiSeedreamWatermark').checked = settings.seedreamWatermark !== false;
@@ -1258,6 +1275,10 @@ async function saveSettingsFromPage() {
     seedreamModel: $('#aiSeedreamModel').value,
     seedreamSize: $('#aiSeedreamSize').value,
     seedreamWatermark: $('#aiSeedreamWatermark').checked,
+    apiKeyConfigured: settings.apiKeyConfigured,
+    tavilyApiKeyConfigured: settings.tavilyApiKeyConfigured,
+    perplexityApiKeyConfigured: settings.perplexityApiKeyConfigured,
+    seedreamApiKeyConfigured: settings.seedreamApiKeyConfigured,
     logAccessPolicy: collectLogAccessPolicyFromPage(),
     skills: {
       westock: { enabled: $('#aiSkillWestockToggle').checked },
@@ -1310,7 +1331,7 @@ async function clearApiKey() {
   $('#aiPerplexityApiKeyInput').value = '';
   $('#aiSeedreamApiKeyInput').value = '';
   try {
-    await saveSettings({ quiet: true });
+    await saveSettings({ quiet: true, clearApiKeys: true });
     showToast('API Key 已清除', 'info');
   } catch (err) {
     showToast('API Key 清除失败：' + err.message, 'error');
@@ -1523,6 +1544,7 @@ async function sendMessage({ forceImage = false } = {}) {
   const chat = activeConversation();
   if (!content || !chat) return;
 
+  if (settings.diaryContextEnabled) chat.diarySensitive = true;
   chat.messages.push({ role: 'user', content, createdAt: Date.now() });
   if (chat.title === '新对话') chat.title = conversationTitleFrom(content);
   if (chat.messages.length > MAX_MESSAGES) chat.messages = chat.messages.slice(-MAX_MESSAGES);

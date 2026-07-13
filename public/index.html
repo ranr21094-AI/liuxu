@@ -338,18 +338,22 @@
       <div class="todo-page-header">
         <div>
           <h2>待办事项</h2>
+          <div class="todo-mode-tabs" id="todoModeTabs" role="tablist" aria-label="待办页面模式">
+            <button class="todo-mode-tab active" id="todoModeTodos" type="button" role="tab" data-mode="todos" aria-selected="true" aria-controls="todoFullPanel">待办</button>
+            <button class="todo-mode-tab" id="todoModeCountdowns" type="button" role="tab" data-mode="countdowns" aria-selected="false" aria-controls="countdownPanel">倒数日</button>
+          </div>
         </div>
         <div class="todo-page-stats" aria-label="待办统计">
-          <div class="todo-stat-card"><span>待办</span><strong id="todoStatPending">0</strong></div>
-          <div class="todo-stat-card"><span>今日</span><strong id="todoStatToday">0</strong></div>
-          <div class="todo-stat-card danger"><span>逾期</span><strong id="todoStatOverdue">0</strong></div>
-          <div class="todo-stat-card"><span>已完成</span><strong id="todoStatDone">0</strong></div>
+          <div class="todo-stat-card"><span id="todoStatLabelPending">待办</span><strong id="todoStatPending">0</strong></div>
+          <div class="todo-stat-card"><span id="todoStatLabelToday">今日</span><strong id="todoStatToday">0</strong></div>
+          <div class="todo-stat-card danger"><span id="todoStatLabelOverdue">逾期</span><strong id="todoStatOverdue">0</strong></div>
+          <div class="todo-stat-card"><span id="todoStatLabelDone">已完成</span><strong id="todoStatDone">0</strong></div>
         </div>
       </div>
       <div class="todo-page-controls">
-        <div class="todo-filter-tabs" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
+        <div class="todo-filter-tabs todo-mode-only" id="todoFilterTabs" role="tablist" aria-label="待办筛选">
         </div>
-        <button class="todo-category-open" id="btnTodoCategoryOpen" type="button" aria-haspopup="dialog" aria-controls="todoCategoryOverlay" title="新增待办分类" aria-label="新增待办分类">
+        <button class="todo-category-open todo-mode-only" id="btnTodoCategoryOpen" type="button" aria-haspopup="dialog" aria-controls="todoCategoryOverlay" title="新增待办分类" aria-label="新增待办分类">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 5v14M5 12h14"></path>
           </svg>
@@ -363,7 +367,10 @@
         <section class="todo-full-panel" id="todoFullPanel" aria-label="待办列表">
           <div class="todo-full-list" id="todoFullList" role="tabpanel"></div>
         </section>
-        <aside class="todo-full-form" aria-label="编辑待办">
+        <section class="countdown-panel" id="countdownPanel" aria-label="倒数日列表" role="tabpanel" hidden>
+          <div class="countdown-grid" id="countdownGrid"></div>
+        </section>
+        <aside class="todo-full-form" id="todoFullForm" aria-label="编辑待办">
           <input type="hidden" id="todoEditId">
           <label class="sr-only" for="todoFullTitle">任务标题</label>
           <input type="text" id="todoFullTitle" placeholder="任务标题..." maxlength="200">
@@ -414,6 +421,29 @@
           <div class="todo-form-actions">
             <button class="btn-secondary btn-sm" id="btnTodoFormCancel" type="button">取消</button>
             <button class="btn-primary btn-sm" id="btnTodoFullSave" type="button">保存任务</button>
+          </div>
+        </aside>
+        <aside class="countdown-form" id="countdownForm" aria-label="编辑倒数日" hidden>
+          <input type="hidden" id="countdownEditId">
+          <div class="countdown-form-heading">
+            <span>倒数日</span>
+            <small id="countdownFormHint">记录值得期待的日子</small>
+          </div>
+          <label class="sr-only" for="countdownTitle">倒数日标题</label>
+          <input type="text" id="countdownTitle" placeholder="例如：旅行出发" maxlength="200">
+          <label class="countdown-field" for="countdownTargetDate">
+            <span>目标日期</span>
+            <input type="date" id="countdownTargetDate" required>
+          </label>
+          <label class="countdown-repeat-option" for="countdownRepeatYearly">
+            <input type="checkbox" id="countdownRepeatYearly">
+            <span>每年重复</span>
+          </label>
+          <label class="sr-only" for="countdownNotes">倒数日备注</label>
+          <textarea id="countdownNotes" placeholder="备注..." maxlength="1000"></textarea>
+          <div class="todo-form-actions">
+            <button class="btn-secondary btn-sm" id="btnCountdownCancel" type="button">取消</button>
+            <button class="btn-primary btn-sm" id="btnCountdownSave" type="button">保存倒数日</button>
           </div>
         </aside>
       </div>

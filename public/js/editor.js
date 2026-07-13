@@ -11,6 +11,7 @@ import { AUTO_SAVE_MS, SAVE_STATUS_DURATION } from './constants.js';
 import { businessDateString } from './businessDate.js';
 import { renderTemplateVariables } from './templateDate.js';
 import { createContentEditor } from './contentEditor.js';
+import { enableMarkdownImagePreview } from './imagePreview.js';
 
 const editorView = $('#editorView');
 const categoryView = $('#categoryView');
@@ -24,6 +25,7 @@ const codeMirrorContentEditor = $('#codeMirrorContentEditor');
 const contentEditor = createContentEditor(editContent, codeMirrorContentEditor);
 const editorContentArea = document.querySelector('.editor-content-area');
 const editPreview = $('#editPreview');
+enableMarkdownImagePreview(editPreview);
 const editDate = $('#editDate');
 const editCategory = $('#editCategory');
 const editSubcategory = $('#editSubcategory');
@@ -93,12 +95,21 @@ let lastSavedCategory = '';
 let isDirty = false;
 let isSaving = false;
 let currentSavePromise = null;
+let editorDocumentEpoch = 0;
+let activeEditorLoadController = null;
 let editorAiAllConversations = [];
 let editorAiActiveConversationId = '';
 let editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const editorAiPendingByConversationId = new Set();
 let editorAiRenameConversationId = '';
 const EDITOR_SELECT_IDS = ['editCategory', 'editSubcategory'];
+
+function invalidateEditorRequests() {
+  editorDocumentEpoch += 1;
+  activeEditorLoadController?.abort();
+  activeEditorLoadController = null;
+  return editorDocumentEpoch;
+}
 
 function isOutlinePanelOpen() {
   return btnEditorOutlinePanel.getAttribute('aria-expanded') === 'true';
@@ -302,6 +313,7 @@ function createEditorAiConversation(logKey = currentEditorLogKey()) {
     title: label.slice(0, 40) || '日志对话',
     scope: 'editor',
     logKey,
+    diarySensitive: getCategoryValue().startsWith('日记'),
     messages: [],
     updatedAt: Date.now(),
   };
@@ -869,6 +881,7 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
   if (!content) return;
   const chat = activeEditorAiConversation();
   if (isEditorAiConversationPending(chat.id)) return;
+  if (getCategoryValue().startsWith('日记')) chat.diarySensitive = true;
   chat.messages.push({ role: 'user', content });
   if (!chat.title || chat.title === '日志对话' || chat.title === '当前日志') chat.title = conversationTitleFrom(content);
   if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
@@ -1116,6 +1129,7 @@ function setEditorFullscreen(enabled) {
 }
 
 export function showListView() {
+  invalidateEditorRequests();
   setEditorFullscreen(false);
   setOutlinePanelOpen(false);
   setEditorAiPanelOpen(false);
@@ -1202,9 +1216,15 @@ function updateDirtyState() {
 }
 
 export async function openEditor(id) {
+  const requestEpoch = invalidateEditorRequests();
+  const controller = new AbortController();
+  activeEditorLoadController = controller;
   try {
-    const res = await apiFetch(`/api/logs/${id}`);
+    const res = await apiFetch(`/api/logs/${id}`, { signal: controller.signal });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Load failed');
     const log = await res.json();
+    if (requestEpoch !== editorDocumentEpoch || controller.signal.aborted) return false;
+    activeEditorLoadController = null;
     state.editingId = id;
     state.listScrollY = window.scrollY;
     showEditorView();
@@ -1232,6 +1252,7 @@ export async function openEditor(id) {
     syncEditorSelectControls();
     if (sub) {
       setTimeout(() => {
+        if (requestEpoch !== editorDocumentEpoch) return;
         if ([...editSubcategory.options].some(o => o.value === sub)) {
           editSubcategory.value = sub;
         }
@@ -1254,13 +1275,17 @@ export async function openEditor(id) {
     if (editorTab !== 'preview') contentEditor.focus();
     return true;
   } catch (err) {
+    if (err.name === 'AbortError' || requestEpoch !== editorDocumentEpoch) return false;
+    activeEditorLoadController = null;
     console.error('Load log failed:', err);
     showToast('加载日志失败: ' + err.message, 'error');
     return false;
   }
 }
 
-export function newLog() {
+export async function newLog() {
+  if (currentSavePromise) await currentSavePromise;
+  invalidateEditorRequests();
   const defaultDate = state.selectedDate || businessDateString();
   const defaultCategory = getNewLogCategory();
   editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1295,22 +1320,45 @@ export function newLog() {
 
 $('#btnNewLog').addEventListener('click', newLog);
 
-async function returnToListAfterSave() {
+export async function leaveEditorSafely({ showList = false } = {}) {
+  if (editorView.style.display === 'none') return true;
   clearAutoSave();
   if (currentSavePromise) await currentSavePromise;
   updateDirtyState();
 
   if (state.editingId || editTitle.value.trim() || contentEditor.getValue().trim()) {
     const saved = await doSave(false);
-    if (!saved) return;
+    if (!saved) return false;
     updateDirtyState();
     if (isDirty) {
       showToast('仍有未保存内容，请稍后再返回', 'error');
-      return;
+      return false;
     }
   }
-  showListView();
-  loadStats();
+  if (showList) {
+    showListView();
+    loadStats();
+  }
+  return true;
+}
+
+async function returnToListAfterSave() {
+  return leaveEditorSafely({ showList: true });
+}
+
+export function clearEditorForDiaryLock() {
+  invalidateEditorRequests();
+  clearAutoSave();
+  state.editingId = null;
+  editTitle.value = '';
+  contentEditor.loadDocument('', 'diary-locked');
+  editPreview.textContent = '';
+  editorAiMessages.textContent = '';
+  editorAiAllConversations = [];
+  editorAiActiveConversationId = '';
+  lastSavedContent = '';
+  lastSavedTitle = '';
+  isDirty = false;
 }
 
 export async function openEditorFromNavigation(id) {
@@ -1494,8 +1542,11 @@ export async function doSave(silent) {
 
   const finalTitle = title || '未命名日志';
   const body = { title: finalTitle, content, log_date, hours, category };
-  const url = state.editingId ? `/api/logs/${state.editingId}` : '/api/logs';
-  const method = state.editingId ? 'PUT' : 'POST';
+  const requestEpoch = editorDocumentEpoch;
+  const requestEditingId = state.editingId;
+  const wasNewLog = !requestEditingId;
+  const url = requestEditingId ? `/api/logs/${requestEditingId}` : '/api/logs';
+  const method = requestEditingId ? 'PUT' : 'POST';
 
   isSaving = true;
   currentSavePromise = (async () => {
@@ -1510,7 +1561,8 @@ export async function doSave(silent) {
       if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
 
       const saved = await res.json();
-      const wasNewLog = !state.editingId;
+      const sameDocument = requestEpoch === editorDocumentEpoch && state.editingId === requestEditingId;
+      if (!sameDocument) return true;
       if (wasNewLog) {
         state.editingId = saved.id;
       }

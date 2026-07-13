@@ -40,7 +40,9 @@ export function formatDate(dateStr) {
 export function escHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export function debounce(fn, ms) {

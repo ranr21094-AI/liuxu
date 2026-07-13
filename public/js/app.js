@@ -5,8 +5,8 @@ import { showToast, confirmDialog, openModal, closeModal, $ } from './helpers.js
 import { clearMdCache } from './markdown.js';
 import { populateCalendarSelects, renderCalendar } from './calendar.js';
 import { loadLogs, populateMonthFilter, syncArchiveFilterControls } from './logList.js';
-import { showListView } from './editor.js';
-import { initAiChat, showAiChatView } from './aiChat.js';
+import { showListView, leaveEditorSafely, clearEditorForDiaryLock } from './editor.js';
+import { initAiChat, showAiChatView, clearAiStateForDiaryLock } from './aiChat.js';
 import { showPhotoWallView } from './photoWall.js';
 import { loadStats } from './stats.js';
 import { loadCategories, openCategoryManager } from './categories.js';
@@ -113,8 +113,9 @@ function syncSidebarViewportMode() {
   }
 }
 
-function setSidebarMode(mode, { updateMain = true } = {}) {
+async function setSidebarMode(mode, { updateMain = true } = {}) {
   if (!['normal', 'todo', 'categories', 'photo-wall', 'ai'].includes(mode)) mode = 'normal';
+  if (updateMain && !(await leaveEditorSafely())) return;
   document.body.classList.toggle('sidebar-todo-mode', mode === 'todo');
   document.body.classList.toggle('sidebar-category-mode', mode === 'categories');
   document.body.classList.toggle('sidebar-photo-wall-mode', mode === 'photo-wall');
@@ -142,7 +143,8 @@ function setSidebarMode(mode, { updateMain = true } = {}) {
   }
 }
 
-function setSidebarToolsMode(enabled) {
+async function setSidebarToolsMode(enabled) {
+  if (enabled && !(await leaveEditorSafely())) return;
   document.body.classList.toggle('sidebar-tools-mode', enabled);
   if (enabled) {
     document.body.classList.remove('sidebar-todo-mode', 'sidebar-ai-mode');
@@ -221,12 +223,15 @@ $('#btnDiaryUnlock').addEventListener('click', openDiaryUnlockModal);
 window.addEventListener('request-diary-unlock', openDiaryUnlockModal);
 
 $('#btnDiaryLock').addEventListener('click', async () => {
+  if (!(await leaveEditorSafely({ showList: true }))) return;
+  clearEditorForDiaryLock();
+  clearAiStateForDiaryLock();
   await lockDiary();
   syncDiaryLockState({ enabled: true, locked: true });
   $('#btnDiaryUnlock').style.display = '';
   $('#btnDiaryLock').style.display = 'none';
   showToast('日记已锁定', 'info');
-  if (state.category === '日记') {
+  if (state.category === '日记' || state.category.startsWith('日记/')) {
     state.category = '';
     state.currentPage = 1;
     $('#filterCategory').value = '';
@@ -385,7 +390,7 @@ $('#restoreFileInput').addEventListener('change', async () => {
     const result = await res.json();
     clearMdCache();
     await refreshAll();
-    showToast(`导入成功！${result.logs} 条日志，${result.todos} 条待办，${result.categories} 个分类已恢复。`, 'success');
+    showToast(`导入成功！${result.logs} 条日志，${result.todos} 条待办，${result.countdowns || 0} 个倒数日，${result.categories} 个分类已恢复。`, 'success');
   } catch (err) {
     showToast('导入失败：' + err.message, 'error');
   } finally {

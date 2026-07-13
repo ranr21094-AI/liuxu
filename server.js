@@ -4,6 +4,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const net = require('net');
 const childProcess = require('child_process');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
@@ -13,6 +14,7 @@ const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./busi
 const app = express();
 let todoReminderService = null;
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 
 // Auth token (optional — set AUTH_TOKEN env var to enable)
@@ -89,12 +91,18 @@ const DIARY_PASSWORD_HASH = process.env.DIARY_PASSWORD_HASH || null;
 const diaryTokens = new Map(); // token -> createdAt(ms)
 const DIARY_TOKEN_TTL = 24 * 60 * 60 * 1000; // 24h
 const DIARY_COOKIE_NAME = 'diary_session';
+const SITE_SESSION_TTL = 24 * 60 * 60 * 1000;
+const SITE_COOKIE_NAME = 'site_session';
+const siteTokens = new Map();
 
 // Clean expired diary tokens every hour
 const diaryTokenCleanup = setInterval(() => {
   const now = Date.now();
   for (const [t, createdAt] of diaryTokens) {
     if (now - createdAt > DIARY_TOKEN_TTL) diaryTokens.delete(t);
+  }
+  for (const [t, createdAt] of siteTokens) {
+    if (now - createdAt > SITE_SESSION_TTL) siteTokens.delete(t);
   }
 }, 3600000);
 if (diaryTokenCleanup.unref) diaryTokenCleanup.unref();
@@ -157,6 +165,207 @@ function clearDiaryCookie(req, res) {
   res.setHeader('Set-Cookie', diaryCookieOptions(req, '', 0));
 }
 
+function parsePositiveId(value) {
+  const text = String(value ?? '');
+  if (!/^\d+$/.test(text)) return null;
+  const id = Number(text);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+function validateLogInput(body, { partial = false } = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'JSON object required' };
+  }
+  const payload = {};
+  if (!partial || body.title !== undefined) {
+    if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200) {
+      return { error: 'Title must be a non-empty string of at most 200 characters' };
+    }
+    payload.title = body.title.trim();
+  }
+  if (!partial || body.content !== undefined) {
+    if (typeof body.content !== 'string' || !body.content || body.content.length > 100000) {
+      return { error: 'Content must be a non-empty string of at most 100000 characters' };
+    }
+    payload.content = body.content;
+  }
+  if (body.category !== undefined) {
+    if (typeof body.category !== 'string' || !body.category.trim() || body.category.length > 160) {
+      return { error: 'Category must be a non-empty string of at most 160 characters' };
+    }
+    payload.category = body.category.trim();
+  } else if (!partial) {
+    payload.category = '其他';
+  }
+  if (body.hours !== undefined && body.hours !== null && body.hours !== '') {
+    const hours = Number(body.hours);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 24) {
+      return { error: '工时需为 0-24 之间的数字' };
+    }
+    payload.hours = hours;
+  } else if (!partial) {
+    payload.hours = 0;
+  }
+  if (body.log_date !== undefined) {
+    if (typeof body.log_date !== 'string' || (body.log_date && !isValidDate(body.log_date))) {
+      return { error: '日期格式无效' };
+    }
+    payload.log_date = body.log_date;
+  }
+  return { payload };
+}
+
+function validateTodoInput(body, { partial = false } = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'JSON object required' };
+  }
+  const payload = {};
+  if (!partial || body.title !== undefined) {
+    if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 500) {
+      return { error: 'Title must be a non-empty string of at most 500 characters' };
+    }
+    payload.title = body.title.trim();
+  }
+  if (body.done !== undefined) {
+    if (typeof body.done !== 'boolean') return { error: 'done must be a boolean' };
+    payload.done = body.done;
+  }
+  if (body.due_date !== undefined) {
+    if (body.due_date !== null && (typeof body.due_date !== 'string' || (body.due_date && !isValidDate(body.due_date)))) {
+      return { error: 'due_date must be null, empty, or a valid YYYY-MM-DD date' };
+    }
+    payload.due_date = body.due_date || null;
+  }
+  if (body.priority !== undefined) {
+    if (!['none', 'normal', 'important', 'urgent', 'low', 'high'].includes(body.priority)) {
+      return { error: 'Unsupported priority' };
+    }
+    payload.priority = body.priority;
+  }
+  if (body.recurrence !== undefined) {
+    if (!['none', 'daily', 'weekly', 'monthly', 'yearly'].includes(body.recurrence)) {
+      return { error: 'Unsupported recurrence' };
+    }
+    payload.recurrence = body.recurrence;
+  }
+  if (body.category !== undefined) {
+    if (typeof body.category !== 'string' || !body.category.trim() || body.category.length > 24) {
+      return { error: 'Category must be a non-empty string of at most 24 characters' };
+    }
+    payload.category = body.category.trim();
+  }
+  if (body.notes !== undefined) {
+    if (typeof body.notes !== 'string' || body.notes.length > 5000) {
+      return { error: 'Notes must be a string of at most 5000 characters' };
+    }
+    payload.notes = body.notes;
+  }
+  return { payload };
+}
+
+function validateCountdownInput(body, { partial = false } = {}) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'JSON object required' };
+  }
+  const payload = {};
+  if (!partial || body.title !== undefined) {
+    if (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200) {
+      return { error: 'Title must be a non-empty string of at most 200 characters' };
+    }
+    payload.title = body.title.trim();
+  }
+  if (!partial || body.target_date !== undefined) {
+    if (typeof body.target_date !== 'string' || !isValidDate(body.target_date)) {
+      return { error: 'target_date must be a valid YYYY-MM-DD date' };
+    }
+    payload.target_date = body.target_date;
+  }
+  if (body.repeat_yearly !== undefined) {
+    if (typeof body.repeat_yearly !== 'boolean') return { error: 'repeat_yearly must be a boolean' };
+    payload.repeat_yearly = body.repeat_yearly;
+  } else if (!partial) {
+    payload.repeat_yearly = false;
+  }
+  if (body.notes !== undefined) {
+    if (typeof body.notes !== 'string' || body.notes.length > 1000) {
+      return { error: 'Notes must be a string of at most 1000 characters' };
+    }
+    payload.notes = body.notes;
+  } else if (!partial) {
+    payload.notes = '';
+  }
+  return { payload };
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (timer.unref) timer.unref();
+  const externalSignal = options.signal;
+  const abortFromExternal = () => controller.abort();
+  externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
+  }
+}
+
+function isPrivateIpLiteral(hostname) {
+  if (net.isIP(hostname) === 4) {
+    const parts = hostname.split('.').map(Number);
+    return parts[0] === 10 || parts[0] === 127 ||
+      (parts[0] === 169 && parts[1] === 254) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168);
+  }
+  if (net.isIP(hostname) === 6) {
+    const normalized = hostname.toLowerCase();
+    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb');
+  }
+  return false;
+}
+
+function validateGeneratedImageUrl(value) {
+  const url = new URL(value);
+  const hostname = url.hostname.toLowerCase();
+  if (url.protocol !== 'https:' || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIpLiteral(hostname)) {
+    throw new Error('Generated image URL is not allowed');
+  }
+  return url.toString();
+}
+
+function siteCookieOptions(req, token, maxAge) {
+  const parts = [
+    `${SITE_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    `Max-Age=${maxAge}`,
+  ];
+  if (req.secure) parts.push('Secure');
+  return parts.join('; ');
+}
+
+function setSiteCookie(req, res) {
+  const token = generateToken();
+  siteTokens.set(token, Date.now());
+  res.setHeader('Set-Cookie', siteCookieOptions(req, token, Math.floor(SITE_SESSION_TTL / 1000)));
+}
+
+function hasSiteSession(req) {
+  if (!AUTH_TOKEN) return true;
+  const token = getCookie(req, SITE_COOKIE_NAME);
+  if (!token) return false;
+  const createdAt = siteTokens.get(token);
+  if (!createdAt || Date.now() - createdAt > SITE_SESSION_TTL) {
+    siteTokens.delete(token);
+    return false;
+  }
+  return true;
+}
+
 function isValidDiaryToken(token) {
   if (!DIARY_PASSWORD_HASH) return true;
   if (!token) return false;
@@ -192,6 +401,12 @@ function isDiaryRoot(category) {
   return category === '\u65e5\u8bb0';
 }
 
+function cleanCategorySegment(value) {
+  if (typeof value !== 'string') return '';
+  const name = value.trim();
+  return name && name.length <= 80 && !name.includes('/') && !name.includes('\\') ? name : '';
+}
+
 function qqMailReady() {
   return Boolean(QQ_EMAIL_ACCOUNT && QQ_EMAIL_AUTH_CODE);
 }
@@ -213,6 +428,8 @@ function createTodoReminderTransporter() {
     host: 'smtp.qq.com',
     port: 465,
     secure: true,
+    disableFileAccess: true,
+    disableUrlAccess: true,
     auth: {
       user: QQ_EMAIL_ACCOUNT,
       pass: QQ_EMAIL_AUTH_CODE,
@@ -229,6 +446,8 @@ async function sendTodoReminderEmail({ from = QQ_EMAIL_ACCOUNT, to, subject, tex
     subject,
     text,
     textEncoding,
+    disableFileAccess: true,
+    disableUrlAccess: true,
   });
 }
 
@@ -410,16 +629,20 @@ function createTodoReminderService({
   return service;
 }
 
-// Simple in-memory rate limiter
-const rateLimitMap = new Map(); // key -> {count, resetAt}
 function rateLimiter(maxAttempts, windowMs) {
+  const entries = new Map();
   return (req, res, next) => {
     const key = req.ip || '127.0.0.1';
     const now = Date.now();
-    let entry = rateLimitMap.get(key);
+    if (entries.size > 10000) {
+      for (const [candidate, value] of entries) {
+        if (now > value.resetAt) entries.delete(candidate);
+      }
+    }
+    let entry = entries.get(key);
     if (!entry || now > entry.resetAt) {
       entry = { count: 0, resetAt: now + windowMs };
-      rateLimitMap.set(key, entry);
+      entries.set(key, entry);
     }
     entry.count++;
     if (entry.count > maxAttempts) {
@@ -431,11 +654,30 @@ function rateLimiter(maxAttempts, windowMs) {
 
 function authMiddleware(req, res, next) {
   if (!AUTH_TOKEN) return next();
-  // Allow static files
-  if (!req.path.startsWith('/api/')) return next();
+  const protectedPath = req.path.startsWith('/api/') || req.path.startsWith('/uploads/');
+  if (!protectedPath) return next();
   const auth = req.headers.authorization;
-  if (auth === 'Bearer ' + AUTH_TOKEN) return next();
+  if (auth === 'Bearer ' + AUTH_TOKEN || hasSiteSession(req)) return next();
   return res.status(401).json({ error: 'Unauthorized' });
+}
+
+function concurrencyLimiter(maxConcurrent) {
+  let active = 0;
+  return (_req, res, next) => {
+    if (active >= maxConcurrent) {
+      return res.status(503).json({ error: '服务繁忙，请稍后再试' });
+    }
+    active += 1;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      active = Math.max(0, active - 1);
+    };
+    res.once('finish', release);
+    res.once('close', release);
+    next();
+  };
 }
 
 app.use(authMiddleware);
@@ -448,8 +690,12 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.use('/api/ai', rateLimiter(60, 60 * 1000));
+app.use('/api/ai', concurrencyLimiter(4));
+app.use('/api/upload', rateLimiter(20, 60 * 1000));
 
 // Image upload setup
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
@@ -468,7 +714,14 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+    fields: 2,
+    parts: 3,
+    fieldNameSize: 64,
+    fieldSize: 64,
+  },
   fileFilter: (_req, _file, cb) => {
     const allowed = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
     const ext = path.extname(_file.originalname).toLowerCase();
@@ -480,11 +733,32 @@ const upload = multer({
   },
 });
 
+function uploadedImageMatchesExtension(file) {
+  const ext = path.extname(file.filename).toLowerCase();
+  const header = Buffer.alloc(16);
+  const fd = fs.openSync(file.path, 'r');
+  let bytesRead = 0;
+  try {
+    bytesRead = fs.readSync(fd, header, 0, header.length, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (bytesRead < 2) return false;
+  if (ext === '.png') return header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (ext === '.jpg' || ext === '.jpeg') return header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
+  if (ext === '.gif') return header.subarray(0, 6).toString('ascii') === 'GIF87a' || header.subarray(0, 6).toString('ascii') === 'GIF89a';
+  if (ext === '.webp') return header.subarray(0, 4).toString('ascii') === 'RIFF' && header.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (ext === '.bmp') return header.subarray(0, 2).toString('ascii') === 'BM';
+  return false;
+}
+
 // Auth check endpoint
 app.get('/api/auth/check', (req, res) => {
   if (!AUTH_TOKEN) return res.json({ authenticated: true });
   const auth = req.headers.authorization;
-  res.json({ authenticated: auth === 'Bearer ' + AUTH_TOKEN });
+  const authenticated = auth === 'Bearer ' + AUTH_TOKEN || hasSiteSession(req);
+  if (authenticated && !hasSiteSession(req)) setSiteCookie(req, res);
+  res.json({ authenticated });
 });
 
 // Diary unlock
@@ -694,7 +968,14 @@ function safeTavilyError(status, data) {
     : `Tavily request failed (${status})`;
 }
 
-function parseAiSettingsInput(body) {
+function nextStoredSecret(body, field, current) {
+  if (body?.clearApiKeys === true) return '';
+  const value = body?.[field];
+  if (typeof value !== 'string' || !value.trim()) return current || '';
+  return value.trim().slice(0, 500);
+}
+
+function parseAiSettingsInput(body, current = {}) {
   const model = body?.model || 'deepseek-v4-flash';
   const reasoningEffort = body?.reasoningEffort || 'high';
   const stream = body?.stream === undefined ? false : body.stream;
@@ -754,18 +1035,18 @@ function parseAiSettingsInput(body) {
     throw new Error('Unsupported Perplexity skill option');
   }
   return {
-    apiKey: typeof body?.apiKey === 'string' ? body.apiKey.trim() : '',
+    apiKey: nextStoredSecret(body, 'apiKey', current.apiKey),
     model,
     reasoningEffort,
     stream,
     userProfile: userProfile.trim().slice(0, AI_USER_PROFILE_MAX_CHARS),
     logContextEnabled,
     diaryContextEnabled,
-    tavilyApiKey: typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '',
-    perplexityApiKey: typeof body?.perplexityApiKey === 'string' ? body.perplexityApiKey.trim() : '',
+    tavilyApiKey: nextStoredSecret(body, 'tavilyApiKey', current.tavilyApiKey),
+    perplexityApiKey: nextStoredSecret(body, 'perplexityApiKey', current.perplexityApiKey),
     webSearchEnabled,
     webSearchDepth,
-    seedreamApiKey: typeof body?.seedreamApiKey === 'string' ? body.seedreamApiKey.trim() : '',
+    seedreamApiKey: nextStoredSecret(body, 'seedreamApiKey', current.seedreamApiKey),
     seedreamModel,
     seedreamSize,
     seedreamWatermark,
@@ -774,6 +1055,20 @@ function parseAiSettingsInput(body) {
       westock: { enabled: westockSource.enabled !== false },
       perplexity: { enabled: perplexitySource.enabled !== false },
     },
+  };
+}
+
+function publicAiSettings(settings) {
+  return {
+    ...settings,
+    apiKey: '',
+    tavilyApiKey: '',
+    perplexityApiKey: '',
+    seedreamApiKey: '',
+    apiKeyConfigured: Boolean(settings.apiKey || DEEPSEEK_API_KEY),
+    tavilyApiKeyConfigured: Boolean(settings.tavilyApiKey || TAVILY_API_KEY),
+    perplexityApiKeyConfigured: Boolean(settings.perplexityApiKey || PERPLEXITY_API_KEY),
+    seedreamApiKeyConfigured: Boolean(settings.seedreamApiKey || SEEDREAM_API_KEY),
   };
 }
 
@@ -857,7 +1152,8 @@ function extensionFromContentType(contentType, fallbackUrl = '') {
 }
 
 async function downloadGeneratedImage(url) {
-  const imageResponse = await fetch(url);
+  const safeUrl = validateGeneratedImageUrl(url);
+  const imageResponse = await fetchWithTimeout(safeUrl, {}, 30000);
   if (!imageResponse.ok) {
     throw new Error(`Generated image download failed (${imageResponse.status})`);
   }
@@ -865,12 +1161,29 @@ async function downloadGeneratedImage(url) {
   if (contentType && !/^image\//i.test(contentType)) {
     throw new Error('Generated image response was not an image');
   }
-  const buffer = Buffer.from(await imageResponse.arrayBuffer());
-  if (!buffer.length || buffer.length > 20 * 1024 * 1024) {
+  const maxBytes = 20 * 1024 * 1024;
+  const contentLength = Number(imageResponse.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw new Error('Generated image size is invalid');
   }
+  const chunks = [];
+  let total = 0;
+  const reader = imageResponse.body?.getReader();
+  if (!reader) throw new Error('Generated image response body was empty');
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new Error('Generated image size is invalid');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  const buffer = Buffer.concat(chunks, total);
+  if (!buffer.length) throw new Error('Generated image size is invalid');
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  const ext = extensionFromContentType(contentType, url);
+  const ext = extensionFromContentType(contentType, safeUrl);
   const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
   return { filename, url: `/uploads/${filename}` };
@@ -1445,7 +1758,7 @@ async function fetchPerplexitySearch(queries, apiKey) {
     err.status = 503;
     throw err;
   }
-  const upstream = await fetch(`${PERPLEXITY_BASE_URL}/search`, {
+  const upstream = await fetchWithTimeout(`${PERPLEXITY_BASE_URL}/search`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -1642,7 +1955,7 @@ async function runTavilySearch(query, { tavilyApiKey, webSearchDepth }) {
     include_raw_content: false,
     include_images: false,
   };
-  const upstream = await fetch(`${TAVILY_BASE_URL}/search`, {
+  const upstream = await fetchWithTimeout(`${TAVILY_BASE_URL}/search`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${tavilyApiKey}`,
@@ -1737,7 +2050,7 @@ async function pipeDeepSeekStream(upstream, res, sources = []) {
 
 app.get('/api/ai/settings', (_req, res) => {
   try {
-    res.json(db.getAiSettings());
+    res.json(publicAiSettings(db.getAiSettings()));
   } catch (err) {
     res.status(500).json({ error: 'Failed to load AI settings' });
   }
@@ -1745,8 +2058,9 @@ app.get('/api/ai/settings', (_req, res) => {
 
 app.put('/api/ai/settings', (req, res) => {
   try {
-    const saved = db.saveAiSettings(parseAiSettingsInput(req.body));
-    res.json(saved);
+    const current = db.getAiSettings();
+    const saved = db.saveAiSettings(parseAiSettingsInput(req.body, current));
+    res.json(publicAiSettings(saved));
   } catch (err) {
     res.status(400).json({ error: err.message || 'Failed to save AI settings' });
   }
@@ -1862,7 +2176,7 @@ app.post('/api/ai/image/prompt', async (req, res) => {
     };
     if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
 
-    const upstream = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    const upstream = await fetchWithTimeout(`${DEEPSEEK_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -1911,7 +2225,7 @@ app.post('/api/ai/image/generate', async (req, res) => {
     };
     if (image) payload.extra_body.image = image;
 
-    const upstream = await fetch(`${SEEDREAM_BASE_URL}/images/generations`, {
+    const upstream = await fetchWithTimeout(`${SEEDREAM_BASE_URL}/images/generations`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -2014,7 +2328,7 @@ app.post('/api/ai/chat', async (req, res) => {
     };
     if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
 
-    const upstream = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    const upstream = await fetchWithTimeout(`${DEEPSEEK_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -2086,7 +2400,7 @@ app.post('/api/ai/editor', async (req, res) => {
     };
     if (thinkingMode === 'enabled') payload.reasoning_effort = reasoningEffort;
 
-    const upstream = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+    const upstream = await fetchWithTimeout(`${DEEPSEEK_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -2117,9 +2431,40 @@ app.post('/api/ai/editor', async (req, res) => {
   }
 });
 
-app.get('/api/ai/conversations', (_req, res) => {
+function conversationReferencesDiaryLog(conversation) {
+  if (conversation?.scope !== 'editor' || typeof conversation.logKey !== 'string') return false;
+  const match = /^log:(\d+)$/.exec(conversation.logKey);
+  if (!match) return false;
+  const log = db.getById(Number(match[1]));
+  return Boolean(log && isDiaryCategory(log.category));
+}
+
+function conversationIsProtectedWhenDiaryLocked(conversation) {
+  if (conversation?.diarySensitive === true) return true;
+  if (conversation?.scope === 'global') return true;
+  if (conversation?.scope !== 'editor') return true;
+  if (!/^log:\d+$/.test(conversation.logKey || '')) return true;
+  return conversationReferencesDiaryLog(conversation);
+}
+
+function markConversationSensitivity(conversation, existing) {
+  return {
+    ...conversation,
+    diarySensitive: existing?.diarySensitive === true ||
+      conversation?.diarySensitive === true ||
+      conversationReferencesDiaryLog(conversation),
+  };
+}
+
+app.get('/api/ai/conversations', (req, res) => {
   try {
-    res.json(db.getAiChats());
+    const saved = db.getAiChats();
+    if (hasDiaryAccess(req)) return res.json(saved);
+    const conversations = saved.conversations.filter(item => !conversationIsProtectedWhenDiaryLocked(item));
+    const activeConversationId = conversations.some(item => item.id === saved.activeConversationId)
+      ? saved.activeConversationId
+      : (conversations[0]?.id || '');
+    res.json({ conversations, activeConversationId });
   } catch (err) {
     res.status(500).json({ error: 'Failed to load AI conversations' });
   }
@@ -2127,11 +2472,27 @@ app.get('/api/ai/conversations', (_req, res) => {
 
 app.put('/api/ai/conversations', (req, res) => {
   try {
-    const saved = db.saveAiChats({
-      conversations: req.body?.conversations,
-      activeConversationId: req.body?.activeConversationId,
+    const incoming = Array.isArray(req.body?.conversations) ? req.body.conversations : [];
+    const existing = db.getAiChats();
+    const existingById = new Map(existing.conversations.map(item => [item.id, item]));
+    let conversations = incoming.map(item => markConversationSensitivity(item, existingById.get(item?.id)));
+    if (!hasDiaryAccess(req)) {
+      const protectedExisting = existing.conversations.filter(conversationIsProtectedWhenDiaryLocked);
+      const protectedIds = new Set(protectedExisting.map(item => item.id));
+      const safeIncoming = conversations.filter(item =>
+        !protectedIds.has(item?.id) && !conversationIsProtectedWhenDiaryLocked(item)
+      );
+      conversations = [...protectedExisting, ...safeIncoming];
+    }
+    const saved = db.saveAiChats({ conversations, activeConversationId: req.body?.activeConversationId });
+    if (hasDiaryAccess(req)) return res.json(saved);
+    const visible = saved.conversations.filter(item => !conversationIsProtectedWhenDiaryLocked(item));
+    res.json({
+      conversations: visible,
+      activeConversationId: visible.some(item => item.id === saved.activeConversationId)
+        ? saved.activeConversationId
+        : (visible[0]?.id || ''),
     });
-    res.json(saved);
   } catch (err) {
     res.status(400).json({ error: 'Failed to save AI conversations' });
   }
@@ -2141,7 +2502,9 @@ app.put('/api/ai/conversations', (req, res) => {
 app.get('/api/logs', (req, res) => {
   try {
     const diaryUnlocked = hasDiaryAccess(req);
-    const result = db.getAll(req.query, diaryUnlocked);
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+    const result = db.getAll({ ...req.query, page, limit }, diaryUnlocked);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2152,14 +2515,15 @@ app.get('/api/logs', (req, res) => {
 app.put('/api/logs/reorder', (req, res) => {
   try {
     const { orderedIds } = req.body;
-    if (!Array.isArray(orderedIds)) {
-      return res.status(400).json({ error: 'orderedIds array required' });
+    const ids = Array.isArray(orderedIds) ? orderedIds.map(parsePositiveId) : [];
+    if (!Array.isArray(orderedIds) || ids.some(id => !id) || new Set(ids).size !== ids.length) {
+      return res.status(400).json({ error: 'orderedIds must contain unique positive integers' });
     }
-    const touchesDiary = orderedIds
-      .map(id => db.getById(parseInt(id)))
+    const touchesDiary = ids
+      .map(id => db.getById(id))
       .some(logRequiresDiaryAccess);
     if (touchesDiary && !hasDiaryAccess(req)) return rejectLockedDiary(res);
-    db.reorderLogs(orderedIds);
+    db.reorderLogs(ids);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2169,7 +2533,9 @@ app.put('/api/logs/reorder', (req, res) => {
 // Get single log
 app.get('/api/logs/:id', (req, res) => {
   try {
-    const log = db.getById(parseInt(req.params.id));
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid log id' });
+    const log = db.getById(id);
     if (!log) return res.status(404).json({ error: 'Log not found' });
     if (logRequiresDiaryAccess(log) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     res.json(log);
@@ -2181,19 +2547,10 @@ app.get('/api/logs/:id', (req, res) => {
 // Create log
 app.post('/api/logs', (req, res) => {
   try {
-    const { title, content, category, hours, log_date } = req.body;
-    if (!title || !content) {
-      return res.status(400).json({ error: 'Title and content are required' });
-    }
-    if (hours !== undefined && hours !== null && hours !== '') {
-      const h = parseFloat(hours);
-      if (isNaN(h) || h < 0 || h > 24) return res.status(400).json({ error: '工时需为 0-24 之间的数字' });
-    }
-    if (log_date && !isValidDate(log_date)) {
-      return res.status(400).json({ error: '日期格式无效' });
-    }
-    if (isDiaryCategory(category) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
-    const entry = db.create({ title, content, category, hours, log_date });
+    const validated = validateLogInput(req.body);
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    if (isDiaryCategory(validated.payload.category) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
+    const entry = db.create(validated.payload);
     res.status(201).json(entry);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2203,18 +2560,15 @@ app.post('/api/logs', (req, res) => {
 // Update log
 app.put('/api/logs/:id', (req, res) => {
   try {
-    const { title, content, category, hours, log_date } = req.body;
-    if (hours !== undefined && hours !== null && hours !== '') {
-      const h = parseFloat(hours);
-      if (isNaN(h) || h < 0 || h > 24) return res.status(400).json({ error: '工时需为 0-24 之间的数字' });
-    }
-    if (log_date && !isValidDate(log_date)) {
-      return res.status(400).json({ error: '日期格式无效' });
-    }
-    const existing = db.getById(parseInt(req.params.id));
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid log id' });
+    const validated = validateLogInput(req.body, { partial: true });
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    if (!Object.keys(validated.payload).length) return res.status(400).json({ error: 'No log fields to update' });
+    const existing = db.getById(id);
     if (!existing) return res.status(404).json({ error: 'Log not found' });
-    if ((logRequiresDiaryAccess(existing) || isDiaryCategory(category)) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
-    const entry = db.update(parseInt(req.params.id), { title, content, category, hours, log_date });
+    if ((logRequiresDiaryAccess(existing) || isDiaryCategory(validated.payload.category)) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
+    const entry = db.update(id, validated.payload);
     res.json(entry);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2224,10 +2578,12 @@ app.put('/api/logs/:id', (req, res) => {
 // Delete log
 app.delete('/api/logs/:id', (req, res) => {
   try {
-    const log = db.getById(parseInt(req.params.id));
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid log id' });
+    const log = db.getById(id);
     if (!log) return res.status(404).json({ error: 'Log not found' });
     if (logRequiresDiaryAccess(log) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
-    const ok = db.remove(parseInt(req.params.id));
+    const ok = db.remove(id);
     if (!ok) return res.status(404).json({ error: 'Log not found' });
     res.json({ success: true });
   } catch (err) {
@@ -2325,6 +2681,50 @@ app.put('/api/todo-reminder-settings', (req, res) => {
   }
 });
 
+app.get('/api/countdowns', (_req, res) => {
+  try {
+    res.json(db.getAllCountdowns());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/countdowns', (req, res) => {
+  try {
+    const validated = validateCountdownInput(req.body);
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    res.status(201).json(db.createCountdown(validated.payload));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/countdowns/:id', (req, res) => {
+  try {
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid countdown id' });
+    const validated = validateCountdownInput(req.body, { partial: true });
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    if (!Object.keys(validated.payload).length) return res.status(400).json({ error: 'No countdown fields to update' });
+    const entry = db.updateCountdown(id, validated.payload);
+    if (!entry) return res.status(404).json({ error: 'Countdown not found' });
+    res.json(entry);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/countdowns/:id', (req, res) => {
+  try {
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid countdown id' });
+    if (!db.removeCountdown(id)) return res.status(404).json({ error: 'Countdown not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/todos', (req, res) => {
   try {
     const todos = db.getAllTodos(req.query);
@@ -2336,11 +2736,9 @@ app.get('/api/todos', (req, res) => {
 
 app.post('/api/todos', (req, res) => {
   try {
-    const { title } = req.body;
-    if (!title || !title.trim()) {
-      return res.status(400).json({ error: 'Title is required' });
-    }
-    const entry = db.createTodo(req.body);
+    const validated = validateTodoInput(req.body);
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    const entry = db.createTodo(validated.payload);
     res.status(201).json(entry);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2360,10 +2758,11 @@ app.delete('/api/todos/completed', (req, res) => {
 app.put('/api/todos/reorder', (req, res) => {
   try {
     const { orderedIds } = req.body;
-    if (!Array.isArray(orderedIds)) {
-      return res.status(400).json({ error: 'orderedIds array required' });
+    const ids = Array.isArray(orderedIds) ? orderedIds.map(parsePositiveId) : [];
+    if (!Array.isArray(orderedIds) || ids.some(id => !id) || new Set(ids).size !== ids.length) {
+      return res.status(400).json({ error: 'orderedIds must contain unique positive integers' });
     }
-    db.reorderTodos(orderedIds);
+    db.reorderTodos(ids);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2372,7 +2771,12 @@ app.put('/api/todos/reorder', (req, res) => {
 
 app.put('/api/todos/:id', (req, res) => {
   try {
-    const entry = db.updateTodo(parseInt(req.params.id), req.body);
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid todo id' });
+    const validated = validateTodoInput(req.body, { partial: true });
+    if (validated.error) return res.status(400).json({ error: validated.error });
+    if (!Object.keys(validated.payload).length) return res.status(400).json({ error: 'No todo fields to update' });
+    const entry = db.updateTodo(id, validated.payload);
     if (!entry) return res.status(404).json({ error: 'Todo not found' });
     res.json(entry);
   } catch (err) {
@@ -2382,7 +2786,9 @@ app.put('/api/todos/:id', (req, res) => {
 
 app.delete('/api/todos/:id', (req, res) => {
   try {
-    const ok = db.removeTodo(parseInt(req.params.id));
+    const id = parsePositiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Invalid todo id' });
+    const ok = db.removeTodo(id);
     if (!ok) return res.status(404).json({ error: 'Todo not found' });
     res.json({ success: true });
   } catch (err) {
@@ -2401,6 +2807,10 @@ app.post('/api/upload', (req, res) => {
       return res.status(400).json({ error: err.message });
     }
     if (!req.file) return res.status(400).json({ error: '请选择要上传的图片' });
+    if (!uploadedImageMatchesExtension(req.file)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: '文件内容与图片格式不匹配' });
+    }
     const privateUpload = req.body.private === 'true' || req.body.private === '1';
     if (privateUpload && !hasDiaryAccess(req)) {
       fs.unlinkSync(req.file.path);
@@ -2473,8 +2883,8 @@ app.get('/uploads/:filename', (req, res) => {
   try {
     const filePath = resolveUploadPath(req.params.filename);
     if (!filePath) return res.status(403).json({ error: 'Invalid filename' });
-    if (db.isPrivateUpload(req.params.filename) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: '文件不存在' });
+    if (db.isPrivateUpload(req.params.filename) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     res.sendFile(filePath);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2513,11 +2923,13 @@ app.get('/api/categories', (req, res) => {
 app.post('/api/categories', (req, res) => {
   try {
     const { name, parent } = req.body;
-    if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
-    if ((isDiaryCategory(name.trim()) || isDiaryCategory(parent)) && !hasDiaryAccess(req)) {
+    const cleanName = cleanCategorySegment(name);
+    const cleanParent = parent === undefined || parent === null || parent === '' ? null : cleanCategorySegment(parent);
+    if (!cleanName || (parent && !cleanParent)) return res.status(400).json({ error: 'Invalid category name' });
+    if ((isDiaryCategory(cleanName) || isDiaryCategory(cleanParent)) && !hasDiaryAccess(req)) {
       return rejectLockedDiary(res);
     }
-    const result = db.addCategory(name, parent || null);
+    const result = db.addCategory(cleanName, cleanParent);
     if (!result) {
       if (parent) return res.status(404).json({ error: 'Parent category not found' });
       return res.status(409).json({ error: 'Category already exists' });
@@ -2543,7 +2955,7 @@ app.put('/api/categories/reorder', (req, res) => {
 
 app.put('/api/categories/:parent/subcategories/reorder', (req, res) => {
   try {
-    const parent = decodeURIComponent(req.params.parent);
+    const parent = req.params.parent;
     const { orderedSubs } = req.body;
     if (isDiaryCategory(parent) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     if (!Array.isArray(orderedSubs)) {
@@ -2559,7 +2971,7 @@ app.put('/api/categories/:parent/subcategories/reorder', (req, res) => {
 
 app.patch('/api/categories/:name/calendar-day-visibility', (req, res) => {
   try {
-    const name = decodeURIComponent(req.params.name);
+    const name = req.params.name;
     if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     if (typeof req.body.visible !== 'boolean') {
       return res.status(400).json({ error: 'visible boolean required' });
@@ -2574,8 +2986,9 @@ app.patch('/api/categories/:name/calendar-day-visibility', (req, res) => {
 
 app.put('/api/categories/:oldName', (req, res) => {
   try {
-    const oldName = decodeURIComponent(req.params.oldName);
-    const newName = req.body.name;
+    const oldName = req.params.oldName;
+    const newName = cleanCategorySegment(req.body.name);
+    if (!newName) return res.status(400).json({ error: 'Invalid category name' });
     if (isDiaryRoot(oldName) || isDiaryRoot(newName)) {
       return res.status(409).json({ error: 'Diary root category is protected' });
     }
@@ -2592,7 +3005,7 @@ app.put('/api/categories/:oldName', (req, res) => {
 
 app.delete('/api/categories/:name', (req, res) => {
   try {
-    const name = decodeURIComponent(req.params.name);
+    const name = req.params.name;
     if (isDiaryRoot(name)) return res.status(409).json({ error: 'Diary root category is protected' });
     if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const ok = db.deleteCategory(name);
@@ -2603,16 +3016,60 @@ app.delete('/api/categories/:name', (req, res) => {
   }
 });
 
-function startServer(port = PORT) {
+function isLoopbackHost(host) {
+  return ['127.0.0.1', '::1', 'localhost'].includes(String(host).toLowerCase());
+}
+
+function acquireProcessLock() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const lockPath = path.join(DATA_DIR, '.schedule.lock');
+  const tryAcquire = () => {
+    const fd = fs.openSync(lockPath, 'wx', 0o600);
+    fs.writeFileSync(fd, String(process.pid), 'utf-8');
+    fs.fsyncSync(fd);
+    return { fd, lockPath };
+  };
+  try {
+    return tryAcquire();
+  } catch (err) {
+    if (err.code !== 'EEXIST') throw err;
+    const oldPid = Number.parseInt(fs.readFileSync(lockPath, 'utf-8'), 10);
+    let alive = Number.isInteger(oldPid) && oldPid > 0;
+    if (alive) {
+      try { process.kill(oldPid, 0); } catch { alive = false; }
+    }
+    if (alive) throw new Error(`DATA_DIR is already in use by process ${oldPid}`);
+    fs.unlinkSync(lockPath);
+    return tryAcquire();
+  }
+}
+
+function releaseProcessLock(lock) {
+  if (!lock) return;
+  try { fs.closeSync(lock.fd); } catch {}
+  try {
+    if (fs.readFileSync(lock.lockPath, 'utf-8').trim() === String(process.pid)) {
+      fs.unlinkSync(lock.lockPath);
+    }
+  } catch {}
+}
+
+function startServer(port = PORT, host = HOST) {
+  if (!isLoopbackHost(host) && !AUTH_TOKEN) {
+    throw new Error('AUTH_TOKEN is required when HOST is not loopback');
+  }
+  const processLock = acquireProcessLock();
   todoReminderService = createTodoReminderService();
-  const server = app.listen(port, () => {
-    console.log(`Work Log server running at http://localhost:${port}`);
+  const server = app.listen(port, host, () => {
+    console.log(`Work Log server running at http://${host}:${port}`);
     if (AUTH_TOKEN) console.log('Authentication enabled (AUTH_TOKEN is set)');
     db.checkDataIntegrity();
     todoReminderService.start();
   });
+  server.on('error', () => releaseProcessLock(processLock));
   server.on('close', () => {
     todoReminderService?.stop();
+    releaseProcessLock(processLock);
   });
   return server;
 }

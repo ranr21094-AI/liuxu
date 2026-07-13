@@ -1,6 +1,7 @@
 import { apiFetch } from './auth.js';
 import { showToast, escHtml, setupDragAndDrop, confirmDialog, openModal, closeModal, $ } from './helpers.js';
-import { businessDateString } from './businessDate.js';
+import { businessDateString, parseBusinessDate } from './businessDate.js';
+import { countdownTiming } from './countdownDate.js';
 import { state } from './state.js';
 import { renderCalendar } from './calendar.js';
 
@@ -13,10 +14,13 @@ const TODO_RECURRENCE_LABELS = {
   yearly: '每年',
 };
 let allTodos = [];
+let allCountdowns = [];
 let todoCategories = [DEFAULT_TODO_CATEGORY];
+let todoPageMode = localStorage.getItem('todoPageMode') === 'countdowns' ? 'countdowns' : 'todos';
 let activeFilter = localStorage.getItem('todoFilter') || DEFAULT_TODO_CATEGORY;
 if (activeFilter === 'all' || activeFilter === 'undated' || activeFilter === 'pending') activeFilter = DEFAULT_TODO_CATEGORY;
 let selectedTodoId = null;
+let selectedCountdownId = null;
 let todoSearchQuery = '';
 let todoReminderSettings = {
   enabled: false,
@@ -41,6 +45,16 @@ function normalizeTodo(todo) {
     recurrence: todo.recurrence || 'none',
     category: todo.category || DEFAULT_TODO_CATEGORY,
     notes: typeof todo.notes === 'string' ? todo.notes : '',
+  };
+}
+
+function normalizeCountdown(countdown) {
+  return {
+    ...countdown,
+    title: typeof countdown?.title === 'string' ? countdown.title : '',
+    target_date: typeof countdown?.target_date === 'string' ? countdown.target_date : '',
+    repeat_yearly: countdown?.repeat_yearly === true,
+    notes: typeof countdown?.notes === 'string' ? countdown.notes : '',
   };
 }
 
@@ -104,17 +118,20 @@ function renderTodoReminderSettings() {
 
 export async function loadTodos() {
   try {
-    const [todosRes, categoriesRes, reminderRes] = await Promise.all([
+    const [todosRes, countdownsRes, categoriesRes, reminderRes] = await Promise.all([
       apiFetch('/api/todos'),
+      apiFetch('/api/countdowns'),
       apiFetch('/api/todo-categories'),
       apiFetch('/api/todo-reminder-settings'),
     ]);
     allTodos = (await todosRes.json()).map(normalizeTodo);
+    allCountdowns = (await countdownsRes.json()).map(normalizeCountdown);
     todoCategories = normalizeTodoCategories(await categoriesRes.json());
     todoReminderSettings = normalizeTodoReminderSettings(await reminderRes.json());
     todoReminderUiMessage = '';
     if (activeFilter !== 'done' && !todoCategories.includes(activeFilter)) activeFilter = DEFAULT_TODO_CATEGORY;
     if (selectedTodoId && !allTodos.some(t => t.id === selectedTodoId)) resetTodoForm();
+    if (selectedCountdownId && !allCountdowns.some(item => item.id === selectedCountdownId)) resetCountdownForm();
     refreshTodoCalendarDates();
     renderTodos();
   } catch (err) {
@@ -141,6 +158,16 @@ function todoStats() {
   const overdue = pending.filter(t => t.due_date && t.due_date < today);
   const dueToday = pending.filter(t => t.due_date === today);
   return { pending, done, overdue, dueToday };
+}
+
+function countdownStats() {
+  const timing = allCountdowns.map(item => countdownTiming(item));
+  return {
+    total: timing.length,
+    today: timing.filter(item => item.state === 'today').length,
+    soon: timing.filter(item => item.state === 'future' && item.days <= 30).length,
+    elapsed: timing.filter(item => item.state === 'elapsed').length,
+  };
 }
 
 function refreshTodoCalendarDates() {
@@ -406,11 +433,7 @@ function sectionHtml(title, todos, { action = '' } = {}) {
 }
 
 function renderFullTodos() {
-  const { pending, done, overdue, dueToday } = todoStats();
-  $('#todoStatPending').textContent = pending.length;
-  $('#todoStatToday').textContent = dueToday.length;
-  $('#todoStatOverdue').textContent = overdue.length;
-  $('#todoStatDone').textContent = done.length;
+  const { done } = todoStats();
   renderTodoFilterTabs();
   renderTodoCategorySelect($('#todoFullCategory').value || DEFAULT_TODO_CATEGORY);
 
@@ -431,9 +454,104 @@ function renderFullTodos() {
   }
 }
 
+function countdownLabel(timing) {
+  if (timing.state === 'today') return '就是今天';
+  if (timing.state === 'future') return `还有 ${timing.days} 天`;
+  return `已过 ${Math.abs(timing.days)} 天`;
+}
+
+function formatCountdownDate(value) {
+  const parts = parseBusinessDate(value);
+  return parts ? `${parts.year}年${parts.month}月${parts.day}日` : value;
+}
+
+function sortedFilteredCountdowns() {
+  const query = todoSearchQuery.trim().toLowerCase();
+  return allCountdowns
+    .filter(item => !query ||
+      item.title.toLowerCase().includes(query) ||
+      item.notes.toLowerCase().includes(query))
+    .map(item => ({ item, timing: countdownTiming(item) }))
+    .sort((a, b) => {
+      const rank = value => value.timing.state === 'today' ? 0 : (value.timing.state === 'future' ? 1 : 2);
+      const rankDiff = rank(a) - rank(b);
+      if (rankDiff) return rankDiff;
+      if (a.timing.state === 'elapsed') return b.timing.days - a.timing.days || b.item.id - a.item.id;
+      return a.timing.days - b.timing.days || b.item.id - a.item.id;
+    });
+}
+
+function countdownCardHtml(item, timing) {
+  const selected = selectedCountdownId === item.id ? ' selected' : '';
+  const stateClass = timing.state === 'today' ? ' is-today' : (timing.state === 'elapsed' ? ' is-elapsed' : '');
+  return `
+    <article class="countdown-card${selected}${stateClass}" data-countdown-id="${item.id}" tabindex="0" aria-label="编辑倒数日：${escHtml(item.title)}">
+      <div class="countdown-card-topline">
+        ${item.repeat_yearly ? '<span class="countdown-repeat-badge">每年</span>' : '<span class="countdown-once-badge">一次</span>'}
+        <button class="countdown-delete" type="button" data-action="delete-countdown" aria-label="删除倒数日：${escHtml(item.title)}" title="删除">×</button>
+      </div>
+      <div class="countdown-number">${timing.state === 'today' ? 'TODAY' : Math.abs(timing.days)}</div>
+      <div class="countdown-status">${countdownLabel(timing)}</div>
+      <h3>${escHtml(item.title)}</h3>
+      <time datetime="${escHtml(timing.effectiveDate)}">${escHtml(formatCountdownDate(timing.effectiveDate))}</time>
+      ${item.notes ? `<p>${escHtml(item.notes)}</p>` : ''}
+    </article>
+  `;
+}
+
+function renderCountdowns() {
+  const grid = $('#countdownGrid');
+  const countdowns = sortedFilteredCountdowns();
+  if (!countdowns.length) {
+    grid.innerHTML = `<div class="todo-empty countdown-empty">${todoSearchQuery.trim() ? '没有匹配的倒数日' : '还没有倒数日，添加一个值得期待的日子吧'}</div>`;
+    return;
+  }
+  grid.innerHTML = countdowns.map(({ item, timing }) => countdownCardHtml(item, timing)).join('');
+}
+
+function renderModeStats() {
+  const labels = [$('#todoStatLabelPending'), $('#todoStatLabelToday'), $('#todoStatLabelOverdue'), $('#todoStatLabelDone')];
+  const values = [$('#todoStatPending'), $('#todoStatToday'), $('#todoStatOverdue'), $('#todoStatDone')];
+  const cards = values.map(value => value.closest('.todo-stat-card'));
+  cards.forEach(card => card.classList.remove('danger'));
+  if (todoPageMode === 'countdowns') {
+    const stats = countdownStats();
+    ['总数', '今天', '30天内', '已过期'].forEach((label, index) => { labels[index].textContent = label; });
+    [stats.total, stats.today, stats.soon, stats.elapsed].forEach((value, index) => { values[index].textContent = value; });
+    cards[3].classList.add('danger');
+  } else {
+    const { pending, done, overdue, dueToday } = todoStats();
+    ['待办', '今日', '逾期', '已完成'].forEach((label, index) => { labels[index].textContent = label; });
+    [pending.length, dueToday.length, overdue.length, done.length].forEach((value, index) => { values[index].textContent = value; });
+    cards[2].classList.add('danger');
+  }
+  $('.todo-page-stats').setAttribute('aria-label', todoPageMode === 'countdowns' ? '倒数日统计' : '待办统计');
+}
+
+function applyTodoPageMode() {
+  const countdownMode = todoPageMode === 'countdowns';
+  $('#todoView').classList.toggle('countdown-mode', countdownMode);
+  $('#todoFullPanel').hidden = countdownMode;
+  $('#todoFullForm').hidden = countdownMode;
+  $('#countdownPanel').hidden = !countdownMode;
+  $('#countdownForm').hidden = !countdownMode;
+  document.querySelectorAll('.todo-mode-only').forEach(element => { element.hidden = countdownMode; });
+  $('#todoSearchInput').placeholder = countdownMode ? '搜索倒数日标题或备注...' : '搜索标题或备注...';
+  document.querySelector('label[for="todoSearchInput"]').textContent = countdownMode ? '搜索倒数日' : '搜索待办';
+  document.querySelectorAll('#todoModeTabs [data-mode]').forEach(button => {
+    const selected = button.dataset.mode === todoPageMode;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  });
+  renderModeStats();
+}
+
 function renderTodos() {
   renderFullTodos();
+  renderCountdowns();
   renderTodoReminderSettings();
+  applyTodoPageMode();
 }
 
 export function showTodoView() {
@@ -475,6 +593,85 @@ function fillTodoForm(todo) {
   renderFullTodos();
   $('#todoFullTitle').focus();
   $('#todoFullTitle').select();
+}
+
+function resetCountdownForm() {
+  selectedCountdownId = null;
+  $('#countdownEditId').value = '';
+  $('#countdownTitle').value = '';
+  $('#countdownTargetDate').value = '';
+  $('#countdownRepeatYearly').checked = false;
+  $('#countdownNotes').value = '';
+  $('#btnCountdownSave').textContent = '保存倒数日';
+  $('#countdownFormHint').textContent = '记录值得期待的日子';
+  renderCountdowns();
+}
+
+function fillCountdownForm(countdown) {
+  selectedCountdownId = countdown.id;
+  $('#countdownEditId').value = countdown.id;
+  $('#countdownTitle').value = countdown.title;
+  $('#countdownTargetDate').value = countdown.target_date;
+  $('#countdownRepeatYearly').checked = countdown.repeat_yearly;
+  $('#countdownNotes').value = countdown.notes;
+  $('#btnCountdownSave').textContent = '更新倒数日';
+  $('#countdownFormHint').textContent = '正在编辑倒数日';
+  renderCountdowns();
+  $('#countdownTitle').focus();
+  $('#countdownTitle').select();
+}
+
+async function saveCountdownFromForm() {
+  const title = $('#countdownTitle').value.trim();
+  const targetDate = $('#countdownTargetDate').value;
+  if (!title) {
+    showToast('请输入倒数日标题', 'error');
+    $('#countdownTitle').focus();
+    return;
+  }
+  if (!targetDate) {
+    showToast('请选择目标日期', 'error');
+    $('#countdownTargetDate').focus();
+    return;
+  }
+  const id = parseInt($('#countdownEditId').value, 10);
+  const body = {
+    title,
+    target_date: targetDate,
+    repeat_yearly: $('#countdownRepeatYearly').checked,
+    notes: $('#countdownNotes').value,
+  };
+  try {
+    await apiFetch(id ? `/api/countdowns/${id}` : '/api/countdowns', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    showToast(id ? '倒数日已更新' : '倒数日已添加', 'success');
+    resetCountdownForm();
+    await loadTodos();
+  } catch (err) {
+    showToast('保存倒数日失败: ' + err.message, 'error');
+  }
+}
+
+async function deleteCountdown(id) {
+  const countdown = allCountdowns.find(item => item.id === id);
+  if (!countdown) return;
+  const confirmed = await confirmDialog({
+    title: '删除倒数日',
+    message: `删除倒数日「${countdown.title}」？`,
+    confirmText: '删除',
+  });
+  if (!confirmed) return;
+  try {
+    await apiFetch(`/api/countdowns/${id}`, { method: 'DELETE' });
+    if (selectedCountdownId === id) resetCountdownForm();
+    await loadTodos();
+    showToast('倒数日已删除', 'success');
+  } catch (err) {
+    showToast('删除倒数日失败: ' + err.message, 'error');
+  }
 }
 
 async function saveTodoFromFullForm() {
@@ -670,6 +867,29 @@ async function handleTodoListClick(e, { full = false } = {}) {
 
 $('#todoFullList').addEventListener('click', (e) => handleTodoListClick(e, { full: true }));
 
+$('#countdownGrid').addEventListener('click', (event) => {
+  const card = event.target.closest('[data-countdown-id]');
+  if (!card) return;
+  const id = parseInt(card.dataset.countdownId, 10);
+  if (event.target.closest('[data-action="delete-countdown"]')) {
+    event.stopPropagation();
+    deleteCountdown(id);
+    return;
+  }
+  const countdown = allCountdowns.find(item => item.id === id);
+  if (countdown) fillCountdownForm(countdown);
+});
+
+$('#countdownGrid').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  if (event.target.closest('[data-action="delete-countdown"]')) return;
+  const card = event.target.closest('[data-countdown-id]');
+  if (!card) return;
+  event.preventDefault();
+  const countdown = allCountdowns.find(item => item.id === parseInt(card.dataset.countdownId, 10));
+  if (countdown) fillCountdownForm(countdown);
+});
+
 function setupTodoDrag(container) {
   setupDragAndDrop({
     container,
@@ -690,6 +910,8 @@ setupTodoDrag($('#todoFullList'));
 
 $('#btnTodoFullSave').addEventListener('click', saveTodoFromFullForm);
 $('#btnTodoFormCancel').addEventListener('click', resetTodoForm);
+$('#btnCountdownSave').addEventListener('click', saveCountdownFromForm);
+$('#btnCountdownCancel').addEventListener('click', resetCountdownForm);
 $('#btnTodoReminderSave').addEventListener('click', saveTodoReminderSettings);
 $('#todoReminderEnabled').addEventListener('change', (e) => {
   if (!todoReminderSettings.mailReady && e.target.checked) {
@@ -730,7 +952,33 @@ $('#todoFilterTabs').addEventListener('keydown', (e) => {
 
 $('#todoSearchInput').addEventListener('input', (e) => {
   todoSearchQuery = e.target.value || '';
-  renderFullTodos();
+  if (todoPageMode === 'countdowns') renderCountdowns();
+  else renderFullTodos();
+});
+
+$('#todoModeTabs').addEventListener('click', (event) => {
+  const button = event.target.closest('[data-mode]');
+  if (!button || !['todos', 'countdowns'].includes(button.dataset.mode)) return;
+  todoPageMode = button.dataset.mode;
+  localStorage.setItem('todoPageMode', todoPageMode);
+  todoSearchQuery = '';
+  $('#todoSearchInput').value = '';
+  renderTodos();
+  $('#todoSearchInput').focus();
+});
+
+$('#todoModeTabs').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+  event.preventDefault();
+  const nextMode = todoPageMode === 'todos' ? 'countdowns' : 'todos';
+  document.querySelector(`#todoModeTabs [data-mode="${nextMode}"]`)?.click();
+});
+
+$('#countdownTitle').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    saveCountdownFromForm();
+  }
 });
 
 $('#btnTodoCategoryOpen').addEventListener('click', openTodoCategoryModal);
