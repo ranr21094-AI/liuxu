@@ -99,7 +99,14 @@ function failCorruptData(label, file, err) {
 }
 
 function cloneLogs(logs) {
-  return logs.map(log => ({ ...log }));
+  return logs.map(log => {
+    const pinned = log.pinned === true;
+    return {
+      ...log,
+      pinned,
+      pinned_at: pinned && typeof log.pinned_at === 'string' && log.pinned_at ? log.pinned_at : null,
+    };
+  });
 }
 
 function cloneTodos(todos) {
@@ -839,8 +846,16 @@ function getAll(query = {}, diaryUnlocked = true) {
     );
   }
 
-  // Sort: by date desc, sort_order asc, id desc
+  // Category browsing promotes pinned logs before the existing date/manual order.
   logs.sort((a, b) => {
+    if (query.category) {
+      const pinnedDiff = Number(b.pinned === true) - Number(a.pinned === true);
+      if (pinnedDiff !== 0) return pinnedDiff;
+      if (a.pinned === true && b.pinned === true) {
+        const pinnedAtDiff = (b.pinned_at || '').localeCompare(a.pinned_at || '');
+        if (pinnedAtDiff !== 0) return pinnedAtDiff;
+      }
+    }
     const dateA = a.log_date || '';
     const dateB = b.log_date || '';
     if (dateA !== dateB) return dateB.localeCompare(dateA);
@@ -876,6 +891,8 @@ function create(data, referenceDate = new Date()) {
     hours: parseFloat(data.hours) || 0,
     log_date: data.log_date === undefined ? businessDateString(referenceDate) : (data.log_date || ''),
     sort_order: data.sort_order !== undefined ? data.sort_order : 0,
+    pinned: data.pinned === true,
+    pinned_at: data.pinned === true ? new Date().toISOString() : null,
     created_at: now,
     updated_at: now,
   };
@@ -898,6 +915,10 @@ function update(id, data) {
   if (data.category !== undefined) entry.category = data.category;
   if (data.hours !== undefined) entry.hours = parseFloat(data.hours) || 0;
   if (data.log_date !== undefined) entry.log_date = data.log_date;
+  if (data.pinned !== undefined) {
+    entry.pinned = data.pinned;
+    entry.pinned_at = data.pinned ? new Date().toISOString() : null;
+  }
   entry.updated_at = now;
 
   writeLogs(logs);
@@ -1683,6 +1704,22 @@ function normalizeLogsForRestore(logs) {
     const sortOrder = normalizeFiniteNumber(item.sort_order, 0);
     if (sortOrder === null) return { error: `Invalid sort_order for log id ${id}` };
 
+    if (item.pinned !== undefined && typeof item.pinned !== 'boolean') {
+      return { error: `Invalid pinned for log id ${id}` };
+    }
+    const pinned = item.pinned === true;
+    let pinnedAt = item.pinned_at === undefined ? null : item.pinned_at;
+    if (pinnedAt !== null && (typeof pinnedAt !== 'string' || !pinnedAt || !Number.isFinite(Date.parse(pinnedAt)))) {
+      return { error: `Invalid pinned_at for log id ${id}` };
+    }
+    if (!pinned) pinnedAt = null;
+
+    const createdAt = normalizeString(item.created_at, now);
+    const updatedAt = normalizeString(item.updated_at, createdAt);
+    if (pinned && !pinnedAt) {
+      pinnedAt = Number.isFinite(Date.parse(updatedAt)) ? updatedAt : new Date().toISOString();
+    }
+
     normalized.push({
       id,
       title: normalizeString(item.title, ''),
@@ -1691,8 +1728,10 @@ function normalizeLogsForRestore(logs) {
       hours,
       log_date: logDate,
       sort_order: sortOrder,
-      created_at: normalizeString(item.created_at, now),
-      updated_at: normalizeString(item.updated_at, normalizeString(item.created_at, now)),
+      pinned,
+      pinned_at: pinnedAt,
+      created_at: createdAt,
+      updated_at: updatedAt,
     });
   }
 

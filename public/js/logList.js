@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { apiFetch } from './auth.js';
-import { formatDate, escHtml, setupDragAndDrop, $ } from './helpers.js';
+import { formatDate, escHtml, setupDragAndDrop, showToast, $ } from './helpers.js';
 import { renderToHtml } from './markdown.js';
 import { renderCalendar } from './calendar.js';
 import { handleInternalLogLinkClick, openEditor, openEditorFromNavigation } from './editor.js';
@@ -371,9 +371,16 @@ function renderLogList(data) {
       title = title.replace(re, '<mark>$1</mark>');
     }
     const dateLabel = formatShortDateLabel(log.log_date);
+    const pinned = log.pinned === true;
+    const pinLabel = pinned ? '取消置顶' : '置顶';
     return `
-      <div class="log-card" data-id="${log.id}" draggable="true" tabindex="0" role="button" aria-label="打开日志: ${escHtml(log.title)}">
-        <div class="log-card-drag" title="拖动排序">⋮⋮</div>
+      <div class="log-card${pinned ? ' is-pinned' : ''}" data-id="${log.id}" data-pinned="${pinned}" draggable="true" tabindex="0" role="button" aria-label="打开日志: ${escHtml(log.title)}">
+        <button class="log-card-pin${pinned ? ' active' : ''}" type="button" data-action="toggle-pin" aria-pressed="${pinned}" aria-label="${pinLabel}日志：${escHtml(log.title)}" title="${pinLabel}">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path class="log-card-pin-head" d="M9 3h6l-1 7 3 3v1H7v-1l3-3-1-7Z"/>
+            <path d="M12 14v7"/>
+          </svg>
+        </button>
         <div class="log-card-top">
           <span class="log-card-title">${title}</span>
           <span class="log-card-category">${escHtml(log.category)}</span>
@@ -392,6 +399,34 @@ function renderLogList(data) {
 }
 
 logList.addEventListener('click', async (e) => {
+  const pinButton = e.target.closest('[data-action="toggle-pin"]');
+  if (pinButton) {
+    e.preventDefault();
+    e.stopPropagation();
+    const card = pinButton.closest('.log-card');
+    if (!card || pinButton.disabled) return;
+    const id = Number.parseInt(card.dataset.id, 10);
+    const nextPinned = card.dataset.pinned !== 'true';
+    pinButton.disabled = true;
+    try {
+      const res = await apiFetch(`/api/logs/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned: nextPinned }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || '更新置顶状态失败');
+      }
+      state.currentPage = 1;
+      await loadLogs();
+      showToast(nextPinned ? '日志已置顶' : '已取消置顶', 'success');
+    } catch (err) {
+      if (pinButton.isConnected) pinButton.disabled = false;
+      if (err.message !== 'Unauthorized') showToast(err.message || '更新置顶状态失败', 'error');
+    }
+    return;
+  }
   if (e.target.closest('[data-action="unlock-diary-from-list"]')) {
     e.preventDefault();
     window.dispatchEvent(new CustomEvent('request-diary-unlock'));
@@ -425,7 +460,6 @@ logList.addEventListener('click', async (e) => {
     e.stopPropagation();
     return;
   }
-  if (e.target.closest('.log-card-drag')) return;
   if (e.target.closest('.card-resize-handle')) return;
   const card = e.target.closest('.log-card');
   if (!card) return;
@@ -482,11 +516,13 @@ setupDragAndDrop({
   itemSelector: '.log-card',
   getId: (el) => parseInt(el.dataset.id),
   onReorder: async (ids) => {
-    await apiFetch('/api/logs/reorder', {
+    const res = await apiFetch('/api/logs/reorder', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ orderedIds: ids }),
     });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '日志排序失败');
+    await loadLogs();
   }
 });
 

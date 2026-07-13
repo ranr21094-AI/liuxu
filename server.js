@@ -212,6 +212,12 @@ function validateLogInput(body, { partial = false } = {}) {
     }
     payload.log_date = body.log_date;
   }
+  if (body.pinned !== undefined) {
+    if (typeof body.pinned !== 'boolean') {
+      return { error: 'pinned must be a boolean' };
+    }
+    payload.pinned = body.pinned;
+  }
   return { payload };
 }
 

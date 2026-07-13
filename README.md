@@ -304,7 +304,7 @@ http://<电脑局域网 IP>:<PORT>
 | --- | --- | --- |
 | `GET` | `/api/logs?date=&month=&category=&search=&page=` | 查询日志 |
 | `POST` | `/api/logs` | 新建日志 |
-| `PUT` | `/api/logs/:id` | 更新日志 |
+| `PUT` | `/api/logs/:id` | 更新日志（含 `pinned` 置顶状态） |
 | `DELETE` | `/api/logs/:id` | 删除日志 |
 | `GET` | `/api/todos` | 查询待办 |
 | `POST` | `/api/todos` | 新建待办 |
@@ -333,3 +333,5 @@ http://<电脑局域网 IP>:<PORT>
 | `POST` | `/api/ai/editor` | 日志内 AI 建议 |
 | `POST` | `/api/ai/image/prompt` | 生图 prompt 优化 |
 | `POST` | `/api/ai/image/generate` | Seedream 生图并保存到本地 |
+
+日志记录包含服务端维护的 `pinned` 与 `pinned_at` 字段。分类筛选时，置顶日志会在分页前优先排列；未选择分类时保持原有日期排序。

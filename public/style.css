@@ -2680,19 +2680,55 @@ body.sidebar-todo-mode .todo-reminder-card {
   white-space: nowrap;
 }
 
-/* Drag handle */
-.log-card-drag {
+/* Pin action */
+.log-card-pin {
   position: absolute;
-  top: 16px;
-  right: 12px;
-  color: rgba(100, 116, 139, 0.36);
-  cursor: grab;
-  font-size: 1rem;
-  padding: 4px;
-  user-select: none;
-  line-height: 1;
+  top: 14px;
+  right: 10px;
+  z-index: 4;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(100, 116, 139, 0.5);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
 }
-.log-card-drag:active { cursor: grabbing; }
+.log-card-pin svg {
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.log-card-pin:hover,
+.log-card-pin:focus-visible {
+  background: rgba(var(--color-primary-rgb), 0.09);
+  color: var(--color-primary);
+  outline: none;
+}
+.log-card-pin:focus-visible {
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb), 0.24);
+}
+.log-card-pin.active {
+  background: transparent;
+  color: var(--color-primary);
+}
+.log-card-pin.active .log-card-pin-head {
+  fill: currentColor;
+}
+.log-card-pin:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+.log-card.is-pinned {
+  border-color: rgba(var(--color-primary-rgb), 0.42);
+}
 
 /* Card resize handle */
 .card-resize-handle {
@@ -5720,8 +5756,7 @@ kbd {
     white-space: nowrap;
   }
 
-  .card-resize-handle,
-  .log-card-drag { display: none; }
+  .card-resize-handle { display: none; }
   .toolbar {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

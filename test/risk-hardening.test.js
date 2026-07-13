@@ -1967,6 +1967,75 @@ test('log and todo APIs reject malformed field types without poisoning persisted
   assert.equal((await fetch(`${baseUrl}/api/stats`)).status, 200);
 });
 
+test('log pinning persists and is promoted only within category-filtered results', async (t) => {
+  const { db, baseUrl, dataDir } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const newest = db.create({ title: 'newest normal', content: 'normal', category: '开发', log_date: '2026-12-01' });
+  const firstPinned = db.create({ title: 'first pinned', content: 'pin one', category: '开发', log_date: '2025-01-01' });
+  const nestedPinned = db.create({ title: 'nested pinned', content: 'pin two', category: '开发/前端', log_date: '2024-01-01' });
+  const diary = db.create({ title: 'private', content: 'secret', category: DIARY_CATEGORY, log_date: '2026-01-01' });
+
+  const setPinned = async (id, pinned) => fetch(`${baseUrl}/api/logs/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pinned }),
+  });
+
+  assert.equal((await setPinned(firstPinned.id, 'yes')).status, 400);
+  assert.equal((await setPinned('invalid', true)).status, 400);
+  assert.equal((await setPinned(999999, true)).status, 404);
+  assert.equal((await setPinned(diary.id, true)).status, 403);
+
+  const firstPinResponse = await setPinned(firstPinned.id, true);
+  assert.equal(firstPinResponse.status, 200);
+  const firstPinBody = await firstPinResponse.json();
+  assert.equal(firstPinBody.pinned, true);
+  assert.equal(Number.isFinite(Date.parse(firstPinBody.pinned_at)), true);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await setPinned(nestedPinned.id, true)).status, 200);
+
+  const parentFiltered = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent('开发')}&page=1&limit=1`)).json();
+  assert.equal(parentFiltered.total, 3);
+  assert.equal(parentFiltered.totalPages, 3);
+  assert.equal(parentFiltered.items[0].id, nestedPinned.id);
+
+  const subcategoryFiltered = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent('开发/前端')}`)).json();
+  assert.deepEqual(subcategoryFiltered.items.map(item => item.id), [nestedPinned.id]);
+
+  const unfiltered = await (await fetch(`${baseUrl}/api/logs`)).json();
+  assert.equal(unfiltered.items[0].id, newest.id);
+
+  const combinedMonth = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent('开发')}&month=2026-12`)).json();
+  assert.deepEqual(combinedMonth.items.map(item => item.id), [newest.id]);
+  const combinedSearch = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent('开发')}&search=nested`)).json();
+  assert.deepEqual(combinedSearch.items.map(item => item.id), [nestedPinned.id]);
+
+  assert.equal((await fetch(`${baseUrl}/api/logs/reorder`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orderedIds: [newest.id, firstPinned.id, nestedPinned.id] }),
+  })).status, 200);
+  const afterReorder = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent('开发')}`)).json();
+  assert.deepEqual(afterReorder.items.slice(0, 2).map(item => item.id), [nestedPinned.id, firstPinned.id]);
+
+  const unpinned = await setPinned(nestedPinned.id, false);
+  assert.equal(unpinned.status, 200);
+  assert.equal((await unpinned.json()).pinned_at, null);
+  const afterUnpin = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent('开发')}`)).json();
+  assert.equal(afterUnpin.items[0].id, firstPinned.id);
+
+  const createdPinned = await fetch(`${baseUrl}/api/logs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'created pinned', content: 'body', category: '开发', log_date: '2023-01-01', pinned: true }),
+  });
+  assert.equal(createdPinned.status, 201);
+  assert.equal((await createdPinned.json()).pinned, true);
+
+  const stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'logs.json'), 'utf8'));
+  assert.equal(stored.find(item => item.id === firstPinned.id).pinned, true);
+  assert.equal(stored.find(item => item.id === nestedPinned.id).pinned, false);
+});
+
 test('image upload rejects svg and still accepts allowed extensions', async (t) => {
   const { baseUrl } = loadFreshApp(t);
 
@@ -2152,6 +2221,8 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, logs: [{ id: 1 }, { id: 1 }] }).error, /Duplicate log id/);
   assert.match(db.restore({ ...base, logs: [{ id: 1, log_date: '2026-02-31' }] }).error, /Invalid log_date/);
   assert.match(db.restore({ ...base, logs: [{ id: 1, hours: 25 }] }).error, /Invalid hours/);
+  assert.match(db.restore({ ...base, logs: [{ id: 1, pinned: 'yes' }] }).error, /Invalid pinned/);
+  assert.match(db.restore({ ...base, logs: [{ id: 1, pinned: true, pinned_at: 'not-a-date' }] }).error, /Invalid pinned_at/);
   assert.match(db.restore({ ...base, todos: [{ id: 1 }, { id: 1 }] }).error, /Duplicate todo id/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, due_date: '2026-02-31' }] }).error, /Invalid due_date/);
   assert.match(db.restore({ ...base, todos: [{ id: 1, priority: 'critical' }] }).error, /Invalid priority/);
@@ -2165,6 +2236,8 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, photoWall: { items: [{ id: 1, url: '/uploads/a.png', filename: 'a.png', width: 10 }] } }).error, /Invalid photo wall geometry/);
 
   assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'], photoWall: { items: [{ id: 1, url: '/uploads/wall.png', filename: 'wall.png', x: 1, y: 2, width: 320, height: 240, comment: 'ok' }] } }).success, true);
+  assert.equal(db.backup().logs[0].pinned, false);
+  assert.equal(db.backup().logs[0].pinned_at, null);
   assert.equal(db.getAllTodos()[0].notes, '');
   assert.equal(db.getAllTodos()[0].recurrence, 'none');
   assert.deepEqual(db.backup().privateUploads, ['secret.png']);
@@ -2184,6 +2257,14 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.equal(db.createCountdown({ title: 'next countdown', target_date: '2026-09-01' }).id, 2);
   assert.equal(db.restore(base, 'merge').success, true);
   assert.deepEqual(db.getAllCountdowns().map(item => item.id), [2, 1]);
+
+  const pinnedBackup = {
+    ...base,
+    logs: [{ ...base.logs[0], pinned: true, pinned_at: '2026-06-01T12:00:00.000Z', updated_at: '2026-06-01T12:00:00.000Z' }],
+  };
+  assert.equal(db.restore(pinnedBackup).success, true);
+  assert.equal(db.backup().logs[0].pinned, true);
+  assert.equal(db.backup().logs[0].pinned_at, '2026-06-01T12:00:00.000Z');
 });
 
 test('corrupt JSON data fails closed and is preserved for recovery', (t) => {
@@ -3249,9 +3330,18 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.match(logListSource, /filterPage\.innerHTML = '<option value="1">第 1 \/ 1 页<\/option>';/);
   assert.match(logListSource, /html \+= `<option value="\$\{i\}" \$\{i === data\.page \? 'selected' : ''\}>第 \$\{i\} \/ \$\{data\.totalPages\} 页<\/option>`;/);
   assert.match(logListSource, /filterPage\?\.addEventListener\('change', \(\) => \{/);
-  assert.match(logListSource, /<div class="log-card"[\s\S]*<div class="log-card-top">[\s\S]*<span class="log-card-category">[\s\S]*<div class="log-card-content log-card-preview">[\s\S]*<div class="log-card-meta-row">[\s\S]*<span class="log-card-date">[\s\S]*<span class="log-card-hours">[\s\S]*<div class="card-resize-handle"><\/div>/);
+  assert.match(logListSource, /data-pinned="\$\{pinned\}"[\s\S]*<div class="log-card-top">[\s\S]*<span class="log-card-category">[\s\S]*<div class="log-card-content log-card-preview">[\s\S]*<div class="log-card-meta-row">[\s\S]*<span class="log-card-date">[\s\S]*<span class="log-card-hours">[\s\S]*<div class="card-resize-handle"><\/div>/);
   assert.match(logListSource, /<div class="preview-md markdown-body">\$\{renderToHtml\(log\.content\)\}<\/div>/);
-  assert.match(logListSource, /<div class="log-card-drag" title="拖动排序">/);
+  assert.match(logListSource, /<button class="log-card-pin\$\{pinned \? ' active' : ''\}"[^>]*data-action="toggle-pin"[^>]*aria-pressed="\$\{pinned\}"/);
+  assert.match(logListSource, /body:\s*JSON\.stringify\(\{ pinned: nextPinned \}\)/);
+  assert.match(logListSource, /state\.currentPage = 1;[\s\S]*await loadLogs\(\);[\s\S]*showToast\(nextPinned \? '日志已置顶' : '已取消置顶'/);
+  assert.match(logListSource, /onReorder: async \(ids\) => \{[\s\S]*if \(!res\.ok\) throw new Error[\s\S]*await loadLogs\(\);/);
+  assert.doesNotMatch(logListSource, /log-card-drag/);
+  assert.match(styleSource, /\.log-card-pin\.active\s*\{[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.log-card-pin\.active\s*\{[\s\S]*background:\s*transparent;[\s\S]*color:\s*var\(--color-primary\);/);
+  assert.match(styleSource, /\.log-card-pin\.active \.log-card-pin-head\s*\{[\s\S]*fill:\s*currentColor;/);
+  assert.match(styleSource, /\.log-card\.is-pinned\s*\{[\s\S]*border-color:/);
+  assert.doesNotMatch(styleSource, /\.log-card-drag/);
   assert.doesNotMatch(logListSource, /previewFormat/);
   assert.doesNotMatch(logListSource, /renderToText/);
   assert.doesNotMatch(logListSource, /btn-preview-toggle/);
