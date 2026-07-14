@@ -358,7 +358,8 @@ async function loadEditorAiConversations() {
     const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT);
     if (!res.ok) return;
     const data = await res.json();
-    editorAiAllConversations = normalizeEditorAiConversations(data.conversations);
+    editorAiAllConversations = normalizeEditorAiConversations(data.conversations)
+      .filter(item => item.scope === 'editor');
   } catch (err) {
     console.warn('Failed to load editor AI conversations:', err);
   }
@@ -366,14 +367,19 @@ async function loadEditorAiConversations() {
 
 async function saveEditorAiConversations() {
   try {
-    await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
+    const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        conversations: editorAiAllConversations,
+        scope: 'editor',
+        conversations: editorAiAllConversations.filter(item => item.scope === 'editor'),
         activeConversationId: editorAiActiveConversationId,
       }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'AI 历史保存失败');
+    }
   } catch (err) {
     console.warn('Failed to save editor AI conversations:', err);
     showToast('AI 历史保存失败：' + err.message, 'error');

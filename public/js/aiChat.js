@@ -19,7 +19,6 @@ const AI_SKILLS_ENDPOINT = '/api/ai/skills';
 const AI_SETTINGS_SELECT_IDS = ['aiModelSelect', 'aiReasoningEffort', 'aiSeedreamModel', 'aiSeedreamSize', 'aiWebSearchDepth'];
 
 let conversations = [];
-let allConversations = [];
 let activeConversationId = '';
 let previousViewId = 'listView';
 let sending = false;
@@ -58,7 +57,6 @@ let settings = {
 
 export function clearAiStateForDiaryLock() {
   conversations = [];
-  allConversations = [];
   activeConversationId = '';
   sending = false;
   const messages = $('#aiChatMessages');
@@ -291,8 +289,7 @@ async function loadConversations() {
     console.warn('Failed to load AI conversations:', err);
   }
 
-  allConversations = normalizeConversations(loaded.conversations);
-  conversations = allConversations.filter(item => item.scope !== 'editor');
+  conversations = normalizeConversations(loaded.conversations).filter(item => item.scope === 'global');
   activeConversationId = loaded.activeConversationId || '';
 
   if (!conversations.length) {
@@ -310,13 +307,19 @@ async function loadConversations() {
 
 async function saveConversations() {
   try {
-    const nonGlobalConversations = allConversations.filter(item => item.scope === 'editor');
-    allConversations = [...nonGlobalConversations, ...conversations.map(item => ({ ...item, scope: 'global', logKey: '' }))];
-    await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
+    const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversations: allConversations, activeConversationId }),
+      body: JSON.stringify({
+        scope: 'global',
+        conversations: conversations.map(item => ({ ...item, scope: 'global', logKey: '' })),
+        activeConversationId,
+      }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'AI 历史保存失败');
+    }
   } catch (err) {
     console.warn('Failed to save AI conversations:', err);
     showToast('AI 历史保存失败：' + err.message, 'error');
@@ -460,6 +463,13 @@ function formatChatTime(timestamp) {
   if (!timestamp) return '';
   const date = new Date(timestamp);
   return `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+export async function reloadAiChatHistory() {
+  await loadConversations();
+  renderMessages();
+  renderHistory();
+  updateSendState();
 }
 
 function messageTimeLabel(message, fallbackTimestamp) {

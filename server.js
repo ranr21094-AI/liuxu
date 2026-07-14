@@ -2447,7 +2447,7 @@ function conversationReferencesDiaryLog(conversation) {
 
 function conversationIsProtectedWhenDiaryLocked(conversation) {
   if (conversation?.diarySensitive === true) return true;
-  if (conversation?.scope === 'global') return true;
+  if (conversation?.scope === 'global') return false;
   if (conversation?.scope !== 'editor') return true;
   if (!/^log:\d+$/.test(conversation.logKey || '')) return true;
   return conversationReferencesDiaryLog(conversation);
@@ -2479,9 +2479,22 @@ app.get('/api/ai/conversations', (req, res) => {
 app.put('/api/ai/conversations', (req, res) => {
   try {
     const incoming = Array.isArray(req.body?.conversations) ? req.body.conversations : [];
+    const requestedScope = req.body?.scope;
+    if (requestedScope !== undefined && !['global', 'editor'].includes(requestedScope)) {
+      return res.status(400).json({ error: 'Invalid AI conversation scope' });
+    }
+    if (requestedScope && incoming.some(item => item?.scope !== requestedScope)) {
+      return res.status(400).json({ error: 'AI conversation scope mismatch' });
+    }
     const existing = db.getAiChats();
     const existingById = new Map(existing.conversations.map(item => [item.id, item]));
-    let conversations = incoming.map(item => markConversationSensitivity(item, existingById.get(item?.id)));
+    const normalizedIncoming = incoming.map(item => markConversationSensitivity(item, existingById.get(item?.id)));
+    let conversations = requestedScope
+      ? [
+          ...existing.conversations.filter(item => item.scope !== requestedScope),
+          ...normalizedIncoming,
+        ]
+      : normalizedIncoming;
     if (!hasDiaryAccess(req)) {
       const protectedExisting = existing.conversations.filter(conversationIsProtectedWhenDiaryLocked);
       const protectedIds = new Set(protectedExisting.map(item => item.id));
@@ -2490,7 +2503,10 @@ app.put('/api/ai/conversations', (req, res) => {
       );
       conversations = [...protectedExisting, ...safeIncoming];
     }
-    const saved = db.saveAiChats({ conversations, activeConversationId: req.body?.activeConversationId });
+    const activeConversationId = requestedScope === 'editor'
+      ? existing.activeConversationId
+      : req.body?.activeConversationId;
+    const saved = db.saveAiChats({ conversations, activeConversationId });
     if (hasDiaryAccess(req)) return res.json(saved);
     const visible = saved.conversations.filter(item => !conversationIsProtectedWhenDiaryLocked(item));
     res.json({

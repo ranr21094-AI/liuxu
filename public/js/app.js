@@ -6,7 +6,7 @@ import { clearMdCache } from './markdown.js';
 import { populateCalendarSelects, renderCalendar } from './calendar.js';
 import { loadLogs, populateMonthFilter, syncArchiveFilterControls } from './logList.js';
 import { showListView, leaveEditorSafely, clearEditorForDiaryLock } from './editor.js';
-import { initAiChat, showAiChatView, clearAiStateForDiaryLock } from './aiChat.js';
+import { initAiChat, showAiChatView, clearAiStateForDiaryLock, reloadAiChatHistory } from './aiChat.js';
 import { showPhotoWallView } from './photoWall.js';
 import { loadStats } from './stats.js';
 import { loadCategories, openCategoryManager } from './categories.js';
@@ -228,6 +228,7 @@ $('#btnDiaryLock').addEventListener('click', async () => {
   clearAiStateForDiaryLock();
   await lockDiary();
   syncDiaryLockState({ enabled: true, locked: true });
+  await reloadAiChatHistory();
   $('#btnDiaryUnlock').style.display = '';
   $('#btnDiaryLock').style.display = 'none';
   showToast('日记已锁定', 'info');
@@ -263,7 +264,7 @@ $('#btnDiaryUnlockSubmit').addEventListener('click', async () => {
     showToast('日记已解锁', 'success');
     await loadCategories();
     if (!preserveCurrentDiaryFilter) selectDiaryLogs();
-    await Promise.all([loadLogs(), loadStats(), loadTodos()]);
+    await Promise.all([loadLogs(), loadStats(), loadTodos(), reloadAiChatHistory()]);
   } else {
     showToast('密码错误', 'error');
   }

@@ -1939,6 +1939,7 @@ test('diary lock hides diary-sensitive AI conversations', async (t) => {
         { id: 'safe-editor', title: 'safe', scope: 'editor', logKey: 'log:1', messages: [] },
         { id: 'private-chat', title: 'private', scope: 'editor', logKey: 'draft:diary', diarySensitive: true, messages: [{ role: 'user', content: 'secret' }] },
         { id: 'global-chat', title: 'global', scope: 'global', logKey: '', messages: [] },
+        { id: 'private-global', title: 'private global', scope: 'global', logKey: '', diarySensitive: true, messages: [{ role: 'user', content: 'secret' }] },
       ],
     }),
   });
@@ -1946,8 +1947,67 @@ test('diary lock hides diary-sensitive AI conversations', async (t) => {
   assert.equal((await fetch(`${baseUrl}/api/auth/diary/lock`, { method: 'POST', headers: { Cookie: cookie } })).status, 200);
 
   const locked = await (await fetch(`${baseUrl}/api/ai/conversations`)).json();
-  assert.deepEqual(locked.conversations.map(item => item.id), ['safe-editor']);
+  assert.deepEqual(locked.conversations.map(item => item.id), ['safe-editor', 'global-chat']);
   assert.equal(locked.activeConversationId, 'safe-editor');
+});
+
+test('scoped AI conversation saves do not overwrite history owned by the other AI surface', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+
+  const seed = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      activeConversationId: 'global-1',
+      conversations: [
+        { id: 'global-1', title: 'global one', scope: 'global', messages: [] },
+        { id: 'editor-1', title: 'editor one', scope: 'editor', logKey: 'log:1', messages: [] },
+      ],
+    }),
+  });
+  assert.equal(seed.status, 200);
+
+  const editorSave = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scope: 'editor',
+      activeConversationId: 'editor-2',
+      conversations: [
+        { id: 'editor-2', title: 'editor two', scope: 'editor', logKey: 'log:2', messages: [] },
+      ],
+    }),
+  });
+  assert.equal(editorSave.status, 200);
+  let loaded = await (await fetch(`${baseUrl}/api/ai/conversations`)).json();
+  assert.deepEqual(loaded.conversations.map(item => item.id), ['global-1', 'editor-2']);
+  assert.equal(loaded.activeConversationId, 'global-1');
+
+  const globalSave = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scope: 'global',
+      activeConversationId: 'global-2',
+      conversations: [
+        { id: 'global-2', title: 'global two', scope: 'global', messages: [] },
+      ],
+    }),
+  });
+  assert.equal(globalSave.status, 200);
+  loaded = await (await fetch(`${baseUrl}/api/ai/conversations`)).json();
+  assert.deepEqual(loaded.conversations.map(item => item.id), ['editor-2', 'global-2']);
+  assert.equal(loaded.activeConversationId, 'global-2');
+
+  const mismatch = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scope: 'global',
+      conversations: [{ id: 'wrong-scope', title: 'wrong', scope: 'editor', logKey: 'log:1', messages: [] }],
+    }),
+  });
+  assert.equal(mismatch.status, 400);
 });
 
 test('log and todo APIs reject malformed field types without poisoning persisted data', async (t) => {
@@ -3827,7 +3887,9 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   const aiChatBodyCleanupBlock = aiCleanupStyles.match(/\.ai-chat-body\s*\{[^}]*\}/)?.[0] || '';
   const aiMessageFooterStyles = styleSource.match(/\/\* AI message footer and grouped history refinements \*\/[\s\S]*?\/\* Codex-style category workspace refinements \*\//)?.[0] || '';
 
-  assert.match(appSource, /import \{ initAiChat, showAiChatView, clearAiStateForDiaryLock \} from '\.\/aiChat\.js';/);
+  assert.match(appSource, /import \{ initAiChat, showAiChatView, clearAiStateForDiaryLock, reloadAiChatHistory \} from '\.\/aiChat\.js';/);
+  assert.match(appSource, /await lockDiary\(\);[\s\S]*await reloadAiChatHistory\(\);/);
+  assert.match(appSource, /Promise\.all\(\[loadLogs\(\), loadStats\(\), loadTodos\(\), reloadAiChatHistory\(\)\]\)/);
   assert.match(appSource, /import \{ showPhotoWallView \} from '\.\/photoWall\.js';/);
   assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
   assert.match(appSource, /async function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
@@ -3980,9 +4042,8 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /function imagePromptFrom\(text\)\s*\{\s*return String\(text \|\| ''\)\.trim\(\)\.slice\(0, 800\);/);
   assert.match(aiSource, /if \(forceImage\) \{[\s\S]*imageGeneration: \{[\s\S]*status: 'optimizing'/);
   assert.match(aiSource, /await apiFetch\(AI_CONVERSATIONS_ENDPOINT,[\s\S]*method: 'PUT'/);
-  assert.match(aiSource, /let allConversations = \[\];/);
-  assert.match(aiSource, /const nonGlobalConversations = allConversations\.filter\(item => item\.scope === 'editor'\);/);
-  assert.match(aiSource, /allConversations = \[\.\.\.nonGlobalConversations, \.\.\.conversations\.map\(item => \(\{ \.\.\.item, scope: 'global', logKey: '' \}\)\)\];/);
+  assert.match(aiSource, /scope: 'global',[\s\S]*conversations: conversations\.map/);
+  assert.doesNotMatch(aiSource, /let allConversations = \[\];/);
   assert.doesNotMatch(aiSource, /localStorage\.setItem\(CHAT_STORAGE_KEY|localStorage\.setItem\(ACTIVE_CHAT_STORAGE_KEY/);
   assert.match(aiSource, /async function newConversation\(\)/);
   assert.match(aiSource, /function openRenameModal\(id\)/);
