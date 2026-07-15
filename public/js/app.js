@@ -12,6 +12,7 @@ import { loadStats } from './stats.js';
 import { loadCategories, openCategoryManager } from './categories.js';
 import { loadTodos, showTodoView } from './todos.js';
 import { businessDateString } from './businessDate.js';
+import { initAccounts } from './accounts.js';
 
 // Theme
 function initTheme() {
@@ -417,14 +418,6 @@ function syncMainViewWithSidebarMode() {
   }
 }
 
-// Re-login after auth success
-window.addEventListener('auth-success', async () => {
-  await initAiChat();
-  const diarySelected = await initDiaryLock();
-  if (!diarySelected) await refreshAll();
-  syncMainViewWithSidebarMode();
-});
-
 // Global error boundary
 window.addEventListener('error', (e) => {
   showToast('应用遇到错误: ' + e.message, 'error');
@@ -442,6 +435,7 @@ async function initializeApp() {
   populateCalendarSelects();
   const authenticated = await checkAuth();
   if (!authenticated) return;
+  await initAccounts();
   await initAiChat();
   const diarySelected = await initDiaryLock();
   if (!diarySelected) await refreshAll();

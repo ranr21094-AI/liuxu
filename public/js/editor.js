@@ -1,5 +1,5 @@
 import { state } from './state.js';
-import { apiFetch, getAuthToken } from './auth.js';
+import { apiFetch, redirectToLogin } from './auth.js';
 import { showToast, escHtml, confirmDialog, openModal, closeModal, $, $$ } from './helpers.js';
 import { renderToHtmlUncached } from './markdown.js';
 import { loadLogs, listView, syncArchiveFilterControls } from './logList.js';
@@ -2355,8 +2355,6 @@ function uploadImageFile(file, selection = null) {
 
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/upload');
-  const authToken = getAuthToken();
-  if (authToken) xhr.setRequestHeader('Authorization', 'Bearer ' + authToken);
 
   xhr.upload.addEventListener('progress', (e) => {
     if (e.lengthComputable) {
@@ -2376,9 +2374,16 @@ function uploadImageFile(file, selection = null) {
       setTimeout(() => { if (status.textContent === '已插入') status.textContent = ''; }, SAVE_STATUS_DURATION);
     } else {
       let message = '上传失败';
+      let errorCode = '';
       try {
-        message = JSON.parse(xhr.responseText).error || message;
+        const data = JSON.parse(xhr.responseText);
+        message = data.error || message;
+        errorCode = data.code || '';
       } catch {}
+      if (xhr.status === 401 || errorCode === 'PASSWORD_CHANGE_REQUIRED') {
+        redirectToLogin({ passwordChange: errorCode === 'PASSWORD_CHANGE_REQUIRED' });
+        return;
+      }
       status.textContent = '上传失败';
       showToast(message, 'error');
     }

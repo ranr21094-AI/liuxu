@@ -46,6 +46,7 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
     process.env.DIARY_PASSWORD_HASH = '';
   }
   process.env.AUTH_TOKEN = authToken || '';
+  process.env.ALLOW_INSECURE_NO_AUTH = authToken ? '' : '1';
   process.env.DEEPSEEK_API_KEY = deepseekApiKey || '';
   process.env.DEEPSEEK_BASE_URL = deepseekBaseUrl || 'https://api.deepseek.com';
   process.env.DEEPSEEK_DEFAULT_MODEL = deepseekDefaultModel || 'deepseek-v4-flash';
@@ -71,6 +72,7 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
     delete process.env.DATA_DIR;
     delete process.env.DIARY_PASSWORD_HASH;
     delete process.env.AUTH_TOKEN;
+    delete process.env.ALLOW_INSECURE_NO_AUTH;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.DEEPSEEK_BASE_URL;
     delete process.env.DEEPSEEK_DEFAULT_MODEL;
@@ -116,6 +118,67 @@ async function unlockDiary(baseUrl, password = 'secret') {
   assert.match(setCookie, /HttpOnly/);
   assert.match(setCookie, /SameSite=Strict/);
   return setCookie.split(';')[0];
+}
+
+async function loginAndChangeBootstrapPassword(baseUrl, currentPassword, newPassword = 'new-secure-password') {
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: currentPassword }),
+  });
+  assert.equal(login.status, 200);
+  const loginBody = await login.json();
+  assert.equal(loginBody.must_change_password, true);
+  const loginCookieHeader = login.headers.get('set-cookie') || '';
+  assert.match(loginCookieHeader, /HttpOnly/);
+  assert.match(loginCookieHeader, /SameSite=Strict/);
+  assert.match(loginCookieHeader, /Max-Age=86(?:399|400)/);
+  const loginCookie = loginCookieHeader.split(';')[0];
+  assert.match(loginCookie, /^site_session=/);
+  const changed = await fetch(`${baseUrl}/api/auth/password`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: loginCookie },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  assert.equal(changed.status, 200);
+  const cookie = (changed.headers.get('set-cookie') || '').split(';')[0];
+  assert.match(cookie, /^site_session=/);
+  return { cookie, newPassword };
+}
+
+async function loginAccount(baseUrl, username, password) {
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const body = await response.json().catch(() => ({}));
+  const cookie = (response.headers.get('set-cookie') || '').split(';')[0];
+  return { response, body, cookie };
+}
+
+async function changeAccountPassword(baseUrl, cookie, currentPassword, newPassword) {
+  const response = await fetch(`${baseUrl}/api/auth/password`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  const body = await response.json().catch(() => ({}));
+  return {
+    response,
+    body,
+    cookie: (response.headers.get('set-cookie') || '').split(';')[0],
+  };
+}
+
+async function jsonRequest(baseUrl, route, cookie, { method = 'GET', body } = {}) {
+  const headers = { Cookie: cookie };
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  return fetch(`${baseUrl}${route}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 }
 
 test('diary lock protects detail, mutation, backup, restore, and reorder routes', async (t) => {
@@ -421,14 +484,13 @@ test('diary routes remain compatible when diary lock is disabled', async (t) => 
   })).status, 201);
 });
 
-test('backup accepts bearer authentication when site auth is enabled', async (t) => {
+test('site auth rejects the legacy bearer token and allows an authenticated account backup', async (t) => {
   const { baseUrl } = loadFreshApp(t, { authToken: 'backup-secret' });
 
   assert.equal((await fetch(`${baseUrl}/api/backup`)).status, 401);
-
-  const authorized = await fetch(`${baseUrl}/api/backup`, {
-    headers: { Authorization: 'Bearer backup-secret' },
-  });
+  assert.equal((await fetch(`${baseUrl}/api/backup`, { headers: { Authorization: 'Bearer backup-secret' } })).status, 401);
+  const { cookie } = await loginAndChangeBootstrapPassword(baseUrl, 'backup-secret');
+  const authorized = await fetch(`${baseUrl}/api/backup`, { headers: { Cookie: cookie } });
   assert.equal(authorized.status, 200);
   assert.match(
     authorized.headers.get('content-disposition') || '',
@@ -438,26 +500,461 @@ test('backup accepts bearer authentication when site auth is enabled', async (t)
 
 test('site authentication also protects uploaded files and supports an HttpOnly session cookie', async (t) => {
   const { baseUrl } = loadFreshApp(t, { authToken: 'site-secret' });
-  const authCheck = await fetch(`${baseUrl}/api/auth/check`, {
-    headers: { Authorization: 'Bearer site-secret' },
-  });
+  const { cookie } = await loginAndChangeBootstrapPassword(baseUrl, 'site-secret');
+  const authCheck = await fetch(`${baseUrl}/api/auth/check`, { headers: { Cookie: cookie } });
   assert.equal(authCheck.status, 200);
-  const cookieHeader = authCheck.headers.get('set-cookie') || '';
-  assert.match(cookieHeader, /^site_session=/);
-  assert.match(cookieHeader, /HttpOnly/);
-  const cookie = cookieHeader.split(';')[0];
+  assert.equal((await authCheck.json()).authenticated, true);
 
   const form = new FormData();
   form.append('image', validPngBlob(), 'protected.png');
   const upload = await fetch(`${baseUrl}/api/upload`, {
     method: 'POST',
-    headers: { Authorization: 'Bearer site-secret' },
+    headers: { Cookie: cookie },
     body: form,
   });
   assert.equal(upload.status, 200);
   const image = await upload.json();
   assert.equal((await fetch(`${baseUrl}${image.url}`)).status, 401);
   assert.equal((await fetch(`${baseUrl}${image.url}`, { headers: { Cookie: cookie } })).status, 200);
+});
+
+test('account registry hashes credentials, persists sessions, expires them, and fails closed on corruption', (t) => {
+  const { createAuthStore, SESSION_TTL_MS } = require('../auth-store');
+  const dataDir = makeTempDataDir(t);
+  let clock = Date.parse('2026-07-14T08:00:00.000Z');
+  const store = createAuthStore({
+    dataDir,
+    bootstrapPassword: '123456',
+    bootstrapDiaryHash: sha256('legacy-diary'),
+    now: () => clock,
+  });
+  const admin = store.authenticate('ADMIN', '123456');
+  assert.ok(admin);
+  assert.equal(admin.username, 'admin');
+  assert.equal(admin.must_change_password, true);
+  assert.equal(admin.storage_key, 'legacy');
+  const session = store.createSession(admin.id);
+  assert.equal(session.expires_at - clock, SESSION_TTL_MS);
+
+  const usersText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
+  const sessionsText = fs.readFileSync(path.join(dataDir, 'auth-sessions.json'), 'utf8');
+  assert.match(usersText, /scrypt\$/);
+  assert.doesNotMatch(usersText, /123456|legacy-diary/);
+  assert.doesNotMatch(sessionsText, new RegExp(session.token));
+  assert.match(sessionsText, /token_hash/);
+
+  const restarted = createAuthStore({ dataDir, bootstrapPassword: 'changed-env-value', now: () => clock });
+  assert.equal(restarted.getSession(session.token)?.user.id, admin.id);
+  assert.equal(restarted.authenticate('admin', 'changed-env-value'), null);
+
+  clock += SESSION_TTL_MS + 1;
+  const expired = createAuthStore({ dataDir, now: () => clock });
+  assert.equal(expired.getSession(session.token), null);
+
+  const missingDir = makeTempDataDir(t);
+  assert.throws(
+    () => createAuthStore({ dataDir: missingDir }),
+    /AUTH_TOKEN is required to initialize the first administrator/,
+  );
+
+  fs.writeFileSync(path.join(dataDir, 'auth-sessions.json'), '{broken', 'utf8');
+  assert.throws(() => createAuthStore({ dataDir, now: () => clock }), /Failed to read auth-sessions\.json/);
+  assert.equal(fs.readdirSync(dataDir).some(name => name.startsWith('auth-sessions.json.corrupt-')), true);
+
+  const corruptUsersDir = makeTempDataDir(t);
+  createAuthStore({ dataDir: corruptUsersDir, bootstrapPassword: 'temporary-password' });
+  fs.writeFileSync(path.join(corruptUsersDir, 'users.json'), '{}', 'utf8');
+  assert.throws(() => createAuthStore({ dataDir: corruptUsersDir }), /Failed to read users\.json/);
+  assert.equal(fs.readdirSync(corruptUsersDir).some(name => name.startsWith('users.json.corrupt-')), true);
+});
+
+test('first account migration validates existing data before creating users.json', (t) => {
+  const dataDir = makeTempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'logs.json'), '[]', 'utf8');
+  fs.writeFileSync(path.join(dataDir, 'categories.json'), JSON.stringify([
+    { name: '开发', sub: [], calendar_day_visible: true },
+    { name: '其他', sub: [], calendar_day_visible: true },
+  ]), 'utf8');
+  fs.writeFileSync(path.join(dataDir, 'todos.json'), '{broken', 'utf8');
+  process.env.DATA_DIR = dataDir;
+  process.env.AUTH_TOKEN = '123456';
+  process.env.ALLOW_INSECURE_NO_AUTH = '';
+  process.env.DIARY_PASSWORD_HASH = '';
+  clearAppModules();
+  t.after(() => {
+    delete process.env.DATA_DIR;
+    delete process.env.AUTH_TOKEN;
+    delete process.env.ALLOW_INSECURE_NO_AUTH;
+    delete process.env.DIARY_PASSWORD_HASH;
+    clearAppModules();
+  });
+
+  assert.throws(() => require(path.join(ROOT, 'server.js')), /Failed to read todos\.json/);
+  assert.equal(fs.existsSync(path.join(dataDir, 'users.json')), false);
+  assert.equal(fs.readFileSync(path.join(dataDir, 'todos.json'), 'utf8'), '{broken');
+  assert.equal(fs.readdirSync(dataDir).some(name => name.startsWith('todos.json.corrupt-')), true);
+});
+
+test('dedicated login and administrator-managed account lifecycle enforce forced password changes', async (t) => {
+  const { baseUrl, dataDir, server } = loadFreshApp(t, { authToken: '123456' });
+
+  const root = await fetch(`${baseUrl}/?from=calendar`, { redirect: 'manual' });
+  assert.equal(root.status, 302);
+  assert.match(root.headers.get('location') || '', /^\/login\?next=/);
+  assert.equal((await fetch(`${baseUrl}/login`)).status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/logs`)).status, 401);
+  assert.equal((await fetch(`${baseUrl}/api/logs`, { headers: { Authorization: 'Bearer 123456' } })).status, 401);
+
+  const { cookie: adminCookie, newPassword: adminPassword } = await loginAndChangeBootstrapPassword(baseUrl, '123456', 'admin-password-2026');
+  const usersResponse = await jsonRequest(baseUrl, '/api/admin/users', adminCookie);
+  assert.equal(usersResponse.status, 200);
+  const users = await usersResponse.json();
+  const admin = users.find(user => user.username === 'admin');
+  assert.ok(admin);
+  assert.equal(admin.role, 'admin');
+  assert.equal(admin.must_change_password, false);
+
+  const createdResponse = await jsonRequest(baseUrl, '/api/admin/users', adminCookie, {
+    method: 'POST',
+    body: { username: 'Member.One', display_name: '成员一', temporary_password: 'member-temp-2026', role: 'member' },
+  });
+  assert.equal(createdResponse.status, 201);
+  const member = await createdResponse.json();
+  assert.equal(member.username, 'member.one');
+  assert.equal(member.must_change_password, true);
+
+  const duplicate = await jsonRequest(baseUrl, '/api/admin/users', adminCookie, {
+    method: 'POST',
+    body: { username: 'MEMBER.ONE', display_name: '重复', temporary_password: 'another-temp-2026' },
+  });
+  assert.equal(duplicate.status, 400);
+  const invalidRole = await jsonRequest(baseUrl, '/api/admin/users', adminCookie, {
+    method: 'POST',
+    body: { username: 'bad.role', display_name: '错误角色', temporary_password: 'another-temp-2026', role: 'owner' },
+  });
+  assert.equal(invalidRole.status, 400);
+
+  const memberLogin = await loginAccount(baseUrl, 'MEMBER.ONE', 'member-temp-2026');
+  assert.equal(memberLogin.response.status, 200);
+  assert.equal(memberLogin.body.must_change_password, true);
+  const blockedWorkspace = await jsonRequest(baseUrl, '/api/logs', memberLogin.cookie);
+  assert.equal(blockedWorkspace.status, 403);
+  assert.equal((await blockedWorkspace.json()).code, 'PASSWORD_CHANGE_REQUIRED');
+
+  const memberChanged = await changeAccountPassword(baseUrl, memberLogin.cookie, 'member-temp-2026', 'member-password-2026');
+  assert.equal(memberChanged.response.status, 200);
+  assert.match(memberChanged.cookie, /^site_session=/);
+  let memberCookie = memberChanged.cookie;
+  assert.equal((await jsonRequest(baseUrl, '/api/admin/users', memberCookie)).status, 403);
+
+  const profile = await jsonRequest(baseUrl, '/api/auth/me', memberCookie, {
+    method: 'PATCH',
+    body: { display_name: '成员甲' },
+  });
+  assert.equal(profile.status, 200);
+  assert.equal((await profile.json()).display_name, '成员甲');
+
+  for (const body of [{ role: 'member' }, { status: 'disabled' }]) {
+    const protectedAdmin = await jsonRequest(baseUrl, `/api/admin/users/${admin.id}`, adminCookie, { method: 'PATCH', body });
+    assert.equal(protectedAdmin.status, 400);
+    assert.match((await protectedAdmin.json()).error, /最后一个有效管理员/);
+  }
+
+  const disabled = await jsonRequest(baseUrl, `/api/admin/users/${member.id}`, adminCookie, {
+    method: 'PATCH',
+    body: { status: 'disabled' },
+  });
+  assert.equal(disabled.status, 200);
+  assert.equal((await jsonRequest(baseUrl, '/api/auth/me', memberCookie)).status, 401);
+  assert.equal((await loginAccount(baseUrl, 'member.one', 'member-password-2026')).response.status, 401);
+
+  assert.equal((await jsonRequest(baseUrl, `/api/admin/users/${member.id}`, adminCookie, {
+    method: 'PATCH', body: { status: 'active' },
+  })).status, 200);
+  assert.equal((await jsonRequest(baseUrl, `/api/admin/users/${member.id}/reset-password`, adminCookie, {
+    method: 'POST', body: { temporary_password: 'member-reset-2026' },
+  })).status, 200);
+  assert.equal((await loginAccount(baseUrl, 'member.one', 'member-password-2026')).response.status, 401);
+  const resetLogin = await loginAccount(baseUrl, 'member.one', 'member-reset-2026');
+  assert.equal(resetLogin.response.status, 200);
+  assert.equal(resetLogin.body.must_change_password, true);
+  const promoted = await jsonRequest(baseUrl, `/api/admin/users/${member.id}`, adminCookie, {
+    method: 'PATCH', body: { username: 'member.renamed', role: 'admin' },
+  });
+  assert.equal(promoted.status, 200);
+  assert.equal((await promoted.json()).username, 'member.renamed');
+  assert.equal((await jsonRequest(baseUrl, `/api/admin/users/${member.id}`, adminCookie, {
+    method: 'PATCH', body: { role: 'member' },
+  })).status, 200);
+
+  await new Promise(resolve => server.close(resolve));
+  process.env.AUTH_TOKEN = 'different-bootstrap-value';
+  clearAppModules();
+  const { app: restartedApp } = require(path.join(ROOT, 'server.js'));
+  const restartedServer = restartedApp.listen(0);
+  const restartedUrl = `http://127.0.0.1:${restartedServer.address().port}`;
+  t.after(() => new Promise(resolve => restartedServer.close(resolve)));
+  const persistedSession = await jsonRequest(restartedUrl, '/api/auth/me', adminCookie);
+  assert.equal(persistedSession.status, 200);
+  assert.equal((await persistedSession.json()).username, 'admin');
+  assert.equal((await loginAccount(restartedUrl, 'admin', 'different-bootstrap-value')).response.status, 401);
+  assert.equal((await loginAccount(restartedUrl, 'admin', adminPassword)).response.status, 200);
+
+  const registryText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
+  assert.doesNotMatch(registryText, /123456|admin-password-2026|member-password-2026|member-reset-2026/);
+});
+
+test('login is limited to five attempts per IP and uses a generic credential error', async (t) => {
+  const { baseUrl } = loadFreshApp(t, { authToken: '123456' });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const login = await loginAccount(baseUrl, 'admin', `wrong-${attempt}`);
+    assert.equal(login.response.status, 401);
+    assert.equal(login.body.error, '用户名或密码错误');
+  }
+  const limited = await loginAccount(baseUrl, 'admin', '123456');
+  assert.equal(limited.response.status, 429);
+});
+
+test('logs, todos, countdowns, categories, AI state, reminders, photo wall, uploads, and backups are isolated by account', async (t) => {
+  const { baseUrl, dataDir } = loadFreshApp(t, {
+    authToken: '123456',
+    deepseekApiKey: 'legacy-admin-deepseek-key',
+    perplexityApiKey: 'legacy-admin-perplexity-key',
+    seedreamApiKey: 'legacy-admin-seedream-key',
+  });
+  const { cookie: adminCookie } = await loginAndChangeBootstrapPassword(baseUrl, '123456', 'admin-isolation-2026');
+  const createdMember = await jsonRequest(baseUrl, '/api/admin/users', adminCookie, {
+    method: 'POST',
+    body: { username: 'isolated.member', display_name: '隔离成员', temporary_password: 'member-isolation-temp', role: 'member' },
+  });
+  assert.equal(createdMember.status, 201);
+  const member = await createdMember.json();
+  const memberLogin = await loginAccount(baseUrl, 'isolated.member', 'member-isolation-temp');
+  const memberChanged = await changeAccountPassword(baseUrl, memberLogin.cookie, 'member-isolation-temp', 'member-isolation-2026');
+  assert.equal(memberChanged.response.status, 200);
+  const memberCookie = memberChanged.cookie;
+
+  const makeLog = (title, content) => ({ title, content, category: '开发', hours: 1, log_date: '2026-07-14' });
+  const adminLogResponse = await jsonRequest(baseUrl, '/api/logs', adminCookie, {
+    method: 'POST', body: makeLog('admin workspace log', 'admin private content'),
+  });
+  const memberLogResponse = await jsonRequest(baseUrl, '/api/logs', memberCookie, {
+    method: 'POST', body: makeLog('member workspace log', 'member private content'),
+  });
+  assert.equal(adminLogResponse.status, 201);
+  assert.equal(memberLogResponse.status, 201);
+  const adminLog = await adminLogResponse.json();
+  const memberLog = await memberLogResponse.json();
+  assert.equal(adminLog.id, 1);
+  assert.equal(memberLog.id, 1);
+
+  const adminTodo = await jsonRequest(baseUrl, '/api/todos', adminCookie, {
+    method: 'POST', body: { title: 'admin todo', due_date: '2026-07-15', priority: 'normal' },
+  });
+  const memberTodo = await jsonRequest(baseUrl, '/api/todos', memberCookie, {
+    method: 'POST', body: { title: 'member todo', due_date: '2026-07-16', priority: 'urgent' },
+  });
+  assert.equal((await adminTodo.json()).id, 1);
+  assert.equal((await memberTodo.json()).id, 1);
+
+  const adminCountdown = await jsonRequest(baseUrl, '/api/countdowns', adminCookie, {
+    method: 'POST', body: { title: 'admin countdown', target_date: '2026-12-31', repeat_yearly: false, notes: '' },
+  });
+  const memberCountdown = await jsonRequest(baseUrl, '/api/countdowns', memberCookie, {
+    method: 'POST', body: { title: 'member countdown', target_date: '2027-01-01', repeat_yearly: true, notes: 'member only' },
+  });
+  assert.equal((await adminCountdown.json()).id, 1);
+  assert.equal((await memberCountdown.json()).id, 1);
+
+  assert.equal((await jsonRequest(baseUrl, '/api/categories', adminCookie, {
+    method: 'POST', body: { name: '管理员分类' },
+  })).status, 201);
+  assert.equal((await jsonRequest(baseUrl, '/api/categories', memberCookie, {
+    method: 'POST', body: { name: '成员分类' },
+  })).status, 201);
+
+  assert.equal((await jsonRequest(baseUrl, '/api/ai/settings', adminCookie, {
+    method: 'PUT', body: { userProfile: 'admin AI profile' },
+  })).status, 200);
+  assert.equal((await jsonRequest(baseUrl, '/api/ai/settings', memberCookie, {
+    method: 'PUT', body: { userProfile: 'member AI profile' },
+  })).status, 200);
+
+  const conversationPayload = (id, content) => ({
+    activeConversationId: id,
+    conversations: [{
+      id, title: id, updatedAt: 1784016000000, scope: 'global', logKey: '',
+      messages: [{ role: 'user', content }],
+    }],
+  });
+  assert.equal((await jsonRequest(baseUrl, '/api/ai/conversations', adminCookie, {
+    method: 'PUT', body: conversationPayload('admin-chat', 'admin AI history'),
+  })).status, 200);
+  assert.equal((await jsonRequest(baseUrl, '/api/ai/conversations', memberCookie, {
+    method: 'PUT', body: conversationPayload('member-chat', 'member AI history'),
+  })).status, 200);
+
+  assert.equal((await jsonRequest(baseUrl, '/api/todo-reminder-settings', adminCookie, {
+    method: 'PUT', body: { enabled: false, recipientEmail: 'admin@example.com', sendTime: '08:10' },
+  })).status, 200);
+  assert.equal((await jsonRequest(baseUrl, '/api/todo-reminder-settings', memberCookie, {
+    method: 'PUT', body: { enabled: false, recipientEmail: 'member@example.com', sendTime: '09:20' },
+  })).status, 200);
+
+  const registry = JSON.parse(fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8')).users;
+  const memberRecord = registry.find(user => user.id === member.id);
+  const adminUploads = path.join(dataDir, 'uploads');
+  const memberUploads = path.join(dataDir, 'accounts', memberRecord.storage_key, 'uploads');
+  fs.mkdirSync(adminUploads, { recursive: true });
+  fs.mkdirSync(memberUploads, { recursive: true });
+  fs.writeFileSync(path.join(adminUploads, 'same-name.png'), Buffer.from('admin-image'));
+  fs.writeFileSync(path.join(memberUploads, 'same-name.png'), Buffer.from('member-image'));
+
+  const adminImage = await jsonRequest(baseUrl, '/uploads/same-name.png', adminCookie);
+  const memberImage = await jsonRequest(baseUrl, '/uploads/same-name.png', memberCookie);
+  assert.equal(await adminImage.text(), 'admin-image');
+  assert.equal(await memberImage.text(), 'member-image');
+
+  const memberUploadForm = new FormData();
+  memberUploadForm.append('image', validPngBlob(), 'member-upload.png');
+  const memberUploadResponse = await fetch(`${baseUrl}/api/upload`, {
+    method: 'POST', headers: { Cookie: memberCookie }, body: memberUploadForm,
+  });
+  assert.equal(memberUploadResponse.status, 200);
+  const memberUpload = await memberUploadResponse.json();
+  assert.equal((await jsonRequest(baseUrl, memberUpload.url, adminCookie)).status, 404);
+  assert.equal((await jsonRequest(baseUrl, memberUpload.url, memberCookie)).status, 200);
+
+  const adminWall = await jsonRequest(baseUrl, '/api/photo-wall/items', adminCookie, {
+    method: 'POST', body: { url: '/uploads/same-name.png', filename: 'same-name.png', x: 1, y: 2, width: 320, height: 240 },
+  });
+  const memberWall = await jsonRequest(baseUrl, '/api/photo-wall/items', memberCookie, {
+    method: 'POST', body: { url: '/uploads/same-name.png', filename: 'same-name.png', x: 3, y: 4, width: 320, height: 240 },
+  });
+  assert.equal((await adminWall.json()).id, 1);
+  assert.equal((await memberWall.json()).id, 1);
+
+  const adminLogs = await (await jsonRequest(baseUrl, '/api/logs', adminCookie)).json();
+  const memberLogs = await (await jsonRequest(baseUrl, '/api/logs', memberCookie)).json();
+  assert.deepEqual(adminLogs.items.map(log => log.title), ['admin workspace log']);
+  assert.deepEqual(memberLogs.items.map(log => log.title), ['member workspace log']);
+  assert.deepEqual((await (await jsonRequest(baseUrl, '/api/todos', adminCookie)).json()).map(todo => todo.title), ['admin todo']);
+  assert.deepEqual((await (await jsonRequest(baseUrl, '/api/todos', memberCookie)).json()).map(todo => todo.title), ['member todo']);
+  assert.deepEqual((await (await jsonRequest(baseUrl, '/api/countdowns', adminCookie)).json()).map(item => item.title), ['admin countdown']);
+  assert.deepEqual((await (await jsonRequest(baseUrl, '/api/countdowns', memberCookie)).json()).map(item => item.title), ['member countdown']);
+
+  const adminCategories = await (await jsonRequest(baseUrl, '/api/categories', adminCookie)).json();
+  const memberCategories = await (await jsonRequest(baseUrl, '/api/categories', memberCookie)).json();
+  assert.equal(adminCategories.some(category => category.name === '管理员分类'), true);
+  assert.equal(adminCategories.some(category => category.name === '成员分类'), false);
+  assert.equal(memberCategories.some(category => category.name === '成员分类'), true);
+  assert.equal(memberCategories.some(category => category.name === '管理员分类'), false);
+  const adminAiSettings = await (await jsonRequest(baseUrl, '/api/ai/settings', adminCookie)).json();
+  const memberAiSettings = await (await jsonRequest(baseUrl, '/api/ai/settings', memberCookie)).json();
+  assert.equal(adminAiSettings.userProfile, 'admin AI profile');
+  assert.equal(memberAiSettings.userProfile, 'member AI profile');
+  assert.equal(adminAiSettings.apiKeyConfigured, true);
+  assert.equal(adminAiSettings.perplexityApiKeyConfigured, true);
+  assert.equal(adminAiSettings.seedreamApiKeyConfigured, true);
+  assert.equal(memberAiSettings.apiKeyConfigured, false);
+  assert.equal(memberAiSettings.perplexityApiKeyConfigured, false);
+  assert.equal(memberAiSettings.seedreamApiKeyConfigured, false);
+  assert.equal((await (await jsonRequest(baseUrl, '/api/ai/conversations', adminCookie)).json()).conversations[0].id, 'admin-chat');
+  assert.equal((await (await jsonRequest(baseUrl, '/api/ai/conversations', memberCookie)).json()).conversations[0].id, 'member-chat');
+  assert.equal((await (await jsonRequest(baseUrl, '/api/todo-reminder-settings', adminCookie)).json()).recipientEmail, 'admin@example.com');
+  assert.equal((await (await jsonRequest(baseUrl, '/api/todo-reminder-settings', memberCookie)).json()).recipientEmail, 'member@example.com');
+
+  const adminBackup = await (await jsonRequest(baseUrl, '/api/backup', adminCookie)).json();
+  const memberBackup = await (await jsonRequest(baseUrl, '/api/backup', memberCookie)).json();
+  assert.deepEqual(adminBackup.logs.map(log => log.title), ['admin workspace log']);
+  assert.deepEqual(memberBackup.logs.map(log => log.title), ['member workspace log']);
+  assert.equal(Object.hasOwn(adminBackup, 'users'), false);
+  assert.equal(Object.hasOwn(memberBackup, 'sessions'), false);
+
+  memberBackup.logs[0].title = 'member restored log';
+  const memberRestore = await jsonRequest(baseUrl, '/api/restore', memberCookie, {
+    method: 'POST', body: memberBackup,
+  });
+  assert.equal(memberRestore.status, 200);
+  assert.equal((await (await jsonRequest(baseUrl, `/api/logs/${memberLog.id}`, memberCookie)).json()).title, 'member restored log');
+  assert.equal((await (await jsonRequest(baseUrl, `/api/logs/${adminLog.id}`, adminCookie)).json()).title, 'admin workspace log');
+
+  assert.equal((await jsonRequest(baseUrl, `/api/logs/${adminLog.id}`, adminCookie, { method: 'DELETE' })).status, 200);
+  const memberStillExists = await jsonRequest(baseUrl, `/api/logs/${memberLog.id}`, memberCookie);
+  assert.equal(memberStillExists.status, 200);
+  assert.equal((await memberStillExists.json()).title, 'member restored log');
+
+  const registryText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
+  assert.doesNotMatch(registryText, /admin workspace log|member workspace log|AI profile|AI history/);
+});
+
+test('diary passwords and unlock sessions are isolated per account and reset with account credentials', async (t) => {
+  const { baseUrl } = loadFreshApp(t, { authToken: '123456', diaryPassword: 'admin-diary' });
+  const { cookie: adminCookie } = await loginAndChangeBootstrapPassword(baseUrl, '123456', 'admin-diary-account');
+  const memberResponse = await jsonRequest(baseUrl, '/api/admin/users', adminCookie, {
+    method: 'POST',
+    body: { username: 'diary.member', display_name: '日记成员', temporary_password: 'diary-member-temp', role: 'member' },
+  });
+  const member = await memberResponse.json();
+  const memberLogin = await loginAccount(baseUrl, 'diary.member', 'diary-member-temp');
+  const memberChanged = await changeAccountPassword(baseUrl, memberLogin.cookie, 'diary-member-temp', 'diary-member-account');
+  let memberCookie = memberChanged.cookie;
+
+  assert.deepEqual(await (await jsonRequest(baseUrl, '/api/auth/diary/status', adminCookie)).json(), { enabled: true, locked: true });
+  assert.deepEqual(await (await jsonRequest(baseUrl, '/api/auth/diary/status', memberCookie)).json(), { enabled: false, locked: false });
+
+  const setMemberDiary = await jsonRequest(baseUrl, '/api/auth/diary/password', memberCookie, {
+    method: 'PUT', body: { account_password: 'diary-member-account', new_password: 'member-diary-password' },
+  });
+  assert.equal(setMemberDiary.status, 200);
+  assert.deepEqual(await (await jsonRequest(baseUrl, '/api/auth/diary/status', memberCookie)).json(), { enabled: true, locked: true });
+
+  const adminUnlock = await jsonRequest(baseUrl, '/api/auth/diary', adminCookie, {
+    method: 'POST', body: { password: 'admin-diary' },
+  });
+  assert.equal(adminUnlock.status, 200);
+  const adminDiaryCookie = (adminUnlock.headers.get('set-cookie') || '').split(';')[0];
+  assert.match(adminDiaryCookie, /^diary_session=/);
+
+  const wrongAccountStatus = await fetch(`${baseUrl}/api/auth/diary/status`, {
+    headers: { Cookie: `${memberCookie}; ${adminDiaryCookie}` },
+  });
+  assert.deepEqual(await wrongAccountStatus.json(), { enabled: true, locked: true });
+  const wrongPassword = await jsonRequest(baseUrl, '/api/auth/diary', memberCookie, {
+    method: 'POST', body: { password: 'admin-diary' },
+  });
+  assert.equal(wrongPassword.status, 403);
+
+  const memberUnlock = await jsonRequest(baseUrl, '/api/auth/diary', memberCookie, {
+    method: 'POST', body: { password: 'member-diary-password' },
+  });
+  assert.equal(memberUnlock.status, 200);
+  const memberDiaryCookie = (memberUnlock.headers.get('set-cookie') || '').split(';')[0];
+  const diaryLog = { title: 'member diary', content: 'member diary secret', category: DIARY_CATEGORY, hours: 0, log_date: '2026-07-14' };
+  assert.equal((await jsonRequest(baseUrl, '/api/logs', memberCookie, { method: 'POST', body: diaryLog })).status, 403);
+  assert.equal((await fetch(`${baseUrl}/api/logs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: `${memberCookie}; ${adminDiaryCookie}` },
+    body: JSON.stringify(diaryLog),
+  })).status, 403);
+  assert.equal((await fetch(`${baseUrl}/api/logs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: `${memberCookie}; ${memberDiaryCookie}` },
+    body: JSON.stringify(diaryLog),
+  })).status, 201);
+
+  assert.equal((await jsonRequest(baseUrl, `/api/admin/users/${member.id}/reset-password`, adminCookie, {
+    method: 'POST', body: { temporary_password: 'diary-member-reset' },
+  })).status, 200);
+  assert.equal((await jsonRequest(baseUrl, '/api/auth/me', memberCookie)).status, 401);
+  const resetLogin = await loginAccount(baseUrl, 'diary.member', 'diary-member-reset');
+  const afterReset = await changeAccountPassword(baseUrl, resetLogin.cookie, 'diary-member-reset', 'diary-member-final');
+  assert.equal(afterReset.response.status, 200);
+  memberCookie = afterReset.cookie;
+  const revokedDiary = await fetch(`${baseUrl}/api/auth/diary/status`, {
+    headers: { Cookie: `${memberCookie}; ${memberDiaryCookie}` },
+  });
+  assert.deepEqual(await revokedDiary.json(), { enabled: true, locked: true });
 });
 
 test('AI chat requires DeepSeek configuration and validates request options', async (t) => {
@@ -3786,15 +4283,45 @@ test('application initialization waits for auth and diary selection before refre
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const authSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'auth.js'), 'utf8');
 
-  assert.match(appSource, /const authenticated = await checkAuth\(\);[\s\S]*if \(!authenticated\) return;[\s\S]*const diarySelected = await initDiaryLock\(\);[\s\S]*if \(!diarySelected\) await refreshAll\(\);/);
-  assert.match(appSource, /window\.addEventListener\('auth-success', async \(\) => \{[\s\S]*await initDiaryLock\(\)/);
+  assert.match(appSource, /const authenticated = await checkAuth\(\);[\s\S]*if \(!authenticated\) return;[\s\S]*await initAccounts\(\);[\s\S]*const diarySelected = await initDiaryLock\(\);[\s\S]*if \(!diarySelected\) await refreshAll\(\);/);
+  assert.doesNotMatch(appSource, /auth-success/);
   assert.match(appSource, /import \{ apiFetch, checkAuth, getDiaryStatus, unlockDiary, lockDiary \} from '\.\/auth\.js';/);
+  assert.match(appSource, /import \{ initAccounts \} from '\.\/accounts\.js';/);
   assert.match(appSource, /function syncDiaryLockState\(status\)[\s\S]*state\.diaryLockEnabled = status\.enabled !== false;[\s\S]*state\.diaryUnlocked = !state\.diaryLockEnabled \|\| !status\.locked;/);
   assert.match(appSource, /window\.addEventListener\('request-diary-unlock', openDiaryUnlockModal\);/);
   assert.match(appSource, /const preserveCurrentDiaryFilter = state\.category === '日记' \|\| state\.category\.startsWith\('日记\/'\);[\s\S]*if \(!preserveCurrentDiaryFilter\) selectDiaryLogs\(\);/);
   assert.match(appSource, /const status = await getDiaryStatus\(\);[\s\S]*syncDiaryLockState\(status\);/);
   assert.match(authSource, /export async function getDiaryStatus\(\)/);
-  assert.match(authSource, /showLoginOverlay\(\);\s*return false;/);
+  assert.match(authSource, /window\.location\.assign\(`\/login\?\$\{params\.toString\(\)\}`\);/);
+  assert.doesNotMatch(authSource, /sessionStorage|Authorization|Bearer|showLoginOverlay/);
+});
+
+test('dedicated login and account management UI remove plaintext token handling and support responsive themes', () => {
+  const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const loginSource = fs.readFileSync(path.join(ROOT, 'public', 'login.html'), 'utf8');
+  const loginScript = fs.readFileSync(path.join(ROOT, 'public', 'js', 'login.js'), 'utf8');
+  const accountsSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'accounts.js'), 'utf8');
+  const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
+  const authSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'auth.js'), 'utf8');
+  const loginStyle = fs.readFileSync(path.join(ROOT, 'public', 'login.css'), 'utf8');
+  const appStyle = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
+
+  assert.match(loginSource, /id="loginForm"[\s\S]*autocomplete="username"[\s\S]*autocomplete="current-password"/);
+  assert.match(loginSource, /id="passwordChangeForm"[\s\S]*minlength="10"[\s\S]*id="loginError" role="alert"/);
+  assert.doesNotMatch(indexSource, /loginOverlay|login-overlay/);
+  assert.match(indexSource, /id="accountPanel"[\s\S]*id="btnAccountSettings"[\s\S]*id="btnAdminUsers"[\s\S]*id="btnLogout"/);
+  assert.match(indexSource, /id="userManagerOverlay"[\s\S]*管理员只能管理账户资料，不能查看成员工作区/);
+  assert.match(indexSource, /id="accountSettingsOverlay"[\s\S]*id="btnSaveDiaryPassword"/);
+
+  assert.match(loginScript, /target\.origin !== window\.location\.origin/);
+  assert.match(loginScript, /window\.location\.replace\(safeNextPath\(\)\)/);
+  assert.match(accountsSource, /api\/admin\/users/);
+  assert.match(accountsSource, /event\.key !== 'Escape'/);
+  assert.match(editorSource, /import \{ apiFetch, redirectToLogin \} from '\.\/auth\.js';/);
+  assert.doesNotMatch(`${authSource}\n${editorSource}`, /sessionStorage|getAuthToken|site_token|Authorization[^\n]*Bearer/);
+  assert.match(loginStyle, /\[data-theme="dark"\]/);
+  assert.match(loginStyle, /@media \(max-width: 520px\)/);
+  assert.match(appStyle, /@media \(max-width: 768px\)[\s\S]*\.user-manager-body \{ grid-template-columns: 1fr;/);
 });
 
 test('locked diary filter shows an unlock empty state in the log list', () => {

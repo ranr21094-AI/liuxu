@@ -2,7 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const { businessDateString, daysInMonth, parseDateParts, startOfWeekMonday } = require('./business-date');
 
-const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
+function createDatabase(dataDirectory = (process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data'))) {
+const DATA_DIR = path.resolve(dataDirectory);
 const DATA_FILE = path.join(DATA_DIR, 'logs.json');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
@@ -54,6 +55,24 @@ const cache = {
   maxCountdownId: 0,
   maxPhotoWallId: 0,
 };
+
+function resetCache() {
+  cache.logs = null;
+  cache.todos = null;
+  cache.countdowns = null;
+  cache.todoCategories = null;
+  cache.categories = null;
+  cache.privateUploads = null;
+  cache.aiChats = null;
+  cache.aiSettings = null;
+  cache.todoReminderSettings = null;
+  cache.todoReminderState = null;
+  cache.photoWall = null;
+  cache.maxLogId = 0;
+  cache.maxTodoId = 0;
+  cache.maxCountdownId = 0;
+  cache.maxPhotoWallId = 0;
+}
 
 function maxPositiveId(items) {
   return items.reduce((max, item) => {
@@ -1580,6 +1599,15 @@ function checkDataIntegrity() {
   const issues = [];
   const logs = readLogs();
   const cats = readCategories();
+  readTodos();
+  readCountdowns();
+  readTodoCategories();
+  readPrivateUploads();
+  readPhotoWall();
+  readAiChats();
+  readAiSettings();
+  readTodoReminderSettings();
+  readTodoReminderState();
 
   // Check for duplicate IDs
   const ids = new Set();
@@ -2079,7 +2107,8 @@ function mergeCategoryTrees(existing, incoming) {
   return merged;
 }
 
-module.exports = {
+return {
+  dataDir: DATA_DIR,
   getAll,
   getById,
   create,
@@ -2123,10 +2152,19 @@ module.exports = {
   backup,
   restore,
   checkDataIntegrity,
+  resetCache,
   isDiaryCategory,
   isSafeUploadFilename,
   isPrivateUpload,
   markPrivateUpload,
   unmarkPrivateUpload,
   extractLocalUploadFilenames,
+};
+}
+
+const defaultDatabase = createDatabase();
+
+module.exports = {
+  ...defaultDatabase,
+  createDatabase,
 };

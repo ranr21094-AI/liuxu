@@ -9573,60 +9573,6 @@ body.editor-fullscreen .codemirror-content-editor {
 .toast-success { background: var(--color-success); }
 .toast-info { background: var(--color-primary); }
 
-/* Login Overlay */
-.login-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--color-modal-overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 400;
-}
-.login-box {
-  background: var(--color-input-bg);
-  border-radius: 12px;
-  padding: 32px;
-  width: 360px;
-  max-width: 90vw;
-  text-align: center;
-  box-shadow: 0 20px 60px var(--color-modal-shadow);
-}
-.login-box h2 {
-  font-size: 1.3rem;
-  margin-bottom: 8px;
-  color: var(--color-text);
-}
-.login-box p {
-  font-size: 0.85rem;
-  color: var(--color-text-secondary);
-  margin-bottom: 20px;
-}
-.login-box input {
-  width: 100%;
-  padding: 10px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  font-size: 0.9rem;
-  outline: none;
-  background: var(--color-input-bg);
-  color: var(--color-text);
-  margin-bottom: 12px;
-  box-sizing: border-box;
-}
-.login-box input:focus { border-color: var(--color-primary); }
-.login-box .btn-primary {
-  width: 100%;
-  padding: 12px;
-  font-size: 0.9rem;
-}
-.login-error {
-  color: var(--color-danger);
-  font-size: 0.8rem;
-  margin-top: 8px;
-  min-height: 1.2em;
-}
-
 /* Loading state */
 .loading-state {
   text-align: center;
@@ -11903,6 +11849,94 @@ body.sidebar-collapsed .ai-chat-view::after {
 .category-sidebar-tools {
   gap: 6px;
   margin-bottom: 6px;
+}
+
+/* Account workspace and isolated user management */
+.account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--sidebar-faint);
+  border-radius: 12px;
+  background: var(--sidebar-soft);
+}
+
+.account-panel-copy { display: grid; gap: 2px; min-width: 0; }
+.account-panel-copy strong { font-size: 0.75rem; color: var(--color-text-secondary); }
+.account-panel-copy span { overflow: hidden; color: var(--color-text); font-size: 0.9rem; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.account-panel-copy small { overflow: hidden; color: var(--color-text-secondary); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.account-panel-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.account-panel-actions .btn-export { margin: 0; }
+.account-panel-actions .account-logout-button { grid-column: 1 / -1; color: var(--color-danger); }
+
+body.sidebar-todo-mode .account-panel,
+body.sidebar-ai-mode .account-panel,
+body.sidebar-category-mode .account-panel,
+body.sidebar-photo-wall-mode .account-panel { display: none; }
+
+body.desktop-narrow-sidebar:not(.sidebar-tools-mode) .account-panel { display: none; }
+body.sidebar-tools-mode .account-panel { display: flex; }
+
+.account-settings-modal { width: min(760px, calc(100vw - 32px)); }
+.account-settings-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.account-settings-section { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-secondary); }
+.account-settings-section h3 { margin: 0 0 4px; font-size: 0.94rem; }
+.account-settings-section label { font-size: 0.76rem; font-weight: 700; color: var(--color-text-secondary); }
+.account-settings-section input,
+.user-create-form input,
+.user-create-form select,
+.managed-user-fields input,
+.managed-user-fields select,
+.managed-user-reset input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: var(--color-input-bg);
+  font: inherit;
+}
+.account-settings-note { margin: 0; color: var(--color-text-secondary); font-size: 0.75rem; line-height: 1.45; }
+.account-disable-diary { display: flex; align-items: center; gap: 7px; }
+.account-disable-diary input { width: auto; min-height: auto; }
+
+.user-manager-modal { width: min(980px, calc(100vw - 32px)); }
+.user-manager-subtitle { margin: 3px 0 0; color: var(--color-text-secondary); font-size: 0.78rem; font-weight: 400; }
+.user-manager-body { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; align-items: start; max-height: 72vh; overflow: hidden; }
+.user-create-form { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-secondary); }
+.user-create-form h3 { margin: 0 0 4px; font-size: 0.96rem; }
+.user-create-form label,
+.managed-user-fields label,
+.managed-user-reset label { display: grid; gap: 4px; color: var(--color-text-secondary); font-size: 0.73rem; font-weight: 700; }
+.user-list-section { min-width: 0; min-height: 0; }
+.user-list-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+.user-list-heading h3 { margin: 0; font-size: 0.96rem; }
+.user-list-heading span { color: var(--color-text-secondary); font-size: 0.75rem; }
+.user-manager-list { display: grid; gap: 10px; max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+.managed-user-card { display: grid; gap: 11px; padding: 14px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-card); }
+.managed-user-summary { display: grid; gap: 2px; }
+.managed-user-summary strong { font-size: 0.9rem; }
+.managed-user-summary span,
+.managed-user-summary small { color: var(--color-text-secondary); font-size: 0.72rem; }
+.managed-user-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.managed-user-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.managed-user-reset { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: end; padding-top: 10px; border-top: 1px solid var(--color-border); }
+
+@media (max-width: 768px) {
+  .account-panel { display: none; width: 100%; }
+  body.sidebar-tools-mode .account-panel { display: flex; }
+  .account-settings-body,
+  .user-manager-body { grid-template-columns: 1fr; }
+  .account-settings-modal,
+  .user-manager-modal { width: calc(100vw - 20px); }
+  .account-settings-body,
+  .user-manager-body { max-height: 76vh; overflow-y: auto; }
+  .user-manager-list { max-height: none; overflow: visible; }
+  .managed-user-fields,
+  .managed-user-reset { grid-template-columns: 1fr; }
 }
 
 .category-sidebar-add,

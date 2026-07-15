@@ -1,90 +1,55 @@
-import { showToast, openModal, closeModal, $ } from './helpers.js';
+function currentReturnPath() {
+  const path = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  return path.startsWith('/login') ? '/' : path;
+}
 
-export function getAuthToken() {
-  return sessionStorage.getItem('auth_token') || '';
+export function redirectToLogin({ passwordChange = false } = {}) {
+  const params = new URLSearchParams();
+  params.set('next', currentReturnPath());
+  if (passwordChange) params.set('change', '1');
+  window.location.assign(`/login?${params.toString()}`);
 }
 
 export async function apiFetch(url, options = {}) {
-  const token = getAuthToken();
-  if (token) {
-    options.headers = options.headers || {};
-    options.headers['Authorization'] = 'Bearer ' + token;
-  }
   const res = await fetch(url, options);
   if (res.status === 401) {
-    showLoginOverlay();
+    redirectToLogin();
     throw new Error('Unauthorized');
+  }
+  if (res.status === 403) {
+    const data = await res.clone().json().catch(() => ({}));
+    if (data.code === 'PASSWORD_CHANGE_REQUIRED') {
+      redirectToLogin({ passwordChange: true });
+      throw new Error('Password change required');
+    }
   }
   return res;
 }
 
-function showLoginOverlay() {
-  let overlay = $('#loginOverlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.id = 'loginOverlay';
-    overlay.className = 'login-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-labelledby', 'loginTitle');
-    overlay.innerHTML = `
-      <div class="login-box">
-        <h2 id="loginTitle">工作日志</h2>
-        <p>请输入访问密码</p>
-        <label class="sr-only" for="loginTokenInput">访问密码</label>
-        <input type="password" id="loginTokenInput" placeholder="密码" autocomplete="current-password">
-        <button class="btn-primary" id="loginSubmitBtn">登录</button>
-        <div class="login-error" id="loginError" role="alert" aria-live="assertive"></div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    $('#loginSubmitBtn').addEventListener('click', attemptLogin);
-    $('#loginTokenInput').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') attemptLogin();
-    });
-  }
-  openModal(overlay, '#loginTokenInput');
-}
-
-async function attemptLogin() {
-  const input = $('#loginTokenInput');
-  const token = input.value.trim();
-  if (!token) return;
-
-  try {
-    const res = await fetch('/api/auth/check', {
-      headers: { 'Authorization': 'Bearer ' + token }
-    });
-    const data = await res.json();
-    if (data.authenticated) {
-      sessionStorage.setItem('auth_token', token);
-      closeModal($('#loginOverlay'));
-      input.value = '';
-      $('#loginError').textContent = '';
-      window.dispatchEvent(new CustomEvent('auth-success'));
-    } else {
-      $('#loginError').textContent = '密码错误';
-    }
-  } catch {
-    $('#loginError').textContent = '连接失败';
-  }
-}
-
 export async function checkAuth() {
   try {
-    const token = getAuthToken();
-    const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
-    const res = await fetch('/api/auth/check', { headers });
+    const res = await fetch('/api/auth/check');
     const data = await res.json();
     if (!data.authenticated) {
-      showLoginOverlay();
+      redirectToLogin();
+      return false;
+    }
+    if (data.must_change_password) {
+      redirectToLogin({ passwordChange: true });
       return false;
     }
     return true;
   } catch {
-    // Server might not require auth
-    return true;
+    redirectToLogin();
+    return false;
+  }
+}
+
+export async function logoutSite() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } finally {
+    window.location.assign('/login');
   }
 }
 

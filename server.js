@@ -6,19 +6,23 @@ const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
 const childProcess = require('child_process');
+const { AsyncLocalStorage } = require('async_hooks');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
-const db = require('./database');
+const database = require('./database');
+const { createAuthStore } = require('./auth-store');
 const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
 
 const app = express();
+app.set('trust proxy', 'loopback');
 let todoReminderService = null;
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 
-// Auth token (optional — set AUTH_TOKEN env var to enable)
+// AUTH_TOKEN is used only to bootstrap the first administrator.
 const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
+const ALLOW_INSECURE_NO_AUTH = process.env.ALLOW_INSECURE_NO_AUTH === '1';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEEPSEEK_DEFAULT_MODEL = process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-flash';
@@ -88,21 +92,58 @@ const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
 
 // Diary lock (optional — set DIARY_PASSWORD_HASH env var to enable)
 const DIARY_PASSWORD_HASH = process.env.DIARY_PASSWORD_HASH || null;
-const diaryTokens = new Map(); // token -> createdAt(ms)
+database.checkDataIntegrity();
+database.resetCache();
+const authStore = createAuthStore({
+  dataDir: DATA_DIR,
+  bootstrapPassword: AUTH_TOKEN || '',
+  bootstrapDiaryHash: DIARY_PASSWORD_HASH || '',
+  allowInsecureNoAuth: ALLOW_INSECURE_NO_AUTH,
+});
+const databaseContext = new AsyncLocalStorage();
+const databaseInstances = new Map();
+databaseInstances.set('legacy', database);
+
+function userDataDirectory(user) {
+  if (!user || user.storage_key === 'legacy') return DATA_DIR;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(user.storage_key || '')) {
+    throw new Error('Invalid user storage key');
+  }
+  const accountsRoot = path.resolve(DATA_DIR, 'accounts');
+  const target = path.resolve(accountsRoot, user.storage_key);
+  if (!target.startsWith(accountsRoot + path.sep)) throw new Error('Invalid user data directory');
+  return target;
+}
+
+function databaseForUser(user) {
+  const storageKey = user?.storage_key || 'legacy';
+  if (!databaseInstances.has(storageKey)) {
+    databaseInstances.set(storageKey, database.createDatabase(userDataDirectory(user)));
+  }
+  return databaseInstances.get(storageKey);
+}
+
+function currentDatabase() {
+  return databaseContext.getStore() || database;
+}
+
+const db = new Proxy(database, {
+  get(_target, property) {
+    const value = currentDatabase()[property];
+    return typeof value === 'function' ? value.bind(currentDatabase()) : value;
+  },
+});
+
+const diaryTokens = new Map(); // token -> { userId, createdAt }
 const DIARY_TOKEN_TTL = 24 * 60 * 60 * 1000; // 24h
 const DIARY_COOKIE_NAME = 'diary_session';
-const SITE_SESSION_TTL = 24 * 60 * 60 * 1000;
 const SITE_COOKIE_NAME = 'site_session';
-const siteTokens = new Map();
 
 // Clean expired diary tokens every hour
 const diaryTokenCleanup = setInterval(() => {
   const now = Date.now();
-  for (const [t, createdAt] of diaryTokens) {
-    if (now - createdAt > DIARY_TOKEN_TTL) diaryTokens.delete(t);
-  }
-  for (const [t, createdAt] of siteTokens) {
-    if (now - createdAt > SITE_SESSION_TTL) siteTokens.delete(t);
+  for (const [t, entry] of diaryTokens) {
+    if (now - entry.createdAt > DIARY_TOKEN_TTL) diaryTokens.delete(t);
   }
 }, 3600000);
 if (diaryTokenCleanup.unref) diaryTokenCleanup.unref();
@@ -153,7 +194,8 @@ function diaryCookieOptions(req, token, maxAge) {
     'SameSite=Strict',
     `Max-Age=${maxAge}`,
   ];
-  if (req.secure) parts.push('Secure');
+  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (req.secure || forwardedProtocol === 'https') parts.push('Secure');
   return parts.join('; ');
 }
 
@@ -350,33 +392,31 @@ function siteCookieOptions(req, token, maxAge) {
     'SameSite=Strict',
     `Max-Age=${maxAge}`,
   ];
-  if (req.secure) parts.push('Secure');
+  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  if (req.secure || forwardedProtocol === 'https') parts.push('Secure');
   return parts.join('; ');
 }
 
-function setSiteCookie(req, res) {
-  const token = generateToken();
-  siteTokens.set(token, Date.now());
-  res.setHeader('Set-Cookie', siteCookieOptions(req, token, Math.floor(SITE_SESSION_TTL / 1000)));
+function setSiteCookie(req, res, token, expiresAt) {
+  const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  res.setHeader('Set-Cookie', siteCookieOptions(req, token, maxAge));
 }
 
-function hasSiteSession(req) {
-  if (!AUTH_TOKEN) return true;
+function clearSiteCookie(req, res) {
+  res.setHeader('Set-Cookie', siteCookieOptions(req, '', 0));
+}
+
+function getSiteSession(req) {
+  if (authStore.disabled) return authStore.getSession('');
   const token = getCookie(req, SITE_COOKIE_NAME);
-  if (!token) return false;
-  const createdAt = siteTokens.get(token);
-  if (!createdAt || Date.now() - createdAt > SITE_SESSION_TTL) {
-    siteTokens.delete(token);
-    return false;
-  }
-  return true;
+  return authStore.getSession(token);
 }
 
-function isValidDiaryToken(token) {
-  if (!DIARY_PASSWORD_HASH) return true;
+function isValidDiaryToken(req, token) {
+  if (!req.user?.diary_password_hash) return true;
   if (!token) return false;
-  const createdAt = diaryTokens.get(token);
-  if (!createdAt || Date.now() - createdAt > DIARY_TOKEN_TTL) {
+  const entry = diaryTokens.get(token);
+  if (!entry || entry.userId !== req.user.id || Date.now() - entry.createdAt > DIARY_TOKEN_TTL) {
     diaryTokens.delete(token);
     return false;
   }
@@ -384,7 +424,13 @@ function isValidDiaryToken(token) {
 }
 
 function hasDiaryAccess(req) {
-  return !DIARY_PASSWORD_HASH || isValidDiaryToken(getDiaryToken(req));
+  return !req.user?.diary_password_hash || isValidDiaryToken(req, getDiaryToken(req));
+}
+
+function revokeDiaryTokensForUser(userId) {
+  for (const [token, entry] of diaryTokens) {
+    if (entry.userId === userId) diaryTokens.delete(token);
+  }
 }
 
 function isDiaryCategory(category) {
@@ -399,8 +445,8 @@ function logRequiresDiaryAccess(log) {
   return log && isDiaryCategory(log.category);
 }
 
-function restoreRequiresDiaryAccess() {
-  return !!DIARY_PASSWORD_HASH;
+function restoreRequiresDiaryAccess(req) {
+  return Boolean(req.user?.diary_password_hash);
 }
 
 function isDiaryRoot(category) {
@@ -635,6 +681,57 @@ function createTodoReminderService({
   return service;
 }
 
+function createTodoReminderCoordinator({ intervalMs = TODO_REMINDER_INTERVAL_MS } = {}) {
+  const services = new Map();
+  let timer = null;
+  let running = false;
+
+  function sync() {
+    const activeUsers = authStore.listActiveUsers();
+    const activeIds = new Set(activeUsers.map(user => user.id));
+    for (const user of activeUsers) {
+      if (!services.has(user.id)) {
+        const userDb = databaseForUser(user);
+        userDb.checkDataIntegrity();
+        services.set(user.id, createTodoReminderService({ db: userDb }));
+      }
+    }
+    for (const userId of services.keys()) {
+      if (!activeIds.has(userId)) services.delete(userId);
+    }
+    return services.size;
+  }
+
+  async function tick() {
+    if (running) return false;
+    running = true;
+    try {
+      sync();
+      await Promise.all([...services.values()].map(service => service.tick()));
+      return true;
+    } finally {
+      running = false;
+    }
+  }
+
+  function start() {
+    if (timer) return coordinator;
+    void tick();
+    timer = setInterval(() => { void tick(); }, intervalMs);
+    if (timer.unref) timer.unref();
+    return coordinator;
+  }
+
+  function stop() {
+    if (!timer) return;
+    clearInterval(timer);
+    timer = null;
+  }
+
+  const coordinator = { sync, tick, start, stop };
+  return coordinator;
+}
+
 function rateLimiter(maxAttempts, windowMs) {
   const entries = new Map();
   return (req, res, next) => {
@@ -659,12 +756,27 @@ function rateLimiter(maxAttempts, windowMs) {
 }
 
 function authMiddleware(req, res, next) {
-  if (!AUTH_TOKEN) return next();
-  const protectedPath = req.path.startsWith('/api/') || req.path.startsWith('/uploads/');
-  if (!protectedPath) return next();
-  const auth = req.headers.authorization;
-  if (auth === 'Bearer ' + AUTH_TOKEN || hasSiteSession(req)) return next();
-  return res.status(401).json({ error: 'Unauthorized' });
+  const siteToken = getCookie(req, SITE_COOKIE_NAME);
+  const authenticated = getSiteSession(req);
+  const protectedPath = req.path === '/' || req.path === '/index.html' || req.path.startsWith('/api/') || req.path.startsWith('/uploads/');
+  if (!authenticated) {
+    if (!protectedPath) return next();
+    if (req.path === '/' || req.path === '/index.html') {
+      return res.redirect(302, `/login?next=${encodeURIComponent(req.originalUrl || '/')}`);
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  req.user = authenticated.user;
+  req.siteToken = siteToken;
+  const passwordChangeAllowed = ['/api/auth/me', '/api/auth/password', '/api/auth/logout'].includes(req.path);
+  if (req.user.must_change_password && !passwordChangeAllowed) {
+    if (req.path === '/' || req.path === '/index.html') return res.redirect(302, '/login?change=1');
+    if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
+      return res.status(403).json({ error: 'Password change required', code: 'PASSWORD_CHANGE_REQUIRED' });
+    }
+  }
+  return databaseContext.run(databaseForUser(req.user), next);
 }
 
 function concurrencyLimiter(maxConcurrent) {
@@ -686,8 +798,6 @@ function concurrencyLimiter(maxConcurrent) {
   };
 }
 
-app.use(authMiddleware);
-
 // Security headers
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -697,20 +807,57 @@ app.use((_req, res, next) => {
 });
 
 app.use(express.json({ limit: '2mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/favicon.ico', (_req, res) => res.status(204).end());
+
+app.get('/login', (req, res) => {
+  const authenticated = getSiteSession(req);
+  if (authenticated && !authenticated.user.must_change_password) return res.redirect(302, '/');
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/api/auth/login', rateLimiter(5, 15 * 60 * 1000), (req, res) => {
+  const username = typeof req.body?.username === 'string' ? req.body.username : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const user = authStore.authenticate(username, password);
+  if (!user) return res.status(401).json({ error: '用户名或密码错误' });
+  const session = authStore.createSession(user.id);
+  if (session.token) setSiteCookie(req, res, session.token, session.expires_at);
+  res.json({ authenticated: true, must_change_password: user.must_change_password === true, user: authStore.publicUser(user) });
+});
+
+app.get('/api/auth/check', (req, res) => {
+  const authenticated = getSiteSession(req);
+  res.json({
+    authenticated: Boolean(authenticated),
+    must_change_password: authenticated?.user?.must_change_password === true,
+    user: authenticated ? authStore.publicUser(authenticated.user) : null,
+  });
+});
+
+app.use(authMiddleware);
+
+app.get(['/', '/index.html'], (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 app.use('/api/ai', rateLimiter(60, 60 * 1000));
 app.use('/api/ai', concurrencyLimiter(4));
 app.use('/api/upload', rateLimiter(20, 60 * 1000));
 
 // Image upload setup
-const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+function currentUploadsDirectory() {
+  return path.join(currentDatabase().dataDir, 'uploads');
 }
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  destination: (_req, _file, cb) => {
+    const directory = currentUploadsDirectory();
+    fs.mkdirSync(directory, { recursive: true });
+    cb(null, directory);
+  },
   filename: (_req, _file, cb) => {
     const ext = path.extname(_file.originalname).toLowerCase();
     const name = Date.now() + '-' + crypto.randomBytes(6).toString('hex') + ext;
@@ -758,23 +905,83 @@ function uploadedImageMatchesExtension(file) {
   return false;
 }
 
-// Auth check endpoint
-app.get('/api/auth/check', (req, res) => {
-  if (!AUTH_TOKEN) return res.json({ authenticated: true });
-  const auth = req.headers.authorization;
-  const authenticated = auth === 'Bearer ' + AUTH_TOKEN || hasSiteSession(req);
-  if (authenticated && !hasSiteSession(req)) setSiteCookie(req, res);
-  res.json({ authenticated });
+app.post('/api/auth/logout', (req, res) => {
+  authStore.revokeSession(req.siteToken);
+  const diaryToken = getDiaryToken(req);
+  if (diaryToken) diaryTokens.delete(diaryToken);
+  clearSiteCookie(req, res);
+  res.append('Set-Cookie', diaryCookieOptions(req, '', 0));
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  res.json(authStore.publicUser(req.user));
+});
+
+app.patch('/api/auth/me', (req, res) => {
+  const result = authStore.updateProfile(req.user.id, req.body?.display_name);
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(result.user);
+});
+
+app.put('/api/auth/password', (req, res) => {
+  const result = authStore.changePassword(req.user.id, req.body?.current_password, req.body?.new_password);
+  if (result.error) return res.status(400).json({ error: result.error });
+  revokeDiaryTokensForUser(req.user.id);
+  const session = authStore.createSession(req.user.id);
+  if (session.token) setSiteCookie(req, res, session.token, session.expires_at);
+  res.json({ success: true, user: result.user });
+});
+
+app.put('/api/auth/diary/password', (req, res) => {
+  const result = authStore.setDiaryPassword(req.user.id, req.body?.account_password, req.body?.new_password);
+  if (result.error) return res.status(400).json({ error: result.error });
+  revokeDiaryTokensForUser(req.user.id);
+  clearDiaryCookie(req, res);
+  res.json({ success: true, user: result.user });
+});
+
+function requireAdmin(req, res, next) {
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Administrator access required' });
+  next();
+}
+
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  res.json(authStore.listUsers());
+});
+
+app.post('/api/admin/users', requireAdmin, (req, res) => {
+  const result = authStore.createUser(req.body);
+  if (result.error) return res.status(400).json({ error: result.error });
+  const user = authStore.getUserById(result.user.id);
+  databaseForUser(user).checkDataIntegrity();
+  todoReminderService?.sync?.();
+  res.status(201).json(result.user);
+});
+
+app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const result = authStore.updateUser(req.params.id, req.body || {});
+  if (result.error) return res.status(400).json({ error: result.error });
+  if (result.user.status === 'disabled') revokeDiaryTokensForUser(result.user.id);
+  todoReminderService?.sync?.();
+  res.json(result.user);
+});
+
+app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
+  const result = authStore.resetPassword(req.params.id, req.body?.temporary_password);
+  if (result.error) return res.status(400).json({ error: result.error });
+  revokeDiaryTokensForUser(result.user.id);
+  res.json(result.user);
 });
 
 // Diary unlock
 app.post('/api/auth/diary', rateLimiter(5, 15 * 60 * 1000), (req, res) => {
-  if (!DIARY_PASSWORD_HASH) return res.json({ unlocked: true });
+  if (!req.user.diary_password_hash) return res.json({ unlocked: true });
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: '请输入密码' });
-  if (hashPassword(password) === DIARY_PASSWORD_HASH) {
+  if (authStore.verifyDiaryPassword(req.user.id, password)) {
     const token = generateToken();
-    diaryTokens.set(token, Date.now());
+    diaryTokens.set(token, { userId: req.user.id, createdAt: Date.now() });
     setDiaryCookie(req, res, token);
     return res.json({ unlocked: true });
   }
@@ -791,10 +998,10 @@ app.post('/api/auth/diary/lock', (req, res) => {
 
 // Diary status
 app.get('/api/auth/diary/status', (req, res) => {
-  if (!DIARY_PASSWORD_HASH) return res.json({ enabled: false, locked: false });
+  if (!req.user.diary_password_hash) return res.json({ enabled: false, locked: false });
   const token = getDiaryToken(req);
   if (!token) return res.json({ enabled: true, locked: true });
-  res.json({ enabled: true, locked: !isValidDiaryToken(token) });
+  res.json({ enabled: true, locked: !isValidDiaryToken(req, token) });
 });
 
 function normalizeAiMessages(messages) {
@@ -1064,17 +1271,21 @@ function parseAiSettingsInput(body, current = {}) {
   };
 }
 
-function publicAiSettings(settings) {
+function serverAiSecretForUser(user, secret) {
+  return user?.storage_key === 'legacy' ? secret : '';
+}
+
+function publicAiSettings(settings, user) {
   return {
     ...settings,
     apiKey: '',
     tavilyApiKey: '',
     perplexityApiKey: '',
     seedreamApiKey: '',
-    apiKeyConfigured: Boolean(settings.apiKey || DEEPSEEK_API_KEY),
-    tavilyApiKeyConfigured: Boolean(settings.tavilyApiKey || TAVILY_API_KEY),
-    perplexityApiKeyConfigured: Boolean(settings.perplexityApiKey || PERPLEXITY_API_KEY),
-    seedreamApiKeyConfigured: Boolean(settings.seedreamApiKey || SEEDREAM_API_KEY),
+    apiKeyConfigured: Boolean(settings.apiKey || serverAiSecretForUser(user, DEEPSEEK_API_KEY)),
+    tavilyApiKeyConfigured: Boolean(settings.tavilyApiKey || serverAiSecretForUser(user, TAVILY_API_KEY)),
+    perplexityApiKeyConfigured: Boolean(settings.perplexityApiKey || serverAiSecretForUser(user, PERPLEXITY_API_KEY)),
+    seedreamApiKeyConfigured: Boolean(settings.seedreamApiKey || serverAiSecretForUser(user, SEEDREAM_API_KEY)),
   };
 }
 
@@ -1125,7 +1336,7 @@ function safeSeedreamError(status, data) {
     : `Seedream request failed (${status})`;
 }
 
-function resolveSeedreamOptions(body) {
+function resolveSeedreamOptions(body, user) {
   const saved = db.getAiSettings();
   const model = body?.model || saved.seedreamModel || SEEDREAM_DEFAULT_MODEL;
   const size = body?.size || saved.seedreamSize || '2K';
@@ -1140,7 +1351,7 @@ function resolveSeedreamOptions(body) {
     throw new Error('Unsupported Seedream watermark option');
   }
   return {
-    apiKey: saved.seedreamApiKey || SEEDREAM_API_KEY,
+    apiKey: saved.seedreamApiKey || serverAiSecretForUser(user, SEEDREAM_API_KEY),
     model,
     size,
     watermark,
@@ -1188,14 +1399,15 @@ async function downloadGeneratedImage(url) {
   }
   const buffer = Buffer.concat(chunks, total);
   if (!buffer.length) throw new Error('Generated image size is invalid');
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  const uploadsDirectory = currentUploadsDirectory();
+  fs.mkdirSync(uploadsDirectory, { recursive: true });
   const ext = extensionFromContentType(contentType, safeUrl);
   const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-  fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
+  fs.writeFileSync(path.join(uploadsDirectory, filename), buffer);
   return { filename, url: `/uploads/${filename}` };
 }
 
-function resolveAiChatOptions(body) {
+function resolveAiChatOptions(body, user) {
   const saved = db.getAiSettings();
   const model = body?.model || saved.model || DEEPSEEK_DEFAULT_MODEL;
   const thinkingMode = body?.thinkingMode || 'enabled';
@@ -1242,7 +1454,7 @@ function resolveAiChatOptions(body) {
   const requestTavilyApiKey = typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '';
   const requestPerplexityApiKey = typeof body?.perplexityApiKey === 'string' ? body.perplexityApiKey.trim() : '';
   return {
-    apiKey: requestApiKey || saved.apiKey || DEEPSEEK_API_KEY,
+    apiKey: requestApiKey || saved.apiKey || serverAiSecretForUser(user, DEEPSEEK_API_KEY),
     model,
     thinkingMode,
     reasoningEffort,
@@ -1251,8 +1463,8 @@ function resolveAiChatOptions(body) {
     logContextEnabled,
     diaryContextEnabled,
     logAccessPolicy,
-    tavilyApiKey: requestTavilyApiKey || saved.tavilyApiKey || TAVILY_API_KEY,
-    perplexityApiKey: requestPerplexityApiKey || saved.perplexityApiKey || PERPLEXITY_API_KEY,
+    tavilyApiKey: requestTavilyApiKey || saved.tavilyApiKey || serverAiSecretForUser(user, TAVILY_API_KEY),
+    perplexityApiKey: requestPerplexityApiKey || saved.perplexityApiKey || serverAiSecretForUser(user, PERPLEXITY_API_KEY),
     webSearchEnabled,
     webSearchDepth,
   };
@@ -2054,9 +2266,9 @@ async function pipeDeepSeekStream(upstream, res, sources = []) {
   }
 }
 
-app.get('/api/ai/settings', (_req, res) => {
+app.get('/api/ai/settings', (req, res) => {
   try {
-    res.json(publicAiSettings(db.getAiSettings()));
+    res.json(publicAiSettings(db.getAiSettings(), req.user));
   } catch (err) {
     res.status(500).json({ error: 'Failed to load AI settings' });
   }
@@ -2066,7 +2278,7 @@ app.put('/api/ai/settings', (req, res) => {
   try {
     const current = db.getAiSettings();
     const saved = db.saveAiSettings(parseAiSettingsInput(req.body, current));
-    res.json(publicAiSettings(saved));
+    res.json(publicAiSettings(saved, req.user));
   } catch (err) {
     res.status(400).json({ error: err.message || 'Failed to save AI settings' });
   }
@@ -2114,7 +2326,7 @@ app.post('/api/ai/skills/perplexity/run', async (req, res) => {
       return res.status(400).json({ error: 'Perplexity tool execution requires confirmation' });
     }
     const saved = db.getAiSettings();
-    const apiKey = saved.perplexityApiKey || PERPLEXITY_API_KEY;
+    const apiKey = saved.perplexityApiKey || serverAiSecretForUser(req.user, PERPLEXITY_API_KEY);
     const content = await runPerplexitySearch(req.body?.args || {}, apiKey);
     res.json({ skillId: 'perplexity', tool, content });
   } catch (err) {
@@ -2154,7 +2366,7 @@ app.post('/api/ai/image/prompt', async (req, res) => {
       model,
       thinkingMode,
       reasoningEffort,
-    } = resolveAiChatOptions({ ...req.body, stream: false, thinkingMode: 'enabled' });
+    } = resolveAiChatOptions({ ...req.body, stream: false, thinkingMode: 'enabled' }, req.user);
     if (!apiKey) {
       return res.status(503).json({ error: 'DeepSeek API key is not configured' });
     }
@@ -2215,7 +2427,7 @@ app.post('/api/ai/image/generate', async (req, res) => {
     if (image && image.length > 12000) {
       return res.status(400).json({ error: 'Reference image is too large' });
     }
-    const { apiKey, model, size, watermark } = resolveSeedreamOptions(req.body);
+    const { apiKey, model, size, watermark } = resolveSeedreamOptions(req.body, req.user);
     if (!apiKey) {
       return res.status(503).json({ error: 'Seedream API key is not configured' });
     }
@@ -2273,7 +2485,7 @@ app.post('/api/ai/chat', async (req, res) => {
       perplexityApiKey,
       webSearchEnabled,
       webSearchDepth,
-    } = resolveAiChatOptions(req.body);
+    } = resolveAiChatOptions(req.body, req.user);
     if (!apiKey) {
       return res.status(503).json({ error: 'DeepSeek API key is not configured' });
     }
@@ -2383,7 +2595,7 @@ app.post('/api/ai/editor', async (req, res) => {
       tavilyApiKey,
       webSearchEnabled,
       webSearchDepth,
-    } = resolveAiChatOptions({ ...req.body, stream: false, thinkingMode: 'enabled' });
+    } = resolveAiChatOptions({ ...req.body, stream: false, thinkingMode: 'enabled' }, req.user);
     if (!apiKey) {
       return res.status(503).json({ error: 'DeepSeek API key is not configured' });
     }
@@ -2627,7 +2839,7 @@ app.get('/api/stats', (req, res) => {
 // Backup full data as JSON
 app.get('/api/backup', (req, res) => {
   try {
-    if (restoreRequiresDiaryAccess() && !hasDiaryAccess(req)) return rejectLockedDiary(res);
+    if (restoreRequiresDiaryAccess(req) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const data = db.backup();
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename=work-log-backup-${businessDateString()}.json`);
@@ -2640,7 +2852,7 @@ app.get('/api/backup', (req, res) => {
 // Restore from backup JSON (?mode=merge for non-destructive merge)
 app.post('/api/restore', (req, res) => {
   try {
-    if (restoreRequiresDiaryAccess() && !hasDiaryAccess(req)) return rejectLockedDiary(res);
+    if (restoreRequiresDiaryAccess(req) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const mode = req.query.mode === 'merge' ? 'merge' : 'replace';
     const result = db.restore(req.body, mode);
     if (result.error) return res.status(400).json(result);
@@ -2894,9 +3106,10 @@ app.delete('/api/photo-wall/items/:id', (req, res) => {
 
 function resolveUploadPath(filename) {
   if (!db.isSafeUploadFilename(filename)) return null;
-  const filePath = path.join(UPLOADS_DIR, filename);
+  const uploadsDirectory = currentUploadsDirectory();
+  const filePath = path.join(uploadsDirectory, filename);
   const resolved = path.resolve(filePath);
-  const root = path.resolve(UPLOADS_DIR);
+  const root = path.resolve(uploadsDirectory);
   return resolved.startsWith(root + path.sep) && resolved !== root ? resolved : null;
 }
 
@@ -2936,7 +3149,7 @@ app.delete('/api/uploads/:filename', (req, res) => {
 app.get('/api/categories', (req, res) => {
   try {
     const diaryUnlocked = hasDiaryAccess(req);
-    res.json(db.getAllCategories(diaryUnlocked, Boolean(DIARY_PASSWORD_HASH) && diaryUnlocked));
+    res.json(db.getAllCategories(diaryUnlocked, Boolean(req.user?.diary_password_hash) && diaryUnlocked));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3077,14 +3290,14 @@ function releaseProcessLock(lock) {
 }
 
 function startServer(port = PORT, host = HOST) {
-  if (!isLoopbackHost(host) && !AUTH_TOKEN) {
-    throw new Error('AUTH_TOKEN is required when HOST is not loopback');
+  if (!isLoopbackHost(host) && authStore.disabled) {
+    throw new Error('Account authentication is required when HOST is not loopback');
   }
   const processLock = acquireProcessLock();
-  todoReminderService = createTodoReminderService();
+  todoReminderService = createTodoReminderCoordinator();
   const server = app.listen(port, host, () => {
     console.log(`Work Log server running at http://${host}:${port}`);
-    if (AUTH_TOKEN) console.log('Authentication enabled (AUTH_TOKEN is set)');
+    if (!authStore.disabled) console.log('Account authentication enabled');
     db.checkDataIntegrity();
     todoReminderService.start();
   });
