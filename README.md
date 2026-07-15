@@ -1,6 +1,6 @@
 # Work Log
 
-本地优先的工作日志、待办、照片墙和 AI 辅助应用。它用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类管理、日历浏览、待办主界面、无界照片墙、图片上传、模板、备份恢复，以及可选的 DeepSeek、Tavily、Perplexity、Seedream 和 WeStock 能力。
+本地优先、支持多账户隔离的工作日志、待办、倒数日、照片墙和 AI 辅助应用。它使用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类与日历、重复待办、账户级备份、图片上传，以及可选的 DeepSeek、Tavily、Perplexity、Seedream 和 WeStock 能力。
 
 更新记录见 [ChangeLog.md](ChangeLog.md)。
 
@@ -12,7 +12,15 @@ copy .env.example .env
 npm start
 ```
 
-macOS 或 Linux 可用 `cp .env.example .env`。不创建 `.env` 也能运行，默认访问地址是 `http://localhost:3000`。
+macOS 或 Linux 可用 `cp .env.example .env`。首次启动前必须在 `.env` 中设置一个临时管理员密码：
+
+```dotenv
+AUTH_TOKEN=replace-with-a-temporary-password
+```
+
+首次启动会创建用户名为 `admin` 的管理员。打开 `http://localhost:3000/login`，使用 `admin` 和上述临时密码登录，然后按提示改成 10–128 个字符的新密码。
+
+`AUTH_TOKEN` 只用于第一次创建管理员；`data/users.json` 创建后，旧 Bearer Token 会失效，修改 `AUTH_TOKEN` 也不会覆盖登录密码。完成首次改密后可以从 `.env` 删除它。
 
 常用命令：
 
@@ -22,6 +30,8 @@ npm test
 ```
 
 `npm start` 和 `npm test` 会自动构建编辑器资源；如果直接运行 `node server.js`，请先执行 `npm run build`。
+
+默认仅监听 `127.0.0.1:3000`。若已有 `users.json`，后续启动不再需要 `AUTH_TOKEN`；若既没有用户注册表又没有 `AUTH_TOKEN`，服务会拒绝启动并给出初始化提示。
 
 待办提醒测试命令：
 
@@ -37,40 +47,36 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 ## Recent Updates
 
-- 待办页面新增独立“倒数日”模式，支持一次性或每年重复日期、倒数/已过天数、搜索、统计、备份与恢复。
-- 待办入口文案统一为“待办事项”；待办页左侧侧栏现在只显示待办日历和邮件提醒设置。
-- 待办页统计改为标题行右侧的小卡片，分类添加改为 SVG 图标按钮打开弹窗。
-- 待办侧栏邮件提醒改为上下两行输入，收件邮箱和提醒时间不再挤在同一行。
-- 分类管理页同步为 Codex 工作台风格：白底细灰边、紧凑列表、黑白灰操作按钮，并取消二级分类中间页。
-- 待办新增“不重复 / 每日 / 每周 / 每月 / 每年”选项；完成重复待办后会自动生成下一期待办。
-- 待办分类删除入口改为分类标签内部的垃圾桶 SVG 按钮，不再显示小圆 `×`。
-- 待办日历会标记有截止日期的待办，点击日期只更新日历焦点，不会筛选或跳转待办列表。
-- 邮件提醒设置已从待办右侧编辑表单移到左侧待办侧栏，保存逻辑和后端接口保持不变。
-- 日志页标题行统计卡片已删除；统计接口仍用于刷新日志日历中的有日志日期。
-- AI 对话页现在采用 Codex 工作台风格：白底、细灰边、列表式历史栏、黑白灰操作按钮、无头像 AI 回答和底部命令框输入器。
-- AI 对话消息进一步收紧：用户和 AI 消息都取消头像，复制操作移到消息底部，历史记录按今天、一周内和更久以前分组。
-- AI 对话消息区外层大框已移除，聊天内容直接铺在白底工作区中，底部输入器仍保留命令框边界。
-- AI 回答底部时间紧跟复制按钮显示，底部输入框高度进一步收紧。
-- 独立 AI 对话生成后的图片支持双击放大查看，点击遮罩、关闭按钮或 `Escape` 可退出预览。
-- 全局左侧栏绿色调调整为更清新的浅薄荷色，默认、待办、分类和 AI 侧栏统一继承。
-- 新增“照片墙”侧栏模式：单一无界画布支持上传图片、拖动/等比缩放图片，并在图片下方保存文字评论。
-- 照片墙主区域改为全画布布局，标题区移除，当前缩放百分比显示在左侧照片墙侧栏。
-- 修复了独立 AI 对话页的消息区滚动问题，长对话会由主消息容器负责滚动，自动滚底也跟着恢复正常。
-- 日志归档页已收成“工具区 + 卡片区”的结构：搜索和筛选保留在上方，日志卡片不再被整块大白框包裹。
-- 日志编辑器内 AI 面板改成更紧凑的头部和输入区，历史、设置、新对话、生图、发送入口都还保留。
-- 日志内 AI 输入框下方不再重复显示“正在思考”，回答中状态只保留在消息区；全屏编辑改为只保留标题和正文。
+- 新增独立 `/login`、24 小时 HttpOnly Cookie 会话和管理员创建的多账户体系。
+- 每个账户拥有独立的日志、待办、倒数日、分类、上传、照片墙、AI 设置与历史、提醒配置、日记密码和备份恢复空间。
+- 现有根目录数据会原地归属首次管理员；新账户保存到 `data/accounts/<UUID>/`。
+- 管理员可创建、重命名、启停、设置角色和重置账户，但不能查看成员工作区。
+- 待办页新增“倒数日”模式，支持一次性/每年重复日期、搜索、动态统计、跨年和闰年计算。
+- 日志卡片新增分类内置顶；图片在日志卡片、详情预览和 AI 对话中支持双击放大。
+- AI 历史和配置按账户持久化，新成员不会继承旧管理员的服务器级 AI Key。
+- 完整变更见 [ChangeLog.md](ChangeLog.md)。
 
 ## Main Areas
+
+### 账户与登录
+
+- 未登录访问 `/` 或 `/index.html` 会跳转到独立 `/login` 页面；API 返回 401 时前端统一回到登录页。
+- 用户名为 3–32 位字母、数字、点、下划线或短横线，判重忽略大小写；登录密码使用 Node `crypto.scrypt` 和随机盐保存。
+- 会话 Cookie 为 HttpOnly、SameSite=Strict，有效期 24 小时；磁盘中只保存令牌哈希、账户 ID 和过期时间。
+- 新账户和管理员重置密码后的账户必须首次改密；修改或重置密码、停用账户都会撤销相关会话。
+- 管理员可管理账户元数据，但没有成员工作区、备份、数据量或内容的读取入口。
+- 普通成员可修改自己的显示名称、登录密码和日记密码。
 
 ### 日志
 
 - 横向卡片列表：支持搜索、日期、月份、父分类、子分类和页码筛选；卡片区独立于顶部工具区。
+- 分类筛选下支持多条日志置顶，最近置顶的卡片优先显示在分页结果最左侧；未选择分类时仍保持原有日期排序。
 - 日志归档页：顶部使用单独的搜索/筛选模块，卡片区脱离外层大面板，主操作改为更紧凑的图标按钮。
 - Markdown 编辑器：可选 CodeMirror 富编辑体验，同时保留原生 `textarea` 回退路径，支持语法高亮、查找、撤销、自动换行和自动保存。
 - 预览模式：支持编辑、预览、分屏，以及 Markdown/LaTeX 渲染。
 - 标题大纲：编辑页可展开当前 Markdown 的 `#` 至 `######` 标题树，并快速跳转。
 - 全屏编辑：进入后只保留标题和正文编辑区，隐藏元信息、工具栏、预览切换、大纲和日志内 AI；退出后恢复进入前的编辑/预览状态。
-- 图片：支持上传或直接粘贴 PNG、JPG、GIF、WebP、BMP 图片，并插入 Markdown 图片链接。
+- 图片：支持上传或直接粘贴 PNG、JPG、GIF、WebP、BMP 图片，并插入 Markdown 图片链接；卡片预览和编辑器详情预览均可双击图片放大。
 - 模板：支持中文日期、日期偏移、周区间等占位符。
 
 ### 待办
@@ -126,7 +132,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 ## AI
 
-AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不会写入前端源码。
+AI 设置、API Key 和历史会话保存在当前账户的数据目录，不会写入前端源码，也不会与其它账户共享。旧管理员可继续使用 `.env` 中的服务端回退 Key；新账户需要在各自的 AI 设置中配置 Key。
 
 ### 独立 AI 对话
 
@@ -185,18 +191,18 @@ AI 相关设置、API Key 和历史会话默认保存在本机 `DATA_DIR`，不�
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `PORT` | HTTP 服务端口 | `3000` |
-| `HOST` | 监听地址；仅在显式配置且启用 `AUTH_TOKEN` 时允许对外监听 | `127.0.0.1` |
-| `DATA_DIR` | JSON 数据、设置、历史和上传图片保存目录 | `./data` |
-| `AUTH_TOKEN` | 可选全站访问 token；留空则不启用 | disabled |
-| `DIARY_PASSWORD_HASH` | 可选日记分类密码 SHA-256 哈希；留空则不启用 | disabled |
-| `DEEPSEEK_API_KEY` | 服务端默认 DeepSeek API Key | empty |
+| `HOST` | 监听地址；对外监听时必须启用账户认证 | `127.0.0.1` |
+| `DATA_DIR` | 用户注册表、账户数据和上传图片保存目录 | `./data` |
+| `AUTH_TOKEN` | 仅在没有 `users.json` 时初始化 `admin` 的一次性密码 | required on first start |
+| `DIARY_PASSWORD_HASH` | 仅首次迁移时导入给 `admin` 的旧 SHA-256 日记密码哈希 | empty |
+| `DEEPSEEK_API_KEY` | 旧管理员工作区可使用的服务端 DeepSeek 回退 Key | empty |
 | `DEEPSEEK_BASE_URL` | DeepSeek API 基础地址 | `https://api.deepseek.com` |
 | `DEEPSEEK_DEFAULT_MODEL` | 默认 DeepSeek 模型 | `deepseek-v4-flash` |
-| `TAVILY_API_KEY` | 服务端默认 Tavily API Key | empty |
+| `TAVILY_API_KEY` | 旧管理员工作区可使用的服务端 Tavily 回退 Key | empty |
 | `TAVILY_BASE_URL` | Tavily API 基础地址 | `https://api.tavily.com` |
-| `PERPLEXITY_API_KEY` | 服务端默认 Perplexity API Key | empty |
+| `PERPLEXITY_API_KEY` | 旧管理员工作区可使用的服务端 Perplexity 回退 Key | empty |
 | `PERPLEXITY_BASE_URL` | Perplexity API 基础地址 | `https://api.perplexity.ai` |
-| `SEEDREAM_API_KEY` | 服务端默认 Seedream API Key | empty |
+| `SEEDREAM_API_KEY` | 旧管理员工作区可使用的服务端 Seedream 回退 Key | empty |
 | `SEEDREAM_BASE_URL` | Seedream API 基础地址 | `https://ark.cn-beijing.volces.com/api/v3` |
 | `SEEDREAM_DEFAULT_MODEL` | 默认 Seedream 模型 | `doubao-seedream-5-0-260128` |
 | `WESTOCK_NPX_COMMAND` | WeStock CLI 启动命令 | `npx -y westock-data-clawhub@1.0.4` |
@@ -224,22 +230,27 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 - 当天无符合条件的待办时不发邮件。
 - SMTP 失败会重试同一份当天快照，直到成功或服务停止。
 
-生成日记密码哈希：
+### 首次迁移说明
 
-```bash
-node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256').update('your-password').digest('hex'))"
-```
-
-如果启用 `AUTH_TOKEN`，页面登录密码就是该 token。请使用随机长字符串，并不要提交真实 `.env`。
+- 如果 `DATA_DIR` 中还没有 `users.json`，启动时必须提供 `AUTH_TOKEN`。
+- 服务会先检查现有 JSON 数据，再原子创建 `admin` 账户；现有日志、待办、分类、照片墙、AI 历史和上传文件不会移动。
+- 旧的 `AUTH_TOKEN` 可以是现有 6 位密码，但它只作为一次性密码；首次登录后必须换成至少 10 个字符的新密码。
+- 如果提供了 `DIARY_PASSWORD_HASH`，它只在首次迁移时导入给 `admin`。新成员默认不启用日记密码，可在个人设置中自行开启。
+- 创建用户注册表后，`AUTH_TOKEN` 和 `DIARY_PASSWORD_HASH` 不再覆盖账户配置，可以从 `.env` 删除。
+- `users.json` 或 `auth-sessions.json` 损坏时，服务会保留 `.corrupt-*.bak` 副本并拒绝登录，不会降级成无密码模式。
 
 ## Data And Privacy
 
-默认数据目录为 `data/`，可用 `DATA_DIR` 修改。
+默认数据目录为 `data/`，可用 `DATA_DIR` 修改。首次管理员继续使用根目录中的原有文件；新账户的数据位于 `accounts/<storage_key>/`，其内部文件结构与管理员工作区相同。
 
 | File | Content |
 | --- | --- |
+| `users.json` | 账户 ID、用户名、显示名称、角色、状态、scrypt 密码哈希和存储目录键 |
+| `auth-sessions.json` | 会话令牌哈希、账户 ID、创建时间和过期时间 |
 | `logs.json` | 日志 |
 | `todos.json` | 待办 |
+| `countdowns.json` | 独立倒数日 |
+| `todo-categories.json` | 待办分类 |
 | `todo-reminder-settings.json` | 待办提醒开关、收件邮箱和发送时间 |
 | `todo-reminder-state.json` | 当天提醒快照、发送状态和错误信息 |
 | `categories.json` | 父分类、子分类和日历显示设置 |
@@ -248,32 +259,40 @@ node -e "const crypto=require('crypto'); console.log(crypto.createHash('sha256')
 | `ai-chats.json` | 独立 AI 和日志内 AI 历史 |
 | `private-uploads.json` | 日记保护图片标记 |
 | `uploads/` | 上传图片和生成图片 |
+| `accounts/<UUID>/` | 新账户的独立工作区数据和上传目录 |
 
 隐私边界：
 
+- 所有工作区 API 都从当前 Cookie 会话解析账户，客户端不能通过传入用户 ID 切换数据目录。
+- 管理员接口只返回账户元数据，不提供成员日志、统计、AI 历史、备份或进入成员工作区的接口。
+- 相同记录 ID 或相同上传文件名只在各自账户目录内解析，不能跨账户读取、修改或删除。
+- 新账户不会继承旧管理员的服务端 AI Key；每个账户可在自己的 AI 设置中保存独立 Key。
 - 后端 AI 聊天接口只有在用户开启日志访问时，才会按访问设置读取允许的日志分类和子分类。
 - 日记内容还需要同时满足“允许 AI 访问日记内容”和日记已解锁。
 - 独立 AI 对话可使用允许范围内的日志上下文，并提示模型用 `#log/id` 返回本地日志链接。
 - 日志内 AI 只使用前端主动发送的当前日志上下文，不会额外读取其它日志。
 - Tavily 和 Perplexity 搜索只接收用户问题，不接收日志全文。
+- 日记解锁 Cookie 同时绑定账户 ID；另一个账户即使携带相同 Cookie 值也不能解锁。
 - `.env` 和 `data/` 已在 `.gitignore` 中排除，提交前仍建议用 `git status` 检查。
 
 ## Backup And Restore
 
-- JSON 备份包含日志、待办、分类、照片墙和私有上传标记。
-- 上传图片和生成图片文件本身位于 `data/uploads/`，需要额外备份。
+- JSON 备份只包含当前账户的日志、待办、倒数日、分类、照片墙和私有上传标记。
+- 备份不包含 `users.json`、密码哈希、会话或其它账户的数据。
+- 上传图片和生成图片文件本身位于当前账户的 `uploads/`，需要额外备份。
 - 启用日记锁后，备份和恢复需要先解锁日记。
-- 启用全站访问 token 后，需要通过页面登录或携带授权信息。
+- 恢复支持替换和合并；不含倒数日、置顶字段等新字段的旧备份继续兼容。
+- 所有备份与恢复接口都要求当前账户的有效 Cookie 会话。
 
 ## Mobile Access
 
-电脑和手机连接到同一局域网后，先设置随机长字符串 `AUTH_TOKEN`，并将 `HOST` 设置为 `0.0.0.0`，然后手机访问：
+先在本机完成管理员初始化和首次改密，再将 `HOST` 设置为 `0.0.0.0`。电脑和手机连接到同一局域网后，手机访问：
 
 ```text
 http://<电脑局域网 IP>:<PORT>
 ```
 
-例如 `http://192.168.1.4:3000`。首次访问前请确认 Windows 防火墙允许 Node.js 在专用网络通信。若在局域网外访问，请启用 `AUTH_TOKEN` 并使用可信隧道或组网。
+例如 `http://192.168.1.4:3000`。首次访问前请确认 Windows 防火墙允许 Node.js 在专用网络通信。账户认证始终生效，不需要继续保留 `AUTH_TOKEN`。若在局域网外访问，请使用 HTTPS 反向代理、可信隧道或组网，不要直接暴露未加密的 HTTP 端口。
 
 ## Template Variables
 
@@ -293,15 +312,31 @@ http://<电脑局域网 IP>:<PORT>
 
 ## Development Notes
 
-- 后端：Express + JSON 文件存储。
+- 后端：Express + JSON 文件存储；数据库通过工厂按账户数据目录创建实例。
 - 前端：原生 JavaScript 单页应用。
 - 编辑器：CodeMirror 资源生成到未纳入版本控制的 `public/generated/editor/`。
 - Markdown 渲染：本地前端模块封装 `marked`、KaTeX 和清洗逻辑。
+- 认证：scrypt 密码哈希、持久化会话令牌哈希、HttpOnly Cookie；不再支持旧 Bearer `AUTH_TOKEN`。
+- 路由顺序：`/api/logs/reorder`、`/api/todos/reorder` 等固定路径必须定义在对应 `/:id` 路由之前。
 
 ## Relevant API
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
+| `POST` | `/api/auth/login` | 登录并签发 Cookie 会话 |
+| `GET` | `/api/auth/check` | 查询登录状态，用于登录页和前端启动检查 |
+| `POST` | `/api/auth/logout` | 退出并撤销当前会话 |
+| `GET` | `/api/auth/me` | 获取当前账户 |
+| `PATCH` | `/api/auth/me` | 修改当前账户显示名称 |
+| `PUT` | `/api/auth/password` | 修改当前账户登录密码 |
+| `PUT` | `/api/auth/diary/password` | 启用、修改或关闭当前账户日记密码 |
+| `POST` | `/api/auth/diary` | 使用当前账户的日记密码解锁 |
+| `POST` | `/api/auth/diary/lock` | 锁定当前账户的日记内容 |
+| `GET` | `/api/auth/diary/status` | 查询当前账户的日记锁状态 |
+| `GET` | `/api/admin/users` | 管理员获取账户列表 |
+| `POST` | `/api/admin/users` | 管理员创建账户和临时密码 |
+| `PATCH` | `/api/admin/users/:id` | 管理员修改用户名、显示名称、角色或状态 |
+| `POST` | `/api/admin/users/:id/reset-password` | 管理员重置临时密码并撤销会话 |
 | `GET` | `/api/logs?date=&month=&category=&search=&page=` | 查询日志 |
 | `POST` | `/api/logs` | 新建日志 |
 | `PUT` | `/api/logs/:id` | 更新日志（含 `pinned` 置顶状态） |
@@ -311,6 +346,10 @@ http://<电脑局域网 IP>:<PORT>
 | `PUT` | `/api/todos/:id` | 更新待办 |
 | `DELETE` | `/api/todos/:id` | 删除待办 |
 | `PUT` | `/api/todos/reorder` | 待办拖拽排序 |
+| `GET` | `/api/countdowns` | 查询当前账户倒数日 |
+| `POST` | `/api/countdowns` | 新建倒数日 |
+| `PUT` | `/api/countdowns/:id` | 更新倒数日 |
+| `DELETE` | `/api/countdowns/:id` | 删除倒数日 |
 | `GET` | `/api/todo-reminder-settings` | 读取待办邮件提醒设置与状态 |
 | `PUT` | `/api/todo-reminder-settings` | 保存待办邮件提醒设置 |
 | `GET` | `/api/categories` | 获取分类树 |
@@ -333,5 +372,7 @@ http://<电脑局域网 IP>:<PORT>
 | `POST` | `/api/ai/editor` | 日志内 AI 建议 |
 | `POST` | `/api/ai/image/prompt` | 生图 prompt 优化 |
 | `POST` | `/api/ai/image/generate` | Seedream 生图并保存到本地 |
+
+除登录和登录状态检查外，工作区 API 都要求有效的 `site_session` Cookie；`/api/admin/*` 还要求管理员角色。处于强制改密状态的会话只能查询或修改当前账户、修改密码和退出。
 
 日志记录包含服务端维护的 `pinned` 与 `pinned_at` 字段。分类筛选时，置顶日志会在分页前优先排列；未选择分类时保持原有日期排序。

@@ -278,11 +278,6 @@ body.desktop-narrow-sidebar .btn-sidebar-tools {
   display: flex;
 }
 
-body.desktop-narrow-sidebar:not(.sidebar-tools-mode) .diary-lock-panel,
-body.desktop-narrow-sidebar:not(.sidebar-tools-mode) .backup-buttons {
-  display: none;
-}
-
 body.desktop-narrow-sidebar .sidebar {
   padding: 14px 14px 18px;
 }
@@ -385,8 +380,8 @@ body.desktop-narrow-sidebar .sidebar-brand {
   color: var(--color-sidebar-text);
   cursor: pointer;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 6px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   padding: 7px 8px;
   text-align: left;
   font: inherit;
@@ -402,13 +397,6 @@ body.desktop-narrow-sidebar .sidebar-brand {
 
 .card-nav-item.active {
   box-shadow: inset 2px 0 0 var(--color-primary);
-}
-
-.card-nav-index {
-  color: var(--color-primary);
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.5;
 }
 
 .card-nav-main {
@@ -502,8 +490,8 @@ body.desktop-narrow-sidebar .card-nav-panel {
   margin-bottom: 0;
   overflow: hidden;
   flex: 1 1 auto;
-  min-height: 260px;
-  max-height: clamp(260px, calc(100vh - 430px), 420px);
+  min-height: 120px;
+  max-height: none;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 18px;
   background:
@@ -799,14 +787,26 @@ body.sidebar-tools-mode .todo-reminder-card {
   display: none;
 }
 
-body.sidebar-tools-mode .diary-lock-panel,
-body.sidebar-tools-mode .calendar-widget.collapsed ~ .diary-lock-panel {
-  display: block;
+.sidebar-tools-panel {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
-body.sidebar-tools-mode .backup-buttons,
-body.sidebar-tools-mode .calendar-widget.collapsed ~ .backup-buttons {
+body.sidebar-tools-mode .sidebar-tools-panel {
   display: flex;
+}
+
+body.sidebar-tools-mode .sidebar {
+  overflow: hidden;
+}
+
+body.sidebar-todo-mode .sidebar {
+  overflow-y: auto;
 }
 
 body.sidebar-ai-mode .sidebar {
@@ -6860,15 +6860,6 @@ body.editor-fullscreen .main {
   display: none;
 }
 
-.calendar-widget:not(.collapsed) ~ .card-nav-panel {
-  display: none;
-}
-
-.calendar-widget.collapsed ~ .diary-lock-panel,
-.calendar-widget.collapsed ~ .backup-buttons {
-  display: none;
-}
-
 .calendar-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -11860,7 +11851,7 @@ body.sidebar-collapsed .ai-chat-view::after {
   padding: 12px;
   border: 1px solid var(--sidebar-faint);
   border-radius: 12px;
-  background: var(--sidebar-soft);
+  background: var(--sidebar-bg-subtle);
 }
 
 .account-panel-copy { display: grid; gap: 2px; min-width: 0; }
@@ -12540,5 +12531,189 @@ body.sidebar-tools-mode .account-panel { display: flex; }
 
   .photo-wall-tool-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Balanced log workspace: keep navigation primary and utilities separate. */
+@media (min-width: 769px) {
+  .sidebar {
+    overflow: hidden;
+  }
+
+  .calendar-widget {
+    flex: 0 0 auto;
+  }
+
+  .card-nav-panel {
+    flex: 1 1 auto;
+    min-height: 120px;
+  }
+
+  body.sidebar-todo-mode .sidebar {
+    overflow-y: auto;
+  }
+}
+
+.sidebar-tools-panel .diary-lock-panel,
+.sidebar-tools-panel .backup-buttons,
+.sidebar-tools-panel .account-panel {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.sidebar-tools-panel .diary-lock-panel {
+  margin-bottom: 0;
+}
+
+.sidebar-tools-panel .account-panel-copy strong,
+.sidebar-tools-panel .account-panel-copy small {
+  color: var(--color-sidebar-text);
+}
+
+.sidebar-tools-panel .account-panel-copy span {
+  color: var(--color-sidebar-heading);
+}
+
+.log-archive-toolbar {
+  grid-template-columns: minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(226, 232, 240, 0.82);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+}
+
+[data-theme="dark"] .log-archive-toolbar {
+  border-color: rgba(71, 85, 105, 0.46);
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.log-archive-searchbar,
+.log-archive-filterbar {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-theme="dark"] .log-archive-searchbar,
+[data-theme="dark"] .log-archive-filterbar {
+  border-color: transparent;
+  background: transparent;
+}
+
+.archive-clear-filters {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--archive-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: border-color 0.16s, background 0.16s, color 0.16s;
+}
+
+.archive-clear-filters:hover,
+.archive-clear-filters:focus-visible {
+  border-color: rgba(var(--color-primary-rgb), 0.3);
+  background: rgba(var(--color-primary-rgb), 0.07);
+  color: var(--color-primary);
+}
+
+.archive-clear-filters[hidden],
+.log-archive-actions #btnResetCardWidth[hidden] {
+  display: none;
+}
+
+.log-archive-hero #btnNewLog {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.log-archive-hero #btnNewLog .new-log-icon {
+  color: inherit;
+}
+
+.log-archive-hero #btnNewLog:hover {
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-hover);
+  color: #fff;
+}
+
+.archive-action-tooltip {
+  position: relative;
+}
+
+.archive-action-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 120;
+  top: calc(100% + 8px);
+  right: 0;
+  width: max-content;
+  max-width: 180px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-3px);
+  transition: opacity 0.14s, transform 0.14s;
+  white-space: nowrap;
+}
+
+.archive-action-tooltip:hover::after,
+.archive-action-tooltip:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 1100px) {
+  .log-archive-toolbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .sidebar-tools-panel {
+    width: 100%;
+  }
+
+  body.sidebar-tools-mode .sidebar {
+    overflow: hidden;
+  }
+
+  body.sidebar-tools-mode .sidebar-tools-panel {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .log-archive-toolbar {
+    padding: 10px;
+  }
+
+  .archive-clear-filters {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .archive-action-tooltip::after {
+    content: none;
   }
 }

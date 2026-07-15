@@ -20,6 +20,8 @@ const listTitle = $('#listTitle');
 export const listView = $('#listView');
 const pagination = $('#pagination');
 const filterPage = $('#filterPage');
+const clearFiltersButton = $('#btnClearFilters');
+const resetCardWidthButton = $('#btnResetCardWidth');
 const cardNavPanel = $('#cardNavPanel');
 const cardNavToggle = $('#cardNavToggle');
 const cardNavCount = $('#cardNavCount');
@@ -126,6 +128,21 @@ export function syncArchiveFilterControls() {
       >${escHtml(option.textContent)}</button>
     `).join('');
   });
+  syncClearFiltersButton();
+}
+
+function syncClearFiltersButton() {
+  if (!clearFiltersButton) return;
+  clearFiltersButton.hidden = !(state.search || state.selectedDate || state.category || state.month);
+}
+
+function savedCardWidth() {
+  const value = parseInt(localStorage.getItem(CARD_WIDTH_KEY), 10);
+  return Number.isFinite(value) && value >= 200 && value <= 800 ? value : null;
+}
+
+function syncCardWidthResetButton() {
+  if (resetCardWidthButton) resetCardWidthButton.hidden = savedCardWidth() === null;
 }
 
 function initArchiveFilterControls() {
@@ -170,22 +187,25 @@ function initArchiveFilterControls() {
 }
 
 function loadSavedCardWidth() {
-  const value = parseInt(localStorage.getItem(CARD_WIDTH_KEY), 10);
-  if (Number.isFinite(value) && value >= 200 && value <= 800) {
+  const value = savedCardWidth();
+  if (value !== null) {
     document.documentElement.style.setProperty('--card-width', value + 'px');
   }
+  syncCardWidthResetButton();
 }
 
 function persistCardWidth(width) {
   const value = Math.min(800, Math.max(200, Math.round(width)));
   localStorage.setItem(CARD_WIDTH_KEY, String(value));
   document.documentElement.style.setProperty('--card-width', value + 'px');
+  syncCardWidthResetButton();
 }
 
 loadSavedCardWidth();
 applyCardNavCollapsed(localStorage.getItem(CARD_NAV_COLLAPSED_KEY) === 'true');
 
 export async function loadLogs() {
+  syncClearFiltersButton();
   const params = new URLSearchParams();
   if (state.selectedDate) params.set('date', state.selectedDate);
   if (state.month) params.set('month', state.month);
@@ -230,13 +250,10 @@ function renderCardNavigator(data) {
     return;
   }
 
-  const offset = (page - 1) * 20;
-
-  cardNavList.innerHTML = items.map((log, idx) => {
+  cardNavList.innerHTML = items.map((log) => {
     const active = state.editingId === log.id ? ' active' : '';
     return `
       <button class="card-nav-item${active}" data-id="${log.id}" title="${escHtml(log.title || '未命名日志')}">
-        <span class="card-nav-index">${offset + idx + 1}</span>
         <span class="card-nav-main">
           <span class="card-nav-title">${escHtml(log.title || '未命名日志')}</span>
           <span class="card-nav-meta">${escHtml(log.log_date || '无日期')} · ${escHtml(log.category)} · ${log.hours}h</span>
@@ -577,6 +594,22 @@ $('#btnSearchClear').addEventListener('click', () => {
   loadLogs();
 });
 
+clearFiltersButton?.addEventListener('click', () => {
+  $('#searchInput').value = '';
+  $('#btnSearchClear').classList.remove('visible');
+  $('#filterCategory').value = '';
+  $('#filterMonth').value = '';
+  state.search = '';
+  state.category = '';
+  state.month = '';
+  state.selectedDate = null;
+  state.currentPage = 1;
+  populateFilterSubCategory(null);
+  syncArchiveFilterControls();
+  renderCalendar();
+  loadLogs();
+});
+
 $('#filterCategory').addEventListener('change', () => {
   const parent = $('#filterCategory').value;
   state.category = parent;
@@ -652,10 +685,11 @@ document.addEventListener('mouseup', () => {
 });
 
 // Reset card widths
-$('#btnResetCardWidth').addEventListener('click', () => {
+resetCardWidthButton.addEventListener('click', () => {
   localStorage.removeItem(CARD_WIDTH_KEY);
   document.documentElement.style.removeProperty('--card-width');
   document.querySelectorAll('.log-card').forEach(c => { c.style.width = ''; });
+  syncCardWidthResetButton();
 });
 
 initArchiveFilterControls();

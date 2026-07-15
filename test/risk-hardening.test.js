@@ -3596,6 +3596,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
     'categories',
     'photo-wall',
     'ai',
+    'tools',
   ]);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="nav"]'), null);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="todo"]').textContent, '待办事项');
@@ -3857,6 +3858,8 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.equal(document.querySelector('#btnResetCardWidth').closest('.log-filter-row'), null);
   assert.equal(document.querySelector('#btnResetCardWidth').getAttribute('aria-label'), '恢复卡片默认宽度');
   assert.equal(document.querySelector('#btnResetCardWidth svg') !== null, true);
+  assert.equal(document.querySelector('#btnResetCardWidth').hidden, true);
+  assert.equal(document.querySelector('#btnNewLog').dataset.tooltip, '新建日志');
   assert.equal(document.querySelector('#listTitle').closest('.log-archive-hero') !== null, true);
   assert.equal(document.querySelector('#logCount').closest('.log-archive-hero') !== null, true);
   assert.equal(document.querySelector('#searchInput').closest('.log-archive-toolbar') !== null, true);
@@ -3876,6 +3879,8 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.equal(document.querySelector('#filterPage').style.display, 'none');
   assert.equal(document.querySelector('#filterPageMenu').getAttribute('role'), 'listbox');
   assert.equal(document.querySelector('#filterCategoryMenu').getAttribute('role'), 'listbox');
+  assert.equal(document.querySelector('#btnClearFilters').closest('.log-filter-row') !== null, true);
+  assert.equal(document.querySelector('#btnClearFilters').hidden, true);
   assert.equal(document.querySelector('#logList').closest('.log-archive-track') !== null, true);
   assert.equal(document.querySelector('#pagination') !== null, true);
 
@@ -3887,6 +3892,8 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.match(logListSource, /filterPage\.innerHTML = '<option value="1">第 1 \/ 1 页<\/option>';/);
   assert.match(logListSource, /html \+= `<option value="\$\{i\}" \$\{i === data\.page \? 'selected' : ''\}>第 \$\{i\} \/ \$\{data\.totalPages\} 页<\/option>`;/);
   assert.match(logListSource, /filterPage\?\.addEventListener\('change', \(\) => \{/);
+  assert.match(logListSource, /clearFiltersButton\?\.addEventListener\('click', \(\) => \{[\s\S]*state\.search = '';[\s\S]*state\.category = '';[\s\S]*state\.month = '';[\s\S]*state\.selectedDate = null;[\s\S]*renderCalendar\(\);[\s\S]*loadLogs\(\);/);
+  assert.match(logListSource, /function syncCardWidthResetButton\(\)[\s\S]*resetCardWidthButton\.hidden = savedCardWidth\(\) === null;/);
   assert.match(logListSource, /data-pinned="\$\{pinned\}"[\s\S]*<div class="log-card-top">[\s\S]*<span class="log-card-category">[\s\S]*<div class="log-card-content log-card-preview">[\s\S]*<div class="log-card-meta-row">[\s\S]*<span class="log-card-date">[\s\S]*<span class="log-card-hours">[\s\S]*<div class="card-resize-handle"><\/div>/);
   assert.match(logListSource, /<div class="preview-md markdown-body">\$\{renderToHtml\(log\.content\)\}<\/div>/);
   assert.match(logListSource, /<button class="log-card-pin\$\{pinned \? ' active' : ''\}"[^>]*data-action="toggle-pin"[^>]*aria-pressed="\$\{pinned\}"/);
@@ -3910,16 +3917,15 @@ test('log main page uses archive layout while preserving existing controls', () 
   assert.match(styleSource, /\.log-archive-hero\s*\{[\s\S]*border-bottom:\s*1px solid var\(--archive-line\);/);
   assert.match(styleSource, /\.log-archive-actions\s*\{[\s\S]*display:\s*inline-flex;/);
   assert.match(styleSource, /\.log-archive-actions #btnNewLog,[\s\S]*\.log-archive-actions #btnResetCardWidth\s*\{[\s\S]*width:\s*40px;[\s\S]*border-radius:\s*999px;/);
-  assert.match(styleSource, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*border-color:\s*rgba\(47, 125, 244, 0\.32\);[\s\S]*background:\s*rgba\(255, 255, 255, 0\.96\);/);
-  assert.doesNotMatch(styleSource, /\.log-archive-hero #btnNewLog\s*\{[\s\S]*background:\s*linear-gradient\(135deg, #3f83f8, #2f7df4\);/);
+  assert.match(styleSource, /\/\* Balanced log workspace:[\s\S]*\.log-archive-hero #btnNewLog\s*\{[\s\S]*border-color:\s*var\(--color-primary\);[\s\S]*background:\s*var\(--color-primary\);[\s\S]*color:\s*#fff;/);
   assert.match(styleSource, /\.archive-log-view\s*\{[\s\S]*font-family:\s*Inter, MiSans, "HarmonyOS Sans SC"/);
   assert.match(styleSource, /\.new-log-icon svg,[\s\S]*\.archive-icon svg\s*\{[\s\S]*width:\s*18px;[\s\S]*height:\s*18px;/);
   assert.match(styleSource, /\.log-archive-actions #btnResetCardWidth\s*\{[\s\S]*background:\s*rgba\(255, 255, 255, 0\.92\);[\s\S]*color:\s*#64748b;/);
-  assert.match(styleSource, /\.log-archive-toolbar\s*\{[\s\S]*display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(280px, 360px\) minmax\(0, 1fr\);/);
+  assert.match(styleSource, /\/\* Balanced log workspace:[\s\S]*\.log-archive-toolbar\s*\{[\s\S]*grid-template-columns:\s*minmax\(280px, 1fr\) auto;[\s\S]*padding:\s*12px;[\s\S]*border:\s*1px solid/);
   assert.match(styleSource, /\.log-archive-panel\s*\{[\s\S]*padding:\s*0;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;/);
-  assert.match(styleSource, /\.log-archive-searchbar,[\s\S]*\.log-archive-filterbar\s*\{[\s\S]*border:\s*1px solid rgba\(226, 232, 240, 0\.78\);[\s\S]*border-radius:\s*12px;/);
-  assert.match(styleSource, /\.log-archive-searchbar\s*\{[\s\S]*padding:\s*14px;/);
-  assert.match(styleSource, /\.log-archive-filterbar\s*\{[\s\S]*padding:\s*10px 12px;/);
+  assert.match(styleSource, /\/\* Balanced log workspace:[\s\S]*\.log-archive-searchbar,[\s\S]*\.log-archive-filterbar\s*\{[\s\S]*padding:\s*0;[\s\S]*border:\s*0;[\s\S]*background:\s*transparent;/);
+  assert.match(styleSource, /\.archive-clear-filters\s*\{[\s\S]*min-height:\s*36px;[\s\S]*white-space:\s*nowrap;/);
+  assert.match(styleSource, /\.archive-action-tooltip:hover::after,[\s\S]*\.archive-action-tooltip:focus-visible::after\s*\{[\s\S]*opacity:\s*1;/);
   assert.match(styleSource, /\.log-filter-row\s*\{[\s\S]*align-items:\s*center;[\s\S]*justify-content:\s*flex-start;[\s\S]*flex-wrap:\s*wrap;[\s\S]*overflow:\s*visible;/);
   assert.match(styleSource, /\.archive-page-filter\s*\{[\s\S]*min-width:\s*8\.8em;/);
   assert.match(styleSource, /\.archive-filter-control\.open\s*\{[\s\S]*z-index:\s*90;/);
@@ -4352,7 +4358,7 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   assert.match(styleSource, /\[data-theme="dark"\]\s*\{[\s\S]*--sidebar-hover:\s*rgba\(94, 234, 212, 0\.10\);[\s\S]*--sidebar-hover-strong:\s*rgba\(94, 234, 212, 0\.16\);[\s\S]*--sidebar-bg-subtle:\s*rgba\(94, 234, 212, 0\.07\);[\s\S]*--sidebar-border:\s*rgba\(94, 234, 212, 0\.16\);[\s\S]*--sidebar-faint:\s*rgba\(94, 234, 212, 0\.22\);/);
   assert.match(appSource, /const COMPACT_DESKTOP_SIDEBAR_QUERY = '\(max-width: 1100px\)';/);
   assert.match(appSource, /const DESKTOP_POINTER_QUERY = '\(hover: hover\) and \(pointer: fine\)';/);
-  assert.match(appSource, /function isCompactDesktopSidebar\(\) \{[\s\S]*compactDesktopSidebarMedia\.matches && desktopPointerMedia\.matches;/);
+  assert.match(appSource, /function isCompactDesktopSidebar\(\) \{[\s\S]*!mobileSidebarMedia\.matches && compactDesktopSidebarMedia\.matches && desktopPointerMedia\.matches;/);
   assert.match(appSource, /function syncSidebarViewportMode\(\) \{[\s\S]*document\.body\.classList\.toggle\('desktop-narrow-sidebar', compactDesktop\)/);
   assert.match(calendarSource, /const CALENDAR_COLLAPSED_STORAGE_KEY = 'calendarCollapsed';/);
   assert.match(calendarSource, /localStorage\.getItem\(CALENDAR_COLLAPSED_STORAGE_KEY\) === 'true'/);
@@ -4366,12 +4372,16 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   assert.doesNotMatch(calendarSource, /\$\('#prevMonth'\)|\$\('#nextMonth'\)|function changeMonth/);
   assert.match(logListSource, /renderCardNavigator\(data\)/);
   assert.doesNotMatch(htmlSource, /id="prevMonth"|id="nextMonth"/);
-  assert.match(styleSource, /\.calendar-widget:not\(\.collapsed\) ~ \.card-nav-panel\s*\{[\s\S]*display:\s*none;/);
+  assert.doesNotMatch(styleSource, /\.calendar-widget:not\(\.collapsed\) ~ \.card-nav-panel/);
   assert.match(styleSource, /\.calendar-widget\.collapsed \.calendar-body\s*\{[\s\S]*display:\s*none;/);
-  assert.match(styleSource, /\.calendar-widget\.collapsed ~ \.diary-lock-panel,[\s\S]*\.calendar-widget\.collapsed ~ \.backup-buttons\s*\{[\s\S]*display:\s*none;/);
-  assert.match(styleSource, /body\.sidebar-tools-mode \.calendar-widget\.collapsed ~ \.diary-lock-panel\s*\{[\s\S]*display:\s*block;/);
-  assert.match(styleSource, /body\.sidebar-tools-mode \.calendar-widget\.collapsed ~ \.backup-buttons\s*\{[\s\S]*display:\s*flex;/);
-  assert.match(styleSource, /body\.desktop-narrow-sidebar:not\(\.sidebar-tools-mode\) \.diary-lock-panel,[\s\S]*body\.desktop-narrow-sidebar:not\(\.sidebar-tools-mode\) \.backup-buttons\s*\{[\s\S]*display:\s*none;/);
+  assert.equal(/data-mode="tools">更多工具/.test(htmlSource), true);
+  assert.match(htmlSource, /class="sidebar-tools-panel"[\s\S]*id="diaryLockPanel"[\s\S]*class="backup-buttons"[\s\S]*id="accountPanel"/);
+  assert.match(styleSource, /\.sidebar-tools-panel\s*\{[\s\S]*display:\s*none;[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styleSource, /body\.sidebar-tools-mode \.sidebar-tools-panel\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(styleSource, /\/\* Balanced log workspace:[\s\S]*@media \(min-width: 769px\)[\s\S]*\.sidebar\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*\.card-nav-panel\s*\{[\s\S]*min-height:\s*120px;/);
+  assert.match(appSource, /\['normal', 'todo', 'categories', 'photo-wall', 'ai', 'tools'\]/);
+  assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-tools-mode', mode === 'tools'\)/);
+  assert.match(appSource, /localStorage\.setItem\(SIDEBAR_MODE_KEY, mode\)/);
   assert.match(styleSource, /body\.desktop-narrow-sidebar \.btn-sidebar-tools\s*\{[\s\S]*display:\s*flex;/);
   assert.match(styleSource, /body\.desktop-narrow-sidebar \.card-nav-page-actions\s*\{[\s\S]*grid-template-columns:\s*1fr;/);
   assert.match(styleSource, /\.calendar-selects\s*\{[\s\S]*grid-template-columns:\s*minmax\(108px, 1\.25fr\) minmax\(82px, 0\.95fr\);/);
@@ -4387,6 +4397,8 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   assert.doesNotMatch(styleSource, /\.calendar-day\s*\{[^}]*border-radius:\s*50%/);
   assert.doesNotMatch(styleSource, /calendar-mini-summary|calendar-mini-log-hint/);
   assert.match(styleSource, /\.card-nav-panel\s*\{[\s\S]*display:\s*flex;[\s\S]*flex:\s*1;[\s\S]*min-height:\s*0;[\s\S]*flex-direction:\s*column;/);
+  assert.doesNotMatch(logListSource, /card-nav-index/);
+  assert.doesNotMatch(htmlSource, /card-nav-index/);
   assert.match(styleSource, /\.card-nav-body\s*\{[\s\S]*flex:\s*1;[\s\S]*min-height:\s*0;[\s\S]*display:\s*flex;/);
   assert.match(styleSource, /\.card-nav-list\s*\{[\s\S]*max-height:\s*none;/);
   assert.doesNotMatch(styleSource, /\.todo-panel\s*\{/);
@@ -4420,7 +4432,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(appSource, /import \{ showPhotoWallView \} from '\.\/photoWall\.js';/);
   assert.match(appSource, /const SIDEBAR_MODE_KEY = 'sidebarMode';/);
   assert.match(appSource, /async function setSidebarMode\(mode, \{ updateMain = true \} = \{\}\)/);
-  assert.match(appSource, /if \(!\['normal', 'todo', 'categories', 'photo-wall', 'ai'\]\.includes\(mode\)\) mode = 'normal';/);
+  assert.match(appSource, /if \(!\['normal', 'todo', 'categories', 'photo-wall', 'ai', 'tools'\]\.includes\(mode\)\) mode = 'normal';/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-ai-mode', mode === 'ai'\);/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-category-mode', mode === 'categories'\);/);
   assert.match(appSource, /document\.body\.classList\.toggle\('sidebar-photo-wall-mode', mode === 'photo-wall'\);/);
@@ -5153,6 +5165,9 @@ test('mobile layout uses compact on-demand sidebar panels and retains collapse c
   assert.equal(document.querySelector('#btnSidebarTools').getAttribute('aria-label'), '切换更多工具');
   assert.equal(document.querySelector('#sidebarModeTrigger') !== null, true);
   assert.equal(document.querySelector('#sidebarModeMenu') !== null, true);
+  assert.equal(document.querySelector('#sidebarModeMenu [data-mode="tools"]').textContent, '更多工具');
+  assert.equal(document.querySelector('#diaryLockPanel').closest('#sidebarToolsPanel') !== null, true);
+  assert.equal(document.querySelector('#accountPanel').closest('#sidebarToolsPanel') !== null, true);
   assert.doesNotMatch(mobileStyles, /\.btn-sidebar-toggle\s*\{\s*display:\s*none/);
   assert.match(mobileStyles, /\.btn-theme-toggle,[\s\S]*\.btn-sidebar-toggle\s*\{[\s\S]*min-width:\s*36px;[\s\S]*min-height:\s*36px;/);
   assert.match(mobileStyles, /\.btn-sidebar-tools\s*\{\s*display:\s*flex;/);
@@ -5165,8 +5180,9 @@ test('mobile layout uses compact on-demand sidebar panels and retains collapse c
   assert.match(mobileStyles, /body\.sidebar-collapsed \.sidebar\s*\{\s*display:\s*none;/);
   assert.match(appSource, /function collapseSidebar\(\)\s*\{\s*document\.body\.classList\.toggle\('sidebar-collapsed'\);\s*\}/);
   assert.match(appSource, /\$\('#btnToggleSidebar'\)\.addEventListener\('click', collapseSidebar\);[\s\S]*\$\('#btnSidebarExpand'\)\.addEventListener\('click', collapseSidebar\);/);
-  assert.match(appSource, /function setSidebarToolsMode\(enabled\)[\s\S]*sidebar-tools-mode/);
+  assert.match(appSource, /function setSidebarToolsMode\(enabled\)[\s\S]*setSidebarMode\(enabled \? 'tools' : 'normal'\)/);
   assert.match(appSource, /\$\('#sidebarModeTrigger'\)\.addEventListener\('click', toggleSidebarModeMenu\)/);
+  assert.match(appSource, /\$\('#sidebarModeMenu'\)\.addEventListener\('keydown',[\s\S]*'ArrowDown'[\s\S]*'ArrowUp'[\s\S]*'Home'[\s\S]*'End'/);
   assert.doesNotMatch(appSource, /localStorage\.(?:setItem|getItem)\([^)]*sidebar-collapsed/i);
 });
 

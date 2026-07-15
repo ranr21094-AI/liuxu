@@ -30,6 +30,7 @@
           <button type="button" role="menuitem" data-mode="categories">管理分类</button>
           <button type="button" role="menuitem" data-mode="photo-wall">照片墙</button>
           <button type="button" role="menuitem" data-mode="ai">AI 对话</button>
+          <button type="button" role="menuitem" data-mode="tools">更多工具</button>
         </div>
       </div>
       <button class="btn-sidebar-mode btn-sidebar-tools" id="btnSidebarTools" title="切换更多工具" aria-label="切换更多工具" aria-pressed="false">
@@ -117,28 +118,30 @@
       </div>
     </section>
 
-    <div class="diary-lock-panel" id="diaryLockPanel">
-      <button class="btn-diary-unlock" id="btnDiaryUnlock" title="解锁日记分类">🔒 解锁日记</button>
-      <button class="btn-diary-lock" id="btnDiaryLock" style="display:none" title="锁定日记分类">🔓 锁定日记</button>
-    </div>
-    <div class="backup-buttons">
-      <button class="btn-export" id="btnBackup">备份数据 JSON</button>
-      <button class="btn-export btn-restore" id="btnRestore">导入恢复 JSON</button>
-      <input type="file" id="restoreFileInput" accept=".json" style="display:none">
-    </div>
+    <div class="sidebar-tools-panel" id="sidebarToolsPanel" aria-label="更多工具">
+      <div class="diary-lock-panel" id="diaryLockPanel">
+        <button class="btn-diary-unlock" id="btnDiaryUnlock" title="解锁日记分类">🔒 解锁日记</button>
+        <button class="btn-diary-lock" id="btnDiaryLock" style="display:none" title="锁定日记分类">🔓 锁定日记</button>
+      </div>
+      <div class="backup-buttons">
+        <button class="btn-export" id="btnBackup">备份数据 JSON</button>
+        <button class="btn-export btn-restore" id="btnRestore">导入恢复 JSON</button>
+        <input type="file" id="restoreFileInput" accept=".json" style="display:none">
+      </div>
 
-    <section class="account-panel" id="accountPanel" aria-labelledby="accountPanelTitle">
-      <div class="account-panel-copy">
-        <strong id="accountPanelTitle">当前账户</strong>
-        <span id="accountDisplayName">加载中…</span>
-        <small id="accountMeta"></small>
-      </div>
-      <div class="account-panel-actions">
-        <button class="btn-export" id="btnAccountSettings" type="button">个人设置</button>
-        <button class="btn-export" id="btnAdminUsers" type="button" hidden>账户管理</button>
-        <button class="btn-export account-logout-button" id="btnLogout" type="button">退出登录</button>
-      </div>
-    </section>
+      <section class="account-panel" id="accountPanel" aria-labelledby="accountPanelTitle">
+        <div class="account-panel-copy">
+          <strong id="accountPanelTitle">当前账户</strong>
+          <span id="accountDisplayName">加载中…</span>
+          <small id="accountMeta"></small>
+        </div>
+        <div class="account-panel-actions">
+          <button class="btn-export" id="btnAccountSettings" type="button">个人设置</button>
+          <button class="btn-export" id="btnAdminUsers" type="button" hidden>账户管理</button>
+          <button class="btn-export account-logout-button" id="btnLogout" type="button">退出登录</button>
+        </div>
+      </section>
+    </div>
 
     <div class="ai-sidebar-history-panel" id="aiSidebarHistoryPanel">
       <div class="ai-sidebar-history-header">
@@ -260,14 +263,14 @@
           </div>
         </div>
         <div class="log-archive-actions">
-          <button class="btn-primary" id="btnNewLog" type="button" title="新建日志" aria-label="新建日志">
+          <button class="btn-primary archive-action-tooltip" id="btnNewLog" type="button" title="新建日志" aria-label="新建日志" data-tooltip="新建日志">
             <span class="new-log-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
               </svg>
             </span>
           </button>
-          <button class="btn-secondary btn-sm" id="btnResetCardWidth" type="button" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度">
+          <button class="btn-secondary btn-sm archive-action-tooltip" id="btnResetCardWidth" type="button" title="恢复卡片默认宽度" aria-label="恢复卡片默认宽度" data-tooltip="恢复默认宽度" hidden>
             <span class="archive-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M4 12h6M14 12h6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
@@ -333,6 +336,7 @@
                 </button>
                 <div class="archive-filter-menu" id="filterPageMenu" role="listbox" hidden></div>
               </div>
+              <button class="archive-clear-filters" id="btnClearFilters" type="button" hidden>清除筛选</button>
             </div>
           </div>
         </div>

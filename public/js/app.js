@@ -47,7 +47,7 @@ const compactDesktopSidebarMedia = window.matchMedia(COMPACT_DESKTOP_SIDEBAR_QUE
 const desktopPointerMedia = window.matchMedia(DESKTOP_POINTER_QUERY);
 
 function isCompactDesktopSidebar() {
-  return compactDesktopSidebarMedia.matches && desktopPointerMedia.matches;
+  return !mobileSidebarMedia.matches && compactDesktopSidebarMedia.matches && desktopPointerMedia.matches;
 }
 
 function setSidebarTitle(mode) {
@@ -85,11 +85,10 @@ function toggleSidebarModeMenu() {
   $('#sidebarModeTrigger').setAttribute('aria-expanded', String(!open));
 }
 
-function resetToolsMode() {
-  document.body.classList.remove('sidebar-tools-mode');
-  $('#btnSidebarTools').classList.remove('active');
-  $('#btnSidebarTools').setAttribute('aria-pressed', 'false');
-  $('#btnSidebarTools').title = '切换更多工具';
+function syncToolsShortcut(active) {
+  $('#btnSidebarTools').classList.toggle('active', active);
+  $('#btnSidebarTools').setAttribute('aria-pressed', String(active));
+  $('#btnSidebarTools').title = active ? '切换回常规侧边栏' : '切换更多工具';
 }
 
 function activeSidebarMode() {
@@ -109,19 +108,17 @@ function syncSidebarViewportMode() {
   const compactDesktop = isCompactDesktopSidebar();
   document.body.classList.toggle('desktop-narrow-sidebar', compactDesktop);
   if (compactDesktop) closeMobileCalendar();
-  if (!compactDesktop && !mobileSidebarMedia.matches && document.body.classList.contains('sidebar-tools-mode')) {
-    setSidebarToolsMode(false);
-  }
 }
 
 async function setSidebarMode(mode, { updateMain = true } = {}) {
-  if (!['normal', 'todo', 'categories', 'photo-wall', 'ai'].includes(mode)) mode = 'normal';
+  if (!['normal', 'todo', 'categories', 'photo-wall', 'ai', 'tools'].includes(mode)) mode = 'normal';
   if (updateMain && !(await leaveEditorSafely())) return;
   document.body.classList.toggle('sidebar-todo-mode', mode === 'todo');
   document.body.classList.toggle('sidebar-category-mode', mode === 'categories');
   document.body.classList.toggle('sidebar-photo-wall-mode', mode === 'photo-wall');
   document.body.classList.toggle('sidebar-ai-mode', mode === 'ai');
-  resetToolsMode();
+  document.body.classList.toggle('sidebar-tools-mode', mode === 'tools');
+  syncToolsShortcut(mode === 'tools');
   closeMobileCalendar();
   setSidebarTitle(mode);
   $('#sidebarModeMenu').querySelectorAll('[data-mode]').forEach(button => {
@@ -145,28 +142,41 @@ async function setSidebarMode(mode, { updateMain = true } = {}) {
 }
 
 async function setSidebarToolsMode(enabled) {
-  if (enabled && !(await leaveEditorSafely())) return;
-  document.body.classList.toggle('sidebar-tools-mode', enabled);
-  if (enabled) {
-    document.body.classList.remove('sidebar-todo-mode', 'sidebar-ai-mode');
-    document.body.classList.remove('sidebar-category-mode', 'sidebar-photo-wall-mode');
-    closeMobileCalendar();
-    localStorage.setItem(SIDEBAR_MODE_KEY, 'normal');
-    showListView();
-  }
-  $('#btnSidebarTools').classList.toggle('active', enabled);
-  $('#btnSidebarTools').setAttribute('aria-pressed', String(enabled));
-  $('#btnSidebarTools').title = enabled ? '切换回常规侧边栏' : '切换更多工具';
-  setSidebarTitle(activeSidebarMode());
+  await setSidebarMode(enabled ? 'tools' : 'normal');
 }
 
 setSidebarMode(localStorage.getItem(SIDEBAR_MODE_KEY) || 'normal', { updateMain: false });
 
 $('#sidebarModeTrigger').addEventListener('click', toggleSidebarModeMenu);
+$('#sidebarModeTrigger').addEventListener('keydown', (event) => {
+  if (event.key !== 'ArrowDown') return;
+  event.preventDefault();
+  const menu = $('#sidebarModeMenu');
+  if (menu.style.display === 'none') toggleSidebarModeMenu();
+  menu.querySelector('[role="menuitem"]')?.focus();
+});
 $('#sidebarModeMenu').addEventListener('click', (event) => {
   const item = event.target.closest('[data-mode]');
   if (!item) return;
   setSidebarMode(item.dataset.mode);
+});
+$('#sidebarModeMenu').addEventListener('keydown', (event) => {
+  const items = [...$('#sidebarModeMenu').querySelectorAll('[role="menuitem"]')];
+  const currentIndex = items.indexOf(document.activeElement);
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeSidebarModeMenu();
+    $('#sidebarModeTrigger').focus();
+    return;
+  }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !items.length) return;
+  event.preventDefault();
+  let nextIndex = currentIndex;
+  if (event.key === 'Home') nextIndex = 0;
+  else if (event.key === 'End') nextIndex = items.length - 1;
+  else if (event.key === 'ArrowDown') nextIndex = (Math.max(currentIndex, -1) + 1) % items.length;
+  else nextIndex = (currentIndex <= 0 ? items.length : currentIndex) - 1;
+  items[nextIndex]?.focus();
 });
 
 window.addEventListener('category-manager-closed', () => {
@@ -189,9 +199,6 @@ $('#btnSidebarTools').addEventListener('click', () => {
 });
 
 mobileSidebarMedia.addEventListener('change', (event) => {
-  if (!event.matches && !isCompactDesktopSidebar() && document.body.classList.contains('sidebar-tools-mode')) {
-    setSidebarToolsMode(false);
-  }
   if (!event.matches || isCompactDesktopSidebar()) closeMobileCalendar();
   syncSidebarViewportMode();
 });
