@@ -825,7 +825,7 @@ function isPrivateUpload(filename) {
 
 // CRUD operations
 
-function getAll(query = {}, diaryUnlocked = true) {
+function getFilteredLogs(query = {}, diaryUnlocked = true) {
   let logs = readLogs();
 
   // Hide diary logs if locked
@@ -881,6 +881,16 @@ function getAll(query = {}, diaryUnlocked = true) {
     if ((a.sort_order || 0) !== (b.sort_order || 0)) return (a.sort_order || 0) - (b.sort_order || 0);
     return b.id - a.id;
   });
+
+  return logs;
+}
+
+function getAllUnpaginated(query = {}, diaryUnlocked = true) {
+  return getFilteredLogs(query, diaryUnlocked).map(log => ({ ...log }));
+}
+
+function getAll(query = {}, diaryUnlocked = true) {
+  const logs = getFilteredLogs(query, diaryUnlocked);
 
   // Pagination
   const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
@@ -2110,6 +2120,7 @@ function mergeCategoryTrees(existing, incoming) {
 return {
   dataDir: DATA_DIR,
   getAll,
+  getAllUnpaginated,
   getById,
   create,
   update,

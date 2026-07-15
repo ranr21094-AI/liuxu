@@ -28,6 +28,8 @@ let selectedSkillId = '';
 let aiAccessCategories = [];
 let historySearchQuery = '';
 let historySearchScope = 'title';
+let historyMenuConversationId = '';
+let historyMenuTrigger = null;
 let settings = {
   apiKey: '',
   apiKeyConfigured: false,
@@ -602,28 +604,85 @@ function closeAiImagePreview() {
 }
 
 function historyActionIcon(action) {
-  if (action === 'rename') {
-    return `
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 20h4.6L18.7 9.9a2.1 2.1 0 0 0 0-3L17.1 5.3a2.1 2.1 0 0 0-3 0L4 15.4V20Z"></path>
-        <path d="m12.8 6.6 4.6 4.6"></path>
-      </svg>
-    `;
-  }
   return `
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 7h16"></path>
-      <path d="M10 11v6"></path>
-      <path d="M14 11v6"></path>
-      <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path>
-      <path d="M9 7V4h6v3"></path>
+      <circle cx="5" cy="12" r="1.4"></circle>
+      <circle cx="12" cy="12" r="1.4"></circle>
+      <circle cx="19" cy="12" r="1.4"></circle>
     </svg>
   `;
+}
+
+function closeHistoryMenu({ restoreFocus = false } = {}) {
+  const menu = $('#aiHistoryContextMenu');
+  const trigger = historyMenuTrigger;
+  if (menu) {
+    menu.hidden = true;
+    menu.style.removeProperty('left');
+    menu.style.removeProperty('top');
+  }
+  if (trigger) trigger.setAttribute('aria-expanded', 'false');
+  historyMenuConversationId = '';
+  historyMenuTrigger = null;
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
+}
+
+function positionHistoryMenu(trigger, menu) {
+  menu.hidden = false;
+  const triggerRect = trigger.getBoundingClientRect();
+  const margin = 8;
+  const gap = 6;
+  const menuWidth = menu.offsetWidth || 156;
+  const menuHeight = menu.offsetHeight || 92;
+  const left = Math.max(margin, Math.min(window.innerWidth - menuWidth - margin, triggerRect.right - menuWidth));
+  const below = triggerRect.bottom + gap;
+  const top = below + menuHeight <= window.innerHeight - margin
+    ? below
+    : Math.max(margin, triggerRect.top - menuHeight - gap);
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+function openHistoryMenu(id, trigger, { focus = 'first' } = {}) {
+  const menu = $('#aiHistoryContextMenu');
+  if (!menu || !trigger || !conversations.some(chat => chat.id === id)) return;
+  closeHistoryMenu();
+  historyMenuConversationId = id;
+  historyMenuTrigger = trigger;
+  trigger.setAttribute('aria-expanded', 'true');
+  positionHistoryMenu(trigger, menu);
+  if (focus) {
+    requestAnimationFrame(() => {
+      const options = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+      (focus === 'last' ? options.at(-1) : options[0])?.focus();
+    });
+  }
+}
+
+function toggleHistoryMenu(id, trigger) {
+  if (historyMenuConversationId === id && !$('#aiHistoryContextMenu')?.hidden) {
+    closeHistoryMenu({ restoreFocus: true });
+    return;
+  }
+  openHistoryMenu(id, trigger, { focus: null });
+}
+
+function moveHistoryMenuFocus(direction) {
+  const menu = $('#aiHistoryContextMenu');
+  if (!menu || menu.hidden) return;
+  const options = [...menu.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+  if (!options.length) return;
+  const currentIndex = options.indexOf(document.activeElement);
+  const nextIndex = currentIndex < 0
+    ? (direction > 0 ? 0 : options.length - 1)
+    : (currentIndex + direction + options.length) % options.length;
+  options[nextIndex].focus();
 }
 
 function renderHistory() {
   const list = $('#aiSidebarHistoryList');
   if (!list) return;
+  closeHistoryMenu();
   const sorted = [...conversations].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   const filtered = sorted.filter(chat => historyMatchesSearch(chat));
   const summary = $('#aiSidebarHistorySummary');
@@ -650,8 +709,7 @@ function renderHistory() {
         <button type="button" class="ai-history-open" title="${escHtml(chat.title || '新对话')}">
           <span class="ai-history-title">${escHtml(chat.title || '新对话')}</span>
         </button>
-        <button type="button" class="ai-history-action" data-action="rename" title="重命名对话" aria-label="重命名对话">${historyActionIcon('rename')}</button>
-        <button type="button" class="ai-history-action danger" data-action="delete" title="删除对话" aria-label="删除对话">${historyActionIcon('delete')}</button>
+        <button type="button" class="ai-history-more" data-action="toggle-history-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="aiHistoryContextMenu" title="更多对话操作" aria-label="更多对话操作">${historyActionIcon('more')}</button>
       </div>
     `;
   }).join('');
@@ -712,6 +770,7 @@ function renderMessages() {
   const list = $('#aiChatMessages');
   const messages = activeMessages();
   const current = activeConversation();
+  $('#aiChatView')?.classList.toggle('is-empty', !messages.length);
   updateAiChatHeader();
   if (!messages.length) {
     const dailyQuote = dailyQuoteForDate(businessDateString());
@@ -757,7 +816,7 @@ function renderMessages() {
       ` : ''}
     </div>
   `).join('') + (sending && !messages.at(-1)?.streaming ? `
-    <div class="ai-message assistant ai-message-thinking" aria-live="polite">
+    <div class="ai-message assistant ai-message-thinking">
       <div class="ai-message-content">
         <span class="ai-thinking-text">正在思考</span>
         <span class="ai-thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -1086,6 +1145,34 @@ function updateSendState() {
   send.disabled = disabled;
   if (image) image.disabled = disabled;
   $('#aiChatSending').style.display = sending ? '' : 'none';
+  resizeAiChatInput();
+}
+
+function resizeAiChatInput() {
+  const input = $('#aiChatInput');
+  if (!input) return;
+  input.style.height = 'auto';
+  const styles = window.getComputedStyle(input);
+  const minHeight = Number.parseFloat(styles.minHeight) || 44;
+  const maxHeight = Number.parseFloat(styles.maxHeight) || 144;
+  const contentHeight = Math.max(minHeight, Math.min(input.scrollHeight, maxHeight));
+  input.style.height = `${Math.round(contentHeight)}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden';
+}
+
+function announceAiStatus(text) {
+  const status = $('#aiChatStatus');
+  if (!status) return;
+  status.textContent = '';
+  requestAnimationFrame(() => {
+    status.textContent = text;
+  });
+}
+
+function setAiSendingStatus(text = '正在思考...', { announce = true } = {}) {
+  const status = $('#aiChatSending');
+  if (status) status.textContent = text;
+  if (announce) announceAiStatus(text);
 }
 
 function currentSettings() {
@@ -1351,6 +1438,7 @@ async function clearApiKey() {
 function openRenameModal(id) {
   const chat = conversations.find(item => item.id === id);
   if (!chat) return;
+  closeHistoryMenu();
   renameConversationId = id;
   $('#aiRenameInput').value = chat.title || '新对话';
   openModal($('#aiRenameOverlay'), '#aiRenameInput');
@@ -1362,6 +1450,7 @@ function closeRenameModal() {
 }
 
 async function newConversation() {
+  closeHistoryMenu();
   const chat = createConversation();
   conversations.unshift(chat);
   activeConversationId = chat.id;
@@ -1372,6 +1461,7 @@ async function newConversation() {
 
 async function switchConversation(id) {
   if (!conversations.some(chat => chat.id === id)) return;
+  closeHistoryMenu();
   activeConversationId = id;
   await saveConversations();
   renderMessages();
@@ -1393,6 +1483,7 @@ async function saveRenameConversation() {
 async function deleteConversation(id) {
   const chat = conversations.find(item => item.id === id);
   if (!chat) return;
+  closeHistoryMenu();
   const confirmed = await confirmDialog({
     title: '删除对话',
     message: `删除对话「${chat.title || '新对话'}」？此操作只会删除本地历史记录。`,
@@ -1462,12 +1553,74 @@ async function readStreamingReply(res, assistantMessage) {
   }
 }
 
-async function sendJsonMessage(chat, requestSettings) {
+async function readLogBatchReply(res, chat) {
+  const reader = res.body?.getReader ? res.body.getReader() : null;
+  if (!reader) throw new Error('浏览器不支持批量日志流式读取');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let resultReceived = false;
+  while (true) {
+    const chunk = await reader.read();
+    buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || '';
+    for (const block of blocks) {
+      const event = parseSseBlock(block);
+      if (!event.data) continue;
+      const data = JSON.parse(event.data);
+      if (event.type === 'context') {
+        setAiSendingStatus(`准备分析 ${data.logCount || 0} 条日志（${data.batchCount || 0} 批）...`);
+      } else if (event.type === 'progress' && data.phase === 'analyze') {
+        setAiSendingStatus(`正在分析第 ${data.completed || 0}/${data.total || 0} 批日志...`);
+      } else if (event.type === 'progress' && data.phase === 'merge') {
+        setAiSendingStatus(`正在合并日志证据（${data.completed || 0}/${data.total || 0}）...`);
+      } else if (event.type === 'result') {
+        if (!data.message?.content) throw new Error('AI 没有返回内容');
+        const assistantMessage = {
+          role: 'assistant',
+          content: data.message.content,
+          createdAt: Date.now(),
+          sources: Array.isArray(data.sources) ? data.sources : [],
+        };
+        if (['westock', 'logs'].includes(data.toolCall?.skillId)) assistantMessage.toolCall = data.toolCall;
+        chat.messages.push(assistantMessage);
+        resultReceived = true;
+      } else if (event.type === 'error') {
+        throw new Error(data.error || 'AI 日志分析失败');
+      }
+    }
+    if (chunk.done) break;
+  }
+  if (!resultReceived) throw new Error('AI 日志分析未返回完整结果');
+}
+
+async function sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch = false } = {}) {
   const res = await apiFetch('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: chat.messages, ...requestSettings }),
+    body: JSON.stringify({ messages: chat.messages, ...requestSettings, confirmLargeLogBatch }),
   });
+  if (res.status === 409) {
+    const data = await res.json().catch(() => ({}));
+    if (data.code === 'AI_LOG_BATCH_CONFIRMATION_REQUIRED') {
+      const confirmed = await confirmDialog({
+        title: '确认分析全部日志',
+        message: `将读取 ${data.logCount || 0} 条日志，分为 ${data.batchCount || 0} 批，预计调用 AI ${data.estimatedCalls || data.batchCount || 0} 次。是否继续？`,
+        confirmText: '继续分析',
+        cancelText: '取消',
+      });
+      if (!confirmed) {
+        const error = new Error('已取消全量日志分析');
+        error.cancelled = true;
+        throw error;
+      }
+      return sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch: true });
+    }
+    throw new Error(data.error || 'AI 请求失败');
+  }
+  if (res.ok && (res.headers.get('content-type') || '').includes('text/event-stream')) {
+    return readLogBatchReply(res, chat);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'AI 请求失败');
   if (!data.message?.content) throw new Error('AI 没有返回内容');
@@ -1609,6 +1762,7 @@ async function sendMessage({ forceImage = false } = {}) {
   updateSendState();
 
   sending = true;
+  setAiSendingStatus();
   updateSendState();
   renderMessages();
   try {
@@ -1621,14 +1775,16 @@ async function sendMessage({ forceImage = false } = {}) {
     if (chat.messages.length > MAX_MESSAGES) chat.messages = chat.messages.slice(-MAX_MESSAGES);
     chat.updatedAt = Date.now();
     await saveConversations();
+    announceAiStatus('AI 回答已完成');
     renderMessages();
   } catch (err) {
-    showToast(`AI 对话失败：${err.message}`, 'error');
+    if (!err.cancelled) showToast(`AI 对话失败：${err.message}`, 'error');
+    announceAiStatus(err.cancelled ? '已取消全量日志分析' : `AI 对话失败：${err.message}`);
     const last = chat.messages.at(-1);
     if (last?.streaming) {
       delete last.streaming;
       if (!last.content) last.content = `请求失败：${err.message}`;
-    } else {
+    } else if (!err.cancelled) {
       chat.messages.push({ role: 'assistant', content: `请求失败：${err.message}`, createdAt: Date.now() });
     }
     chat.updatedAt = Date.now();
@@ -1636,6 +1792,7 @@ async function sendMessage({ forceImage = false } = {}) {
     renderMessages();
   } finally {
     sending = false;
+    setAiSendingStatus('正在思考...', { announce: false });
     updateSendState();
     renderMessages();
     input.focus();
@@ -1664,6 +1821,8 @@ export function hideAiChatView() {
 export async function initAiChat() {
   await Promise.all([loadSettings(), loadConversations(), loadAccessCategories()]);
   await loadSkills();
+  const historyContextMenu = $('#aiHistoryContextMenu');
+  if (historyContextMenu && historyContextMenu.parentElement !== document.body) document.body.appendChild(historyContextMenu);
   initAiSettingsSelectControls();
   updateSettingsButton();
   syncWebSearchToggleUi();
@@ -1713,11 +1872,49 @@ export async function initAiChat() {
   $('#aiSidebarHistoryList').addEventListener('click', (event) => {
     const item = event.target.closest('.ai-history-item');
     if (!item) return;
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    if (action === 'rename') return openRenameModal(item.dataset.id);
-    if (action === 'delete') return deleteConversation(item.dataset.id);
+    const actionButton = event.target.closest('[data-action]');
+    if (actionButton?.dataset.action === 'toggle-history-menu') {
+      event.stopPropagation();
+      return toggleHistoryMenu(item.dataset.id, actionButton);
+    }
     switchConversation(item.dataset.id);
   });
+  $('#aiSidebarHistoryList').addEventListener('keydown', (event) => {
+    const trigger = event.target.closest('.ai-history-more');
+    if (!trigger || !['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    event.preventDefault();
+    const item = trigger.closest('.ai-history-item');
+    openHistoryMenu(item?.dataset.id, trigger, { focus: event.key === 'ArrowUp' ? 'last' : 'first' });
+  });
+  $('#aiHistoryContextMenu')?.addEventListener('click', (event) => {
+    const item = event.target.closest('[data-history-menu-action]');
+    if (!item) return;
+    const id = historyMenuConversationId;
+    const action = item.dataset.historyMenuAction;
+    closeHistoryMenu({ restoreFocus: true });
+    if (action === 'rename') return openRenameModal(id);
+    if (action === 'delete') return deleteConversation(id);
+  });
+  $('#aiHistoryContextMenu')?.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveHistoryMenuFocus(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveHistoryMenuFocus(-1);
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      const options = [...event.currentTarget.querySelectorAll('[role="menuitem"]:not(:disabled)')];
+      (event.key === 'Home' ? options[0] : options.at(-1))?.focus();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeHistoryMenu({ restoreFocus: true });
+    } else if (event.key === 'Tab') {
+      closeHistoryMenu();
+    }
+  });
+  $('#aiSidebarHistoryList')?.addEventListener('scroll', () => closeHistoryMenu(), { passive: true });
+  window.addEventListener('resize', () => closeHistoryMenu());
   $('#aiHistorySearchInput')?.addEventListener('input', (event) => {
     historySearchQuery = event.target.value;
     renderHistory();
@@ -1738,11 +1935,11 @@ export async function initAiChat() {
     syncWebSearchToggleUi();
     try {
       await saveSettings({ quiet: true });
-      showToast(settings.webSearchEnabled ? 'Tavily 联网搜索已开启' : 'Tavily 联网搜索已关闭', 'success');
+      showToast(settings.webSearchEnabled ? '联网搜索已开启' : '联网搜索已关闭', 'success');
     } catch (err) {
       settings.webSearchEnabled = previous;
       syncWebSearchToggleUi();
-      showToast('Tavily 开关保存失败：' + err.message, 'error');
+      showToast('联网搜索开关保存失败：' + err.message, 'error');
     }
   });
   $('#aiSkillPicker')?.addEventListener('click', (event) => {
@@ -1789,7 +1986,11 @@ export async function initAiChat() {
     }
   });
   document.addEventListener('click', (event) => {
+    if (!event.target.closest('#aiHistoryContextMenu') && !event.target.closest('.ai-history-more')) closeHistoryMenu();
     if (event.target.closest('#btnAiSkill') || event.target.closest('#aiSkillPicker')) return;
     closeSkillPicker();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !$('#aiHistoryContextMenu')?.hidden) closeHistoryMenu({ restoreFocus: true });
   });
 }

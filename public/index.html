@@ -172,6 +172,25 @@
         </div>
       </div>
       <div class="ai-history-list" id="aiSidebarHistoryList"></div>
+      <div class="ai-history-context-menu" id="aiHistoryContextMenu" role="menu" aria-label="对话操作" hidden>
+        <button type="button" role="menuitem" data-history-menu-action="rename">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 20h4.6L18.7 9.9a2.1 2.1 0 0 0 0-3L17.1 5.3a2.1 2.1 0 0 0-3 0L4 15.4V20Z"></path>
+            <path d="m12.8 6.6 4.6 4.6"></path>
+          </svg>
+          <span>重命名</span>
+        </button>
+        <button class="danger" type="button" role="menuitem" data-history-menu-action="delete">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16"></path>
+            <path d="M10 11v6"></path>
+            <path d="M14 11v6"></path>
+            <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path>
+            <path d="M9 7V4h6v3"></path>
+          </svg>
+          <span>删除</span>
+        </button>
+      </div>
     </div>
 
     <div class="category-sidebar-panel" id="categorySidebarPanel">
@@ -719,19 +738,20 @@
     <div class="ai-chat-view" id="aiChatView" style="display:none;">
       <div class="ai-chat-shell">
         <div class="ai-chat-body">
-          <div class="ai-chat-messages" id="aiChatMessages" aria-live="polite"></div>
+          <div class="ai-chat-messages" id="aiChatMessages" role="region" aria-label="AI 对话消息"></div>
         </div>
+        <div class="sr-only" id="aiChatStatus" role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="ai-chat-composer">
           <label class="sr-only" for="aiChatInput">输入 AI 对话消息</label>
           <div class="ai-skill-chip-row" id="aiSkillChipRow"></div>
-          <textarea id="aiChatInput" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
+          <textarea id="aiChatInput" rows="1" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
           <div class="ai-skill-picker" id="aiSkillPicker" hidden></div>
           <div class="ai-chat-composer-footer">
             <div class="ai-chat-composer-toggles">
-              <label class="ai-chat-web-toggle" for="aiChatWebSearchToggle" title="Tavily 联网搜索">
-                <input type="checkbox" id="aiChatWebSearchToggle" aria-label="Tavily 联网搜索">
+              <label class="ai-chat-web-toggle" for="aiChatWebSearchToggle" title="联网搜索（由 Tavily 提供）">
+                <input type="checkbox" id="aiChatWebSearchToggle" aria-label="联网搜索">
                 <span aria-hidden="true"></span>
-                <strong>Tavily</strong>
+                <strong>联网搜索</strong>
               </label>
               <span class="ai-chat-sending" id="aiChatSending" style="display:none;">发送中...</span>
             </div>

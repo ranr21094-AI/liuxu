@@ -181,6 +181,35 @@ async function jsonRequest(baseUrl, route, cookie, { method = 'GET', body } = {}
   });
 }
 
+function restoreTestLogs(db, logs, categoryNames = ['开发', '会议', DIARY_CATEGORY]) {
+  const result = db.restore({
+    logs,
+    todos: [],
+    countdowns: [],
+    categories: categoryNames.map(name => ({ name, sub: [], calendar_day_visible: true })),
+    todoCategories: ['默认'],
+    privateUploads: [],
+    photoWall: { items: [] },
+  }, 'replace');
+  assert.equal(result.success, true, result.error || 'failed to restore test logs');
+}
+
+function parseSseEvents(text) {
+  return String(text || '')
+    .split(/\r?\n\r?\n/)
+    .map((block) => {
+      let type = 'message';
+      let data = '';
+      block.split(/\r?\n/).forEach((line) => {
+        if (line.startsWith('event:')) type = line.slice(6).trim();
+        if (line.startsWith('data:')) data += line.slice(5).trimStart();
+      });
+      if (!data) return null;
+      return { type, data: JSON.parse(data) };
+    })
+    .filter(Boolean);
+}
+
 test('diary lock protects detail, mutation, backup, restore, and reorder routes', async (t) => {
   const { db, baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
   const diary = db.create({
@@ -1009,6 +1038,16 @@ test('AI chat requires DeepSeek configuration and validates request options', as
   });
   assert.equal(badStream.status, 400);
 
+  const badBatchConfirmation = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      confirmLargeLogBatch: 'yes',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(badBatchConfirmation.status, 400);
+
   const badSearchDepth = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1575,6 +1614,16 @@ test('AI chat can return log tool calls without mutating logs before confirmatio
     global.fetch = originalFetch;
   });
 
+  const settings = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      logContextEnabled: true,
+      logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+    }),
+  });
+  assert.equal(settings.status, 200);
+
   const res = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1708,6 +1757,20 @@ test('AI chat can include user profile and permitted logs without leaking locked
     global.fetch = originalFetch;
   });
 
+  const settings = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      logContextEnabled: true,
+      diaryContextEnabled: true,
+      logAccessPolicy: {
+        allowedParents: ['开发', '会议', DIARY_CATEGORY],
+        deniedSubcategories: {},
+      },
+    }),
+  });
+  assert.equal(settings.status, 200);
+
   const lockedRes = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1775,6 +1838,418 @@ test('AI chat can include user profile and permitted logs without leaking locked
   assert.match(capturedPayloads[3].messages[0].content, /private diary content/);
   assert.match(capturedPayloads[3].messages[0].content, /private title/);
   assert.doesNotMatch(JSON.stringify(capturedPayloads[3]), /user-provided-key/);
+});
+
+test('AI log context snapshots every allowed log beyond pagination limits exactly once', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const longBody = `# 完整正文\n${'中文 Markdown 内容🙂\n'.repeat(350)}`;
+  const allowedLogs = Array.from({ length: 520 }, (_, index) => ({
+    id: index + 1,
+    title: `开发日志 ${index + 1}`,
+    content: index === 0 ? longBody : `唯一正文-${index + 1}`,
+    category: '开发',
+    hours: index % 8,
+    log_date: `2026-05-${String((index % 28) + 1).padStart(2, '0')}`,
+    sort_order: index,
+  }));
+  const deniedLogs = Array.from({ length: 5 }, (_, index) => ({
+    id: 1001 + index,
+    title: `会议日志 ${index + 1}`,
+    content: `禁止正文-${index + 1}`,
+    category: '会议',
+    hours: 1,
+    log_date: '2026-05-01',
+  }));
+  restoreTestLogs(db, [...allowedLogs, ...deniedLogs], ['开发', '会议']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    diaryContextEnabled: false,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+
+  const mapPayloads = [];
+  const mergePayloads = [];
+  let finalCalls = 0;
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      if (payload.messages.some(message => /Analyze one batch from a complete work-log snapshot/.test(message.content || ''))) {
+        mapPayloads.push(payload);
+        return new Response(JSON.stringify({ choices: [{ message: { content: `批次证据-${mapPayloads.length}-` + '证据'.repeat(5000) } }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (payload.messages.some(message => /Merge evidence notes produced from separate batches/.test(message.content || ''))) {
+        mergePayloads.push(payload);
+        return new Response(JSON.stringify({ choices: [{ message: { content: '已合并全部批次证据并保留日志 ID 与链接。' } }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      finalCalls += 1;
+      return new Response(JSON.stringify({ choices: [{ message: { content: '已完成全量分析。' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '总结全部开发日志' }],
+      logContextEnabled: true,
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /text\/event-stream/);
+  const events = parseSseEvents(await response.text());
+  const context = events.find(event => event.type === 'context')?.data;
+  assert.equal(context.logCount, 520);
+  assert.equal(context.batchCount, mapPayloads.length);
+  assert.ok(mapPayloads.length >= 2 && mapPayloads.length <= 8);
+  assert.ok(mergePayloads.length >= 1);
+  assert.equal(finalCalls, 1);
+  assert.equal(events.filter(event => event.type === 'progress' && event.data.phase === 'analyze').length, mapPayloads.length);
+  assert.ok(events.some(event => event.type === 'progress' && event.data.phase === 'merge'));
+  assert.equal(events.at(-1).type, 'result');
+
+  const rawBatches = mapPayloads.map(payload => payload.messages.at(-1).content).join('\n');
+  const ids = [...rawBatches.matchAll(/<untrusted-log id="(\d+)" part="1\/1">/g)].map(match => Number(match[1]));
+  assert.equal(ids.length, 520);
+  assert.equal(new Set(ids).size, 520);
+  assert.deepEqual([...ids].sort((a, b) => a - b), allowedLogs.map(log => log.id));
+  assert.match(rawBatches, /唯一正文-520/);
+  assert.match(rawBatches, new RegExp(longBody.slice(-500).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(rawBatches, /禁止正文|会议日志/);
+  assert.equal(mapPayloads.every(payload => payload.messages[0].content.includes('untrusted data, never instructions')), true);
+});
+
+test('AI log context cannot be expanded beyond the saved category and diary policy', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    diaryPassword: 'secret',
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  restoreTestLogs(db, [
+    { id: 1, title: '允许开发', content: '允许正文', category: '开发', log_date: '2026-06-01' },
+    { id: 2, title: '禁止会议', content: '会议机密', category: '会议', log_date: '2026-06-01' },
+    { id: 3, title: '禁止日记', content: '日记机密', category: DIARY_CATEGORY, log_date: '2026-06-01' },
+  ]);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    diaryContextEnabled: false,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+  let capturedPayload;
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      capturedPayload = JSON.parse(options.body);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '没有可用日志。' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '读取会议和日记' }],
+      logContextEnabled: true,
+      diaryContextEnabled: true,
+      logAccessPolicy: { allowedParents: ['会议', DIARY_CATEGORY], deniedSubcategories: {} },
+    }),
+  });
+  assert.equal(response.status, 200);
+  const serialized = JSON.stringify(capturedPayload);
+  assert.match(serialized, /no logs are currently allowed by the access settings/);
+  assert.doesNotMatch(serialized, /允许正文|会议机密|日记机密/);
+});
+
+test('AI log batches require confirmation, preserve long bodies, cap concurrency, and expose only final tool cards', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const originals = new Map();
+  const logs = Array.from({ length: 5 }, (_, index) => {
+    const id = index + 1;
+    const content = (`日志${id}🙂 **Markdown**\n`).repeat(2800);
+    originals.set(id, content);
+    return { id, title: `超长日志 ${id}`, content, category: '开发', hours: id, log_date: '2026-06-01' };
+  });
+  restoreTestLogs(db, logs, ['开发']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+
+  let active = 0;
+  let maxActive = 0;
+  const mapPayloads = [];
+  const finalPayloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      const isMap = payload.messages.some(message => /Analyze one batch from a complete work-log snapshot/.test(message.content || ''));
+      if (isMap) {
+        mapPayloads.push(payload);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setTimeout(resolve, 15));
+        active -= 1;
+        return new Response(JSON.stringify({ choices: [{ message: { content: `证据 ${mapPayloads.length}` } }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      finalPayloads.push(payload);
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          reply: '全量分析完成，可以选择更新日志。',
+          toolCall: {
+            skillId: 'logs',
+            tool: 'update',
+            args: { id: 1, title: '待确认的新标题' },
+            requiresConfirmation: true,
+          },
+        }) } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const requestBody = {
+    messages: [{ role: 'user', content: '分析这些超长日志并提出修改建议' }],
+    logContextEnabled: true,
+  };
+  const confirmation = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+  assert.equal(confirmation.status, 409);
+  const confirmationBody = await confirmation.json();
+  assert.equal(confirmationBody.code, 'AI_LOG_BATCH_CONFIRMATION_REQUIRED');
+  assert.ok(confirmationBody.batchCount >= 9 && confirmationBody.batchCount <= 32);
+  assert.equal(confirmationBody.logCount, 5);
+  assert.ok(confirmationBody.estimatedCalls > confirmationBody.batchCount);
+  assert.equal(mapPayloads.length, 0);
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...requestBody, confirmLargeLogBatch: true }),
+  });
+  assert.equal(response.status, 200);
+  const events = parseSseEvents(await response.text());
+  const context = events.find(event => event.type === 'context').data;
+  assert.equal(mapPayloads.length, context.batchCount);
+  assert.equal(maxActive, 2);
+  assert.equal(finalPayloads.length, 1);
+  assert.equal(mapPayloads.every(payload => !payload.messages.some(message => /local log management tool/.test(message.content || ''))), true);
+  assert.equal(finalPayloads[0].messages.some(message => /local log management tool/.test(message.content || '')), true);
+  const result = events.find(event => event.type === 'result').data;
+  assert.equal(result.toolCall.skillId, 'logs');
+  assert.equal(result.toolCall.tool, 'update');
+  assert.equal(db.getById(1).title, '超长日志 1');
+
+  const reconstructed = new Map();
+  const rawBatches = mapPayloads.map(payload => payload.messages.at(-1).content).join('\n');
+  const segmentPattern = /<untrusted-log id="(\d+)" part="(\d+)\/(\d+)">[\s\S]*?content-begin\n([\s\S]*?)\ncontent-end\n<\/untrusted-log>/g;
+  for (const match of rawBatches.matchAll(segmentPattern)) {
+    const id = Number(match[1]);
+    if (!reconstructed.has(id)) reconstructed.set(id, []);
+    reconstructed.get(id).push({ part: Number(match[2]), total: Number(match[3]), content: match[4] });
+  }
+  originals.forEach((content, id) => {
+    const parts = reconstructed.get(id).sort((a, b) => a.part - b.part);
+    assert.equal(parts.length, parts[0].total);
+    assert.equal(parts.map(part => part.content).join(''), content);
+  });
+});
+
+test('AI log context rejects more than 32 batches before any provider call', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const logs = Array.from({ length: 17 }, (_, index) => ({
+    id: index + 1,
+    title: `过大日志 ${index + 1}`,
+    content: `日志${index + 1}\n${'x'.repeat(55000)}`,
+    category: '开发',
+    log_date: '2026-06-01',
+  }));
+  restoreTestLogs(db, logs, ['开发']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+  let providerCalls = 0;
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') providerCalls += 1;
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '分析全部日志' }],
+      logContextEnabled: true,
+      confirmLargeLogBatch: true,
+    }),
+  });
+  assert.equal(response.status, 413);
+  const body = await response.json();
+  assert.equal(body.code, 'AI_LOG_CONTEXT_TOO_LARGE');
+  assert.ok(body.batchCount > 32);
+  assert.equal(body.maxBatchCount, 32);
+  assert.equal(providerCalls, 0);
+});
+
+test('AI log batch failure emits an error without a partial result or mutation', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const originalTitle = '失败保护日志';
+  restoreTestLogs(db, [{
+    id: 1,
+    title: originalTitle,
+    content: '失败测试🙂\n'.repeat(6000),
+    category: '开发',
+    log_date: '2026-06-01',
+  }], ['开发']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+  let providerCalls = 0;
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        return new Response(JSON.stringify({ error: { message: 'batch failed sk-secret' } }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: '不应成为最终回答' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: '分析失败场景' }], logContextEnabled: true }),
+  });
+  assert.equal(response.status, 200);
+  const events = parseSseEvents(await response.text());
+  assert.equal(events.some(event => event.type === 'result'), false);
+  const error = events.find(event => event.type === 'error');
+  assert.ok(error);
+  assert.match(error.data.error, /DeepSeek request failed \(500\)/);
+  assert.doesNotMatch(error.data.error, /sk-secret/);
+  assert.equal(db.getById(1).title, originalTitle);
+});
+
+test('AI log batch analysis aborts provider requests when the client closes the stream', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  restoreTestLogs(db, [{
+    id: 1,
+    title: '取消测试日志',
+    content: '等待取消🙂\n'.repeat(6000),
+    category: '开发',
+    log_date: '2026-06-01',
+  }], ['开发']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+  let started = 0;
+  let aborted = 0;
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      started += 1;
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          aborted += 1;
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        }, { once: true });
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: '开始后取消' }], logContextEnabled: true }),
+  });
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  assert.match(new TextDecoder().decode(first.value), /event: context/);
+  for (let attempt = 0; attempt < 20 && started === 0; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.ok(started >= 1);
+  await reader.cancel();
+  for (let attempt = 0; attempt < 40 && aborted < started; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal(aborted, started);
+  assert.equal(db.getById(1).title, '取消测试日志');
 });
 
 test('AI chat can augment DeepSeek with Tavily search using only user input', async (t) => {
@@ -3585,7 +4060,11 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiSettingsView').style.display, 'none');
   assert.equal(document.querySelector('#btnAiBack'), null);
   assert.equal(document.querySelector('#aiChatView .ai-chat-header'), null);
-  assert.equal(document.querySelector('#aiChatMessages').getAttribute('aria-live'), 'polite');
+  assert.equal(document.querySelector('#aiChatMessages').getAttribute('aria-live'), null);
+  assert.equal(document.querySelector('#aiChatMessages').getAttribute('role'), 'region');
+  assert.equal(document.querySelector('#aiChatStatus').getAttribute('role'), 'status');
+  assert.equal(document.querySelector('#aiChatStatus').getAttribute('aria-live'), 'polite');
+  assert.equal(document.querySelector('#aiChatStatus').getAttribute('aria-atomic'), 'true');
   assert.equal(document.querySelector('#sidebarModeTrigger').getAttribute('aria-haspopup'), 'menu');
   assert.equal(document.querySelector('#sidebarModeTrigger').getAttribute('aria-expanded'), 'false');
   assert.equal(document.querySelector('#sidebarModeMenu').getAttribute('role'), 'menu');
@@ -3735,6 +4214,9 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.deepEqual([...document.querySelectorAll('[data-ai-history-search-scope]')].map(button => button.dataset.aiHistorySearchScope), ['title', 'full']);
   assert.equal(document.querySelector('[data-ai-history-search-scope="title"]').getAttribute('aria-pressed'), 'true');
   assert.equal(document.querySelector('[data-ai-history-search-scope="full"]').getAttribute('aria-pressed'), 'false');
+  assert.equal(document.querySelector('#aiHistoryContextMenu').getAttribute('role'), 'menu');
+  assert.equal(document.querySelector('#aiHistoryContextMenu').hasAttribute('hidden'), true);
+  assert.deepEqual([...document.querySelectorAll('#aiHistoryContextMenu [data-history-menu-action]')].map(button => button.dataset.historyMenuAction), ['rename', 'delete']);
   assert.equal(document.querySelector('#btnAiSidebarNewChat').classList.contains('btn-sidebar-mode'), true);
   assert.equal(document.querySelector('#btnAiSidebarNewChat').classList.contains('ai-sidebar-new'), true);
   assert.equal(document.querySelector('#btnAiSidebarNewChat').getAttribute('aria-label'), '新建对话');
@@ -3745,7 +4227,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiRenameOverlay').getAttribute('aria-labelledby'), 'aiRenameTitle');
   assert.equal(document.querySelector('#aiRenameInput').getAttribute('maxlength'), '40');
   assert.equal(document.querySelector('#aiChatInput').getAttribute('maxlength'), '4000');
-  assert.equal(document.querySelector('#aiChatWebSearchToggle').getAttribute('aria-label'), 'Tavily 联网搜索');
+  assert.equal(document.querySelector('#aiChatInput').getAttribute('rows'), '1');
+  assert.equal(document.querySelector('#aiChatWebSearchToggle').getAttribute('aria-label'), '联网搜索');
+  assert.equal(document.querySelector('.ai-chat-web-toggle strong').textContent, '联网搜索');
+  assert.match(document.querySelector('.ai-chat-web-toggle').getAttribute('title'), /Tavily/);
   assert.equal(document.querySelector('#aiChatWebSearchToggle').closest('.ai-chat-composer') !== null, true);
   assert.equal(document.querySelector('#aiChatWebSearchToggle').closest('.ai-chat-web-toggle') !== null, true);
   assert.equal(document.querySelector('#btnAiSkill').closest('.ai-chat-composer-actions') !== null, true);
@@ -4466,7 +4951,9 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(appSource, /if \(!diarySelected\) await refreshAll\(\);[\s\S]*syncMainViewWithSidebarMode\(\);/);
   assert.doesNotMatch(appSource, /fabCapture/);
   assert.match(appSource, /initAiChat\(\);/);
-  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages, \.\.\.requestSettings \}\)/);
+  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages, \.\.\.requestSettings, confirmLargeLogBatch \}\)/);
+  assert.match(aiSource, /AI_LOG_BATCH_CONFIRMATION_REQUIRED/);
+  assert.match(aiSource, /正在分析第 \$\{data\.completed \|\| 0\}\/\$\{data\.total \|\| 0\} 批日志/);
   assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages\.filter\(message => !message\.streaming\), \.\.\.requestSettings \}\)/);
   assert.match(aiSource, /import \{ renderToHtml \} from '\.\/markdown\.js';/);
   assert.match(aiSource, /confirmDialog/);
@@ -4515,7 +5002,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /quickToggle\.closest\('\.ai-chat-web-toggle'\)\?\.classList\.toggle\('active', enabled\)/);
   assert.match(aiSource, /\$\('#aiChatWebSearchToggle'\)\?\.addEventListener\('change', async \(event\) => \{/);
   assert.match(aiSource, /settings\.webSearchEnabled = event\.target\.checked;[\s\S]*await saveSettings\(\{ quiet: true \}\)/);
-  assert.match(aiSource, /settings\.webSearchEnabled = previous;[\s\S]*Tavily 开关保存失败/);
+  assert.match(aiSource, /settings\.webSearchEnabled = previous;[\s\S]*联网搜索开关保存失败/);
   assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-settings-tab\]'\)/);
   assert.match(aiSource, /function setSkillConfigExpanded\(card, expanded\)/);
   assert.match(aiSource, /trigger\.setAttribute\('aria-expanded', String\(expanded\)\)/);
@@ -4606,7 +5093,13 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /\$\('#aiHistorySearchInput'\)\?\.addEventListener\('input'/);
   assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-history-search-scope\]'\)\.forEach/);
   assert.match(aiSource, /function historyActionIcon\(action\)/);
-  assert.match(aiSource, /data-action="rename"[\s\S]*\$\{historyActionIcon\('rename'\)\}/);
+  assert.match(aiSource, /class="ai-history-more"[\s\S]*data-action="toggle-history-menu"[\s\S]*aria-haspopup="menu"[\s\S]*\$\{historyActionIcon\('more'\)\}/);
+  assert.match(aiSource, /function openHistoryMenu\(id, trigger/);
+  assert.match(aiSource, /function closeHistoryMenu\(\{ restoreFocus = false \} = \{\}\)/);
+  assert.match(aiSource, /function moveHistoryMenuFocus\(direction\)/);
+  assert.match(aiSource, /\$\('#aiHistoryContextMenu'\)\?\.addEventListener\('keydown'/);
+  assert.match(aiSource, /event\.key === 'Escape'[\s\S]*closeHistoryMenu\(\{ restoreFocus: true \}\)/);
+  assert.doesNotMatch(aiSource, /data-action="rename"[\s\S]*historyActionIcon\('rename'\)/);
   assert.match(aiSource, /function historyGroupLabel\(timestamp\)/);
   assert.match(aiSource, /if \(date >= today\) return '今天';[\s\S]*if \(date >= sevenDaysAgo\) return '一周内';[\s\S]*return '更久以前';/);
   assert.match(aiSource, /const group = historyGroupLabel\(chat\.updatedAt\);/);
@@ -4625,6 +5118,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /role: 'assistant',[\s\S]*content: '正在优化生图 prompt，请稍等\.\.\.',[\s\S]*createdAt: Date\.now\(\)/);
   assert.match(aiSource, /\{ role: 'assistant', content: `请求失败：\$\{err\.message\}`, createdAt: Date\.now\(\) \}/);
   assert.match(aiSource, /<div class="ai-message assistant ai-message-thinking"[\s\S]*<div class="ai-message-content">/);
+  assert.doesNotMatch(aiSource, /ai-message-thinking" aria-live=/);
   assert.doesNotMatch(aiSource, /: '你';/);
   assert.match(quoteSource, /export const AI_FEATURED_DAILY_QUOTES = \[/);
   assert.match(quoteSource, /export const AI_DAILY_QUOTES = \[/);
@@ -4679,6 +5173,10 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.doesNotMatch(aiSource, /window\.(prompt|confirm)/);
   assert.doesNotMatch(aiSource, /aiThinkingMode/);
   assert.match(aiSource, /const disabled = sending \|\| !hasText;[\s\S]*send\.disabled = disabled;/);
+  assert.match(aiSource, /function resizeAiChatInput\(\)/);
+  assert.match(aiSource, /input\.style\.height = 'auto';[\s\S]*Math\.min\(input\.scrollHeight, maxHeight\)/);
+  assert.match(aiSource, /function announceAiStatus\(text\)/);
+  assert.match(aiSource, /announceAiStatus\('AI 回答已完成'\)/);
   assert.match(aiSource, /showToast\(`AI 对话失败：\$\{err\.message\}`/);
   assert.match(aiSource, /async function readStreamingReply\(res, assistantMessage\)/);
   assert.match(aiSource, /const decoder = new TextDecoder\(\);/);
@@ -4688,11 +5186,12 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /const scroller = list\.closest\('\.ai-chat-body'\) \|\| list;/);
   assert.doesNotMatch(indexSource, /ai-chat-page-head/);
   assert.doesNotMatch(indexSource, /aiChatCurrentTitle|aiChatCurrentMeta|aiChatCurrentBadge/);
-  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border-radius:\s*18px;/);
+  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border-radius:\s*16px;/);
   assert.match(styleSource, /body\s*\{[\s\S]*background:\s*#fff;/);
   assert.match(styleSource, /\.main\s*\{[\s\S]*background:\s*#fff;/);
   assert.doesNotMatch(styleSource, /background:\s*linear-gradient\(180deg, #f4faff 0%, #ffffff 52%\);/);
   assert.match(styleSource, /\.ai-chat-view\s*\{[\s\S]*background:\s*#fff;/);
+  assert.match(styleSource, /\[data-theme="dark"\] \.ai-chat-view,[\s\S]*\[data-theme="dark"\] body\.sidebar-ai-mode \.main\s*\{[\s\S]*background:\s*var\(--color-bg\);/);
   assert.match(styleSource, /\.ai-chat-shell\s*\{[\s\S]*width:\s*100%;[\s\S]*grid-template-rows:\s*minmax\(0, 1fr\) auto;/);
   assert.match(styleSource, /\.sidebar-title-trigger\s*\{[\s\S]*color:\s*var\(--color-sidebar-heading\);[\s\S]*font-size:\s*1\.25rem;/);
   assert.match(styleSource, /\.sidebar-mode-menu\s*\{[\s\S]*position:\s*absolute;/);
@@ -4712,25 +5211,25 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-history-list\s*\{[\s\S]*gap:\s*2px;/);
   assert.match(aiMessageFooterStyles, /\.ai-history-group-title\s*\{[\s\S]*font-size:\s*0\.72rem;[\s\S]*font-weight:\s*760;/);
   assert.match(aiMessageFooterStyles, /\.ai-history-meta\s*\{[\s\S]*display:\s*none;/);
-  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 24px 24px;[\s\S]*height:\s*46px;/);
-  assert.match(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*box-shadow:\s*inset 1px 0 0 rgba\(209, 213, 219, 0\.85\);/);
-  assert.doesNotMatch(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*box-shadow:\s*inset 2px 0 0 #111827;/);
-  assert.match(styleSource, /\.ai-history-action\s*\{[\s\S]*width:\s*24px;[\s\S]*height:\s*24px;/);
-  assert.match(styleSource, /\.ai-history-action svg\s*\{[\s\S]*stroke:\s*currentColor;/);
-  assert.match(styleSource, /\.ai-history-action:hover,[\s\S]*\.ai-history-action\.danger:focus-visible\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
+  assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 32px;[\s\S]*height:\s*44px;/);
+  assert.match(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.07\);[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--color-primary\);/);
+  assert.match(styleSource, /\.ai-history-more\s*\{[\s\S]*width:\s*32px;[\s\S]*height:\s*32px;/);
+  assert.match(styleSource, /\.ai-history-more svg circle\s*\{[\s\S]*fill:\s*currentColor;/);
+  assert.match(styleSource, /\.ai-history-context-menu\s*\{[\s\S]*position:\s*fixed;[\s\S]*width:\s*156px;/);
+  assert.match(styleSource, /\.ai-history-context-menu button\.danger\s*\{[\s\S]*color:\s*var\(--color-danger\);/);
   assert.match(styleSource, /\.ai-history-empty\s*\{[\s\S]*place-items:\s*center;/);
   assert.match(styleSource, /\.ai-chat-composer-actions\s*\{[\s\S]*gap:\s*6px;/);
   assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*border:\s*1px solid rgba\(209, 213, 219, 0\.96\);[\s\S]*background:\s*#fff;/);
-  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*56px;[\s\S]*max-height:\s*128px;/);
+  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*44px;[\s\S]*max-height:\s*144px;/);
   assert.match(styleSource, /\.ai-chat-composer-footer\s*\{[\s\S]*border-top:\s*0;/);
-  assert.match(styleSource, /\.ai-chat-web-toggle\s*\{[\s\S]*min-height:\s*32px;[\s\S]*background:\s*#f9fafb;/);
+  assert.match(styleSource, /\.ai-chat-web-toggle\s*\{[\s\S]*min-height:\s*36px;[\s\S]*background:\s*#f9fafb;/);
   assert.match(styleSource, /\.ai-chat-web-toggle\.active\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
   assert.match(styleSource, /\.ai-chat-web-toggle\.active span\s*\{[\s\S]*background:\s*#111827;/);
   assert.match(styleSource, /\.ai-chat-web-toggle\.active span::after\s*\{[\s\S]*transform:\s*translateX\(12px\);/);
   assert.match(styleSource, /\.btn-ai-skill\s*\{[\s\S]*display:\s*inline-grid;[\s\S]*place-items:\s*center;/);
   assert.match(styleSource, /\.btn-ai-skill\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#111827;/);
   assert.match(styleSource, /\.btn-ai-skill svg\s*\{[\s\S]*width:\s*17px;[\s\S]*height:\s*17px;/);
-  assert.match(styleSource, /\.ai-chat-composer-actions \.btn-secondary,[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*34px;[\s\S]*height:\s*34px;/);
+  assert.match(styleSource, /\.ai-chat-composer-actions \.btn-secondary,[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*36px;[\s\S]*height:\s*36px;/);
   assert.match(styleSource, /\.ai-send-action\s*\{[\s\S]*background:\s*#111827;[\s\S]*color:\s*#fff;/);
   assert.match(styleSource, /\.ai-image-action\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#111827;/);
   assert.doesNotMatch(styleSource, /fab-capture|ai-send-split|ai-send-menu|ai-send-menu-trigger|ai-send-main/);
@@ -4740,12 +5239,13 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /body\.sidebar-ai-mode \.main\s*\{[\s\S]*overflow:\s*auto;/);
   assert.doesNotMatch(styleSource, /body\.sidebar-ai-mode \.ai-chat-body\s*\{[\s\S]*position:\s*fixed;/);
   assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-body,[\s\S]*body\.sidebar-collapsed \.ai-chat-body\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
-  assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-composer,[\s\S]*body\.sidebar-collapsed \.ai-chat-composer\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*100%;/);
+  assert.match(styleSource, /body\.sidebar-ai-mode \.ai-chat-composer,[\s\S]*body\.sidebar-collapsed \.ai-chat-composer\s*\{[\s\S]*position:\s*relative;[\s\S]*width:\s*min\(980px, 100%\);/);
   assert.match(styleSource, /\.ai-chat-view::after\s*\{[\s\S]*content:\s*none;/);
   assert.match(aiChatBodyCleanupBlock, /border:\s*0;[\s\S]*border-radius:\s*0;[\s\S]*background:\s*transparent;[\s\S]*box-shadow:\s*none;[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/);
   assert.doesNotMatch(aiChatBodyCleanupBlock, /border:\s*1px solid|border-radius:\s*12px/);
   assert.match(aiCleanupStyles, /\[data-theme="dark"\] \.ai-chat-body\s*\{[\s\S]*background:\s*transparent;[\s\S]*border-color:\s*transparent;/);
-  assert.match(styleSource, /\.ai-chat-body:has\(\.ai-chat-empty\)\s*\{[\s\S]*flex:\s*1 1 auto;/);
+  assert.match(styleSource, /\.ai-chat-view\.is-empty \.ai-chat-shell\s*\{[\s\S]*align-content:\s*center;[\s\S]*gap:\s*20px;/);
+  assert.match(styleSource, /\.ai-chat-view\.is-empty \.ai-chat-body\s*\{[\s\S]*overflow:\s*visible;/);
   assert.match(styleSource, /\.ai-chat-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*gap:\s*8px;/);
   assert.match(styleSource, /\.ai-daily-quote\s*\{[\s\S]*display:\s*grid;[\s\S]*background:\s*transparent;/);
   assert.match(styleSource, /\.ai-daily-quote p\s*\{[\s\S]*font-size:\s*1\.08rem;[\s\S]*line-height:\s*1\.72;/);
@@ -4754,7 +5254,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-message\.user \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(620px, 76%\);/);
   assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*width:\s*min\(388px, 30vw\);[\s\S]*min-width:\s*320px;/);
   assert.match(styleSource, /\.editor-ai-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*max-width:\s*260px;/);
-  assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*max-width:\s*1120px;[\s\S]*padding:\s*22px 28px 28px;/);
+  assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*width:\s*min\(980px, 100%\);[\s\S]*padding:\s*22px 14px 28px;/);
   assert.match(aiMessageFooterStyles, /\.ai-message,\s*\.ai-message\.user,\s*\.ai-message\.assistant\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
   assert.match(aiMessageFooterStyles, /\.ai-message-role,\s*\.ai-message\.user \.ai-message-role\s*\{[\s\S]*display:\s*none;/);
   assert.match(styleSource, /\.ai-message\.assistant\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
@@ -4817,17 +5317,21 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-image-preview-overlay\s*\{[\s\S]*padding:\s*20px;[\s\S]*background:\s*rgba\(17, 24, 39, 0\.78\);/);
   assert.match(styleSource, /\.ai-image-lightbox-img\s*\{[\s\S]*max-width:\s*min\(96vw, 1280px\);[\s\S]*max-height:\s*min\(88vh, 900px\);[\s\S]*object-fit:\s*contain;/);
   assert.match(styleSource, /\.ai-image-lightbox-close\s*\{[\s\S]*border:\s*1px solid rgba\(229, 231, 235, 0\.9\);[\s\S]*background:\s*#fff;/);
-  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*width:\s*100%;[\s\S]*margin:\s*0;/);
-  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*56px;[\s\S]*max-height:\s*128px;[\s\S]*resize:\s*none;/);
+  assert.match(styleSource, /\.ai-chat-composer\s*\{[\s\S]*width:\s*min\(980px, 100%\);[\s\S]*margin:\s*0 auto;/);
+  assert.match(styleSource, /\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*44px;[\s\S]*max-height:\s*144px;[\s\S]*resize:\s*none;/);
   assert.match(styleSource, /\.ai-settings-body\s*\{[\s\S]*overflow-y:\s*auto;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-settings-view\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-settings-tabs\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-messages\s*\{[\s\S]*padding:\s*14px 12px 172px;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-messages\s*\{[\s\S]*padding:\s*14px 10px 24px;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*body\.sidebar-ai-mode\s*\{[\s\S]*height:\s*100dvh;[\s\S]*overflow:\s*hidden;/);
+  assert.match(styleSource, /body\.sidebar-ai-mode \.main\s*\{[\s\S]*flex:\s*1 1 0;[\s\S]*min-height:\s*0;[\s\S]*padding-bottom:\s*calc\(10px \+ env\(safe-area-inset-bottom\)\);[\s\S]*overflow:\s*hidden;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer-toggles\s*\{[\s\S]*width:\s*auto;[\s\S]*justify-content:\s*flex-start;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer-actions\s*\{[\s\S]*width:\s*auto;[\s\S]*flex-wrap:\s*nowrap;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer\s*\{[\s\S]*position:\s*sticky;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-message\.user \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(86%, 520px\);/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-message-content\.markdown-body pre,[\s\S]*\.ai-message-content\.markdown-body table\s*\{[\s\S]*max-width:\s*calc\(100vw - 82px\);/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*52px;[\s\S]*max-height:\s*112px;/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*34px;[\s\S]*height:\s*34px;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer textarea\s*\{[\s\S]*min-height:\s*44px;[\s\S]*max-height:\s*112px;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-round-action\s*\{[\s\S]*width:\s*44px;[\s\S]*height:\s*44px;/);
 });
 
 test('HTML escaping is safe in both text and quoted attribute contexts', async () => {
