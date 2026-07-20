@@ -458,6 +458,7 @@ function createAuthStore({
     sessionTtlMs: SESSION_TTL_MS,
     publicUser,
     listUsers: () => readUsers().map(publicUser),
+    listStoredUsers: () => readUsers().map(clone),
     listActiveUsers: () => readUsers().filter(user => user.status === 'active').map(clone),
     getUserById,
     authenticate,

@@ -1,23 +1,31 @@
 const fs = require('fs');
 const path = require('path');
 const { businessDateString, daysInMonth, parseDateParts, startOfWeekMonday } = require('./business-date');
+const { decryptSecret, encryptSecret, isEncryptedSecret } = require('./secret-store');
 
-function createDatabase(dataDirectory = (process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data'))) {
+function createDatabase(dataDirectory = (process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data')), options = {}) {
 const DATA_DIR = path.resolve(dataDirectory);
+const SECRET_SCOPE = typeof options.secretScope === 'string' && options.secretScope ? options.secretScope : DATA_DIR;
 const DATA_FILE = path.join(DATA_DIR, 'logs.json');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
 const PRIVATE_UPLOADS_FILE = path.join(DATA_DIR, 'private-uploads.json');
 const AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
+const AI_MEDIA_FILE = path.join(DATA_DIR, 'ai-media.json');
+const AI_MEDIA_DIR = path.join(DATA_DIR, 'ai-media');
 const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
 const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
 const PHOTO_WALL_FILE = path.join(DATA_DIR, 'photo-wall.json');
 const COUNTDOWNS_FILE = path.join(DATA_DIR, 'countdowns.json');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
+  moonshotApiKey: '',
+  openrouterApiKey: '',
   model: 'deepseek-v4-flash',
   reasoningEffort: 'high',
+  reasoningMode: 'effort',
+  thinkingMode: 'enabled',
   stream: false,
   userProfile: '',
   logContextEnabled: false,
@@ -25,6 +33,8 @@ const DEFAULT_AI_SETTINGS = {
   tavilyApiKey: '',
   perplexityApiKey: '',
   webSearchEnabled: false,
+  kimiWebSearchEnabled: false,
+  openrouterZdrEnabled: true,
   webSearchDepth: 'basic',
   seedreamApiKey: '',
   seedreamModel: 'doubao-seedream-5-0-260128',
@@ -47,6 +57,7 @@ const cache = {
   privateUploads: null,
   aiChats: null,
   aiSettings: null,
+  aiMedia: null,
   todoReminderSettings: null,
   todoReminderState: null,
   photoWall: null,
@@ -55,6 +66,9 @@ const cache = {
   maxCountdownId: 0,
   maxPhotoWallId: 0,
 };
+const AI_SECRET_FIELDS = Object.freeze([
+  'apiKey', 'moonshotApiKey', 'openrouterApiKey', 'tavilyApiKey', 'perplexityApiKey', 'seedreamApiKey',
+]);
 
 function resetCache() {
   cache.logs = null;
@@ -65,6 +79,7 @@ function resetCache() {
   cache.privateUploads = null;
   cache.aiChats = null;
   cache.aiSettings = null;
+  cache.aiMedia = null;
   cache.todoReminderSettings = null;
   cache.todoReminderState = null;
   cache.photoWall = null;
@@ -524,12 +539,79 @@ function reorderPhotoWallItems(orderedIds) {
   return { items: sorted };
 }
 
+function normalizeAiAttachment(attachment) {
+  if (!isPlainObject(attachment)) return null;
+  const id = normalizeString(attachment.id, '').trim();
+  if (!/^[a-f0-9-]{16,80}$/i.test(id)) return null;
+  const kind = attachment.kind === 'video' ? 'video' : (attachment.kind === 'image' ? 'image' : '');
+  if (!kind) return null;
+  const name = normalizeString(attachment.name, '').trim().slice(0, 255);
+  const mimeType = normalizeString(attachment.mimeType, '').trim().slice(0, 100);
+  const bytes = Number(attachment.bytes);
+  return {
+    id,
+    kind,
+    name: name || `${kind}-${id.slice(0, 8)}`,
+    mimeType,
+    bytes: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : 0,
+  };
+}
+
+function normalizeAiProviderToolCall(call) {
+  if (!isPlainObject(call)) return null;
+  const id = normalizeString(call.id, '').trim().slice(0, 160);
+  const type = call.type === 'function' ? 'function' : '';
+  const fn = isPlainObject(call.function) ? call.function : {};
+  const name = normalizeString(fn.name, '').trim().slice(0, 80);
+  const args = normalizeString(fn.arguments, '');
+  if (!id || !type || !name || !args) return null;
+  return { id, type, function: { name, arguments: args } };
+}
+
+function normalizeAiProviderTrace(trace) {
+  if (!Array.isArray(trace)) return [];
+  return trace.slice(0, 24).map((entry) => {
+    if (!isPlainObject(entry) || !['assistant', 'tool'].includes(entry.role)) return null;
+    if (entry.role === 'tool') {
+      const toolCallId = normalizeString(entry.tool_call_id, '').trim().slice(0, 160);
+      const content = normalizeString(entry.content, '');
+      return toolCallId && content ? { role: 'tool', tool_call_id: toolCallId, content } : null;
+    }
+    const normalized = {
+      role: 'assistant',
+      content: normalizeString(entry.content, ''),
+    };
+    const reasoningContent = normalizeString(entry.reasoning_content ?? entry.reasoningContent, '');
+    if (reasoningContent) normalized.reasoning_content = reasoningContent;
+    const toolCalls = Array.isArray(entry.tool_calls)
+      ? entry.tool_calls.map(normalizeAiProviderToolCall).filter(Boolean).slice(0, 6)
+      : [];
+    if (toolCalls.length) normalized.tool_calls = toolCalls;
+    return normalized.content || normalized.reasoning_content || normalized.tool_calls ? normalized : null;
+  }).filter(Boolean);
+}
+
+function normalizeOpenRouterReasoningDetails(value) {
+  if (!Array.isArray(value) || value.length > 128) return [];
+  try {
+    const serialized = JSON.stringify(value);
+    if (Buffer.byteLength(serialized, 'utf8') > 1024 * 1024) return [];
+    const cloned = JSON.parse(serialized);
+    return cloned.every(item => isPlainObject(item)) ? cloned : [];
+  } catch {
+    return [];
+  }
+}
+
 function normalizeAiChatMessage(message) {
   const role = message && message.role;
   const content = typeof message?.content === 'string' ? message.content.slice(0, 4000) : '';
-  if (!['user', 'assistant'].includes(role) || !content.trim()) return null;
+  const attachments = Array.isArray(message?.attachments)
+    ? message.attachments.map(normalizeAiAttachment).filter(Boolean).slice(0, 4)
+    : [];
+  if (!['user', 'assistant'].includes(role) || (!content.trim() && !attachments.length)) return null;
   const sources = Array.isArray(message.sources)
-    ? message.sources.slice(0, 5).map(source => ({
+    ? message.sources.slice(0, 10).map(source => ({
       title: normalizeString(source?.title, '').trim().slice(0, 120),
       url: normalizeString(source?.url, '').trim().slice(0, 800),
     })).filter(source => source.url)
@@ -543,6 +625,19 @@ function normalizeAiChatMessage(message) {
     }
     : null;
   const normalized = sources.length ? { role, content, sources } : { role, content };
+  if (attachments.length) normalized.attachments = attachments;
+  if (role === 'assistant') {
+    const provider = ['deepseek', 'moonshot', 'openrouter'].includes(message.provider) ? message.provider : '';
+    const modelId = isStoredAiModel(message.modelId) ? message.modelId : '';
+    if (provider) normalized.provider = provider;
+    if (modelId) normalized.modelId = modelId;
+    const reasoningContent = normalizeString(message.reasoningContent, '');
+    if (reasoningContent) normalized.reasoningContent = reasoningContent;
+    const providerTrace = normalizeAiProviderTrace(message.providerTrace);
+    if (providerTrace.length) normalized.providerTrace = providerTrace;
+    const openrouterReasoningDetails = normalizeOpenRouterReasoningDetails(message.openrouterReasoningDetails);
+    if (openrouterReasoningDetails.length) normalized.openrouterReasoningDetails = openrouterReasoningDetails;
+  }
   if (editorSuggestion) {
     Object.keys(editorSuggestion).forEach(key => {
       if (!editorSuggestion[key]) delete editorSuggestion[key];
@@ -611,6 +706,7 @@ function normalizeAiConversation(item) {
     updatedAt,
     scope,
     logKey,
+    model: isStoredAiModel(item.model) ? item.model : '',
     diarySensitive: item.diarySensitive === true,
   };
 }
@@ -651,12 +747,44 @@ function writeAiChats(data) {
   return cloneJson(next);
 }
 
+function isStoredAiModel(value) {
+  return typeof value === 'string' && (
+    ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'].includes(value) ||
+    /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._:+-]{0,119}$/i.test(value)
+  );
+}
+
+function aiSecretAad(field) {
+  return `work-log-ai-settings:v1:${SECRET_SCOPE}:${field}`;
+}
+
+function decodeAiSettingsSecrets(data) {
+  const source = isPlainObject(data) ? { ...data } : {};
+  let needsMigration = false;
+  for (const field of AI_SECRET_FIELDS) {
+    const value = source[field];
+    if (typeof value !== 'string' || !value) continue;
+    if (isEncryptedSecret(value)) source[field] = decryptSecret(value, aiSecretAad(field));
+    else needsMigration = true;
+  }
+  return { source, needsMigration };
+}
+
+function serializeAiSettings(data) {
+  const output = cloneJson(data);
+  for (const field of AI_SECRET_FIELDS) {
+    const value = output[field];
+    output[field] = typeof value === 'string' && value ? encryptSecret(value, aiSecretAad(field)) : '';
+  }
+  return output;
+}
+
 function normalizeAiSettings(data) {
   const source = isPlainObject(data) ? data : {};
-  const model = ['deepseek-v4-flash', 'deepseek-v4-pro'].includes(source.model)
+  const model = isStoredAiModel(source.model)
     ? source.model
     : DEFAULT_AI_SETTINGS.model;
-  const reasoningEffort = ['high', 'max'].includes(source.reasoningEffort)
+  const reasoningEffort = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(source.reasoningEffort)
     ? source.reasoningEffort
     : DEFAULT_AI_SETTINGS.reasoningEffort;
   const skillsSource = isPlainObject(source.skills) ? source.skills : {};
@@ -688,8 +816,14 @@ function normalizeAiSettings(data) {
   };
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
+    moonshotApiKey: typeof source.moonshotApiKey === 'string' ? source.moonshotApiKey.trim().slice(0, 500) : '',
+    openrouterApiKey: typeof source.openrouterApiKey === 'string' ? source.openrouterApiKey.trim().slice(0, 500) : '',
     model,
     reasoningEffort,
+    reasoningMode: ['default', 'disabled', 'effort'].includes(source.reasoningMode)
+      ? source.reasoningMode
+      : DEFAULT_AI_SETTINGS.reasoningMode,
+    thinkingMode: ['enabled', 'disabled'].includes(source.thinkingMode) ? source.thinkingMode : DEFAULT_AI_SETTINGS.thinkingMode,
     stream: typeof source.stream === 'boolean' ? source.stream : DEFAULT_AI_SETTINGS.stream,
     userProfile: typeof source.userProfile === 'string' ? source.userProfile.trim().slice(0, 2000) : DEFAULT_AI_SETTINGS.userProfile,
     logContextEnabled: typeof source.logContextEnabled === 'boolean' ? source.logContextEnabled : DEFAULT_AI_SETTINGS.logContextEnabled,
@@ -697,6 +831,10 @@ function normalizeAiSettings(data) {
     tavilyApiKey: typeof source.tavilyApiKey === 'string' ? source.tavilyApiKey.trim().slice(0, 500) : '',
     perplexityApiKey: typeof source.perplexityApiKey === 'string' ? source.perplexityApiKey.trim().slice(0, 500) : '',
     webSearchEnabled: typeof source.webSearchEnabled === 'boolean' ? source.webSearchEnabled : DEFAULT_AI_SETTINGS.webSearchEnabled,
+    kimiWebSearchEnabled: typeof source.kimiWebSearchEnabled === 'boolean' ? source.kimiWebSearchEnabled : DEFAULT_AI_SETTINGS.kimiWebSearchEnabled,
+    openrouterZdrEnabled: typeof source.openrouterZdrEnabled === 'boolean'
+      ? source.openrouterZdrEnabled
+      : DEFAULT_AI_SETTINGS.openrouterZdrEnabled,
     webSearchDepth: ['basic', 'advanced'].includes(source.webSearchDepth) ? source.webSearchDepth : DEFAULT_AI_SETTINGS.webSearchDepth,
     seedreamApiKey: typeof source.seedreamApiKey === 'string' ? source.seedreamApiKey.trim().slice(0, 500) : '',
     seedreamModel: ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'].includes(source.seedreamModel)
@@ -726,18 +864,104 @@ function readAiSettings() {
     return cloneJson(cache.aiSettings);
   }
   try {
-    cache.aiSettings = normalizeAiSettings(JSON.parse(fs.readFileSync(AI_SETTINGS_FILE, 'utf-8')));
+    const raw = JSON.parse(fs.readFileSync(AI_SETTINGS_FILE, 'utf-8'));
+    const decoded = decodeAiSettingsSecrets(raw);
+    cache.aiSettings = normalizeAiSettings(decoded.source);
+    if (decoded.needsMigration) atomicWriteJson(AI_SETTINGS_FILE, serializeAiSettings(cache.aiSettings));
     return cloneJson(cache.aiSettings);
   } catch (err) {
+    if (['AI_SECRET_KEY_MISSING', 'AI_SECRET_KEY_INVALID', 'AI_SECRET_DECRYPT_FAILED'].includes(err?.code)) throw err;
     return failCorruptData('ai-settings.json', AI_SETTINGS_FILE, err);
   }
 }
 
 function writeAiSettings(data) {
   const next = normalizeAiSettings(data);
-  atomicWriteJson(AI_SETTINGS_FILE, next);
+  atomicWriteJson(AI_SETTINGS_FILE, serializeAiSettings(next));
   cache.aiSettings = cloneJson(next);
   return cloneJson(next);
+}
+
+function normalizeAiMediaEntry(item) {
+  if (!isPlainObject(item)) return null;
+  const id = normalizeString(item.id, '').trim();
+  const storedFilename = normalizeString(item.storedFilename, '').trim();
+  const kind = item.kind === 'video' ? 'video' : (item.kind === 'image' ? 'image' : '');
+  const bytes = Number(item.bytes);
+  if (!/^[a-f0-9-]{16,80}$/i.test(id) || !/^[a-f0-9-]{16,100}\.[a-z0-9]{2,8}$/i.test(storedFilename) || !kind) return null;
+  return {
+    id,
+    storedFilename,
+    name: normalizeString(item.name, '').trim().slice(0, 255) || storedFilename,
+    mimeType: normalizeString(item.mimeType, '').trim().slice(0, 100),
+    kind,
+    bytes: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : 0,
+    createdAt: Number.isFinite(Number(item.createdAt)) ? Number(item.createdAt) : Date.now(),
+    updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now(),
+    moonshotFileId: normalizeString(item.moonshotFileId, '').trim().slice(0, 200),
+    moonshotKeyFingerprint: normalizeString(item.moonshotKeyFingerprint, '').trim().slice(0, 64),
+    moonshotStatus: normalizeString(item.moonshotStatus, '').trim().slice(0, 40),
+    moonshotVerifiedAt: Number.isFinite(Number(item.moonshotVerifiedAt)) ? Number(item.moonshotVerifiedAt) : 0,
+  };
+}
+
+function readAiMedia() {
+  if (cache.aiMedia !== null) return cloneJson(cache.aiMedia);
+  ensureDataDir();
+  if (!fs.existsSync(AI_MEDIA_FILE)) {
+    cache.aiMedia = [];
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(AI_MEDIA_FILE, 'utf-8'));
+    if (!Array.isArray(parsed)) throw new Error('media registry must be an array');
+    cache.aiMedia = parsed.map(normalizeAiMediaEntry).filter(Boolean);
+    return cloneJson(cache.aiMedia);
+  } catch (err) {
+    return failCorruptData('ai-media.json', AI_MEDIA_FILE, err);
+  }
+}
+
+function writeAiMedia(items) {
+  const normalized = Array.isArray(items) ? items.map(normalizeAiMediaEntry).filter(Boolean) : [];
+  atomicWriteJson(AI_MEDIA_FILE, normalized);
+  cache.aiMedia = cloneJson(normalized);
+  return cloneJson(normalized);
+}
+
+function getAiMediaById(id) {
+  const item = readAiMedia().find(entry => entry.id === id);
+  return item ? cloneJson(item) : null;
+}
+
+function createAiMedia(item) {
+  const normalized = normalizeAiMediaEntry(item);
+  if (!normalized) throw new Error('Invalid AI media metadata');
+  const items = readAiMedia();
+  if (items.some(entry => entry.id === normalized.id)) throw new Error('AI media id already exists');
+  fs.mkdirSync(AI_MEDIA_DIR, { recursive: true });
+  writeAiMedia([...items, normalized]);
+  return cloneJson(normalized);
+}
+
+function updateAiMedia(id, patch) {
+  const items = readAiMedia();
+  const index = items.findIndex(entry => entry.id === id);
+  if (index === -1) return null;
+  const normalized = normalizeAiMediaEntry({ ...items[index], ...patch, id, updatedAt: Date.now() });
+  if (!normalized) throw new Error('Invalid AI media metadata');
+  items[index] = normalized;
+  writeAiMedia(items);
+  return cloneJson(normalized);
+}
+
+function removeAiMedia(id) {
+  const items = readAiMedia();
+  const index = items.findIndex(entry => entry.id === id);
+  if (index === -1) return null;
+  const [removed] = items.splice(index, 1);
+  writeAiMedia(items);
+  return cloneJson(removed);
 }
 
 function readTodoReminderSettings() {
@@ -1616,6 +1840,7 @@ function checkDataIntegrity() {
   readPhotoWall();
   readAiChats();
   readAiSettings();
+  readAiMedia();
   readTodoReminderSettings();
   readTodoReminderState();
 
@@ -2119,6 +2344,7 @@ function mergeCategoryTrees(existing, incoming) {
 
 return {
   dataDir: DATA_DIR,
+  aiMediaDir: AI_MEDIA_DIR,
   getAll,
   getAllUnpaginated,
   getById,
@@ -2155,6 +2381,11 @@ return {
   saveAiChats: writeAiChats,
   getAiSettings: readAiSettings,
   saveAiSettings: writeAiSettings,
+  getAiMedia: readAiMedia,
+  getAiMediaById,
+  createAiMedia,
+  updateAiMedia,
+  removeAiMedia,
   getPhotoWall,
   createPhotoWallItem,
   updatePhotoWallItem,

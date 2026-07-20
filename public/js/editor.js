@@ -45,6 +45,9 @@ const editorAiMessages = $('#editorAiMessages');
 const editorAiInput = $('#editorAiInput');
 const btnEditorAiSend = $('#btnEditorAiSend');
 const btnEditorAiImage = $('#btnEditorAiImage');
+const btnEditorAiAttach = $('#btnEditorAiAttach');
+const editorAiMediaInput = $('#editorAiMediaInput');
+const editorAiMediaDrafts = $('#editorAiMediaDrafts');
 const btnEditorAiNew = $('#btnEditorAiNew');
 const btnEditorAiHistory = $('#btnEditorAiHistory');
 const btnEditorAiSettings = $('#btnEditorAiSettings');
@@ -59,6 +62,7 @@ const editorAiRenameOverlay = $('#editorAiRenameOverlay');
 const editorAiRenameInput = $('#editorAiRenameInput');
 const btnEditorToolbarMore = $('#btnEditorToolbarMore');
 const editorToolbarMoreMenu = $('#editorToolbarMoreMenu');
+enableMarkdownImagePreview(editorAiMessages, '[data-ai-media-preview]');
 
 function editorTitleActionIcon(name) {
   switch (name) {
@@ -102,6 +106,8 @@ let editorAiActiveConversationId = '';
 let editorAiDraftSessionId = `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const editorAiPendingByConversationId = new Set();
 let editorAiRenameConversationId = '';
+let editorAiPendingMedia = [];
+let editorAiMediaUploading = false;
 const EDITOR_SELECT_IDS = ['editCategory', 'editSubcategory'];
 
 function invalidateEditorRequests() {
@@ -796,6 +802,77 @@ function insertEditorGeneratedImage(index) {
   showToast('图片已插入日志', 'success');
 }
 
+function renderEditorAiMediaAttachments(attachments = []) {
+  if (!Array.isArray(attachments) || !attachments.length) return '';
+  return `<div class="ai-message-media editor-ai-message-media">${attachments.map(item => item.kind === 'video' ? `
+    <figure class="ai-message-media-item video">
+      <video src="/api/ai/media/${encodeURIComponent(item.id)}/content" controls preload="metadata" aria-label="${escHtml(item.name || '视频')}"></video>
+      <figcaption>${escHtml(item.name || '视频')}</figcaption>
+    </figure>
+  ` : `
+    <figure class="ai-message-media-item image">
+      <img src="/api/ai/media/${encodeURIComponent(item.id)}/content" alt="${escHtml(item.name || '图片')}" data-ai-media-preview>
+      <figcaption>${escHtml(item.name || '图片')}</figcaption>
+    </figure>
+  `).join('')}</div>`;
+}
+
+function editorAiModelLabel(modelId) {
+  const direct = {
+    'deepseek-v4-flash': 'DeepSeek Flash', 'deepseek-v4-pro': 'DeepSeek Pro',
+    'kimi-k3': 'Kimi K3', 'kimi-k2.7-code': 'Kimi K2.7 Code', 'kimi-k2.6': 'Kimi K2.6',
+  };
+  return direct[modelId] || String(modelId || '').split('/').at(-1) || 'AI';
+}
+
+function renderEditorAiPendingMedia() {
+  if (!editorAiMediaDrafts) return;
+  editorAiMediaDrafts.innerHTML = editorAiPendingMedia.map(item => `
+    <div class="ai-media-draft" data-media-id="${escHtml(item.id)}">
+      ${item.kind === 'image' ? `<img src="${escHtml(item.url)}" alt="">` : '<span class="ai-media-video-icon" aria-hidden="true">▶</span>'}
+      <span title="${escHtml(item.name)}">${escHtml(item.name)}</span>
+      <button type="button" data-action="remove-editor-ai-media" aria-label="移除 ${escHtml(item.name)}" title="移除">×</button>
+    </div>
+  `).join('');
+  editorAiMediaDrafts.hidden = !editorAiPendingMedia.length;
+}
+
+async function uploadEditorAiMediaFiles(files) {
+  const selected = [...files];
+  if (!selected.length) return;
+  if (editorAiPendingMedia.length + selected.length > 4) return showToast('每条消息最多添加 4 个附件', 'error');
+  const totalBytes = editorAiPendingMedia.reduce((sum, item) => sum + (item.bytes || 0), 0) + selected.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > 100 * 1024 * 1024) return showToast('每条消息附件合计不能超过 100MB', 'error');
+  editorAiMediaUploading = true;
+  updateEditorAiSendState();
+  try {
+    for (const file of selected) {
+      const form = new FormData();
+      form.append('media', file);
+      const res = await apiFetch('/api/ai/media', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `上传 ${file.name} 失败`);
+      editorAiPendingMedia.push(data);
+      renderEditorAiPendingMedia();
+    }
+  } catch (err) {
+    showToast('附件上传失败：' + err.message, 'error');
+  } finally {
+    editorAiMediaUploading = false;
+    if (editorAiMediaInput) editorAiMediaInput.value = '';
+    updateEditorAiSendState();
+  }
+}
+
+async function removeEditorAiPendingMedia(id) {
+  const item = editorAiPendingMedia.find(media => media.id === id);
+  editorAiPendingMedia = editorAiPendingMedia.filter(media => media.id !== id);
+  renderEditorAiPendingMedia();
+  updateEditorAiSendState();
+  if (!item) return;
+  try { await apiFetch(`/api/ai/media/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+}
+
 function renderEditorAiMessages() {
   if (!editorAiMessages) return;
   const chat = activeEditorAiConversation();
@@ -815,7 +892,8 @@ function renderEditorAiMessages() {
   }
   editorAiMessages.innerHTML = chat.messages.map((message, index) => `
     <div class="editor-ai-message ${message.role}" data-message-index="${index}">
-      <div class="editor-ai-role">${message.role === 'user' ? '你' : 'AI'}</div>
+      <div class="editor-ai-role"${message.role === 'assistant' && message.modelId ? ` title="${escHtml(`${message.provider || 'AI'} · ${message.modelId}`)}"` : ''}>${message.role === 'user' ? '你' : (message.modelId ? `AI · ${escHtml(editorAiModelLabel(message.modelId))}` : 'AI')}</div>
+      ${renderEditorAiMediaAttachments(message.attachments)}
       ${message.role === 'assistant' ? renderEditorAiAssistantBubble(message, index) : `<div class="editor-ai-bubble">${escHtml(message.content)}</div>`}
       ${message.role === 'assistant' && Array.isArray(message.sources) && message.sources.length ? `
         <div class="editor-ai-sources" aria-label="联网搜索来源">
@@ -835,9 +913,12 @@ function renderEditorAiMessages() {
 function updateEditorAiSendState() {
   if (!btnEditorAiSend || !editorAiInput) return;
   const isPending = isEditorAiConversationPending(editorAiActiveConversationId);
-  const disabled = isPending || !editorAiInput.value.trim();
+  const hasText = Boolean(editorAiInput.value.trim());
+  const hasMedia = editorAiPendingMedia.length > 0;
+  const disabled = isPending || editorAiMediaUploading || (!hasText && !hasMedia);
   btnEditorAiSend.disabled = disabled;
-  if (btnEditorAiImage) btnEditorAiImage.disabled = disabled;
+  if (btnEditorAiImage) btnEditorAiImage.disabled = isPending || editorAiMediaUploading || !hasText || hasMedia;
+  if (btnEditorAiAttach) btnEditorAiAttach.disabled = isPending || editorAiMediaUploading || editorAiPendingMedia.length >= 4;
 }
 
 async function setEditorAiPanelOpen(open, { closeOutline = true, focusInput = true } = {}) {
@@ -884,15 +965,44 @@ function getEditorAiContext() {
 async function sendEditorAiMessage({ forceImage = false } = {}) {
   if (!editorAiInput) return;
   const content = editorAiInput.value.trim();
-  if (!content) return;
+  const attachments = forceImage ? [] : editorAiPendingMedia.map(item => ({ ...item }));
+  if ((!content && !attachments.length) || editorAiMediaUploading) return;
+  if (forceImage && editorAiPendingMedia.length) return showToast('生图和媒体理解是两个独立操作，请先发送或移除附件', 'info');
   const chat = activeEditorAiConversation();
   if (isEditorAiConversationPending(chat.id)) return;
+  if (attachments.length || chat.messages.some(message => message.attachments?.length)) {
+    try {
+      const [settingsResponse, modelsResponse] = await Promise.all([
+        apiFetch('/api/ai/settings'),
+        apiFetch('/api/ai/models'),
+      ]);
+      const aiSettings = await settingsResponse.json().catch(() => ({}));
+      const modelsData = await modelsResponse.json().catch(() => ({}));
+      const model = Array.isArray(modelsData.models) ? modelsData.models.find(item => item.id === aiSettings.model) : null;
+      const allAttachments = [...attachments, ...chat.messages.flatMap(message => message.attachments || [])];
+      const needsVideo = allAttachments.some(item => item.kind === 'video' || String(item.mimeType || '').startsWith('video/'));
+      const needsImage = allAttachments.some(item => !item.kind || item.kind === 'image' || String(item.mimeType || '').startsWith('image/'));
+      if (!settingsResponse.ok || !modelsResponse.ok || !model ||
+          (needsImage && !model.inputModalities?.includes('image')) ||
+          (needsVideo && !model.inputModalities?.includes('video'))) {
+        return showToast('默认 AI 模型不支持当前会话中的附件类型，请在 AI 设置中选择兼容模型', 'error');
+      }
+    } catch {}
+  }
   if (getCategoryValue().startsWith('日记')) chat.diarySensitive = true;
-  chat.messages.push({ role: 'user', content });
-  if (!chat.title || chat.title === '日志对话' || chat.title === '当前日志') chat.title = conversationTitleFrom(content);
+  const userMessage = { role: 'user', content };
+  if (attachments.length) userMessage.attachments = attachments;
+  chat.messages.push(userMessage);
+  if (!chat.title || chat.title === '日志对话' || chat.title === '当前日志') {
+    chat.title = conversationTitleFrom(content || attachments.map(item => item.name).join('、'));
+  }
   if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
   chat.updatedAt = Date.now();
   editorAiInput.value = '';
+  if (attachments.length) {
+    editorAiPendingMedia = [];
+    renderEditorAiPendingMedia();
+  }
   if (forceImage) {
     const prompt = editorImagePromptFrom(content);
     const assistantMessage = {
@@ -963,12 +1073,18 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
     if (!data.message?.content) throw new Error('AI 没有返回内容');
     const targetChat = findEditorAiConversationById(requestChatId);
     if (targetChat) {
-      targetChat.messages.push({
+      const assistantMessage = {
         role: 'assistant',
         content: data.message.content,
         editorSuggestion: data.editorSuggestion || {},
         sources: Array.isArray(data.sources) ? data.sources : [],
-      });
+      };
+      if (data.message.reasoningContent) assistantMessage.reasoningContent = data.message.reasoningContent;
+      if (Array.isArray(data.message.providerTrace) && data.message.providerTrace.length) assistantMessage.providerTrace = data.message.providerTrace;
+      if (Array.isArray(data.message.openrouterReasoningDetails) && data.message.openrouterReasoningDetails.length) assistantMessage.openrouterReasoningDetails = data.message.openrouterReasoningDetails;
+      if (data.message.provider) assistantMessage.provider = data.message.provider;
+      if (data.message.modelId) assistantMessage.modelId = data.message.modelId;
+      targetChat.messages.push(assistantMessage);
       if (targetChat.messages.length > EDITOR_AI_MAX_MESSAGES) targetChat.messages = targetChat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
       targetChat.updatedAt = Date.now();
       await saveEditorAiConversations();
@@ -976,13 +1092,6 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
     }
   } catch (err) {
     showToast('编辑器 AI 请求失败：' + err.message, 'error');
-    const targetChat = findEditorAiConversationById(requestChatId);
-    if (targetChat) {
-      targetChat.messages.push({ role: 'assistant', content: `请求失败：${err.message}` });
-      targetChat.updatedAt = Date.now();
-      await saveEditorAiConversations();
-      renderEditorAiHistory();
-    }
   } finally {
     setEditorAiConversationPending(requestChatId, false);
     if (isEditorAiConversationVisible(requestChatId, requestLogKey)) {
@@ -1439,6 +1548,13 @@ btnEditorAiSettings.addEventListener('click', openEditorAiSettings);
 btnEditorAiHistoryClose.addEventListener('click', () => setEditorAiHistoryOpen(false));
 btnEditorAiSend.addEventListener('click', sendEditorAiMessage);
 btnEditorAiImage?.addEventListener('click', () => sendEditorAiMessage({ forceImage: true }));
+btnEditorAiAttach?.addEventListener('click', () => editorAiMediaInput?.click());
+editorAiMediaInput?.addEventListener('change', (event) => uploadEditorAiMediaFiles(event.target.files || []));
+editorAiMediaDrafts?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-action="remove-editor-ai-media"]');
+  const draft = button?.closest('[data-media-id]');
+  if (draft) removeEditorAiPendingMedia(draft.dataset.mediaId);
+});
 editorAiInput.addEventListener('input', updateEditorAiSendState);
 editorAiInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {

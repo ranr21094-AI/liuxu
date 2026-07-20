@@ -32,14 +32,15 @@ function makeTempDataDir(t) {
 }
 
 function clearAppModules() {
-  for (const file of ['server.js', 'database.js']) {
+  for (const file of ['server.js', 'database.js', 'secret-store.js']) {
     delete require.cache[require.resolve(path.join(ROOT, file))];
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode } = {}) {
+function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, moonshotApiKey, moonshotBaseUrl, openrouterApiKey, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
+  process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
   if (diaryPassword) {
     process.env.DIARY_PASSWORD_HASH = sha256(diaryPassword);
   } else {
@@ -50,6 +51,9 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   process.env.DEEPSEEK_API_KEY = deepseekApiKey || '';
   process.env.DEEPSEEK_BASE_URL = deepseekBaseUrl || 'https://api.deepseek.com';
   process.env.DEEPSEEK_DEFAULT_MODEL = deepseekDefaultModel || 'deepseek-v4-flash';
+  process.env.MOONSHOT_API_KEY = moonshotApiKey || '';
+  process.env.MOONSHOT_BASE_URL = moonshotBaseUrl || 'https://api.moonshot.cn/v1';
+  process.env.OPENROUTER_API_KEY = openrouterApiKey || '';
   process.env.TAVILY_API_KEY = tavilyApiKey || '';
   process.env.TAVILY_BASE_URL = tavilyBaseUrl || 'https://api.tavily.com';
   process.env.PERPLEXITY_API_KEY = perplexityApiKey || '';
@@ -70,12 +74,16 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   t.after(() => new Promise(resolve => server.close(resolve)));
   t.after(() => {
     delete process.env.DATA_DIR;
+    delete process.env.AI_SECRETS_KEY_FILE;
     delete process.env.DIARY_PASSWORD_HASH;
     delete process.env.AUTH_TOKEN;
     delete process.env.ALLOW_INSECURE_NO_AUTH;
     delete process.env.DEEPSEEK_API_KEY;
     delete process.env.DEEPSEEK_BASE_URL;
     delete process.env.DEEPSEEK_DEFAULT_MODEL;
+    delete process.env.MOONSHOT_API_KEY;
+    delete process.env.MOONSHOT_BASE_URL;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.TAVILY_API_KEY;
     delete process.env.TAVILY_BASE_URL;
     delete process.env.PERPLEXITY_API_KEY;
@@ -95,10 +103,12 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
 function loadFreshDb(t) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
+  process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
   clearAppModules();
   const db = require(path.join(ROOT, 'database.js'));
   t.after(() => {
     delete process.env.DATA_DIR;
+    delete process.env.AI_SECRETS_KEY_FILE;
     clearAppModules();
   });
   return db;
@@ -606,12 +616,14 @@ test('first account migration validates existing data before creating users.json
   ]), 'utf8');
   fs.writeFileSync(path.join(dataDir, 'todos.json'), '{broken', 'utf8');
   process.env.DATA_DIR = dataDir;
+  process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
   process.env.AUTH_TOKEN = '123456';
   process.env.ALLOW_INSECURE_NO_AUTH = '';
   process.env.DIARY_PASSWORD_HASH = '';
   clearAppModules();
   t.after(() => {
     delete process.env.DATA_DIR;
+    delete process.env.AI_SECRETS_KEY_FILE;
     delete process.env.AUTH_TOKEN;
     delete process.env.ALLOW_INSECURE_NO_AUTH;
     delete process.env.DIARY_PASSWORD_HASH;
@@ -854,6 +866,26 @@ test('logs, todos, countdowns, categories, AI state, reminders, photo wall, uplo
   assert.equal((await jsonRequest(baseUrl, memberUpload.url, adminCookie)).status, 404);
   assert.equal((await jsonRequest(baseUrl, memberUpload.url, memberCookie)).status, 200);
 
+  const adminAiMediaForm = new FormData();
+  adminAiMediaForm.append('media', validPngBlob(), 'same-ai-media.png');
+  const memberAiMediaForm = new FormData();
+  memberAiMediaForm.append('media', validPngBlob(), 'same-ai-media.png');
+  const adminAiMediaUpload = await fetch(`${baseUrl}/api/ai/media`, {
+    method: 'POST', headers: { Cookie: adminCookie }, body: adminAiMediaForm,
+  });
+  const memberAiMediaUpload = await fetch(`${baseUrl}/api/ai/media`, {
+    method: 'POST', headers: { Cookie: memberCookie }, body: memberAiMediaForm,
+  });
+  assert.equal(adminAiMediaUpload.status, 201);
+  assert.equal(memberAiMediaUpload.status, 201);
+  const adminAiMedia = await adminAiMediaUpload.json();
+  const memberAiMedia = await memberAiMediaUpload.json();
+  assert.notEqual(adminAiMedia.id, memberAiMedia.id);
+  assert.equal((await jsonRequest(baseUrl, adminAiMedia.url, adminCookie)).status, 200);
+  assert.equal((await jsonRequest(baseUrl, adminAiMedia.url, memberCookie)).status, 404);
+  assert.equal((await jsonRequest(baseUrl, memberAiMedia.url, memberCookie)).status, 200);
+  assert.equal((await jsonRequest(baseUrl, memberAiMedia.url, adminCookie)).status, 404);
+
   const adminWall = await jsonRequest(baseUrl, '/api/photo-wall/items', adminCookie, {
     method: 'POST', body: { url: '/uploads/same-name.png', filename: 'same-name.png', x: 1, y: 2, width: 320, height: 240 },
   });
@@ -899,6 +931,8 @@ test('logs, todos, countdowns, categories, AI state, reminders, photo wall, uplo
   assert.deepEqual(memberBackup.logs.map(log => log.title), ['member workspace log']);
   assert.equal(Object.hasOwn(adminBackup, 'users'), false);
   assert.equal(Object.hasOwn(memberBackup, 'sessions'), false);
+  assert.equal(Object.hasOwn(adminBackup, 'aiMedia'), false);
+  assert.equal(Object.hasOwn(memberBackup, 'aiMedia'), false);
 
   memberBackup.logs[0].title = 'member restored log';
   const memberRestore = await jsonRequest(baseUrl, '/api/restore', memberCookie, {
@@ -1069,7 +1103,7 @@ test('AI chat requires DeepSeek configuration and validates request options', as
   });
   assert.equal(missingTavilyKey.status, 200);
   assert.deepEqual(await missingTavilyKey.json(), {
-    message: { role: 'assistant', content: 'AI reply without search' },
+    message: { role: 'assistant', content: 'AI reply without search', provider: 'deepseek', modelId: 'deepseek-v4-flash' },
     sources: [],
   });
 
@@ -1091,8 +1125,14 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.deepEqual(await defaults.json(), {
     apiKey: '',
     apiKeyConfigured: false,
+    moonshotApiKey: '',
+    moonshotApiKeyConfigured: false,
+    openrouterApiKey: '',
+    openrouterApiKeyConfigured: false,
     model: 'deepseek-v4-flash',
     reasoningEffort: 'high',
+    reasoningMode: 'effort',
+    thinkingMode: 'enabled',
     stream: false,
     userProfile: '',
     logContextEnabled: false,
@@ -1102,6 +1142,8 @@ test('AI settings persist to local data storage and validate options', async (t)
     perplexityApiKey: '',
     perplexityApiKeyConfigured: false,
     webSearchEnabled: false,
+    kimiWebSearchEnabled: false,
+    openrouterZdrEnabled: true,
     webSearchDepth: 'basic',
     seedreamApiKey: '',
     seedreamApiKeyConfigured: false,
@@ -1120,8 +1162,11 @@ test('AI settings persist to local data storage and validate options', async (t)
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       apiKey: 'sk-local-settings',
+      moonshotApiKey: 'sk-moonshot-settings',
+      openrouterApiKey: 'sk-or-local-settings',
       model: 'deepseek-v4-pro',
       reasoningEffort: 'max',
+      reasoningMode: 'default',
       stream: true,
       userProfile: 'I prefer concise Chinese replies.',
       logContextEnabled: true,
@@ -1129,6 +1174,8 @@ test('AI settings persist to local data storage and validate options', async (t)
       tavilyApiKey: 'tvly-local-settings',
       perplexityApiKey: 'pplx-local-settings',
       webSearchEnabled: true,
+      kimiWebSearchEnabled: true,
+      openrouterZdrEnabled: false,
       webSearchDepth: 'advanced',
       seedreamApiKey: 'seedream-local-settings',
       seedreamModel: 'doubao-seedream-4-5-251128',
@@ -1148,8 +1195,14 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.deepEqual(await saved.json(), {
     apiKey: '',
     apiKeyConfigured: true,
+    moonshotApiKey: '',
+    moonshotApiKeyConfigured: true,
+    openrouterApiKey: '',
+    openrouterApiKeyConfigured: true,
     model: 'deepseek-v4-pro',
     reasoningEffort: 'max',
+    reasoningMode: 'default',
+    thinkingMode: 'enabled',
     stream: true,
     userProfile: 'I prefer concise Chinese replies.',
     logContextEnabled: true,
@@ -1159,6 +1212,8 @@ test('AI settings persist to local data storage and validate options', async (t)
     perplexityApiKey: '',
     perplexityApiKeyConfigured: true,
     webSearchEnabled: true,
+    kimiWebSearchEnabled: true,
+    openrouterZdrEnabled: false,
     webSearchDepth: 'advanced',
     seedreamApiKey: '',
     seedreamApiKeyConfigured: true,
@@ -1175,19 +1230,22 @@ test('AI settings persist to local data storage and validate options', async (t)
     },
   });
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
-  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings/);
-  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /tvly-local-settings/);
-  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /pplx-local-settings/);
-  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /seedream-local-settings/);
+  const encryptedSettings = fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8');
+  assert.doesNotMatch(encryptedSettings, /sk-local-settings|sk-moonshot-settings|sk-or-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
+  assert.match(encryptedSettings, /enc:v1:/);
+  assert.equal(fs.existsSync(path.join(dataDir, 'ai-secrets.key')), true);
 
   const preserved = await fetch(`${baseUrl}/api/ai/settings`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ apiKey: '', tavilyApiKey: '', perplexityApiKey: '', seedreamApiKey: '' }),
+    body: JSON.stringify({ apiKey: '', moonshotApiKey: '', openrouterApiKey: '', tavilyApiKey: '', perplexityApiKey: '', seedreamApiKey: '' }),
   });
   assert.equal(preserved.status, 200);
-  assert.equal((await preserved.json()).apiKeyConfigured, true);
-  assert.match(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings/);
+  const preservedBody = await preserved.json();
+  assert.equal(preservedBody.apiKeyConfigured, true);
+  assert.equal(preservedBody.moonshotApiKeyConfigured, true);
+  assert.equal(preservedBody.openrouterApiKeyConfigured, true);
+  assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings/);
 
   const cleared = await fetch(`${baseUrl}/api/ai/settings`, {
     method: 'PUT',
@@ -1195,17 +1253,24 @@ test('AI settings persist to local data storage and validate options', async (t)
     body: JSON.stringify({ clearApiKeys: true }),
   });
   assert.equal(cleared.status, 200);
-  assert.equal((await cleared.json()).apiKeyConfigured, false);
-  assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
+  const clearedBody = await cleared.json();
+  assert.equal(clearedBody.apiKeyConfigured, false);
+  assert.equal(clearedBody.moonshotApiKeyConfigured, false);
+  assert.equal(clearedBody.openrouterApiKeyConfigured, false);
+  assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
 
   for (const body of [
     { model: 'bad-model' },
-    { reasoningEffort: 'low' },
+    { reasoningEffort: 'extreme' },
+    { reasoningMode: 'sometimes' },
+    { thinkingMode: 'sometimes' },
     { stream: 'true' },
     { userProfile: 123 },
     { logContextEnabled: 'true' },
     { diaryContextEnabled: 'true' },
     { webSearchEnabled: 'true' },
+    { kimiWebSearchEnabled: 'true' },
+    { openrouterZdrEnabled: 'true' },
     { webSearchDepth: 'deep' },
     { seedreamModel: 'bad-seedream' },
     { seedreamSize: 'bad-size' },
@@ -1689,13 +1754,21 @@ test('AI chat sends only explicit conversation messages to DeepSeek', async (t) 
       reasoningEffort: 'max',
       messages: [
         { role: 'user', content: 'only this text' },
-        { role: 'assistant', content: 'previous reply' },
+        {
+          role: 'assistant',
+          content: 'previous reply',
+          reasoningContent: 'Kimi-only hidden reasoning',
+          providerTrace: [
+            { role: 'assistant', content: '', tool_calls: [{ id: 'search-1', type: 'function', function: { name: 'web_search', arguments: '{"query":"private query"}' } }] },
+            { role: 'tool', tool_call_id: 'search-1', content: 'private encrypted result' },
+          ],
+        },
       ],
     }),
   });
 
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { message: { role: 'assistant', content: 'AI reply' }, sources: [] });
+  assert.deepEqual(await res.json(), { message: { role: 'assistant', content: 'AI reply', provider: 'deepseek', modelId: 'deepseek-v4-pro' }, sources: [] });
   assert.equal(capturedUrl, 'https://deepseek.test/chat/completions');
   assert.equal(capturedHeaders.Authorization, 'Bearer user-provided-key');
   assert.equal(capturedPayload.messages[0].role, 'system');
@@ -1712,6 +1785,7 @@ test('AI chat sends only explicit conversation messages to DeepSeek', async (t) 
     reasoning_effort: 'max',
   });
   assert.doesNotMatch(JSON.stringify(capturedPayload), /private diary content|private title/);
+  assert.doesNotMatch(JSON.stringify(capturedPayload), /Kimi-only|private query|private encrypted result|tool_calls|reasoning_content/);
 });
 
 test('AI chat can include user profile and permitted logs without leaking locked diary entries', async (t) => {
@@ -1838,6 +1912,503 @@ test('AI chat can include user profile and permitted logs without leaking locked
   assert.match(capturedPayloads[3].messages[0].content, /private diary content/);
   assert.match(capturedPayloads[3].messages[0].content, /private title/);
   assert.doesNotMatch(JSON.stringify(capturedPayloads[3]), /user-provided-key/);
+});
+
+test('OpenRouter discovers account models and preserves provider-specific reasoning, sources, ZDR, and media', async (t) => {
+  const originalFetch = global.fetch;
+  let catalogLoads = 0;
+  const chatCalls = [];
+  global.fetch = async (target, options = {}) => {
+    const url = String(target);
+    if (url === 'https://openrouter.ai/api/v1/models/user') {
+      catalogLoads += 1;
+      assert.equal(options.headers.Authorization, 'Bearer sk-or-test-key');
+      return new Response(JSON.stringify({
+        data: [{
+          id: 'anthropic/test-reasoner',
+          name: 'Test Reasoner',
+          context_length: 128000,
+          architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+          supported_parameters: ['reasoning'],
+          reasoning: { supported_efforts: ['low', 'high'], default_effort: 'high', default_enabled: true },
+          pricing: { prompt: '0.000003', completion: '0.000015', image: '0.002' },
+        }, {
+          id: 'vendor/no-text-output',
+          name: 'Image only',
+          context_length: 4096,
+          architecture: { input_modalities: ['text'], output_modalities: ['image'] },
+          supported_parameters: [],
+          pricing: {},
+        }, {
+          id: 'vendor/tiny-context',
+          name: 'Tiny context',
+          context_length: 256,
+          architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+          supported_parameters: [],
+          pricing: { prompt: '0', completion: '0' },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (url === 'https://openrouter.ai/api/v1/chat/completions') {
+      assert.equal(options.headers.Authorization, 'Bearer sk-or-test-key');
+      assert.equal(options.headers['X-Title'], 'Work Log');
+      chatCalls.push(JSON.parse(options.body));
+      return new Response(JSON.stringify({
+        choices: [{
+          finish_reason: 'stop',
+          message: {
+            role: 'assistant',
+            content: 'OpenRouter answer',
+            reasoning: 'hidden OpenRouter thought',
+            reasoning_details: [{ type: 'reasoning.text', text: 'preserved trace' }],
+            annotations: [{
+              type: 'url_citation',
+              url_citation: { url: 'https://example.com/source', title: 'Example source', content: 'A public source' },
+            }],
+          },
+        }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { baseUrl } = loadFreshApp(t, { openrouterApiKey: 'sk-or-test-key' });
+
+  const modelsResponse = await fetch(`${baseUrl}/api/ai/models`);
+  assert.equal(modelsResponse.status, 200);
+  const catalog = await modelsResponse.json();
+  const openrouterModel = catalog.models.find(model => model.id === 'anthropic/test-reasoner');
+  assert.equal(catalog.openrouterConfigured, true);
+  assert.equal(openrouterModel.source, 'openrouter');
+  assert.equal(openrouterModel.provider, 'anthropic');
+  assert.equal(openrouterModel.contextLength, 128000);
+  assert.deepEqual(openrouterModel.inputModalities, ['text', 'image']);
+  assert.deepEqual(openrouterModel.outputModalities, ['text']);
+  assert.deepEqual(openrouterModel.reasoning.supportedEfforts, ['low', 'high']);
+  assert.equal(openrouterModel.pricing.inputPerMillion, 3);
+  assert.equal(openrouterModel.pricing.outputPerMillion, 15);
+  assert.equal(catalog.models.some(model => model.id === 'vendor/no-text-output'), false);
+  const searchedModels = await (await fetch(`${baseUrl}/api/ai/models?q=test-reasoner`)).json();
+  assert.deepEqual(searchedModels.models.map(model => model.id), ['anthropic/test-reasoner']);
+  assert.equal(catalogLoads, 1);
+
+  const settingsResponse = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'anthropic/test-reasoner',
+      reasoningMode: 'effort',
+      reasoningEffort: 'high',
+      openrouterZdrEnabled: true,
+    }),
+  });
+  assert.equal(settingsResponse.status, 200);
+  assert.equal((await settingsResponse.json()).model, 'anthropic/test-reasoner');
+
+  const firstResponse = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'anthropic/test-reasoner',
+      reasoningMode: 'effort',
+      reasoningEffort: 'high',
+      webSearchEnabled: true,
+      webSearchDepth: 'advanced',
+      messages: [{ role: 'user', content: 'Search this question' }],
+    }),
+  });
+  assert.equal(firstResponse.status, 200);
+  const firstBody = await firstResponse.json();
+  assert.equal(firstBody.message.provider, 'openrouter');
+  assert.equal(firstBody.message.modelId, 'anthropic/test-reasoner');
+  assert.equal(firstBody.message.reasoningContent, 'hidden OpenRouter thought');
+  assert.deepEqual(firstBody.message.openrouterReasoningDetails, [{ type: 'reasoning.text', text: 'preserved trace' }]);
+  assert.equal(firstBody.sources[0].url, 'https://example.com/source');
+  assert.deepEqual(chatCalls[0].reasoning, { effort: 'high' });
+  assert.deepEqual(chatCalls[0].provider, { zdr: true });
+  assert.deepEqual(chatCalls[0].tools, [{
+    type: 'openrouter:web_search',
+    parameters: { engine: 'auto', max_total_results: 10 },
+  }]);
+  assert.doesNotMatch(JSON.stringify(chatCalls[0]), /sk-or-test-key/);
+
+  const secondResponse = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'anthropic/test-reasoner',
+      reasoningMode: 'default',
+      webSearchEnabled: false,
+      messages: [
+        { role: 'user', content: 'First question' },
+        firstBody.message,
+        { role: 'user', content: 'Follow up' },
+      ],
+    }),
+  });
+  assert.equal(secondResponse.status, 200);
+  assert.deepEqual(chatCalls[1].messages.find(message => message.role === 'assistant').reasoning_details, [{ type: 'reasoning.text', text: 'preserved trace' }]);
+  assert.equal('reasoning' in chatCalls[1], false);
+  assert.equal('tools' in chatCalls[1], false);
+
+  const mediaForm = new FormData();
+  mediaForm.append('media', validPngBlob(), 'openrouter.png');
+  const mediaResponse = await fetch(`${baseUrl}/api/ai/media`, { method: 'POST', body: mediaForm });
+  assert.equal(mediaResponse.status, 201);
+  const media = await mediaResponse.json();
+  const mediaChat = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'anthropic/test-reasoner', reasoningMode: 'default',
+      messages: [{ role: 'user', content: 'Describe it', attachments: [{ id: media.id }] }],
+    }),
+  });
+  assert.equal(mediaChat.status, 200);
+  const mediaUserMessage = chatCalls[2].messages.find(message => message.role === 'user');
+  assert.equal(mediaUserMessage.content[0].type, 'text');
+  assert.match(mediaUserMessage.content[1].image_url.url, /^data:image\/png;base64,/);
+
+  const missing = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'anthropic/not-in-catalog', messages: [{ role: 'user', content: 'hello' }] }),
+  });
+  assert.equal(missing.status, 400);
+  assert.match((await missing.json()).error, /unavailable for this account/);
+  assert.equal(catalogLoads, 1);
+
+  const tooSmall = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'vendor/tiny-context', reasoningMode: 'default',
+      messages: [{ role: 'user', content: '中'.repeat(4000) }],
+    }),
+  });
+  assert.equal(tooSmall.status, 413);
+  assert.match((await tooSmall.json()).error, /context window is too small/);
+  assert.equal(chatCalls.length, 3);
+});
+
+test('OpenRouter streaming ignores comments, forwards reasoning and citations, and rejects in-band errors', async (t) => {
+  const originalFetch = global.fetch;
+  let streamCalls = 0;
+  global.fetch = async (target, options = {}) => {
+    const url = String(target);
+    if (url === 'https://openrouter.ai/api/v1/models/user') {
+      return new Response(JSON.stringify({ data: [{
+        id: 'openai/stream-model', name: 'Stream model', context_length: 32000,
+        architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+        supported_parameters: [], pricing: { prompt: '0', completion: '0' },
+      }] }), { status: 200 });
+    }
+    if (url === 'https://openrouter.ai/api/v1/chat/completions') {
+      streamCalls += 1;
+      assert.equal(JSON.parse(options.body).stream, true);
+      const body = streamCalls === 1
+        ? ': OPENROUTER PROCESSING\n\ndata: {"choices":[{"delta":{"reasoning":"think","reasoning_details":[{"type":"reasoning.text","text":"trace"}]}}]}\n\ndata: {"choices":[{"delta":{"content":"answer","annotations":[{"type":"url_citation","url_citation":{"url":"https://example.org/live","title":"Live source"}}]}}]}\n\ndata: [DONE]\n\n'
+        : 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\ndata: {"error":{"code":429,"message":"temporary sk-sensitive-token"}}\n\n';
+      return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { baseUrl } = loadFreshApp(t, { openrouterApiKey: 'sk-or-stream-key' });
+  const request = () => fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'openai/stream-model', reasoningMode: 'default', stream: true,
+      messages: [{ role: 'user', content: 'stream' }],
+    }),
+  });
+  const complete = await request();
+  const completeText = await complete.text();
+  assert.match(completeText, /event: reasoning[\s\S]*think/);
+  assert.match(completeText, /event: delta[\s\S]*answer/);
+  assert.match(completeText, /event: sources[\s\S]*example\.org\/live/);
+  assert.match(completeText, /event: done[\s\S]*openrouterReasoningDetails/);
+  assert.match(completeText, /https:\/\/example\.org\/live/);
+
+  const failed = await request();
+  const failedText = await failed.text();
+  assert.match(failedText, /event: delta[\s\S]*partial/);
+  assert.match(failedText, /event: error[\s\S]*OpenRouter request failed/);
+  assert.doesNotMatch(failedText, /sensitive-token/);
+  assert.doesNotMatch(failedText, /event: done/);
+});
+
+test('Kimi models use provider-specific reasoning parameters and preserve hidden reasoning', async (t) => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://moonshot.test/v1/chat/completions') {
+      calls.push({ headers: options.headers, body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: 'Kimi reply', reasoning_content: 'hidden reasoning' }, finish_reason: 'stop' }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { baseUrl } = loadFreshApp(t, {
+    moonshotApiKey: 'moonshot-test-key',
+    moonshotBaseUrl: 'https://moonshot.test/v1',
+  });
+
+  for (const [model, thinkingMode] of [
+    ['kimi-k3', 'enabled'],
+    ['kimi-k2.7-code', 'enabled'],
+    ['kimi-k2.6', 'enabled'],
+    ['kimi-k2.6', 'disabled'],
+  ]) {
+    const response = await fetch(`${baseUrl}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, thinkingMode, messages: [{ role: 'user', content: 'hello' }] }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.message.content, 'Kimi reply');
+    if (model === 'kimi-k2.6' && thinkingMode === 'disabled') assert.equal(body.message.reasoningContent, undefined);
+    else assert.equal(body.message.reasoningContent, 'hidden reasoning');
+  }
+
+  assert.equal(calls.length, 4);
+  assert.equal(calls[0].headers.Authorization, 'Bearer moonshot-test-key');
+  assert.equal(calls[0].body.reasoning_effort, 'max');
+  assert.equal('thinking' in calls[0].body, false);
+  assert.equal('thinking' in calls[1].body, false);
+  assert.equal('reasoning_effort' in calls[1].body, false);
+  assert.deepEqual(calls[2].body.thinking, { type: 'enabled', keep: 'all' });
+  assert.deepEqual(calls[3].body.thinking, { type: 'disabled' });
+  for (const call of calls) {
+    assert.equal('temperature' in call.body, false);
+    assert.equal('top_p' in call.body, false);
+    assert.equal('n' in call.body, false);
+  }
+});
+
+test('AI settings migrate plaintext secrets and fail closed when the encryption key is missing or wrong', (t) => {
+  const dataDir = makeTempDataDir(t);
+  const keyFile = path.join(dataDir, 'ai-secrets.key');
+  const settingsFile = path.join(dataDir, 'ai-settings.json');
+  process.env.DATA_DIR = dataDir;
+  process.env.AI_SECRETS_KEY_FILE = keyFile;
+  fs.writeFileSync(settingsFile, JSON.stringify({
+    apiKey: 'sk-plaintext-deepseek',
+    moonshotApiKey: 'sk-plaintext-moonshot',
+    openrouterApiKey: 'sk-or-plaintext-openrouter',
+    tavilyApiKey: 'tvly-plaintext',
+    perplexityApiKey: 'pplx-plaintext',
+    seedreamApiKey: 'seedream-plaintext',
+    model: 'deepseek-v4-flash',
+  }), 'utf8');
+  clearAppModules();
+  t.after(() => {
+    delete process.env.DATA_DIR;
+    delete process.env.AI_SECRETS_KEY_FILE;
+    clearAppModules();
+  });
+
+  let freshDb = require(path.join(ROOT, 'database.js'));
+  const migrated = freshDb.getAiSettings();
+  assert.equal(migrated.apiKey, 'sk-plaintext-deepseek');
+  assert.equal(migrated.openrouterApiKey, 'sk-or-plaintext-openrouter');
+  const encrypted = fs.readFileSync(settingsFile, 'utf8');
+  assert.match(encrypted, /enc:v1:/);
+  assert.doesNotMatch(encrypted, /plaintext/);
+  const validKey = fs.readFileSync(keyFile);
+
+  clearAppModules();
+  fs.rmSync(keyFile);
+  freshDb = require(path.join(ROOT, 'database.js'));
+  assert.throws(() => freshDb.getAiSettings(), error => error?.code === 'AI_SECRET_KEY_MISSING');
+
+  fs.writeFileSync(keyFile, `v1:${crypto.randomBytes(32).toString('base64')}\n`, { mode: 0o600 });
+  clearAppModules();
+  freshDb = require(path.join(ROOT, 'database.js'));
+  assert.throws(() => freshDb.getAiSettings(), error => error?.code === 'AI_SECRET_DECRYPT_FAILED');
+
+  fs.writeFileSync(keyFile, validKey);
+  clearAppModules();
+  freshDb = require(path.join(ROOT, 'database.js'));
+  assert.equal(freshDb.getAiSettings().moonshotApiKey, 'sk-plaintext-moonshot');
+});
+
+test('Kimi streaming forwards hidden reasoning and requires the final DONE marker', async (t) => {
+  const originalFetch = global.fetch;
+  let providerCalls = 0;
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://moonshot.stream/v1/chat/completions') {
+      providerCalls += 1;
+      const payload = JSON.parse(options.body);
+      assert.equal(payload.stream, true);
+      const body = providerCalls === 1
+        ? 'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\ndata: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n'
+        : 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n';
+      return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { baseUrl } = loadFreshApp(t, { moonshotApiKey: 'stream-key', moonshotBaseUrl: 'https://moonshot.stream/v1' });
+  const request = () => fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'kimi-k3', stream: true, messages: [{ role: 'user', content: 'stream' }] }),
+  });
+  const complete = await request();
+  const completeText = await complete.text();
+  assert.match(completeText, /event: reasoning[\s\S]*think/);
+  assert.match(completeText, /event: delta[\s\S]*answer/);
+  assert.match(completeText, /event: done/);
+
+  const incomplete = await request();
+  const incompleteText = await incomplete.text();
+  assert.match(incompleteText, /event: error[\s\S]*before \[DONE\]/);
+  assert.doesNotMatch(incompleteText, /event: done/);
+});
+
+test('Kimi Formula web search caches discovery, preserves tool traces, and aligns tool ids', async (t) => {
+  const originalFetch = global.fetch;
+  let toolLoads = 0;
+  let modelCalls = 0;
+  let failFiber = false;
+  const modelPayloads = [];
+  const fiberBodies = [];
+  global.fetch = async (target, options = {}) => {
+    const url = String(target);
+    if (url === 'https://moonshot.formula/v1/formulas/moonshot/web-search:latest/tools') {
+      toolLoads += 1;
+      return new Response(JSON.stringify({ tools: [{ type: 'function', function: { name: 'web_search', description: 'search', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } }] }), { status: 200 });
+    }
+    if (url === 'https://moonshot.formula/v1/formulas/moonshot/web-search:latest/fibers') {
+      fiberBodies.push(JSON.parse(options.body));
+      if (failFiber) return new Response(JSON.stringify({ status: 'failed', error: 'temporary failure' }), { status: 503 });
+      return new Response(JSON.stringify({ status: 'succeeded', context: { encrypted_output: 'encrypted-search-result' } }), { status: 200 });
+    }
+    if (url === 'https://moonshot.formula/v1/chat/completions') {
+      const payload = JSON.parse(options.body);
+      modelPayloads.push(payload);
+      modelCalls += 1;
+      if (modelCalls % 2 === 1) {
+        return new Response(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: '', reasoning_content: 'search thought', tool_calls: [{ id: 'web_search:0', type: 'function', function: { name: 'web_search', arguments: '{"query":"latest moon news"}' } }] } }] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Answer with [source](https://example.com)', reasoning_content: 'final thought' } }] }), { status: 200 });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { baseUrl } = loadFreshApp(t, { moonshotApiKey: 'formula-key', moonshotBaseUrl: 'https://moonshot.formula/v1' });
+
+  let previousAssistant = null;
+  for (let index = 0; index < 2; index += 1) {
+    const messages = previousAssistant
+      ? [
+          { role: 'user', content: 'what is new?' },
+          previousAssistant,
+          { role: 'user', content: 'please check again' },
+        ]
+      : [{ role: 'user', content: 'what is new?' }];
+    const response = await fetch(`${baseUrl}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'kimi-k3', webSearchEnabled: true, kimiWebSearchEnabled: true,
+        messages,
+      }),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.sources.length, 0);
+    assert.equal(body.message.reasoningContent, 'final thought');
+    assert.equal(body.message.providerTrace[0].tool_calls[0].id, 'web_search:0');
+    assert.equal(body.message.providerTrace[1].tool_call_id, 'web_search:0');
+    previousAssistant = body.message;
+  }
+  assert.equal(toolLoads, 1);
+  assert.deepEqual(fiberBodies[0], { name: 'web_search', arguments: '{"query":"latest moon news"}' });
+  assert.equal(modelPayloads[0].tool_choice, 'required');
+  assert.equal(modelPayloads[1].tool_choice, 'auto');
+  assert.equal(modelPayloads[1].messages.at(-1).content, 'encrypted-search-result');
+  const replayedMessages = modelPayloads[2].messages;
+  const replayedToolCallIndex = replayedMessages.findIndex(message => message.tool_calls?.[0]?.id === 'web_search:0');
+  assert.ok(replayedToolCallIndex > 0);
+  assert.equal(replayedMessages[replayedToolCallIndex + 1].tool_call_id, 'web_search:0');
+  assert.equal(replayedMessages[replayedToolCallIndex + 1].content, 'encrypted-search-result');
+  assert.equal(replayedMessages[replayedToolCallIndex + 2].content, 'Answer with [source](https://example.com)');
+  assert.equal(replayedMessages[replayedToolCallIndex + 3].content, 'please check again');
+
+  failFiber = true;
+  const failed = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'kimi-k3', webSearchEnabled: true, kimiWebSearchEnabled: true,
+      messages: [{ role: 'user', content: 'force a failed search' }],
+    }),
+  });
+  assert.equal(failed.status, 502);
+  assert.match((await failed.json()).error, /Kimi Formula web search failed/);
+  assert.equal(toolLoads, 1);
+});
+
+test('AI media validates files, uploads Moonshot references, supports Range, and stays conversation-bound', async (t) => {
+  const originalFetch = global.fetch;
+  const chatPayloads = [];
+  global.fetch = async (target, options = {}) => {
+    const url = String(target);
+    if (url === 'https://moonshot.media/v1/files' && options.method === 'POST') {
+      assert.equal(options.body instanceof FormData, true);
+      return new Response(JSON.stringify({ id: 'file-image-1' }), { status: 200 });
+    }
+    if (url === 'https://moonshot.media/v1/chat/completions') {
+      chatPayloads.push(JSON.parse(options.body));
+      return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'I see an image', reasoning_content: 'vision thought' } }] }), { status: 200 });
+    }
+    if (url.startsWith('https://moonshot.media/v1/files/')) return new Response('{}', { status: 200 });
+    return originalFetch(target, options);
+  };
+  t.after(() => { global.fetch = originalFetch; });
+  const { baseUrl } = loadFreshApp(t, { moonshotApiKey: 'media-key', moonshotBaseUrl: 'https://moonshot.media/v1' });
+
+  const form = new FormData();
+  form.append('media', validPngBlob(), 'vision.png');
+  const uploaded = await fetch(`${baseUrl}/api/ai/media`, { method: 'POST', body: form });
+  const uploadedText = await uploaded.text();
+  assert.equal(uploaded.status, 201, uploadedText);
+  const media = JSON.parse(uploadedText);
+  assert.equal(media.kind, 'image');
+
+  const ranged = await fetch(`${baseUrl}${media.url}`, { headers: { Range: 'bytes=0-3' } });
+  assert.equal(ranged.status, 206);
+  assert.equal((await ranged.arrayBuffer()).byteLength, 4);
+
+  const chat = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'kimi-k2.6', messages: [{ role: 'user', content: '', attachments: [{ id: media.id }] }] }),
+  });
+  assert.equal(chat.status, 200);
+  assert.deepEqual(chatPayloads[0].messages.at(-1).content, [{ type: 'image_url', image_url: { url: 'ms://file-image-1' } }]);
+
+  const saved = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope: 'global', activeConversationId: 'media-chat', conversations: [{ id: 'media-chat', title: 'media', scope: 'global', messages: [{ role: 'user', content: '', attachments: [{ id: media.id }] }] }] }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal((await fetch(`${baseUrl}/api/ai/media/${media.id}`, { method: 'DELETE' })).status, 409);
+
+  const cleared = await fetch(`${baseUrl}/api/ai/conversations`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope: 'global', activeConversationId: '', conversations: [] }),
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal((await fetch(`${baseUrl}${media.url}`)).status, 404);
+
+  const invalidForm = new FormData();
+  invalidForm.append('media', new Blob(['not png'], { type: 'image/png' }), 'fake.png');
+  assert.equal((await fetch(`${baseUrl}/api/ai/media`, { method: 'POST', body: invalidForm })).status, 400);
 });
 
 test('AI log context snapshots every allowed log beyond pagination limits exactly once', async (t) => {
@@ -2319,7 +2890,7 @@ test('AI chat can augment DeepSeek with Tavily search using only user input', as
 
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), {
-    message: { role: 'assistant', content: 'AI searched reply' },
+    message: { role: 'assistant', content: 'AI searched reply', provider: 'deepseek', modelId: 'deepseek-v4-flash' },
     sources: [{ provider: 'tavily', title: 'Trusted result', url: 'https://example.com/trusted', content: 'Fresh public snippet', score: 0.9 }],
   });
   assert.equal(tavilyHeaders.Authorization, 'Bearer tvly-user-provided-key');
@@ -2474,7 +3045,7 @@ test('AI editor endpoint uses provided editor context without reading log storag
 
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), {
-    message: { role: 'assistant', content: '可以改得更清楚。' },
+    message: { role: 'assistant', content: '可以改得更清楚。', provider: 'deepseek', modelId: 'deepseek-v4-flash' },
     editorSuggestion: {
       reply: '可以改得更清楚。',
       suggestedTitle: '清晰标题',
@@ -2877,6 +3448,7 @@ test('AI conversations persist to local data storage separate from logs', async 
       scope: 'global',
       logKey: '',
       diarySensitive: false,
+      model: '',
       messages: [
         { role: 'user', content: 'hello' },
         { role: 'assistant', content: 'hi' },
@@ -2888,6 +3460,7 @@ test('AI conversations persist to local data storage separate from logs', async 
       scope: 'editor',
       logKey: 'log:7',
       diarySensitive: false,
+      model: '',
       messages: [
         { role: 'user', content: 'edit this' },
         { role: 'assistant', content: 'ok', editorSuggestion: { suggestedTitle: 'new title', insertText: 'insert me' } },
@@ -4166,6 +4739,8 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiDiaryContextToggle').closest('#aiSettingsPanelChat'), null);
   assert.equal(document.querySelector('#aiLogContextToggle').closest('#aiSettingsPanelAccess') !== null, true);
   assert.equal(document.querySelector('#aiDiaryContextToggle').closest('#aiSettingsPanelAccess') !== null, true);
+  assert.equal(document.querySelector('#aiKimiWebSearchToggle').closest('#aiSettingsPanelAccess') !== null, true);
+  assert.equal(document.querySelector('#aiKimiWebSearchToggle').closest('#categoryView'), null);
   assert.equal(document.querySelector('#aiAccessTree').closest('#aiSettingsPanelAccess') !== null, true);
   assert.equal(document.querySelector('#btnAiAccessRefresh').closest('#aiSettingsPanelAccess') !== null, true);
   assert.equal(document.querySelector('#aiLogWriteToggle'), null);
@@ -4233,6 +4808,13 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.match(document.querySelector('.ai-chat-web-toggle').getAttribute('title'), /Tavily/);
   assert.equal(document.querySelector('#aiChatWebSearchToggle').closest('.ai-chat-composer') !== null, true);
   assert.equal(document.querySelector('#aiChatWebSearchToggle').closest('.ai-chat-web-toggle') !== null, true);
+  assert.equal(document.querySelector('#aiChatModelSelect').closest('.ai-chat-composer-toggles') !== null, true);
+  assert.equal(document.querySelector('#btnAiChatModel').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#btnAiChatModel').getAttribute('title'), '切换当前对话模型');
+  assert.equal(document.querySelector('#aiChatModelSelect').hasAttribute('hidden'), true);
+  assert.equal(document.querySelector('#aiModelPickerOverlay').getAttribute('role'), 'dialog');
+  assert.equal(document.querySelector('#aiModelPickerList').getAttribute('role'), 'listbox');
+  assert.equal(document.querySelector('#aiModelPickerSearch').getAttribute('type'), 'search');
   assert.equal(document.querySelector('#btnAiSkill').closest('.ai-chat-composer-actions') !== null, true);
   assert.equal(document.querySelector('#btnAiSkill').getAttribute('aria-label'), '选择技能');
   assert.equal(document.querySelector('#btnAiSkill').getAttribute('title'), '选择技能');
@@ -4251,13 +4833,21 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnAiSendMenu'), null);
   assert.equal(document.querySelector('#aiSendMenu'), null);
   assert.equal(document.querySelector('#btnAiImageMenu'), null);
-  assert.deepEqual([...document.querySelectorAll('#aiModelSelect option')].map(option => option.value), [
-    'deepseek-v4-flash',
-    'deepseek-v4-pro',
-  ]);
-  assert.equal(document.querySelector('#aiThinkingMode'), null);
+  assert.equal(document.querySelector('#aiModelSelect').hasAttribute('hidden'), true);
+  assert.equal(document.querySelector('#btnAiDefaultModel').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#aiOpenRouterApiKeyInput')?.type, 'password');
+  assert.equal(document.querySelector('#aiOpenRouterZdrToggle')?.type, 'checkbox');
+  assert.deepEqual([...document.querySelectorAll('#aiReasoningMode option')].map(option => option.value), ['default', 'disabled', 'effort']);
+  assert.deepEqual([...document.querySelectorAll('#aiThinkingMode option')].map(option => option.value), ['enabled', 'disabled']);
+  assert.equal(document.querySelector('#aiMoonshotApiKeyInput')?.type, 'password');
+  assert.equal(document.querySelector('#aiKimiWebSearchToggle')?.type, 'checkbox');
+  assert.equal(document.querySelector('#btnAiAttach')?.getAttribute('aria-label'), '添加图片或视频');
   assert.deepEqual([...document.querySelectorAll('#aiReasoningEffort option')].map(option => option.value), [
+    'minimal',
+    'low',
+    'medium',
     'high',
+    'xhigh',
     'max',
   ]);
   assert.equal(document.querySelector('#fabCapture'), null);
@@ -4968,10 +5558,13 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /perplexity: \{ \.\.\.settings\.skills\?\.perplexity \}/);
   assert.match(aiSource, /服务端未保存 AI 设置，请重启应用后再试/);
   assert.doesNotMatch(aiSource, /apiKey: settings\.apiKey/);
-  assert.match(aiSource, /model: settings\.model \|\| DEFAULT_MODEL/);
+  assert.match(aiSource, /model: isAiModelId\(settings\.model\) \? settings\.model : DEFAULT_MODEL/);
   assert.match(aiSource, /thinkingMode: 'enabled'/);
-  assert.match(aiSource, /reasoningEffort: settings\.reasoningEffort \|\| DEFAULT_REASONING/);
-  assert.match(aiSource, /stream: skill \|\| settings\.logContextEnabled \? false : Boolean\(settings\.stream\)/);
+  assert.match(aiSource, /let reasoningEffort = settings\.reasoningEffort \|\| DEFAULT_REASONING/);
+  assert.match(aiSource, /meta\?\.source === 'openrouter'/);
+  assert.match(aiSource, /activeModel\.startsWith\('kimi-'\) && settings\.kimiWebSearchEnabled/);
+  assert.match(aiSource, /apiFetch\('\/api\/ai\/media'/);
+  assert.match(aiSource, /event\.type === 'reasoning'/);
   assert.match(aiSource, /userProfile: settings\.userProfile \|\| ''/);
   assert.match(aiSource, /logContextEnabled: Boolean\(settings\.logContextEnabled\)/);
   assert.match(aiSource, /diaryContextEnabled: Boolean\(settings\.diaryContextEnabled\)/);
@@ -4999,10 +5592,15 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /\$\('#aiSettingsPanelAccess'\)\.hidden = activeTab !== 'access'/);
   assert.match(aiSource, /function syncWebSearchToggleUi\(\)/);
   assert.match(aiSource, /\$\('#aiChatWebSearchToggle'\)/);
-  assert.match(aiSource, /quickToggle\.closest\('\.ai-chat-web-toggle'\)\?\.classList\.toggle\('active', enabled\)/);
+  assert.match(aiSource, /const label = quickToggle\.closest\('\.ai-chat-web-toggle'\);[\s\S]*label\?\.classList\.toggle\('active', enabled\)/);
   assert.match(aiSource, /\$\('#aiChatWebSearchToggle'\)\?\.addEventListener\('change', async \(event\) => \{/);
   assert.match(aiSource, /settings\.webSearchEnabled = event\.target\.checked;[\s\S]*await saveSettings\(\{ quiet: true \}\)/);
   assert.match(aiSource, /settings\.webSearchEnabled = previous;[\s\S]*联网搜索开关保存失败/);
+  assert.match(aiSource, /aiChatModelSelect[\s\S]*addEventListener\('change', switchChatModel\)/);
+  assert.match(aiSource, /chat\.model = previousModel;[\s\S]*模型切换失败/);
+  assert.match(aiSource, /function pastedAiImagesFromClipboard\(event\)[\s\S]*clipboard\?\.items[\s\S]*clipboard\?\.files/);
+  assert.match(aiSource, /async function handleAiChatPaste\(event\)[\s\S]*event\.preventDefault\(\);[\s\S]*uploadAiMediaFiles\(pasted\.files\)/);
+  assert.match(aiSource, /\$\('#aiChatInput'\)\.addEventListener\('paste', handleAiChatPaste\)/);
   assert.match(aiSource, /document\.querySelectorAll\('\[data-ai-settings-tab\]'\)/);
   assert.match(aiSource, /function setSkillConfigExpanded\(card, expanded\)/);
   assert.match(aiSource, /trigger\.setAttribute\('aria-expanded', String\(expanded\)\)/);
@@ -5046,7 +5644,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /async function sendMessage\(\{ forceImage = false \} = \{\}\)/);
   assert.match(aiSource, /if \(forceImage\) \{/);
   assert.match(aiSource, /\$\('#btnAiImage'\)\?\.addEventListener\('click', \(\) => sendMessage\(\{ forceImage: true \}\)\);/);
-  assert.match(aiSource, /const image = \$\('#btnAiImage'\);[\s\S]*if \(image\) image\.disabled = disabled;/);
+  assert.match(aiSource, /const image = \$\('#btnAiImage'\);[\s\S]*if \(image\) image\.disabled = sending \|\| mediaUploading \|\| !hasText \|\| hasMedia;/);
   assert.doesNotMatch(aiSource, /btnAiSendMenu|aiSendMenu|btnAiImageMenu|setSendMenuOpen|closeSendMenu|toggleSendMenu/);
   assert.match(aiSource, /originalPrompt: prompt/);
   assert.match(aiSource, /optimizedPrompt/);
@@ -5114,9 +5712,10 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /<div class="ai-message-footer">[\s\S]*class="ai-message-copy"[\s\S]*data-action="copy-message"[\s\S]*<span class="ai-message-time">\$\{escHtml\(messageTimeLabel\(message, current\?\.updatedAt\)\)\}<\/span>/);
   assert.match(aiSource, /\{ role: 'user', content, createdAt: Date\.now\(\) \}/);
   assert.match(aiSource, /\{ role: 'assistant', content: data\.message\.content, createdAt: Date\.now\(\), sources:/);
-  assert.match(aiSource, /\{ role: 'assistant', content: '', createdAt: Date\.now\(\), streaming: true \}/);
+  assert.match(aiSource, /\{ role: 'assistant', content: '', createdAt: Date\.now\(\), streaming: true, modelId: model, provider:/);
   assert.match(aiSource, /role: 'assistant',[\s\S]*content: '正在优化生图 prompt，请稍等\.\.\.',[\s\S]*createdAt: Date\.now\(\)/);
-  assert.match(aiSource, /\{ role: 'assistant', content: `请求失败：\$\{err\.message\}`, createdAt: Date\.now\(\) \}/);
+  assert.doesNotMatch(aiSource, /content: `请求失败：\$\{err\.message\}`/);
+  assert.match(aiSource, /if \(last\?\.streaming\) \{[\s\S]*chat\.messages\.pop\(\);/);
   assert.match(aiSource, /<div class="ai-message assistant ai-message-thinking"[\s\S]*<div class="ai-message-content">/);
   assert.doesNotMatch(aiSource, /ai-message-thinking" aria-live=/);
   assert.doesNotMatch(aiSource, /: '你';/);
@@ -5171,8 +5770,8 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /ai-message-thinking/);
   assert.match(aiSource, /正在思考/);
   assert.doesNotMatch(aiSource, /window\.(prompt|confirm)/);
-  assert.doesNotMatch(aiSource, /aiThinkingMode/);
-  assert.match(aiSource, /const disabled = sending \|\| !hasText;[\s\S]*send\.disabled = disabled;/);
+  assert.match(aiSource, /aiThinkingMode/);
+  assert.match(aiSource, /const disabled = sending \|\| mediaUploading \|\| \(!hasText && !hasMedia\);[\s\S]*send\.disabled = disabled;/);
   assert.match(aiSource, /function resizeAiChatInput\(\)/);
   assert.match(aiSource, /input\.style\.height = 'auto';[\s\S]*Math\.min\(input\.scrollHeight, maxHeight\)/);
   assert.match(aiSource, /function announceAiStatus\(text\)/);
@@ -5234,6 +5833,11 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-image-action\s*\{[\s\S]*background:\s*#f9fafb;[\s\S]*color:\s*#111827;/);
   assert.doesNotMatch(styleSource, /fab-capture|ai-send-split|ai-send-menu|ai-send-menu-trigger|ai-send-main/);
   assert.match(styleSource, /\.ai-chat-composer-footer\s*\{[\s\S]*display:\s*flex;[\s\S]*justify-content:\s*space-between;/);
+  assert.match(styleSource, /\.ai-chat-model-switcher select,[\s\S]*\.ai-chat-model-switcher button\s*\{[\s\S]*min-height:\s*36px;[\s\S]*appearance:\s*none;/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.ai-chat-composer-footer\s*\{[\s\S]*flex-wrap:\s*wrap;/);
+  assert.match(styleSource, /\.ai-message-media\s*\{[\s\S]*display:\s*flex;[\s\S]*flex-wrap:\s*wrap;/);
+  assert.match(styleSource, /\.ai-message-media-item\.image\s*\{[\s\S]*flex:\s*0 0 168px;[\s\S]*width:\s*168px;/);
+  assert.match(styleSource, /@media \(max-width: 600px\)[\s\S]*\.ai-message-media-item img\s*\{[\s\S]*width:\s*132px;[\s\S]*height:\s*132px;/);
   assert.match(styleSource, /body\.sidebar-collapsed:not\(\.editor-fullscreen\) \.main\s*\{[\s\S]*padding-left:\s*72px;/);
   assert.match(styleSource, /body\.sidebar-collapsed\.sidebar-ai-mode:not\(\.editor-fullscreen\) \.main\s*\{[\s\S]*padding-left:\s*18px;[\s\S]*padding-right:\s*18px;/);
   assert.match(styleSource, /body\.sidebar-ai-mode \.main\s*\{[\s\S]*overflow:\s*auto;/);
@@ -5583,7 +6187,7 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(editorSource, /function setEditorAiConversationPending\(chatId, pending\)[\s\S]*editorAiPendingByConversationId\.add\(chatId\)[\s\S]*editorAiPendingByConversationId\.delete\(chatId\)/);
   assert.match(editorSource, /function isEditorAiConversationVisible\(chatId, logKey\)[\s\S]*editorAiActiveConversationId === chatId[\s\S]*currentEditorLogKey\(\) === logKey/);
   assert.match(editorSource, /function renderEditorAiMessages\(\)[\s\S]*const isPending = isEditorAiConversationPending\(chat\.id\);[\s\S]*\+ \(isPending \? `/);
-  assert.match(editorSource, /function updateEditorAiSendState\(\)[\s\S]*const isPending = isEditorAiConversationPending\(editorAiActiveConversationId\);[\s\S]*const disabled = isPending \|\| !editorAiInput\.value\.trim\(\);/);
+  assert.match(editorSource, /function updateEditorAiSendState\(\)[\s\S]*const isPending = isEditorAiConversationPending\(editorAiActiveConversationId\);[\s\S]*const hasMedia = editorAiPendingMedia\.length > 0;[\s\S]*const disabled = isPending \|\| editorAiMediaUploading/);
   assert.match(editorSource, /const requestChatId = chat\.id;[\s\S]*const requestLogKey = chat\.logKey;[\s\S]*const requestMessages = chat\.messages\.map\(message => \(\{ \.\.\.message \}\)\);[\s\S]*const requestContext = getEditorAiContext\(\);/);
   assert.match(editorSource, /setEditorAiConversationPending\(requestChatId, true\);[\s\S]*setEditorAiConversationPending\(requestChatId, false\);/);
   assert.match(editorSource, /if \(isEditorAiConversationVisible\(requestChatId, requestLogKey\)\) renderEditorAiMessages\(\);/);

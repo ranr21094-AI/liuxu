@@ -10,13 +10,21 @@ const DEFAULT_REASONING = 'high';
 const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';
 const DEFAULT_SEEDREAM_SIZE = '2K';
 const MAX_MESSAGES = 20;
+const DIRECT_AI_MODEL_LABELS = Object.freeze({
+  'deepseek-v4-flash': 'DeepSeek Flash',
+  'deepseek-v4-pro': 'DeepSeek Pro',
+  'kimi-k3': 'Kimi K3',
+  'kimi-k2.7-code': 'Kimi K2.7 Code',
+  'kimi-k2.6': 'Kimi K2.6',
+});
 const API_KEY_STORAGE_KEY = 'deepseekApiKey';
 const CHAT_STORAGE_KEY = 'aiChatConversations';
 const ACTIVE_CHAT_STORAGE_KEY = 'aiChatActiveConversationId';
 const AI_CONVERSATIONS_ENDPOINT = '/api/ai/conversations';
 const AI_SETTINGS_ENDPOINT = '/api/ai/settings';
+const AI_MODELS_ENDPOINT = '/api/ai/models';
 const AI_SKILLS_ENDPOINT = '/api/ai/skills';
-const AI_SETTINGS_SELECT_IDS = ['aiModelSelect', 'aiReasoningEffort', 'aiSeedreamModel', 'aiSeedreamSize', 'aiWebSearchDepth'];
+const AI_SETTINGS_SELECT_IDS = ['aiReasoningMode', 'aiReasoningEffort', 'aiSeedreamModel', 'aiSeedreamSize', 'aiWebSearchDepth'];
 
 let conversations = [];
 let activeConversationId = '';
@@ -30,11 +38,28 @@ let historySearchQuery = '';
 let historySearchScope = 'title';
 let historyMenuConversationId = '';
 let historyMenuTrigger = null;
+let pendingMedia = [];
+let mediaUploading = false;
+let availableModels = Object.entries(DIRECT_AI_MODEL_LABELS).map(([id, name]) => ({
+  id, name, source: 'direct', provider: id.startsWith('kimi-') ? 'moonshot' : 'deepseek',
+  inputModalities: id.startsWith('kimi-') ? ['text', 'image', 'video'] : ['text'],
+  outputModalities: ['text'], contextLength: null, supportedParameters: [],
+  reasoning: { supported: true, supportedEfforts: ['high', 'max'], mandatory: false },
+  pricing: { inputPerMillion: null, outputPerMillion: null },
+}));
+let modelPickerTarget = '';
+let modelPickerQuery = '';
 let settings = {
   apiKey: '',
   apiKeyConfigured: false,
+  moonshotApiKey: '',
+  moonshotApiKeyConfigured: false,
+  openrouterApiKey: '',
+  openrouterApiKeyConfigured: false,
   model: DEFAULT_MODEL,
   reasoningEffort: DEFAULT_REASONING,
+  reasoningMode: 'effort',
+  thinkingMode: 'enabled',
   stream: false,
   userProfile: '',
   logContextEnabled: false,
@@ -44,6 +69,8 @@ let settings = {
   perplexityApiKey: '',
   perplexityApiKeyConfigured: false,
   webSearchEnabled: false,
+  kimiWebSearchEnabled: false,
+  openrouterZdrEnabled: true,
   webSearchDepth: 'basic',
   seedreamApiKey: '',
   seedreamApiKeyConfigured: false,
@@ -57,10 +84,31 @@ let settings = {
   },
 };
 
+function isAiModelId(value) {
+  return typeof value === 'string' && value.length <= 200 && (
+    Object.hasOwn(DIRECT_AI_MODEL_LABELS, value) || /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._:+-]{0,119}$/i.test(value)
+  );
+}
+
+function aiModelMeta(modelId) {
+  return availableModels.find(model => model.id === modelId) || null;
+}
+
+function aiModelLabel(modelId) {
+  return aiModelMeta(modelId)?.name || DIRECT_AI_MODEL_LABELS[modelId] || modelId || '未知模型';
+}
+
+function activeConversationModel() {
+  const chat = activeConversation();
+  return isAiModelId(chat?.model) ? chat.model : (isAiModelId(settings.model) ? settings.model : DEFAULT_MODEL);
+}
+
 export function clearAiStateForDiaryLock() {
   conversations = [];
   activeConversationId = '';
   sending = false;
+  pendingMedia = [];
+  mediaUploading = false;
   const messages = $('#aiChatMessages');
   if (messages) messages.textContent = '';
 }
@@ -117,7 +165,7 @@ function toggleAiSettingsSelectControl(control) {
 
 function selectFromAiSettingsOption(control, optionButton) {
   const select = document.getElementById(control.dataset.selectId);
-  if (!select || !optionButton) return;
+  if (!select || !optionButton || optionButton.disabled) return;
   select.value = optionButton.dataset.value || '';
   closeAiSettingsSelectControl(control);
   select.dispatchEvent(new Event('change', { bubbles: true }));
@@ -144,6 +192,7 @@ function syncAiSettingsSelectControls() {
         role="option"
         data-value="${escHtml(option.value)}"
         aria-selected="${option.value === select.value}"
+        ${option.disabled ? 'disabled aria-disabled="true"' : ''}
         tabindex="-1"
       >${escHtml(option.textContent)}</button>
     `).join('');
@@ -197,6 +246,7 @@ function createConversation(title = '新对话') {
     scope: 'global',
     logKey: '',
     diarySensitive: false,
+    model: isAiModelId(settings.model) ? settings.model : DEFAULT_MODEL,
     messages: [],
     updatedAt: Date.now(),
   };
@@ -210,6 +260,7 @@ function normalizeConversations(items) {
         ...item,
         scope: item.scope === 'editor' ? 'editor' : 'global',
         logKey: typeof item.logKey === 'string' ? item.logKey : '',
+        model: isAiModelId(item.model) ? item.model : (isAiModelId(settings.model) ? settings.model : DEFAULT_MODEL),
       }))
     : [];
 }
@@ -245,8 +296,14 @@ function normalizeSettings(value) {
   return {
     apiKey: typeof value?.apiKey === 'string' ? value.apiKey : '',
     apiKeyConfigured: value?.apiKeyConfigured === true || Boolean(value?.apiKey),
-    model: ['deepseek-v4-flash', 'deepseek-v4-pro'].includes(value?.model) ? value.model : DEFAULT_MODEL,
-    reasoningEffort: ['high', 'max'].includes(value?.reasoningEffort) ? value.reasoningEffort : DEFAULT_REASONING,
+    moonshotApiKey: typeof value?.moonshotApiKey === 'string' ? value.moonshotApiKey : '',
+    moonshotApiKeyConfigured: value?.moonshotApiKeyConfigured === true || Boolean(value?.moonshotApiKey),
+    openrouterApiKey: typeof value?.openrouterApiKey === 'string' ? value.openrouterApiKey : '',
+    openrouterApiKeyConfigured: value?.openrouterApiKeyConfigured === true || Boolean(value?.openrouterApiKey),
+    model: isAiModelId(value?.model) ? value.model : DEFAULT_MODEL,
+    reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value?.reasoningEffort) ? value.reasoningEffort : DEFAULT_REASONING,
+    reasoningMode: ['default', 'disabled', 'effort'].includes(value?.reasoningMode) ? value.reasoningMode : 'effort',
+    thinkingMode: ['enabled', 'disabled'].includes(value?.thinkingMode) ? value.thinkingMode : 'enabled',
     stream: typeof value?.stream === 'boolean' ? value.stream : false,
     userProfile: typeof value?.userProfile === 'string' ? value.userProfile.slice(0, 2000) : '',
     logContextEnabled: typeof value?.logContextEnabled === 'boolean' ? value.logContextEnabled : false,
@@ -256,6 +313,8 @@ function normalizeSettings(value) {
     perplexityApiKey: typeof value?.perplexityApiKey === 'string' ? value.perplexityApiKey : '',
     perplexityApiKeyConfigured: value?.perplexityApiKeyConfigured === true || Boolean(value?.perplexityApiKey),
     webSearchEnabled: typeof value?.webSearchEnabled === 'boolean' ? value.webSearchEnabled : false,
+    kimiWebSearchEnabled: typeof value?.kimiWebSearchEnabled === 'boolean' ? value.kimiWebSearchEnabled : false,
+    openrouterZdrEnabled: typeof value?.openrouterZdrEnabled === 'boolean' ? value.openrouterZdrEnabled : true,
     webSearchDepth: ['basic', 'advanced'].includes(value?.webSearchDepth) ? value.webSearchDepth : 'basic',
     seedreamApiKey: typeof value?.seedreamApiKey === 'string' ? value.seedreamApiKey : '',
     seedreamApiKeyConfigured: value?.seedreamApiKeyConfigured === true || Boolean(value?.seedreamApiKey),
@@ -322,9 +381,11 @@ async function saveConversations() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || 'AI 历史保存失败');
     }
+    return true;
   } catch (err) {
     console.warn('Failed to save AI conversations:', err);
     showToast('AI 历史保存失败：' + err.message, 'error');
+    return false;
   }
 }
 
@@ -392,10 +453,16 @@ async function saveSettings({ quiet = false, clearApiKeys = false } = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'AI 设置保存失败');
   if (
+    data.model !== submitted.model ||
     data.userProfile !== submitted.userProfile ||
     data.logContextEnabled !== submitted.logContextEnabled ||
     data.diaryContextEnabled !== submitted.diaryContextEnabled ||
     data.webSearchEnabled !== submitted.webSearchEnabled ||
+    data.kimiWebSearchEnabled !== submitted.kimiWebSearchEnabled ||
+    data.openrouterZdrEnabled !== submitted.openrouterZdrEnabled ||
+    data.reasoningMode !== submitted.reasoningMode ||
+    data.reasoningEffort !== submitted.reasoningEffort ||
+    data.thinkingMode !== submitted.thinkingMode ||
     data.webSearchDepth !== submitted.webSearchDepth ||
     data.seedreamModel !== submitted.seedreamModel ||
     data.seedreamSize !== submitted.seedreamSize ||
@@ -407,8 +474,10 @@ async function saveSettings({ quiet = false, clearApiKeys = false } = {}) {
     throw new Error('服务端未保存 AI 设置，请重启应用后再试');
   }
   settings = normalizeSettings(data);
+  if (submitted.openrouterApiKey || clearApiKeys) await loadModels({ quiet: true });
   await loadSkills();
   updateSettingsButton();
+  syncChatModelSwitcherUi();
   syncWebSearchToggleUi();
   if (!quiet) showToast('AI 设置已保存', 'success');
 }
@@ -506,14 +575,16 @@ function selectedImagePrompt(imageGeneration) {
 }
 
 async function optimizeImagePrompt(prompt, context = '') {
+  const aiOptions = currentSettings();
   const res = await apiFetch('/api/ai/image/prompt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
       context,
-      model: settings.model || DEFAULT_MODEL,
-      reasoningEffort: settings.reasoningEffort || DEFAULT_REASONING,
+      model: aiOptions.model,
+      reasoningMode: aiOptions.reasoningMode,
+      reasoningEffort: aiOptions.reasoningEffort,
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -601,6 +672,179 @@ function closeAiImagePreview() {
     document.removeEventListener('keydown', aiImagePreviewKeydown);
     aiImagePreviewKeydown = null;
   }
+}
+
+function normalizeModelCatalogItem(value) {
+  if (!value || !isAiModelId(value.id) || typeof value.name !== 'string') return null;
+  return {
+    id: value.id,
+    name: value.name.trim().slice(0, 160) || value.id,
+    source: value.source === 'openrouter' ? 'openrouter' : 'direct',
+    provider: typeof value.provider === 'string' ? value.provider : '',
+    contextLength: Number.isSafeInteger(Number(value.contextLength)) && Number(value.contextLength) > 0 ? Number(value.contextLength) : null,
+    inputModalities: Array.isArray(value.inputModalities) ? value.inputModalities.filter(item => typeof item === 'string') : ['text'],
+    outputModalities: Array.isArray(value.outputModalities) ? value.outputModalities.filter(item => typeof item === 'string') : ['text'],
+    supportedParameters: Array.isArray(value.supportedParameters) ? value.supportedParameters.filter(item => typeof item === 'string') : [],
+    reasoning: value.reasoning && typeof value.reasoning === 'object' ? value.reasoning : { supported: false, supportedEfforts: [], mandatory: false },
+    pricing: value.pricing && typeof value.pricing === 'object' ? value.pricing : { inputPerMillion: null, outputPerMillion: null },
+  };
+}
+
+async function loadModels({ quiet = true } = {}) {
+  try {
+    const res = await apiFetch(AI_MODELS_ENDPOINT);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '模型目录加载失败');
+    const models = Array.isArray(data.models) ? data.models.map(normalizeModelCatalogItem).filter(Boolean) : [];
+    if (models.length) availableModels = models;
+  } catch (err) {
+    if (!quiet) showToast('OpenRouter 模型目录加载失败：' + err.message, 'error');
+    console.warn('Failed to load AI model catalog:', err);
+  }
+  const configuredModelIds = new Set(availableModels.map(model => model.id));
+  for (const modelId of [settings.model, ...conversations.map(chat => chat.model)]) {
+    if (isAiModelId(modelId) && !configuredModelIds.has(modelId)) {
+      availableModels.push({
+        id: modelId,
+        name: DIRECT_AI_MODEL_LABELS[modelId] || modelId,
+        source: Object.hasOwn(DIRECT_AI_MODEL_LABELS, modelId) ? 'direct' : 'openrouter',
+        provider: modelId.split('/')[0] || '',
+        inputModalities: ['text'], outputModalities: ['text'], supportedParameters: [],
+        contextLength: null, reasoning: { supported: false, supportedEfforts: [], mandatory: false },
+        pricing: { inputPerMillion: null, outputPerMillion: null }, unavailable: true,
+      });
+    }
+  }
+  syncModelControls();
+}
+
+function formatModelContext(value) {
+  if (!value) return '上下文未知';
+  if (value >= 1000000) return `${(value / 1000000).toFixed(value % 1000000 ? 1 : 0)}M`;
+  if (value >= 1000) return `${Math.round(value / 1000)}K`;
+  return String(value);
+}
+
+function formatModelPrice(model) {
+  const input = model.pricing?.inputPerMillion;
+  const output = model.pricing?.outputPerMillion;
+  if (input === null || input === undefined || output === null || output === undefined) return '价格未提供';
+  return `$${Number(input).toLocaleString(undefined, { maximumFractionDigits: 4 })} / $${Number(output).toLocaleString(undefined, { maximumFractionDigits: 4 })} 每百万 Token`;
+}
+
+function modelModalityLabel(model) {
+  const labels = ['文本'];
+  if (model.inputModalities?.includes('image')) labels.push('图片');
+  if (model.inputModalities?.includes('video')) labels.push('视频');
+  return labels.join(' · ');
+}
+
+function selectedModelForPicker() {
+  return modelPickerTarget === 'default' ? ($('#aiModelSelect')?.value || settings.model) : activeConversationModel();
+}
+
+function renderModelPicker() {
+  const list = $('#aiModelPickerList');
+  if (!list) return;
+  const query = modelPickerQuery.trim().toLowerCase();
+  const filtered = availableModels.filter(model => !query || `${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query));
+  const summary = $('#aiModelPickerSummary');
+  if (summary) summary.textContent = query ? `${filtered.length} / ${availableModels.length} 个模型` : `${availableModels.length} 个模型`;
+  if (!filtered.length) {
+    list.innerHTML = '<div class="ai-model-picker-empty">没有匹配的可用模型</div>';
+    return;
+  }
+  const selectedId = selectedModelForPicker();
+  list.innerHTML = filtered.map(model => `
+    <button class="ai-model-option${model.id === selectedId ? ' selected' : ''}${model.unavailable ? ' unavailable' : ''}" type="button"
+      role="option" aria-selected="${model.id === selectedId}" data-model-id="${escHtml(model.id)}" ${model.unavailable ? 'disabled' : ''}>
+      <span class="ai-model-option-main">
+        <strong>${escHtml(model.name)}</strong>
+        <code>${escHtml(model.id)}</code>
+      </span>
+      <span class="ai-model-option-meta">
+        <i>${model.source === 'openrouter' ? 'OpenRouter' : '直连'} · ${escHtml(modelModalityLabel(model))}</i>
+        <i>${escHtml(formatModelContext(model.contextLength))} · ${escHtml(formatModelPrice(model))}</i>
+      </span>
+    </button>
+  `).join('');
+}
+
+function syncModelSelect(select, selectedId) {
+  if (!select) return;
+  select.innerHTML = availableModels.map(model => `<option value="${escHtml(model.id)}">${escHtml(model.name)}</option>`).join('');
+  if (isAiModelId(selectedId) && ![...select.options].some(option => option.value === selectedId)) {
+    select.insertAdjacentHTML('beforeend', `<option value="${escHtml(selectedId)}">${escHtml(selectedId)}</option>`);
+  }
+  select.value = selectedId;
+}
+
+function syncModelControls() {
+  const conversationModel = activeConversationModel();
+  syncModelSelect($('#aiChatModelSelect'), conversationModel);
+  syncModelSelect($('#aiModelSelect'), isAiModelId($('#aiModelSelect')?.value) ? $('#aiModelSelect').value : settings.model);
+  const chatLabel = $('#aiChatModelLabel');
+  if (chatLabel) chatLabel.textContent = aiModelLabel(conversationModel);
+  const chatButton = $('#btnAiChatModel');
+  if (chatButton) {
+    chatButton.title = `下一条消息使用 ${aiModelLabel(conversationModel)}（${conversationModel}）`;
+    chatButton.setAttribute('aria-label', `切换当前对话模型，当前为 ${aiModelLabel(conversationModel)}`);
+  }
+  const defaultModel = $('#aiModelSelect')?.value || settings.model;
+  const defaultLabel = $('#aiDefaultModelLabel');
+  if (defaultLabel) defaultLabel.textContent = aiModelLabel(defaultModel);
+  renderModelPicker();
+}
+
+function openModelPicker(target) {
+  modelPickerTarget = target === 'default' ? 'default' : 'conversation';
+  modelPickerQuery = '';
+  const overlay = $('#aiModelPickerOverlay');
+  const search = $('#aiModelPickerSearch');
+  if (!overlay || !search) return;
+  $('#aiModelPickerTitle').textContent = modelPickerTarget === 'default' ? '选择默认模型' : '选择当前对话模型';
+  search.value = '';
+  renderModelPicker();
+  overlay.style.display = 'flex';
+  requestAnimationFrame(() => search.focus());
+}
+
+function closeModelPicker({ restoreFocus = true } = {}) {
+  const overlay = $('#aiModelPickerOverlay');
+  if (overlay) overlay.style.display = 'none';
+  if (restoreFocus) (modelPickerTarget === 'default' ? $('#btnAiDefaultModel') : $('#btnAiChatModel'))?.focus();
+  modelPickerTarget = '';
+}
+
+async function chooseModelFromPicker(modelId) {
+  const model = aiModelMeta(modelId);
+  if (!model || model.unavailable) return;
+  if (modelPickerTarget === 'default') {
+    $('#aiModelSelect').value = modelId;
+    syncModelControls();
+    syncModelSettingsUi();
+    closeModelPicker();
+    return;
+  }
+  const chat = activeConversation();
+  if (!chat) return;
+  const previousModel = chat.model;
+  chat.model = modelId;
+  chat.updatedAt = Date.now();
+  syncModelControls();
+  syncWebSearchToggleUi();
+  closeModelPicker();
+  if (!await saveConversations()) {
+    chat.model = previousModel;
+    syncModelControls();
+    syncWebSearchToggleUi();
+    showToast('模型切换失败，已恢复原模型', 'error');
+    return;
+  }
+  const missingKey = model.source === 'openrouter'
+    ? !settings.openrouterApiKeyConfigured
+    : model.provider === 'moonshot' ? !settings.moonshotApiKeyConfigured : !settings.apiKeyConfigured;
+  showToast(missingKey ? `已切换至 ${model.name}；请先配置对应 API Key` : `当前对话已切换至 ${model.name}`, missingKey ? 'info' : 'success');
 }
 
 function historyActionIcon(action) {
@@ -752,7 +996,10 @@ function updateAiChatHeader() {
       const metaInfo = skillMeta(skill.id);
       badge.textContent = `技能 · ${metaInfo.label || metaInfo.name}`;
     } else if (settings.webSearchEnabled) {
-      badge.textContent = '联网搜索已开';
+      const activeModel = activeConversationModel();
+      badge.textContent = activeModel.startsWith('kimi-') && settings.kimiWebSearchEnabled
+        ? 'Kimi 官方联网 · 实验'
+        : aiModelMeta(activeModel)?.source === 'openrouter' ? 'OpenRouter 联网 · Beta' : '联网搜索已开';
     } else {
       badge.textContent = '本地对话';
     }
@@ -770,6 +1017,7 @@ function renderMessages() {
   const list = $('#aiChatMessages');
   const messages = activeMessages();
   const current = activeConversation();
+  syncModelControls();
   $('#aiChatView')?.classList.toggle('is-empty', !messages.length);
   updateAiChatHeader();
   if (!messages.length) {
@@ -792,6 +1040,7 @@ function renderMessages() {
   list.innerHTML = messages.map((message, index) => `
     <div class="ai-message ${message.role}" data-message-index="${index}">
       <div class="ai-message-bubble">
+        ${renderAiMediaAttachments(message.attachments)}
         <div class="ai-message-content${message.role === 'assistant' ? ' markdown-body' : ''}">${message.role === 'assistant' ? renderToHtml(message.content) : escHtml(message.content)}</div>
         ${message.role === 'assistant' && message.imageGeneration ? renderImageGenerationCard(message.imageGeneration, index, { insertable: false }) : ''}
         ${message.role === 'assistant' && message.toolCall ? renderToolCallCard(message.toolCall, message.toolResult, index) : ''}
@@ -802,6 +1051,7 @@ function renderMessages() {
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </button>
+          ${message.role === 'assistant' && message.modelId ? `<span class="ai-message-model" title="${escHtml(`${message.provider || 'AI'} · ${message.modelId}`)}">${escHtml(aiModelLabel(message.modelId))}</span>` : ''}
           <span class="ai-message-time">${escHtml(messageTimeLabel(message, current?.updatedAt))}</span>
         </div>
       </div>
@@ -825,6 +1075,131 @@ function renderMessages() {
   ` : '');
   scrollMessagesToBottom();
   renderHistory();
+}
+
+function renderAiMediaAttachments(attachments = []) {
+  if (!Array.isArray(attachments) || !attachments.length) return '';
+  return `<div class="ai-message-media">${attachments.map(item => item.kind === 'video' ? `
+    <figure class="ai-message-media-item video">
+      <video src="/api/ai/media/${encodeURIComponent(item.id)}/content" controls preload="metadata" aria-label="${escHtml(item.name || '视频')}"></video>
+      <figcaption>${escHtml(item.name || '视频')}</figcaption>
+    </figure>
+  ` : `
+    <figure class="ai-message-media-item image">
+      <img src="/api/ai/media/${encodeURIComponent(item.id)}/content" alt="${escHtml(item.name || '图片')}" data-ai-media-preview>
+      <figcaption>${escHtml(item.name || '图片')}</figcaption>
+    </figure>
+  `).join('')}</div>`;
+}
+
+function renderPendingMedia() {
+  const container = $('#aiMediaDrafts');
+  if (!container) return;
+  container.innerHTML = pendingMedia.map(item => `
+    <div class="ai-media-draft" data-media-id="${escHtml(item.id)}">
+      ${item.kind === 'image'
+        ? `<img src="${escHtml(item.url)}" alt="">`
+        : '<span class="ai-media-video-icon" aria-hidden="true">▶</span>'}
+      <span title="${escHtml(item.name)}">${escHtml(item.name)}</span>
+      <button type="button" data-action="remove-ai-media" aria-label="移除 ${escHtml(item.name)}" title="移除">×</button>
+    </div>
+  `).join('');
+  container.hidden = !pendingMedia.length;
+}
+
+function pastedAiImagesFromClipboard(event) {
+  const clipboard = event.clipboardData;
+  const hasImageExtension = file => /\.(png|jpe?g|webp|gif)$/i.test(String(file?.name || ''));
+  const imageItems = [...(clipboard?.items || [])]
+    .filter(item => item.kind === 'file' && String(item.type || '').toLowerCase().startsWith('image/'));
+  const clipboardImageFiles = [...(clipboard?.files || [])]
+    .filter(file => String(file.type || '').toLowerCase().startsWith('image/') || hasImageExtension(file));
+  const itemFiles = imageItems.map(item => item.getAsFile()).filter(Boolean);
+  const rawFiles = itemFiles.length ? itemFiles : clipboardImageFiles;
+  const found = imageItems.length > 0 || clipboardImageFiles.length > 0;
+  const extensionByType = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+  };
+  const typeByExtension = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    gif: 'image/gif',
+  };
+  const pastedAt = Date.now();
+  const files = rawFiles.map((file, index) => {
+    const originalName = String(file.name || '').trim();
+    const originalExtension = originalName.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() || '';
+    const type = extensionByType[String(file.type || '').toLowerCase()]
+      ? String(file.type).toLowerCase()
+      : typeByExtension[originalExtension];
+    const extension = extensionByType[type];
+    if (!extension) return null;
+    const validName = originalName && typeByExtension[originalExtension] === type;
+    const name = validName ? originalName : `pasted-image-${pastedAt}-${index + 1}${extension}`;
+    return new File([file], name, {
+      type,
+      lastModified: Number.isFinite(file.lastModified) ? file.lastModified : pastedAt,
+    });
+  }).filter(Boolean);
+  return { found, files };
+}
+
+async function handleAiChatPaste(event) {
+  const pasted = pastedAiImagesFromClipboard(event);
+  if (!pasted.found) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (sending || mediaUploading) {
+    showToast('请等待当前发送或上传完成后再粘贴图片', 'info');
+    return;
+  }
+  if (!pasted.files.length) {
+    showToast('仅支持粘贴 PNG、JPG、WebP 或 GIF 图片', 'error');
+    return;
+  }
+  await uploadAiMediaFiles(pasted.files);
+}
+
+async function uploadAiMediaFiles(files) {
+  const selected = [...files];
+  if (!selected.length) return;
+  if (pendingMedia.length + selected.length > 4) return showToast('每条消息最多添加 4 个附件', 'error');
+  const totalBytes = pendingMedia.reduce((sum, item) => sum + (item.bytes || 0), 0) + selected.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes > 100 * 1024 * 1024) return showToast('每条消息附件合计不能超过 100MB', 'error');
+  mediaUploading = true;
+  updateSendState();
+  try {
+    for (const file of selected) {
+      const form = new FormData();
+      form.append('media', file);
+      const res = await apiFetch('/api/ai/media', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `上传 ${file.name} 失败`);
+      pendingMedia.push(data);
+      renderPendingMedia();
+    }
+  } catch (err) {
+    showToast('附件上传失败：' + err.message, 'error');
+  } finally {
+    mediaUploading = false;
+    const input = $('#aiMediaInput');
+    if (input) input.value = '';
+    updateSendState();
+  }
+}
+
+async function removePendingMedia(id) {
+  const item = pendingMedia.find(media => media.id === id);
+  pendingMedia = pendingMedia.filter(media => media.id !== id);
+  renderPendingMedia();
+  updateSendState();
+  if (!item) return;
+  try { await apiFetch(`/api/ai/media/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
 }
 
 function renderImageGenerationCard(imageGeneration, index, { insertable = false } = {}) {
@@ -1141,9 +1516,12 @@ function updateSendState() {
   const send = $('#btnAiSend');
   const image = $('#btnAiImage');
   const hasText = input.value.trim().length > 0;
-  const disabled = sending || !hasText;
+  const hasMedia = pendingMedia.length > 0;
+  const disabled = sending || mediaUploading || (!hasText && !hasMedia);
   send.disabled = disabled;
-  if (image) image.disabled = disabled;
+  if (image) image.disabled = sending || mediaUploading || !hasText || hasMedia;
+  const attach = $('#btnAiAttach');
+  if (attach) attach.disabled = sending || mediaUploading || pendingMedia.length >= 4;
   $('#aiChatSending').style.display = sending ? '' : 'none';
   resizeAiChatInput();
 }
@@ -1177,15 +1555,30 @@ function setAiSendingStatus(text = '正在思考...', { announce = true } = {}) 
 
 function currentSettings() {
   const skill = selectedSkill();
+  const model = activeConversationModel();
+  const reasoning = aiModelMeta(model)?.reasoning || {};
+  let reasoningMode = settings.reasoningMode || 'effort';
+  let reasoningEffort = settings.reasoningEffort || DEFAULT_REASONING;
+  if (reasoningMode === 'disabled' && (reasoning.supported === false || reasoning.mandatory)) reasoningMode = 'default';
+  if (reasoningMode === 'effort') {
+    const efforts = Array.isArray(reasoning.supportedEfforts) ? reasoning.supportedEfforts : [];
+    if (!efforts.length) reasoningMode = 'default';
+    else if (!efforts.includes(reasoningEffort)) reasoningEffort = reasoning.defaultEffort || efforts[0];
+  }
   const request = {
-    model: settings.model || DEFAULT_MODEL,
-    thinkingMode: 'enabled',
-    reasoningEffort: settings.reasoningEffort || DEFAULT_REASONING,
-    stream: skill || settings.logContextEnabled ? false : Boolean(settings.stream),
+    model,
+    thinkingMode: reasoningMode === 'disabled' ? 'disabled' : 'enabled',
+    reasoningMode,
+    reasoningEffort,
+    stream: skill || settings.logContextEnabled || (model.startsWith('kimi-') && settings.webSearchEnabled && settings.kimiWebSearchEnabled)
+      ? false
+      : Boolean(settings.stream),
     userProfile: settings.userProfile || '',
     logContextEnabled: Boolean(settings.logContextEnabled),
     diaryContextEnabled: Boolean(settings.diaryContextEnabled),
     webSearchEnabled: Boolean(settings.webSearchEnabled),
+    kimiWebSearchEnabled: Boolean(settings.kimiWebSearchEnabled),
+    openrouterZdrEnabled: Boolean(settings.openrouterZdrEnabled),
     webSearchDepth: settings.webSearchDepth || 'basic',
     logAccessPolicy: settings.logAccessPolicy,
   };
@@ -1196,9 +1589,19 @@ function currentSettings() {
 function updateSettingsButton() {
   const button = $('#btnAiApiKey');
   if (!button) return;
-  button.classList.toggle('has-key', settings.apiKeyConfigured);
-  button.title = settings.apiKeyConfigured ? 'AI 设置（API Key 已保存）' : 'AI 设置';
+  const hasKey = settings.apiKeyConfigured || settings.moonshotApiKeyConfigured || settings.openrouterApiKeyConfigured;
+  button.classList.toggle('has-key', hasKey);
+  button.title = hasKey ? 'AI 设置（API Key 已保存）' : 'AI 设置';
   button.setAttribute('aria-label', button.title);
+}
+
+function syncChatModelSwitcherUi() {
+  syncModelControls();
+}
+
+async function switchChatModel(event) {
+  const nextModel = event.currentTarget?.value;
+  if (aiModelMeta(nextModel)) await chooseModelFromPicker(nextModel);
 }
 
 function syncWebSearchToggleUi() {
@@ -1208,7 +1611,15 @@ function syncWebSearchToggleUi() {
   if (settingsToggle) settingsToggle.checked = enabled;
   if (quickToggle) {
     quickToggle.checked = enabled;
-    quickToggle.closest('.ai-chat-web-toggle')?.classList.toggle('active', enabled);
+    const label = quickToggle.closest('.ai-chat-web-toggle');
+    label?.classList.toggle('active', enabled);
+    const model = activeConversationModel();
+    const meta = aiModelMeta(model);
+    if (label) label.title = model.startsWith('kimi-') && settings.kimiWebSearchEnabled
+      ? '联网搜索（Kimi 官方 Formula，实验性）'
+      : meta?.source === 'openrouter'
+        ? '联网搜索（OpenRouter 官方工具，Beta）'
+        : '联网搜索（Tavily/Perplexity）';
   }
   updateAiChatHeader();
 }
@@ -1284,8 +1695,16 @@ function fillSettingsModal() {
   if (!apiKeyInput) return;
   apiKeyInput.value = '';
   apiKeyInput.placeholder = settings.apiKeyConfigured ? '已配置；留空保持不变' : 'sk-...';
+  $('#aiMoonshotApiKeyInput').value = '';
+  $('#aiMoonshotApiKeyInput').placeholder = settings.moonshotApiKeyConfigured ? '已配置；留空保持不变' : 'sk-...';
+  $('#aiOpenRouterApiKeyInput').value = '';
+  $('#aiOpenRouterApiKeyInput').placeholder = settings.openrouterApiKeyConfigured ? '已配置；留空保持不变' : 'sk-or-...';
+  syncModelSelect($('#aiModelSelect'), settings.model || DEFAULT_MODEL);
   $('#aiModelSelect').value = settings.model || DEFAULT_MODEL;
+  $('#aiThinkingMode').value = settings.thinkingMode || 'enabled';
+  $('#aiReasoningMode').value = settings.reasoningMode || 'effort';
   $('#aiReasoningEffort').value = settings.reasoningEffort || DEFAULT_REASONING;
+  $('#aiOpenRouterZdrToggle').checked = settings.openrouterZdrEnabled !== false;
   $('#aiStreamToggle').checked = Boolean(settings.stream);
   $('#aiUserProfileInput').value = settings.userProfile || '';
   $('#aiLogContextToggle').checked = Boolean(settings.logContextEnabled);
@@ -1303,8 +1722,41 @@ function fillSettingsModal() {
   $('#aiSeedreamWatermark').checked = settings.seedreamWatermark !== false;
   $('#aiSkillWestockToggle').checked = settings.skills?.westock?.enabled !== false;
   $('#aiSkillPerplexityToggle').checked = settings.skills?.perplexity?.enabled !== false;
-  syncAiSettingsSelectControls();
+  $('#aiKimiWebSearchToggle').checked = Boolean(settings.kimiWebSearchEnabled);
+  syncModelSettingsUi();
   renderAccessTree();
+}
+
+function syncModelSettingsUi() {
+  const model = $('#aiModelSelect')?.value || settings.model || DEFAULT_MODEL;
+  const meta = aiModelMeta(model);
+  const reasoning = meta?.reasoning || {};
+  const modeSelect = $('#aiReasoningMode');
+  const thinkingField = $('#aiThinkingModeField');
+  const reasoningField = $('#aiReasoningEffortField');
+  if (thinkingField) thinkingField.hidden = true;
+  const disabledMode = modeSelect?.querySelector('option[value="disabled"]');
+  const effortMode = modeSelect?.querySelector('option[value="effort"]');
+  if (disabledMode) disabledMode.disabled = reasoning.supported === false || reasoning.mandatory === true;
+  if (effortMode) effortMode.disabled = reasoning.supported === false || !Array.isArray(reasoning.supportedEfforts) || !reasoning.supportedEfforts.length;
+  if (modeSelect?.selectedOptions[0]?.disabled) modeSelect.value = 'default';
+  const supportedEfforts = Array.isArray(reasoning.supportedEfforts) ? reasoning.supportedEfforts : [];
+  [...($('#aiReasoningEffort')?.options || [])].forEach(option => {
+    option.disabled = supportedEfforts.length > 0 && !supportedEfforts.includes(option.value);
+  });
+  if ($('#aiReasoningEffort')?.selectedOptions[0]?.disabled) {
+    $('#aiReasoningEffort').value = reasoning.defaultEffort || supportedEfforts[0] || DEFAULT_REASONING;
+  }
+  if (reasoningField) reasoningField.hidden = modeSelect?.value !== 'effort' || effortMode?.disabled;
+  syncModelControls();
+  const hint = $('#aiModelCapabilityHint');
+  if (hint) {
+    const source = meta?.source === 'openrouter' ? 'OpenRouter' : '直连';
+    hint.textContent = meta
+      ? `${source} · ${modelModalityLabel(meta)} · ${formatModelContext(meta.contextLength)} 上下文 · ${formatModelPrice(meta)}`
+      : '该模型当前不在可用目录中，发送前需要重新加载模型。';
+  }
+  syncAiSettingsSelectControls();
 }
 
 function setSettingsTab(tab) {
@@ -1358,8 +1810,13 @@ function closeSettingsPage() {
 async function saveSettingsFromPage() {
   settings = normalizeSettings({
     apiKey: $('#aiApiKeyInput').value.trim(),
+    moonshotApiKey: $('#aiMoonshotApiKeyInput').value.trim(),
+    openrouterApiKey: $('#aiOpenRouterApiKeyInput').value.trim(),
     model: $('#aiModelSelect').value,
+    thinkingMode: $('#aiReasoningMode').value === 'disabled' ? 'disabled' : 'enabled',
+    reasoningMode: $('#aiReasoningMode').value,
     reasoningEffort: $('#aiReasoningEffort').value,
+    openrouterZdrEnabled: $('#aiOpenRouterZdrToggle').checked,
     stream: $('#aiStreamToggle').checked,
     userProfile: $('#aiUserProfileInput').value.trim(),
     logContextEnabled: $('#aiLogContextToggle').checked,
@@ -1367,12 +1824,15 @@ async function saveSettingsFromPage() {
     tavilyApiKey: $('#aiTavilyApiKeyInput').value.trim(),
     perplexityApiKey: $('#aiPerplexityApiKeyInput').value.trim(),
     webSearchEnabled: $('#aiWebSearchToggle').checked,
+    kimiWebSearchEnabled: $('#aiKimiWebSearchToggle').checked,
     webSearchDepth: $('#aiWebSearchDepth').value,
     seedreamApiKey: $('#aiSeedreamApiKeyInput').value.trim(),
     seedreamModel: $('#aiSeedreamModel').value,
     seedreamSize: $('#aiSeedreamSize').value,
     seedreamWatermark: $('#aiSeedreamWatermark').checked,
     apiKeyConfigured: settings.apiKeyConfigured,
+    moonshotApiKeyConfigured: settings.moonshotApiKeyConfigured,
+    openrouterApiKeyConfigured: settings.openrouterApiKeyConfigured,
     tavilyApiKeyConfigured: settings.tavilyApiKeyConfigured,
     perplexityApiKeyConfigured: settings.perplexityApiKeyConfigured,
     seedreamApiKeyConfigured: settings.seedreamApiKeyConfigured,
@@ -1420,10 +1880,14 @@ function toggleSkillConfigFromHeader(event) {
 
 async function clearApiKey() {
   settings.apiKey = '';
+  settings.moonshotApiKey = '';
+  settings.openrouterApiKey = '';
   settings.tavilyApiKey = '';
   settings.perplexityApiKey = '';
   settings.seedreamApiKey = '';
   $('#aiApiKeyInput').value = '';
+  $('#aiMoonshotApiKeyInput').value = '';
+  $('#aiOpenRouterApiKeyInput').value = '';
   $('#aiTavilyApiKeyInput').value = '';
   $('#aiPerplexityApiKeyInput').value = '';
   $('#aiSeedreamApiKeyInput').value = '';
@@ -1544,13 +2008,24 @@ async function readStreamingReply(res, assistantMessage) {
         assistantMessage.content += data.content || '';
         scheduleStreamRender();
       }
+      if (event.type === 'reasoning') assistantMessage.reasoningContent = (assistantMessage.reasoningContent || '') + (data.content || '');
+      if (event.type === 'sources' && Array.isArray(data.sources)) {
+        assistantMessage.sources = data.sources;
+        scheduleStreamRender();
+      }
       if (event.type === 'error') throw new Error(data.error || 'AI 流式请求失败');
       if (event.type === 'done') {
         if (Array.isArray(data.sources) && data.sources.length) assistantMessage.sources = data.sources;
+        if (data.provider) assistantMessage.provider = data.provider;
+        if (data.modelId) assistantMessage.modelId = data.modelId;
+        if (Array.isArray(data.openrouterReasoningDetails) && data.openrouterReasoningDetails.length) {
+          assistantMessage.openrouterReasoningDetails = data.openrouterReasoningDetails;
+        }
         return;
       }
     }
   }
+  throw new Error('AI 流式响应未完整结束');
 }
 
 async function readLogBatchReply(res, chat) {
@@ -1582,6 +2057,11 @@ async function readLogBatchReply(res, chat) {
           createdAt: Date.now(),
           sources: Array.isArray(data.sources) ? data.sources : [],
         };
+        if (data.message.reasoningContent) assistantMessage.reasoningContent = data.message.reasoningContent;
+        if (Array.isArray(data.message.providerTrace) && data.message.providerTrace.length) assistantMessage.providerTrace = data.message.providerTrace;
+        if (Array.isArray(data.message.openrouterReasoningDetails) && data.message.openrouterReasoningDetails.length) assistantMessage.openrouterReasoningDetails = data.message.openrouterReasoningDetails;
+        if (data.message.provider) assistantMessage.provider = data.message.provider;
+        if (data.message.modelId) assistantMessage.modelId = data.message.modelId;
         if (['westock', 'logs'].includes(data.toolCall?.skillId)) assistantMessage.toolCall = data.toolCall;
         chat.messages.push(assistantMessage);
         resultReceived = true;
@@ -1625,6 +2105,11 @@ async function sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch = f
   if (!res.ok) throw new Error(data.error || 'AI 请求失败');
   if (!data.message?.content) throw new Error('AI 没有返回内容');
   const assistantMessage = { role: 'assistant', content: data.message.content, createdAt: Date.now(), sources: Array.isArray(data.sources) ? data.sources : [] };
+  if (data.message.reasoningContent) assistantMessage.reasoningContent = data.message.reasoningContent;
+  if (Array.isArray(data.message.providerTrace) && data.message.providerTrace.length) assistantMessage.providerTrace = data.message.providerTrace;
+  if (Array.isArray(data.message.openrouterReasoningDetails) && data.message.openrouterReasoningDetails.length) assistantMessage.openrouterReasoningDetails = data.message.openrouterReasoningDetails;
+  if (data.message.provider) assistantMessage.provider = data.message.provider;
+  if (data.message.modelId) assistantMessage.modelId = data.message.modelId;
   if (['westock', 'logs'].includes(data.toolCall?.skillId)) assistantMessage.toolCall = data.toolCall;
   chat.messages.push(assistantMessage);
 }
@@ -1688,7 +2173,9 @@ async function executeSkillTool(index) {
 }
 
 async function sendStreamingMessage(chat, requestSettings) {
-  const assistantMessage = { role: 'assistant', content: '', createdAt: Date.now(), streaming: true };
+  const model = requestSettings.model || activeConversationModel();
+  const meta = aiModelMeta(model);
+  const assistantMessage = { role: 'assistant', content: '', createdAt: Date.now(), streaming: true, modelId: model, provider: meta?.source === 'openrouter' ? 'openrouter' : meta?.provider };
   chat.messages.push(assistantMessage);
   renderMessages();
   const res = await apiFetch('/api/ai/chat', {
@@ -1696,8 +2183,14 @@ async function sendStreamingMessage(chat, requestSettings) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages: chat.messages.filter(message => !message.streaming), ...requestSettings }),
   });
-  await readStreamingReply(res, assistantMessage);
-  delete assistantMessage.streaming;
+  try {
+    await readStreamingReply(res, assistantMessage);
+    delete assistantMessage.streaming;
+  } catch (err) {
+    const index = chat.messages.indexOf(assistantMessage);
+    if (index >= 0) chat.messages.splice(index, 1);
+    throw err;
+  }
 }
 
 async function sendMessage({ forceImage = false } = {}) {
@@ -1705,14 +2198,31 @@ async function sendMessage({ forceImage = false } = {}) {
   const input = $('#aiChatInput');
   const content = input.value.trim();
   const chat = activeConversation();
-  if (!content || !chat) return;
+  const attachments = forceImage ? [] : pendingMedia.map(item => ({ ...item }));
+  if ((!content && !attachments.length) || !chat || mediaUploading) return;
+  if (forceImage && pendingMedia.length) return showToast('生图和媒体理解是两个独立操作，请先发送或移除附件', 'info');
+  const model = activeConversationModel();
+  const modelMeta = aiModelMeta(model);
+  if (!modelMeta || modelMeta.unavailable) return showToast('当前模型已不可用，请重新选择模型', 'error');
+  const conversationAttachments = [...attachments, ...chat.messages.flatMap(message => message.attachments || [])];
+  const needsVideo = conversationAttachments.some(item => item.kind === 'video' || String(item.mimeType || '').startsWith('video/'));
+  const needsImage = conversationAttachments.some(item => !item.kind || item.kind === 'image' || String(item.mimeType || '').startsWith('image/'));
+  if ((needsImage && !modelMeta.inputModalities?.includes('image')) || (needsVideo && !modelMeta.inputModalities?.includes('video'))) {
+    return showToast(`${aiModelLabel(model)} 不支持当前会话中的附件类型，请新建对话或选择兼容模型`, 'error');
+  }
 
   if (settings.diaryContextEnabled) chat.diarySensitive = true;
-  chat.messages.push({ role: 'user', content, createdAt: Date.now() });
-  if (chat.title === '新对话') chat.title = conversationTitleFrom(content);
+  const userMessage = { role: 'user', content, createdAt: Date.now() };
+  if (attachments.length) userMessage.attachments = attachments;
+  chat.messages.push(userMessage);
+  if (chat.title === '新对话') chat.title = conversationTitleFrom(content || attachments.map(item => item.name).join('、'));
   if (chat.messages.length > MAX_MESSAGES) chat.messages = chat.messages.slice(-MAX_MESSAGES);
   chat.updatedAt = Date.now();
   input.value = '';
+  if (attachments.length) {
+    pendingMedia = [];
+    renderPendingMedia();
+  }
   if (forceImage) {
     const prompt = imagePromptFrom(content);
     const assistantMessage = {
@@ -1782,10 +2292,7 @@ async function sendMessage({ forceImage = false } = {}) {
     announceAiStatus(err.cancelled ? '已取消全量日志分析' : `AI 对话失败：${err.message}`);
     const last = chat.messages.at(-1);
     if (last?.streaming) {
-      delete last.streaming;
-      if (!last.content) last.content = `请求失败：${err.message}`;
-    } else if (!err.cancelled) {
-      chat.messages.push({ role: 'assistant', content: `请求失败：${err.message}`, createdAt: Date.now() });
+      chat.messages.pop();
     }
     chat.updatedAt = Date.now();
     await saveConversations();
@@ -1819,14 +2326,18 @@ export function hideAiChatView() {
 }
 
 export async function initAiChat() {
-  await Promise.all([loadSettings(), loadConversations(), loadAccessCategories()]);
+  await loadSettings();
+  await Promise.all([loadConversations(), loadAccessCategories()]);
+  await loadModels({ quiet: true });
   await loadSkills();
   const historyContextMenu = $('#aiHistoryContextMenu');
   if (historyContextMenu && historyContextMenu.parentElement !== document.body) document.body.appendChild(historyContextMenu);
   initAiSettingsSelectControls();
   updateSettingsButton();
+  syncChatModelSwitcherUi();
   syncWebSearchToggleUi();
   renderMessages();
+  renderPendingMedia();
   updateSendState();
   syncAiSettingsSelectControls();
 
@@ -1879,6 +2390,8 @@ export async function initAiChat() {
     }
     switchConversation(item.dataset.id);
   });
+  $('#aiModelSelect')?.addEventListener('change', syncModelSettingsUi);
+  $('#aiReasoningMode')?.addEventListener('change', syncModelSettingsUi);
   $('#aiSidebarHistoryList').addEventListener('keydown', (event) => {
     const trigger = event.target.closest('.ai-history-more');
     if (!trigger || !['ArrowDown', 'ArrowUp'].includes(event.key)) return;
@@ -1928,7 +2441,52 @@ export async function initAiChat() {
   });
   $('#btnAiSend').addEventListener('click', sendMessage);
   $('#btnAiImage')?.addEventListener('click', () => sendMessage({ forceImage: true }));
+  $('#btnAiAttach')?.addEventListener('click', () => $('#aiMediaInput')?.click());
+  $('#aiMediaInput')?.addEventListener('change', (event) => uploadAiMediaFiles(event.target.files || []));
+  $('#aiMediaDrafts')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action="remove-ai-media"]');
+    const draft = button?.closest('[data-media-id]');
+    if (draft) removePendingMedia(draft.dataset.mediaId);
+  });
   $('#btnAiSkill')?.addEventListener('click', toggleSkillPicker);
+  $('#btnAiChatModel')?.addEventListener('click', () => openModelPicker('conversation'));
+  $('#btnAiDefaultModel')?.addEventListener('click', () => openModelPicker('default'));
+  $('#btnAiModelPickerClose')?.addEventListener('click', () => closeModelPicker());
+  $('#aiModelPickerOverlay')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeModelPicker();
+  });
+  $('#aiModelPickerSearch')?.addEventListener('input', (event) => {
+    modelPickerQuery = event.target.value;
+    renderModelPicker();
+  });
+  $('#aiModelPickerSearch')?.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      $('#aiModelPickerList')?.querySelector('.ai-model-option:not(:disabled)')?.focus();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeModelPicker();
+    }
+  });
+  $('#aiModelPickerList')?.addEventListener('click', (event) => {
+    const option = event.target.closest('[data-model-id]');
+    if (option && !option.disabled) chooseModelFromPicker(option.dataset.modelId);
+  });
+  $('#aiModelPickerList')?.addEventListener('keydown', (event) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'Escape'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'Escape') return closeModelPicker();
+    const options = [...event.currentTarget.querySelectorAll('.ai-model-option:not(:disabled)')];
+    if (!options.length) return;
+    if (event.key === 'Home') return options[0].focus();
+    if (event.key === 'End') return options.at(-1).focus();
+    const current = options.indexOf(document.activeElement);
+    const next = event.key === 'ArrowDown'
+      ? Math.min(options.length - 1, current + 1)
+      : Math.max(0, current < 0 ? 0 : current - 1);
+    options[next].focus();
+  });
+  $('#aiChatModelSelect')?.addEventListener('change', switchChatModel);
   $('#aiChatWebSearchToggle')?.addEventListener('change', async (event) => {
     const previous = Boolean(settings.webSearchEnabled);
     settings.webSearchEnabled = event.target.checked;
@@ -1973,12 +2531,18 @@ export async function initAiChat() {
     if (Number.isInteger(index)) copyMessageByIndex(index);
   });
   $('#aiChatMessages').addEventListener('dblclick', (event) => {
+    const mediaPreview = event.target.closest('[data-ai-media-preview]');
+    if (mediaPreview) {
+      event.preventDefault();
+      return openAiImagePreview(mediaPreview.src, mediaPreview.alt || 'AI 图片附件');
+    }
     const preview = event.target.closest('.ai-image-preview[data-action="open-image-preview"]');
     if (!preview) return;
     event.preventDefault();
     openAiImagePreview(preview.dataset.previewUrl || preview.src, preview.alt || 'AI 生成图片');
   });
   $('#aiChatInput').addEventListener('input', updateSendState);
+  $('#aiChatInput').addEventListener('paste', handleAiChatPaste);
   $('#aiChatInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -1992,5 +2556,6 @@ export async function initAiChat() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !$('#aiHistoryContextMenu')?.hidden) closeHistoryMenu({ restoreFocus: true });
+    if (event.key === 'Escape' && $('#aiModelPickerOverlay')?.style.display !== 'none') closeModelPicker();
   });
 }

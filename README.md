@@ -1,6 +1,6 @@
 # Work Log
 
-本地优先、支持多账户隔离的工作日志、待办、倒数日、照片墙和 AI 辅助应用。它使用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类与日历、重复待办、账户级备份、图片上传，以及可选的 DeepSeek、Tavily、Perplexity、Seedream 和 WeStock 能力。
+本地优先、支持多账户隔离的工作日志、待办、倒数日、照片墙和 AI 辅助应用。它使用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类与日历、重复待办、账户级备份、图片上传，以及可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream 和 WeStock 能力。
 
 更新记录见 [ChangeLog.md](ChangeLog.md)。
 
@@ -54,6 +54,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 - 待办页新增“倒数日”模式，支持一次性/每年重复日期、搜索、动态统计、跨年和闰年计算。
 - 日志卡片新增分类内置顶；图片在日志卡片、详情预览和 AI 对话中支持双击放大。
 - AI 历史和配置按账户持久化，新成员不会继承旧管理员的服务器级 AI Key。
+- AI 对话新增 Kimi K3、K2.7 Code、K2.6，支持图片/视频理解与实验性 Kimi Formula 联网。
 - 完整变更见 [ChangeLog.md](ChangeLog.md)。
 
 ## Main Areas
@@ -132,7 +133,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 ## AI
 
-AI 设置、API Key 和历史会话保存在当前账户的数据目录，不会写入前端源码，也不会与其它账户共享。旧管理员可继续使用 `.env` 中的服务端回退 Key；新账户需要在各自的 AI 设置中配置 Key。
+AI 设置、加密后的 API Key 和历史会话保存在当前账户的数据目录，不会写入前端源码，也不会与其它账户共享。旧管理员可继续使用 `.env` 中的服务端回退 Key；新账户需要在各自的 AI 设置中配置 Key。
 
 ### 独立 AI 对话
 
@@ -145,7 +146,14 @@ AI 设置、API Key 和历史会话保存在当前账户的数据目录，不会
 - 新对话空白态会从精选名句池中按日期稳定轮换一句；扩展池仍保留 1000 条公版古典诗词。
 - 长对话由消息容器自身滚动，发送后会自动滚到底部；不再依赖页面级 `overflow: hidden` 顶住布局。
 - AI 设置是独立页面，包含基础设置、访问设置、生图设置和技能设置。
-- 支持 DeepSeek 模型、思考强度、流式输出、Tavily/Perplexity 联网搜索、WeStock 数据技能和 Seedream 生图设置。
+- 支持 DeepSeek、Kimi 直连模型和当前账户 OpenRouter Key 可访问的文本模型。OpenRouter 目录动态读取并缓存，模型选择器可按名称或完整 `author/model` ID 搜索。
+- 每个对话独立保存当前模型；新对话继承账户默认模型，在同一对话中切换供应商仍会保留可见历史上下文。
+- 模型选择器展示来源、上下文长度、图片/视频能力和每百万 Token 价格；服务端会再次确认模型存在于当前账户目录，客户端不能指定供应商地址或 Base URL。
+- 支持隐藏思考内容、流式输出、Tavily/Perplexity 联网搜索、WeStock 数据技能和 Seedream 生图设置。
+- Kimi K3 固定最高推理；K2.7 Code 固定开启并保留思考；K2.6 可选择开启并保留思考或关闭。
+- 独立对话与日志内 AI 均可附加图片或视频。附件按账户保存到 `ai-media/`，元数据保存到 `ai-media.json`；Kimi 每条消息最多 4 个、合计 100MB。
+- OpenRouter 附件每条消息最多 4 个、原文件合计 25MB；单图不超过 10MB，单视频不超过 25MB，并且只有模型目录声明对应输入模态时才允许发送。
+- 图片附件可双击放大，视频使用原生播放器。DeepSeek 不接收媒体，包含媒体的会话需要继续使用兼容的 Kimi/OpenRouter 模型或新建对话。
 - 普通发送默认只处理用户输入的对话内容；开启日志访问后，会按访问设置读取允许的日志分类和子分类。
 - AI 回答中的 `[日志标题](#log/id)` 本地链接可点击打开对应日志。
 
@@ -163,7 +171,7 @@ AI 设置、API Key 和历史会话保存在当前账户的数据目录，不会
 
 - 独立 AI 对话和日志内 AI 输入框都有显式 `生图` 按钮。
 - 只有点击 `生图` 才进入图片生成流程；普通发送不会通过关键词自动识别生图意图。
-- 生图会先用 DeepSeek 优化 prompt，然后展示确认卡片。
+- 生图会先用当前选择的文本模型优化 prompt，然后展示确认卡片。
 - 确认卡片可在原始 prompt 和优化 prompt 之间切换。
 - 点击生成后调用 Seedream，图片会下载到本地 `uploads/`，再返回本地 Markdown 链接。
 - 独立 AI 对话中的生成结果可双击图片放大查看；单击图片不触发动作。
@@ -177,6 +185,11 @@ AI 设置、API Key 和历史会话保存在当前账户的数据目录，不会
 - Tavily 和 Perplexity 可以同时开启；搜索结果会合并，单个搜索源失败不会阻断 AI 回复。
 - Perplexity 自动搜索使用用户原问题，仅做空白清理和长度限制，不由模型改写 query。
 - 回复下方会显示来源链接，并标明 `tavily` 或 `perplexity`。
+- “Kimi 官方联网（实验）”开启后，Kimi 会改用官方 Formula `moonshot/web-search:latest`，并跳过 Tavily/Perplexity，避免重复检索和计费。
+- K3 会在首轮强制联网；K2.7 Code 与开启思考的 K2.6 只能由模型自动判断是否搜索。Formula 失败不会自动降级，也不会返回残缺回答。
+- Formula 当前处于实验/升级阶段，可能限流或产生额外费用，不建议作为唯一的生产搜索链路。其加密上下文只在隐藏的供应商续传数据中使用，不显示、复制或进入备份。
+- OpenRouter 模型开启联网时使用官方 `openrouter:web_search` Beta 工具，基础/高级搜索分别最多取 5/10 个结果，并把 `url_citation` 映射为来源链接；不会预先调用或失败后回退 Tavily/Perplexity。
+- OpenRouter 默认请求零数据保留端点（ZDR）；关闭该账户设置后才允许普通路由。ZDR 可能减少当前模型的可用供应商。
 
 ### 技能
 
@@ -198,6 +211,10 @@ AI 设置、API Key 和历史会话保存在当前账户的数据目录，不会
 | `DEEPSEEK_API_KEY` | 旧管理员工作区可使用的服务端 DeepSeek 回退 Key | empty |
 | `DEEPSEEK_BASE_URL` | DeepSeek API 基础地址 | `https://api.deepseek.com` |
 | `DEEPSEEK_DEFAULT_MODEL` | 默认 DeepSeek 模型 | `deepseek-v4-flash` |
+| `MOONSHOT_API_KEY` | 旧管理员工作区可使用的服务端 Moonshot 回退 Key | empty |
+| `MOONSHOT_BASE_URL` | Moonshot API 基础地址 | `https://api.moonshot.cn/v1` |
+| `OPENROUTER_API_KEY` | 旧管理员工作区可使用的服务端 OpenRouter 回退 Key | empty |
+| `AI_SECRETS_KEY_FILE` | 账户 AI Key 的 AES-256-GCM 主密钥文件路径；留空使用系统配置目录 | platform default |
 | `TAVILY_API_KEY` | 旧管理员工作区可使用的服务端 Tavily 回退 Key | empty |
 | `TAVILY_BASE_URL` | Tavily API 基础地址 | `https://api.tavily.com` |
 | `PERPLEXITY_API_KEY` | 旧管理员工作区可使用的服务端 Perplexity 回退 Key | empty |
@@ -255,8 +272,10 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 | `todo-reminder-state.json` | 当天提醒快照、发送状态和错误信息 |
 | `categories.json` | 父分类、子分类和日历显示设置 |
 | `photo-wall.json` | 照片墙图片节点、位置、尺寸、评论和层级 |
-| `ai-settings.json` | AI、Tavily、Perplexity、Seedream、WeStock 设置和本地 API Key |
+| `ai-settings.json` | DeepSeek、Moonshot、OpenRouter、Tavily、Perplexity、Seedream、WeStock 设置和 AES-256-GCM 加密后的账户 API Key |
 | `ai-chats.json` | 独立 AI 和日志内 AI 历史 |
+| `ai-media.json` | AI 图片/视频附件元数据、会话引用和 Moonshot 文件映射 |
+| `ai-media/` | AI 对话上传的图片和视频本地副本 |
 | `private-uploads.json` | 日记保护图片标记 |
 | `uploads/` | 上传图片和生成图片 |
 | `accounts/<UUID>/` | 新账户的独立工作区数据和上传目录 |
@@ -267,11 +286,16 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 - 管理员接口只返回账户元数据，不提供成员日志、统计、AI 历史、备份或进入成员工作区的接口。
 - 相同记录 ID 或相同上传文件名只在各自账户目录内解析，不能跨账户读取、修改或删除。
 - 新账户不会继承旧管理员的服务端 AI Key；每个账户可在自己的 AI 设置中保存独立 Key。
+- 账户 AI Key 使用随机 nonce 的 AES-256-GCM 加密，认证附加数据绑定账户和字段。主密钥默认位于 Windows `%LOCALAPPDATA%\work-log\ai-secrets.key` 或其它系统的用户配置目录；发现加密数据但主密钥丢失/错误时服务会拒绝启动。
+- 迁移机器时必须将主密钥文件通过独立安全渠道一并复制；它不会进入工作区 JSON 备份，也不应提交到仓库。
 - 后端 AI 聊天接口只有在用户开启日志访问时，才会按访问设置读取允许的日志分类和子分类。
 - 日记内容还需要同时满足“允许 AI 访问日记内容”和日记已解锁。
 - 独立 AI 对话可使用允许范围内的日志上下文，并提示模型用 `#log/id` 返回本地日志链接。
 - 日志内 AI 只使用前端主动发送的当前日志上下文，不会额外读取其它日志。
 - Tavily 和 Perplexity 搜索只接收用户问题，不接收日志全文。
+- Kimi 官方联网开启后，查询及工具上下文会发送给 Moonshot Formula；该实验能力不会自动回退到其它搜索服务。
+- OpenRouter 官方联网开启后，当前问题会交给 OpenRouter Web Search Beta 工具；引用链接来自上游 annotations，失败不会切换供应商。
+- AI 图片和视频按账户保存在 `ai-media/`，只通过已认证的媒体接口预览；发送给 Kimi 时上传至 Moonshot Files API，发送给 OpenRouter 时从私有本地副本生成 Data URL。
 - 日记解锁 Cookie 同时绑定账户 ID；另一个账户即使携带相同 Cookie 值也不能解锁。
 - `.env` 和 `data/` 已在 `.gitignore` 中排除，提交前仍建议用 `git status` 检查。
 
@@ -279,7 +303,9 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 
 - JSON 备份只包含当前账户的日志、待办、倒数日、分类、照片墙和私有上传标记。
 - 备份不包含 `users.json`、密码哈希、会话或其它账户的数据。
-- 上传图片和生成图片文件本身位于当前账户的 `uploads/`，需要额外备份。
+- 上传图片、生成图片及 AI 媒体二进制分别位于当前账户的 `uploads/` 和 `ai-media/`，需要额外备份。
+- AI 对话历史、AI 设置、AI 媒体元数据和 Moonshot 远端文件映射不在现有 JSON 备份范围内。
+- AI 主密钥文件从不进入 JSON 备份；迁移部署时必须单独安全备份和恢复。
 - 启用日记锁后，备份和恢复需要先解锁日记。
 - 恢复支持替换和合并；不含倒数日、置顶字段等新字段的旧备份继续兼容。
 - 所有备份与恢复接口都要求当前账户的有效 Cookie 会话。
@@ -364,12 +390,16 @@ http://<电脑局域网 IP>:<PORT>
 | `POST` | `/api/restore` | 恢复 JSON 备份 |
 | `GET` | `/api/ai/settings` | 读取 AI 设置 |
 | `PUT` | `/api/ai/settings` | 保存 AI 设置 |
+| `GET` | `/api/ai/models` | 获取当前账户可用的直连与 OpenRouter 模型目录 |
 | `GET` | `/api/ai/skills` | 获取可手动选择的 AI 技能 |
 | `POST` | `/api/ai/skills/:skill/run` | 确认执行 AI 技能工具 |
 | `GET` | `/api/ai/conversations` | 读取 AI 历史 |
 | `PUT` | `/api/ai/conversations` | 保存 AI 历史 |
 | `POST` | `/api/ai/chat` | 独立 AI 对话 |
 | `POST` | `/api/ai/editor` | 日志内 AI 建议 |
+| `POST` | `/api/ai/media` | 上传账户隔离的 AI 图片或视频附件 |
+| `GET` | `/api/ai/media/:id/content` | 认证预览 AI 媒体，视频支持 Range |
+| `DELETE` | `/api/ai/media/:id` | 删除未被会话引用的 AI 媒体 |
 | `POST` | `/api/ai/image/prompt` | 生图 prompt 优化 |
 | `POST` | `/api/ai/image/generate` | Seedream 生图并保存到本地 |
 

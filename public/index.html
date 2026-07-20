@@ -717,9 +717,14 @@
           <div class="editor-ai-messages" id="editorAiMessages" aria-live="polite"></div>
           <div class="editor-ai-composer">
             <label class="sr-only" for="editorAiInput">输入编辑器 AI 消息</label>
+            <div class="ai-media-drafts editor-ai-media-drafts" id="editorAiMediaDrafts" aria-live="polite"></div>
             <div class="editor-ai-input-shell">
               <textarea id="editorAiInput" placeholder="询问如何改写、总结、补充当前日志..." maxlength="4000"></textarea>
+              <input type="file" id="editorAiMediaInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/mpeg,video/quicktime,video/x-msvideo,video/x-flv,video/webm,video/x-ms-wmv,video/3gpp" multiple hidden>
               <div class="editor-ai-inline-actions">
+                <button class="editor-ai-round-action editor-ai-attach-action" id="btnEditorAiAttach" type="button" aria-label="添加图片或视频" title="添加图片或视频">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m8.5 12.5 6.7-6.7a3.2 3.2 0 0 1 4.5 4.5l-8.8 8.8a5 5 0 0 1-7.1-7.1l8.5-8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m7 14 7.8-7.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                </button>
                 <button class="editor-ai-round-action editor-ai-image-action" id="btnEditorAiImage" type="button" disabled aria-label="生成图片" title="生成图片">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="3" stroke="currentColor" stroke-width="1.9"/><circle cx="8.5" cy="10" r="1.3" fill="currentColor"/><path d="M20.5 15l-4.3-4.3a1.3 1.3 0 0 0-1.9 0L9.4 16l-2-2-3.9 4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </button>
@@ -744,10 +749,19 @@
         <div class="ai-chat-composer">
           <label class="sr-only" for="aiChatInput">输入 AI 对话消息</label>
           <div class="ai-skill-chip-row" id="aiSkillChipRow"></div>
+          <div class="ai-media-drafts" id="aiMediaDrafts" aria-live="polite"></div>
           <textarea id="aiChatInput" rows="1" placeholder="输入消息，Ctrl+Enter 发送..." maxlength="4000"></textarea>
+          <input type="file" id="aiMediaInput" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/mpeg,video/quicktime,video/x-msvideo,video/x-flv,video/webm,video/x-ms-wmv,video/3gpp" multiple hidden>
           <div class="ai-skill-picker" id="aiSkillPicker" hidden></div>
           <div class="ai-chat-composer-footer">
             <div class="ai-chat-composer-toggles">
+              <div class="ai-chat-model-switcher">
+                <select id="aiChatModelSelect" aria-hidden="true" tabindex="-1" hidden></select>
+                <button id="btnAiChatModel" type="button" aria-haspopup="dialog" title="切换当前对话模型">
+                  <span id="aiChatModelLabel">DeepSeek Flash</span>
+                </button>
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4.5 6 3.5 3.5L11.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
               <label class="ai-chat-web-toggle" for="aiChatWebSearchToggle" title="联网搜索（由 Tavily 提供）">
                 <input type="checkbox" id="aiChatWebSearchToggle" aria-label="联网搜索">
                 <span aria-hidden="true"></span>
@@ -756,6 +770,9 @@
               <span class="ai-chat-sending" id="aiChatSending" style="display:none;">发送中...</span>
             </div>
             <div class="ai-chat-composer-actions">
+              <button class="ai-round-action ai-attach-action" id="btnAiAttach" type="button" aria-label="添加图片或视频" title="添加图片或视频">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m8.5 12.5 6.7-6.7a3.2 3.2 0 0 1 4.5 4.5l-8.8 8.8a5 5 0 0 1-7.1-7.1l8.5-8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m7 14 7.8-7.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
               <button class="btn-secondary btn-ai-skill" id="btnAiSkill" type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="选择技能" title="选择技能">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="m12 3 1.85 5.05L19 9.9l-4.12 3.15L16.15 18 12 15.2 7.85 18l1.27-4.95L5 9.9l5.15-1.85L12 3Z"></path>
@@ -801,24 +818,60 @@
               <span>DeepSeek API Key</span>
               <input type="password" id="aiApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
             </label>
-            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiModelSelect">
-              <span>模型</span>
+            <label class="ai-settings-field" for="aiMoonshotApiKeyInput">
+              <span>Moonshot API Key</span>
+              <input type="password" id="aiMoonshotApiKeyInput" class="ai-key-input" placeholder="sk-..." autocomplete="off" spellcheck="false">
+            </label>
+            <label class="ai-settings-field" for="aiOpenRouterApiKeyInput">
+              <span>OpenRouter API Key</span>
+              <input type="password" id="aiOpenRouterApiKeyInput" class="ai-key-input" placeholder="sk-or-..." autocomplete="off" spellcheck="false">
+            </label>
+            <div class="ai-settings-field">
+              <span>默认模型</span>
               <label class="sr-only" for="aiModelSelect">模型</label>
-              <select id="aiModelSelect" class="ai-chat-select ai-native-select" title="AI 模型" tabindex="-1" aria-hidden="true">
-                <option value="deepseek-v4-flash">DeepSeek Flash</option>
-                <option value="deepseek-v4-pro">DeepSeek Pro</option>
-              </select>
-              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiModelSelectMenu">
-                <span class="ai-settings-select-value">DeepSeek Flash</span>
+              <select id="aiModelSelect" class="ai-native-select" tabindex="-1" aria-hidden="true" hidden></select>
+              <button class="ai-settings-select-trigger" id="btnAiDefaultModel" type="button" aria-haspopup="dialog">
+                <span class="ai-settings-select-value" id="aiDefaultModelLabel">DeepSeek Flash</span>
                 <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
               </button>
-              <div class="ai-settings-select-menu" id="aiModelSelectMenu" role="listbox" hidden></div>
             </div>
-            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiReasoningEffort">
+            <p class="ai-settings-hint" id="aiModelCapabilityHint"></p>
+            <div class="ai-settings-field ai-settings-select-control" data-ai-settings-select-control data-select-id="aiReasoningMode">
+              <span>思考模式</span>
+              <label class="sr-only" for="aiReasoningMode">思考模式</label>
+              <select id="aiReasoningMode" class="ai-chat-select ai-native-select" tabindex="-1" aria-hidden="true">
+                <option value="default">模型默认</option>
+                <option value="disabled">关闭</option>
+                <option value="effort">指定强度</option>
+              </select>
+              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiReasoningModeMenu">
+                <span class="ai-settings-select-value">指定强度</span>
+                <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="ai-settings-select-menu" id="aiReasoningModeMenu" role="listbox" hidden></div>
+            </div>
+            <div class="ai-settings-field ai-settings-select-control" id="aiThinkingModeField" data-ai-settings-select-control data-select-id="aiThinkingMode" hidden>
+              <span>K2.6 思考模式</span>
+              <label class="sr-only" for="aiThinkingMode">K2.6 思考模式</label>
+              <select id="aiThinkingMode" class="ai-chat-select ai-native-select" title="K2.6 思考模式" tabindex="-1" aria-hidden="true">
+                <option value="enabled">开启并保留</option>
+                <option value="disabled">关闭</option>
+              </select>
+              <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiThinkingModeMenu">
+                <span class="ai-settings-select-value">开启并保留</span>
+                <span class="ai-settings-select-caret" aria-hidden="true">⌄</span>
+              </button>
+              <div class="ai-settings-select-menu" id="aiThinkingModeMenu" role="listbox" hidden></div>
+            </div>
+            <div class="ai-settings-field ai-settings-select-control" id="aiReasoningEffortField" data-ai-settings-select-control data-select-id="aiReasoningEffort">
               <span>思考强度</span>
               <label class="sr-only" for="aiReasoningEffort">思考强度</label>
               <select id="aiReasoningEffort" class="ai-chat-select ai-native-select" title="思考强度" tabindex="-1" aria-hidden="true">
+                <option value="minimal">最低</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
                 <option value="high">高</option>
+                <option value="xhigh">很高</option>
                 <option value="max">最高</option>
               </select>
               <button class="ai-settings-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="aiReasoningEffortMenu">
@@ -856,6 +909,22 @@
                 <small>需同时开启日志访问；日记锁定时不会发送日记</small>
               </span>
               <input type="checkbox" id="aiDiaryContextToggle">
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="ai-settings-toggle" for="aiOpenRouterZdrToggle">
+              <span>
+                <strong>OpenRouter 零数据保留</strong>
+                <small>默认仅路由到 ZDR 端点；可能减少可用供应商</small>
+              </span>
+              <input type="checkbox" id="aiOpenRouterZdrToggle" checked>
+              <i aria-hidden="true"></i>
+            </label>
+            <label class="ai-settings-toggle" for="aiKimiWebSearchToggle">
+              <span>
+                <strong>Kimi 官方联网（实验）</strong>
+                <small>仅 Kimi 模型使用 Formula；可能限流或额外计费，失败时不会降级</small>
+              </span>
+              <input type="checkbox" id="aiKimiWebSearchToggle">
               <i aria-hidden="true"></i>
             </label>
             <div class="ai-access-panel-head">
@@ -983,7 +1052,7 @@
               </div>
             </div>
           </div>
-          <p class="ai-key-note">保存后写入本机数据目录的 ai-settings.json；API Key 不会写入日志数据。</p>
+          <p class="ai-key-note">API Key 使用本机主密钥加密后保存，不会返回前端、写入日志或工作区备份。</p>
         </div>
         <div class="ai-settings-actions">
           <button class="btn-secondary" id="btnAiApiKeyClear" type="button">清除 Key</button>
@@ -1072,6 +1141,23 @@
         <span class="log-link-hint">选择后会插入 [标题](#log/id)</span>
         <button class="btn-secondary" id="logLinkDone">完成</button>
       </div>
+    </div>
+  </div>
+
+  <!-- AI Model Picker -->
+  <div class="modal-overlay ai-model-picker-overlay" id="aiModelPickerOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="aiModelPickerTitle">
+    <div class="modal ai-model-picker-modal">
+      <div class="modal-header">
+        <div>
+          <h3 id="aiModelPickerTitle">选择模型</h3>
+          <p>模型来自直连供应商和当前账户的 OpenRouter 目录</p>
+        </div>
+        <button class="btn-icon" id="btnAiModelPickerClose" type="button" aria-label="关闭模型选择">×</button>
+      </div>
+      <label class="sr-only" for="aiModelPickerSearch">搜索模型名称或 ID</label>
+      <input class="ai-model-picker-search" id="aiModelPickerSearch" type="search" placeholder="搜索或粘贴模型 ID…" autocomplete="off" spellcheck="false">
+      <div class="ai-model-picker-summary" id="aiModelPickerSummary"></div>
+      <div class="ai-model-picker-list" id="aiModelPickerList" role="listbox" aria-label="可用 AI 模型"></div>
     </div>
   </div>
 
