@@ -8,6 +8,8 @@ data/
 .claude/
 .playwright-cli/
 .tmp/
+.tmp-*/
+.workbuddy/
 output/
 gen_images.py
 public/generated/
