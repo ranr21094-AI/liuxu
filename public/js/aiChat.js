@@ -50,6 +50,7 @@ let availableModels = Object.entries(DIRECT_AI_MODEL_LABELS).map(([id, name]) =>
 }));
 let modelPickerTarget = '';
 let modelPickerQuery = '';
+let editorModelPickerContext = { conversationId: '', selectedModelId: '' };
 let modelCatalogMeta = { configured: false, source: 'none', fetchedAt: null };
 let modelsRefreshing = false;
 let settings = {
@@ -793,7 +794,9 @@ function formatModelCatalogTime(value) {
 }
 
 function selectedModelForPicker() {
-  return modelPickerTarget === 'default' ? ($('#aiModelSelect')?.value || settings.model) : activeConversationModel();
+  if (modelPickerTarget === 'default') return $('#aiModelSelect')?.value || settings.model;
+  if (modelPickerTarget === 'editor') return editorModelPickerContext.selectedModelId || settings.model;
+  return activeConversationModel();
 }
 
 function renderModelPicker() {
@@ -859,12 +862,14 @@ function syncModelControls() {
 }
 
 function openModelPicker(target) {
-  modelPickerTarget = target === 'default' ? 'default' : 'conversation';
+  modelPickerTarget = target === 'default' ? 'default' : (target === 'editor' ? 'editor' : 'conversation');
   modelPickerQuery = '';
   const overlay = $('#aiModelPickerOverlay');
   const search = $('#aiModelPickerSearch');
   if (!overlay || !search) return;
-  $('#aiModelPickerTitle').textContent = modelPickerTarget === 'default' ? '选择默认模型' : '选择当前对话模型';
+  $('#aiModelPickerTitle').textContent = modelPickerTarget === 'default'
+    ? '选择默认模型'
+    : modelPickerTarget === 'editor' ? '选择日志对话模型' : '选择当前对话模型';
   search.value = '';
   renderModelPicker();
   overlay.style.display = 'flex';
@@ -874,8 +879,14 @@ function openModelPicker(target) {
 function closeModelPicker({ restoreFocus = true } = {}) {
   const overlay = $('#aiModelPickerOverlay');
   if (overlay) overlay.style.display = 'none';
-  if (restoreFocus) (modelPickerTarget === 'default' ? $('#btnAiDefaultModel') : $('#btnAiChatModel'))?.focus();
+  if (restoreFocus) {
+    const focusTarget = modelPickerTarget === 'default'
+      ? $('#btnAiDefaultModel')
+      : modelPickerTarget === 'editor' ? $('#btnEditorAiModel') : $('#btnAiChatModel');
+    focusTarget?.focus();
+  }
   modelPickerTarget = '';
+  editorModelPickerContext = { conversationId: '', selectedModelId: '' };
 }
 
 async function refreshModelsFromPicker() {
@@ -920,6 +931,15 @@ async function chooseModelFromPicker(modelId) {
     syncModelControls();
     syncModelSettingsUi();
     closeModelPicker();
+    return;
+  }
+  if (modelPickerTarget === 'editor') {
+    const conversationId = editorModelPickerContext.conversationId;
+    closeModelPicker({ restoreFocus: false });
+    document.dispatchEvent(new CustomEvent('editor-ai-model-selected', {
+      detail: { conversationId, model: { ...model } },
+    }));
+    requestAnimationFrame(() => $('#btnEditorAiModel')?.focus());
     return;
   }
   const chat = activeConversation();
@@ -2609,6 +2629,14 @@ export async function initAiChat() {
   $('#btnAiSkill')?.addEventListener('click', toggleSkillPicker);
   $('#btnAiChatModel')?.addEventListener('click', () => openModelPicker('conversation'));
   $('#btnAiDefaultModel')?.addEventListener('click', () => openModelPicker('default'));
+  document.addEventListener('editor-ai-model-picker-request', (event) => {
+    const detail = event.detail || {};
+    editorModelPickerContext = {
+      conversationId: typeof detail.conversationId === 'string' ? detail.conversationId : '',
+      selectedModelId: isAiModelId(detail.modelId) ? detail.modelId : settings.model,
+    };
+    openModelPicker('editor');
+  });
   $('#btnAiModelRefresh')?.addEventListener('click', refreshModelsFromPicker);
   $('#btnAiModelPickerClose')?.addEventListener('click', () => closeModelPicker());
   $('#aiModelPickerOverlay')?.addEventListener('click', (event) => {

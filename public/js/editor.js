@@ -57,6 +57,9 @@ const editorAiHistoryList = $('#editorAiHistoryList');
 const btnCloseEditorAiPanel = $('#btnCloseEditorAiPanel');
 const editorAiBackdrop = $('#editorAiBackdrop');
 const editorAiScopeLabel = $('#editorAiScopeLabel');
+const editorAiDragHandle = $('#editorAiDragHandle');
+const btnEditorAiModel = $('#btnEditorAiModel');
+const editorAiModelLabelEl = $('#editorAiModelLabel');
 const editorAiConversationMeta = $('#editorAiConversationMeta');
 const editorAiRenameOverlay = $('#editorAiRenameOverlay');
 const editorAiRenameInput = $('#editorAiRenameInput');
@@ -84,6 +87,10 @@ function renderEditorFullscreenButton(enabled) {
 // Editor-internal state
 const EDITOR_TAB_STORAGE_KEY = 'editorTabMode';
 const AI_CONVERSATIONS_ENDPOINT = '/api/ai/conversations';
+const AI_SETTINGS_ENDPOINT = '/api/ai/settings';
+const AI_MODELS_ENDPOINT = '/api/ai/models';
+const DEFAULT_EDITOR_AI_MODEL = 'deepseek-v4-flash';
+const EDITOR_AI_WINDOW_POSITION_KEY = 'editorAiWindowPosition';
 const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';
 const DEFAULT_SEEDREAM_SIZE = '2K';
 const EDITOR_AI_MAX_MESSAGES = 20;
@@ -108,6 +115,24 @@ const editorAiPendingByConversationId = new Set();
 let editorAiRenameConversationId = '';
 let editorAiPendingMedia = [];
 let editorAiMediaUploading = false;
+let editorAiModelsLoadedAt = 0;
+let editorAiModels = [
+  { id: 'deepseek-v4-flash', name: 'DeepSeek Flash', source: 'direct', provider: 'deepseek', inputModalities: ['text'], reasoning: { supported: true, supportedEfforts: ['high', 'max'], defaultEffort: 'high', mandatory: false } },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek Pro', source: 'direct', provider: 'deepseek', inputModalities: ['text'], reasoning: { supported: true, supportedEfforts: ['high', 'max'], defaultEffort: 'high', mandatory: false } },
+  { id: 'kimi-k3', name: 'Kimi K3', source: 'direct', provider: 'moonshot', inputModalities: ['text', 'image', 'video'], reasoning: { supported: true, supportedEfforts: ['max'], defaultEffort: 'max', mandatory: true } },
+  { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', source: 'direct', provider: 'moonshot', inputModalities: ['text', 'image', 'video'], reasoning: { supported: true, supportedEfforts: [], mandatory: true } },
+  { id: 'kimi-k2.6', name: 'Kimi K2.6', source: 'direct', provider: 'moonshot', inputModalities: ['text', 'image', 'video'], reasoning: { supported: true, supportedEfforts: [], mandatory: false } },
+];
+let editorAiSettings = {
+  model: DEFAULT_EDITOR_AI_MODEL,
+  reasoningMode: 'effort',
+  reasoningEffort: 'high',
+  thinkingMode: 'enabled',
+  apiKeyConfigured: false,
+  moonshotApiKeyConfigured: false,
+  openrouterApiKeyConfigured: false,
+};
+let editorAiDragState = null;
 const EDITOR_SELECT_IDS = ['editCategory', 'editSubcategory'];
 
 function invalidateEditorRequests() {
@@ -132,6 +157,94 @@ function syncEditorDrawerBackdrop() {
   const mobileAiOverlay = isMobile && isEditorAiPanelOpen();
   const open = mobileOutlineOverlay || mobileAiOverlay;
   editorAiBackdrop.hidden = !open;
+}
+
+function isDesktopEditorAiWindow() {
+  return Boolean(window.matchMedia && window.matchMedia('(min-width: 769px)').matches);
+}
+
+function readEditorAiWindowPosition() {
+  try {
+    const value = JSON.parse(localStorage.getItem(EDITOR_AI_WINDOW_POSITION_KEY) || 'null');
+    return Number.isFinite(value?.left) && Number.isFinite(value?.top) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function clampEditorAiWindowPosition(left, top) {
+  const rect = editorAiPanel.getBoundingClientRect();
+  const margin = 12;
+  return {
+    left: Math.min(Math.max(margin, left), Math.max(margin, window.innerWidth - rect.width - margin)),
+    top: Math.min(Math.max(margin, top), Math.max(margin, window.innerHeight - rect.height - margin)),
+  };
+}
+
+function positionEditorAiWindow({ useSaved = true } = {}) {
+  if (!editorAiPanel) return;
+  if (!isDesktopEditorAiWindow()) {
+    editorAiPanel.style.removeProperty('left');
+    editorAiPanel.style.removeProperty('top');
+    editorAiPanel.style.removeProperty('right');
+    editorAiPanel.style.removeProperty('bottom');
+    return;
+  }
+  const rect = editorAiPanel.getBoundingClientRect();
+  const saved = useSaved ? readEditorAiWindowPosition() : null;
+  const desiredLeft = saved?.left ?? (window.innerWidth - rect.width - 24);
+  const desiredTop = saved?.top ?? Math.max(24, Math.round((window.innerHeight - rect.height) / 2));
+  const next = clampEditorAiWindowPosition(desiredLeft, desiredTop);
+  editorAiPanel.style.left = `${Math.round(next.left)}px`;
+  editorAiPanel.style.top = `${Math.round(next.top)}px`;
+  editorAiPanel.style.right = 'auto';
+  editorAiPanel.style.bottom = 'auto';
+}
+
+function saveEditorAiWindowPosition() {
+  if (!isDesktopEditorAiWindow()) return;
+  const rect = editorAiPanel.getBoundingClientRect();
+  try {
+    localStorage.setItem(EDITOR_AI_WINDOW_POSITION_KEY, JSON.stringify({ left: Math.round(rect.left), top: Math.round(rect.top) }));
+  } catch {}
+}
+
+function resetEditorAiWindowPosition() {
+  try { localStorage.removeItem(EDITOR_AI_WINDOW_POSITION_KEY); } catch {}
+  positionEditorAiWindow({ useSaved: false });
+}
+
+function startEditorAiWindowDrag(event) {
+  if (!isDesktopEditorAiWindow() || event.button !== 0 || event.target.closest('button, input, textarea, a, [role="button"]')) return;
+  const rect = editorAiPanel.getBoundingClientRect();
+  editorAiDragState = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+  };
+  editorAiPanel.classList.add('is-dragging');
+  editorAiDragHandle.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+}
+
+function moveEditorAiWindow(event) {
+  if (!editorAiDragState || editorAiDragState.pointerId !== event.pointerId) return;
+  const next = clampEditorAiWindowPosition(
+    event.clientX - editorAiDragState.offsetX,
+    event.clientY - editorAiDragState.offsetY,
+  );
+  editorAiPanel.style.left = `${Math.round(next.left)}px`;
+  editorAiPanel.style.top = `${Math.round(next.top)}px`;
+  editorAiPanel.style.right = 'auto';
+  editorAiPanel.style.bottom = 'auto';
+}
+
+function endEditorAiWindowDrag(event) {
+  if (!editorAiDragState || editorAiDragState.pointerId !== event.pointerId) return;
+  try { editorAiDragHandle.releasePointerCapture?.(event.pointerId); } catch {}
+  editorAiDragState = null;
+  editorAiPanel.classList.remove('is-dragging');
+  saveEditorAiWindowPosition();
 }
 
 function setOutlinePanelOpen(open, { closeAi = true } = {}) {
@@ -304,8 +417,129 @@ function normalizeEditorAiConversations(items) {
         ...item,
         scope: item.scope === 'editor' ? 'editor' : 'global',
         logKey: typeof item.logKey === 'string' ? item.logKey : '',
+        model: isEditorAiModelId(item.model) ? item.model : '',
       }))
     : [];
+}
+
+function isEditorAiModelId(value) {
+  return typeof value === 'string' && value.length <= 200 && (
+    ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'].includes(value) ||
+    /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._:+-]{0,119}$/i.test(value)
+  );
+}
+
+function normalizeEditorAiModel(value) {
+  if (!value || !isEditorAiModelId(value.id) || typeof value.name !== 'string') return null;
+  return {
+    ...value,
+    name: value.name.trim().slice(0, 160) || value.id,
+    source: value.source === 'openrouter' ? 'openrouter' : 'direct',
+    provider: typeof value.provider === 'string' ? value.provider : '',
+    inputModalities: Array.isArray(value.inputModalities) ? value.inputModalities.filter(item => typeof item === 'string') : ['text'],
+    reasoning: value.reasoning && typeof value.reasoning === 'object'
+      ? value.reasoning
+      : { supported: false, supportedEfforts: [], mandatory: false },
+  };
+}
+
+function editorAiModelMeta(modelId) {
+  return editorAiModels.find(model => model.id === modelId) || null;
+}
+
+function activeEditorAiModel(chat = activeEditorAiConversation()) {
+  if (isEditorAiModelId(chat?.model)) return chat.model;
+  return isEditorAiModelId(editorAiSettings.model) ? editorAiSettings.model : DEFAULT_EDITOR_AI_MODEL;
+}
+
+function syncEditorAiModelControl() {
+  if (!btnEditorAiModel || !editorAiModelLabelEl) return;
+  const chat = activeEditorAiConversation();
+  const modelId = activeEditorAiModel(chat);
+  const model = editorAiModelMeta(modelId);
+  const label = model?.name || editorAiModelLabel(modelId);
+  editorAiModelLabelEl.textContent = label;
+  btnEditorAiModel.title = `下一条消息使用 ${label}（${modelId}）`;
+  btnEditorAiModel.setAttribute('aria-label', `切换当前日志对话模型，当前为 ${label}`);
+  btnEditorAiModel.disabled = isEditorAiConversationPending(chat.id);
+  btnEditorAiModel.closest('.editor-ai-model-switcher')?.setAttribute('data-provider', model?.provider || '');
+}
+
+async function loadEditorAiModelContext({ forceModels = false, quiet = true } = {}) {
+  const shouldLoadModels = forceModels || !editorAiModelsLoadedAt || Date.now() - editorAiModelsLoadedAt > 10 * 60 * 1000;
+  try {
+    const [settingsResponse, modelsResponse] = await Promise.all([
+      apiFetch(AI_SETTINGS_ENDPOINT),
+      shouldLoadModels ? apiFetch(AI_MODELS_ENDPOINT) : Promise.resolve(null),
+    ]);
+    const nextSettings = await settingsResponse.json().catch(() => ({}));
+    if (!settingsResponse.ok) throw new Error(nextSettings.error || 'AI 设置加载失败');
+    editorAiSettings = { ...editorAiSettings, ...nextSettings };
+    if (modelsResponse) {
+      const data = await modelsResponse.json().catch(() => ({}));
+      if (!modelsResponse.ok) throw new Error(data.error || '模型目录加载失败');
+      const models = Array.isArray(data.models) ? data.models.map(normalizeEditorAiModel).filter(Boolean) : [];
+      if (models.length) editorAiModels = models;
+      editorAiModelsLoadedAt = Date.now();
+    }
+    syncEditorAiModelControl();
+    return true;
+  } catch (err) {
+    if (!quiet) showToast('模型目录加载失败：' + err.message, 'error');
+    console.warn('Failed to load editor AI model context:', err);
+    syncEditorAiModelControl();
+    return false;
+  }
+}
+
+function editorAiRequestOptions(chat) {
+  const model = activeEditorAiModel(chat);
+  const reasoning = editorAiModelMeta(model)?.reasoning || {};
+  let reasoningMode = editorAiSettings.reasoningMode || 'effort';
+  let reasoningEffort = editorAiSettings.reasoningEffort || 'high';
+  if (reasoningMode === 'disabled' && (reasoning.supported === false || reasoning.mandatory)) reasoningMode = 'default';
+  if (reasoningMode === 'effort') {
+    const efforts = Array.isArray(reasoning.supportedEfforts) ? reasoning.supportedEfforts : [];
+    if (!efforts.length) reasoningMode = 'default';
+    else if (!efforts.includes(reasoningEffort)) reasoningEffort = reasoning.defaultEffort || efforts[0];
+  }
+  return {
+    model,
+    thinkingMode: reasoningMode === 'disabled' ? 'disabled' : 'enabled',
+    reasoningMode,
+    reasoningEffort,
+  };
+}
+
+async function openEditorAiModelPicker() {
+  await loadEditorAiModelContext({ quiet: true });
+  const chat = activeEditorAiConversation();
+  document.dispatchEvent(new CustomEvent('editor-ai-model-picker-request', {
+    detail: { conversationId: chat.id, modelId: activeEditorAiModel(chat) },
+  }));
+}
+
+async function selectEditorAiModel(event) {
+  const detail = event.detail || {};
+  const model = normalizeEditorAiModel(detail.model);
+  const chat = findEditorAiConversationById(detail.conversationId);
+  if (!model || !chat || chat.id !== editorAiActiveConversationId || isEditorAiConversationPending(chat.id)) return;
+  const previousModel = chat.model;
+  chat.model = model.id;
+  chat.updatedAt = Date.now();
+  const existingIndex = editorAiModels.findIndex(item => item.id === model.id);
+  if (existingIndex >= 0) editorAiModels[existingIndex] = model;
+  else editorAiModels.push(model);
+  syncEditorAiModelControl();
+  if (!await saveEditorAiConversations()) {
+    chat.model = previousModel;
+    syncEditorAiModelControl();
+    return;
+  }
+  const missingKey = model.source === 'openrouter'
+    ? !editorAiSettings.openrouterApiKeyConfigured
+    : model.provider === 'moonshot' ? !editorAiSettings.moonshotApiKeyConfigured : !editorAiSettings.apiKeyConfigured;
+  showToast(missingKey ? `已切换至 ${model.name}；请先配置对应 API Key` : `日志对话已切换至 ${model.name}`, missingKey ? 'info' : 'success');
 }
 
 function currentEditorLogKey() {
@@ -319,6 +553,7 @@ function createEditorAiConversation(logKey = currentEditorLogKey()) {
     title: label.slice(0, 40) || '日志对话',
     scope: 'editor',
     logKey,
+    model: isEditorAiModelId(editorAiSettings.model) ? editorAiSettings.model : DEFAULT_EDITOR_AI_MODEL,
     diarySensitive: getCategoryValue().startsWith('日记'),
     messages: [],
     updatedAt: Date.now(),
@@ -386,9 +621,11 @@ async function saveEditorAiConversations() {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || 'AI 历史保存失败');
     }
+    return true;
   } catch (err) {
     console.warn('Failed to save editor AI conversations:', err);
     showToast('AI 历史保存失败：' + err.message, 'error');
+    return false;
   }
 }
 
@@ -438,13 +675,14 @@ function editorImagePromptContext() {
   ].filter(Boolean).join('\n\n');
 }
 
-async function optimizeEditorImagePrompt(prompt) {
+async function optimizeEditorImagePrompt(prompt, requestOptions = {}) {
   const res = await apiFetch('/api/ai/image/prompt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
       context: editorImagePromptContext(),
+      ...requestOptions,
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -877,6 +1115,7 @@ function renderEditorAiMessages() {
   if (!editorAiMessages) return;
   const chat = activeEditorAiConversation();
   const isPending = isEditorAiConversationPending(chat.id);
+  syncEditorAiModelControl();
   editorAiScopeLabel.textContent = state.editingId ? `日志 #${state.editingId}` : '未保存草稿';
   if (editorAiConversationMeta) editorAiConversationMeta.textContent = `${chat.messages.length} 条消息`;
   if (!chat.messages.length) {
@@ -919,6 +1158,15 @@ function updateEditorAiSendState() {
   btnEditorAiSend.disabled = disabled;
   if (btnEditorAiImage) btnEditorAiImage.disabled = isPending || editorAiMediaUploading || !hasText || hasMedia;
   if (btnEditorAiAttach) btnEditorAiAttach.disabled = isPending || editorAiMediaUploading || editorAiPendingMedia.length >= 4;
+  syncEditorAiModelControl();
+}
+
+function resizeEditorAiInput() {
+  if (!editorAiInput) return;
+  editorAiInput.style.height = 'auto';
+  const height = Math.min(Math.max(editorAiInput.scrollHeight, 56), 112);
+  editorAiInput.style.height = `${height}px`;
+  editorAiInput.style.overflowY = editorAiInput.scrollHeight > 112 ? 'auto' : 'hidden';
 }
 
 async function setEditorAiPanelOpen(open, { closeOutline = true, focusInput = true } = {}) {
@@ -932,13 +1180,20 @@ async function setEditorAiPanelOpen(open, { closeOutline = true, focusInput = tr
   btnEditorAiPanel.setAttribute('aria-expanded', String(open));
   btnEditorAiPanel.title = open ? '收起编辑器 AI' : '打开编辑器 AI';
   syncEditorDrawerBackdrop();
-  if (open && !editorAiAllConversations.length) await loadEditorAiConversations();
+  if (open) {
+    await Promise.all([
+      editorAiAllConversations.length ? Promise.resolve() : loadEditorAiConversations(),
+      loadEditorAiModelContext({ quiet: true }),
+    ]);
+  }
   if (open) {
     renderEditorAiMessages();
     renderEditorAiHistory();
     updateEditorAiSendState();
     requestAnimationFrame(() => {
+      positionEditorAiWindow();
       contentEditor.layout();
+      resizeEditorAiInput();
       if (focusInput) editorAiInput.focus();
     });
   } else {
@@ -970,25 +1225,20 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
   if (forceImage && editorAiPendingMedia.length) return showToast('生图和媒体理解是两个独立操作，请先发送或移除附件', 'info');
   const chat = activeEditorAiConversation();
   if (isEditorAiConversationPending(chat.id)) return;
+  await loadEditorAiModelContext({ quiet: true });
+  const requestOptions = editorAiRequestOptions(chat);
+  const selectedModel = editorAiModelMeta(requestOptions.model);
+  if (!selectedModel) return showToast('当前模型已不在可用目录中，请重新选择模型', 'error');
   if (attachments.length || chat.messages.some(message => message.attachments?.length)) {
-    try {
-      const [settingsResponse, modelsResponse] = await Promise.all([
-        apiFetch('/api/ai/settings'),
-        apiFetch('/api/ai/models'),
-      ]);
-      const aiSettings = await settingsResponse.json().catch(() => ({}));
-      const modelsData = await modelsResponse.json().catch(() => ({}));
-      const model = Array.isArray(modelsData.models) ? modelsData.models.find(item => item.id === aiSettings.model) : null;
-      const allAttachments = [...attachments, ...chat.messages.flatMap(message => message.attachments || [])];
-      const needsVideo = allAttachments.some(item => item.kind === 'video' || String(item.mimeType || '').startsWith('video/'));
-      const needsImage = allAttachments.some(item => !item.kind || item.kind === 'image' || String(item.mimeType || '').startsWith('image/'));
-      if (!settingsResponse.ok || !modelsResponse.ok || !model ||
-          (needsImage && !model.inputModalities?.includes('image')) ||
-          (needsVideo && !model.inputModalities?.includes('video'))) {
-        return showToast('默认 AI 模型不支持当前会话中的附件类型，请在 AI 设置中选择兼容模型', 'error');
-      }
-    } catch {}
+    const allAttachments = [...attachments, ...chat.messages.flatMap(message => message.attachments || [])];
+    const needsVideo = allAttachments.some(item => item.kind === 'video' || String(item.mimeType || '').startsWith('video/'));
+    const needsImage = allAttachments.some(item => !item.kind || item.kind === 'image' || String(item.mimeType || '').startsWith('image/'));
+    if ((needsImage && !selectedModel.inputModalities?.includes('image')) ||
+        (needsVideo && !selectedModel.inputModalities?.includes('video'))) {
+      return showToast(`${selectedModel.name} 不支持当前会话中的附件类型，请切换兼容模型`, 'error');
+    }
   }
+  chat.model = requestOptions.model;
   if (getCategoryValue().startsWith('日记')) chat.diarySensitive = true;
   const userMessage = { role: 'user', content };
   if (attachments.length) userMessage.attachments = attachments;
@@ -999,6 +1249,7 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
   if (chat.messages.length > EDITOR_AI_MAX_MESSAGES) chat.messages = chat.messages.slice(-EDITOR_AI_MAX_MESSAGES);
   chat.updatedAt = Date.now();
   editorAiInput.value = '';
+  resizeEditorAiInput();
   if (attachments.length) {
     editorAiPendingMedia = [];
     renderEditorAiPendingMedia();
@@ -1026,7 +1277,7 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
     renderEditorAiHistory();
     updateEditorAiSendState();
     try {
-      const optimizedPrompt = await optimizeEditorImagePrompt(prompt);
+      const optimizedPrompt = await optimizeEditorImagePrompt(prompt, requestOptions);
       assistantMessage.imageGeneration.optimizedPrompt = optimizedPrompt;
       assistantMessage.imageGeneration.promptMode = optimizedPrompt ? 'optimized' : 'original';
       assistantMessage.imageGeneration.selectedPrompt = selectedEditorImagePrompt(assistantMessage.imageGeneration);
@@ -1064,6 +1315,7 @@ async function sendEditorAiMessage({ forceImage = false } = {}) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...requestOptions,
         messages: requestMessages,
         editorContext: requestContext,
       }),
@@ -1545,6 +1797,8 @@ btnEditorAiHistory.addEventListener('click', () => {
   setEditorAiHistoryOpen(btnEditorAiHistory.getAttribute('aria-expanded') !== 'true');
 });
 btnEditorAiSettings.addEventListener('click', openEditorAiSettings);
+btnEditorAiModel?.addEventListener('click', openEditorAiModelPicker);
+document.addEventListener('editor-ai-model-selected', selectEditorAiModel);
 btnEditorAiHistoryClose.addEventListener('click', () => setEditorAiHistoryOpen(false));
 btnEditorAiSend.addEventListener('click', sendEditorAiMessage);
 btnEditorAiImage?.addEventListener('click', () => sendEditorAiMessage({ forceImage: true }));
@@ -1555,7 +1809,10 @@ editorAiMediaDrafts?.addEventListener('click', (event) => {
   const draft = button?.closest('[data-media-id]');
   if (draft) removeEditorAiPendingMedia(draft.dataset.mediaId);
 });
-editorAiInput.addEventListener('input', updateEditorAiSendState);
+editorAiInput.addEventListener('input', () => {
+  resizeEditorAiInput();
+  updateEditorAiSendState();
+});
 editorAiInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
@@ -1606,6 +1863,18 @@ $('#btnEditorAiRenameCancel').addEventListener('click', closeEditorAiRenameModal
 $('#btnEditorAiRenameSave').addEventListener('click', saveEditorAiRename);
 editorAiRenameInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') saveEditorAiRename();
+});
+editorAiDragHandle?.addEventListener('pointerdown', startEditorAiWindowDrag);
+editorAiDragHandle?.addEventListener('pointermove', moveEditorAiWindow);
+editorAiDragHandle?.addEventListener('pointerup', endEditorAiWindowDrag);
+editorAiDragHandle?.addEventListener('pointercancel', endEditorAiWindowDrag);
+editorAiDragHandle?.addEventListener('dblclick', (event) => {
+  if (event.target.closest('button, input, textarea, a, [role="button"]')) return;
+  resetEditorAiWindowPosition();
+  showToast('已恢复 AI 浮窗默认位置', 'success');
+});
+window.addEventListener('resize', () => {
+  if (isEditorAiPanelOpen()) requestAnimationFrame(() => positionEditorAiWindow());
 });
 
 editorOutlineList.addEventListener('click', (e) => {
@@ -1785,6 +2054,8 @@ document.addEventListener('keydown', (e) => {
       break;
     case 'escape':
       if (document.getElementById('genericConfirmOverlay')?.style.display === 'flex') {
+        e.preventDefault();
+      } else if ($('#aiModelPickerOverlay')?.style.display === 'flex') {
         e.preventDefault();
       } else if ($('#logLinkOverlay').style.display === 'flex' || $('#templateModalOverlay').style.display === 'flex' || $('#shortcutHelpOverlay').style.display === 'flex' || $('#diaryUnlockOverlay').style.display === 'flex') {
         e.preventDefault(); closeAllModals();

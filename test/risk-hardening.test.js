@@ -4570,8 +4570,23 @@ test('template variables support Chinese day names and week ranges', async () =>
   assert.equal(templateDate.renderTemplateVariables('{{上一周.开始:YYYY-MM-DD}} 至 {{上一周.结束:YYYY-MM-DD}}', baseDate), '2026-05-18 至 2026-05-24');
 });
 
+test('all frontend scripts pass parser checks before browser loading', () => {
+  const scriptsDir = path.join(ROOT, 'public', 'js');
+  const scriptFiles = fs.readdirSync(scriptsDir)
+    .filter(file => file.endsWith('.js'))
+    .sort();
+
+  for (const file of scriptFiles) {
+    const result = childProcess.spawnSync(process.execPath, ['--check', path.join(scriptsDir, file)], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, `${file} failed to parse:\n${result.stderr || result.stdout}`);
+  }
+});
+
 test('primary controls expose accessible names and editor tab semantics', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const aiSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiChat.js'), 'utf8');
   const document = new JSDOM(html).window.document;
 
   assert.equal(document.querySelector('label[for="searchInput"]').textContent, '搜索日志');
@@ -4835,6 +4850,8 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#btnAiModelRefresh').textContent.trim(), '刷新');
   assert.equal(document.querySelector('#aiModelPickerSummary').getAttribute('role'), 'status');
   assert.equal(document.querySelector('#aiModelPickerSummary').getAttribute('aria-live'), 'polite');
+  assert.match(aiSource, /document\.addEventListener\('editor-ai-model-picker-request'[\s\S]*openModelPicker\('editor'\)/);
+  assert.match(aiSource, /modelPickerTarget === 'editor'[\s\S]*document\.dispatchEvent\(new CustomEvent\('editor-ai-model-selected'/);
   assert.equal(document.querySelector('#btnAiSkill').closest('.ai-chat-composer-actions') !== null, true);
   assert.equal(document.querySelector('#btnAiSkill').getAttribute('aria-label'), '选择技能');
   assert.equal(document.querySelector('#btnAiSkill').getAttribute('title'), '选择技能');
@@ -5896,7 +5913,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-daily-quote cite\s*\{[\s\S]*font-style:\s*normal;/);
   assert.match(styleSource, /\.ai-message\.user\s*\{[\s\S]*margin-top:\s*20px;/);
   assert.match(styleSource, /\.ai-message\.user \.ai-message-bubble\s*\{[\s\S]*max-width:\s*min\(620px, 76%\);/);
-  assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*width:\s*min\(388px, 30vw\);[\s\S]*min-width:\s*320px;/);
+  assert.match(styleSource, /\/\* Movable editor AI window \*\/[\s\S]*\.editor-ai-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*width:\s*min\(460px, calc\(100vw - 48px\)\);/);
   assert.match(styleSource, /\.editor-ai-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*max-width:\s*260px;/);
   assert.match(styleSource, /\.ai-chat-messages\s*\{[\s\S]*width:\s*min\(980px, 100%\);[\s\S]*padding:\s*22px 14px 28px;/);
   assert.match(aiMessageFooterStyles, /\.ai-message,\s*\.ai-message\.user,\s*\.ai-message\.assistant\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
@@ -6194,6 +6211,10 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.equal(document.querySelector('#editorAiPanel') !== null, true);
   assert.equal(document.querySelector('#editorAiMessages') !== null, true);
   assert.equal(document.querySelector('#editorAiInput') !== null, true);
+  assert.equal(document.querySelector('#editorAiPanel').getAttribute('role'), 'dialog');
+  assert.equal(document.querySelector('#editorAiPanel').getAttribute('aria-modal'), 'false');
+  assert.equal(document.querySelector('#btnEditorAiModel').getAttribute('aria-haspopup'), 'dialog');
+  assert.equal(document.querySelector('#editorAiModelLabel').textContent, 'DeepSeek Flash');
   assert.equal(document.querySelector('#btnEditorAiSend') !== null, true);
   assert.equal(document.querySelector('#btnEditorAiImage') !== null, true);
   assert.equal(document.querySelector('#btnEditorAiHistory') !== null, true);
@@ -6205,11 +6226,18 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.equal(document.querySelector('#btnEditorAiNew').closest('.editor-ai-header-actions') !== null, true);
   assert.equal(document.querySelector('#btnEditorAiImage').closest('.editor-ai-inline-actions') !== null, true);
   assert.equal(document.querySelector('#btnEditorAiSend').closest('.editor-ai-inline-actions') !== null, true);
+  assert.equal(document.querySelector('#btnEditorAiModel').closest('.editor-ai-composer-footer') !== null, true);
   assert.match(editorSource, /const AI_CONVERSATIONS_ENDPOINT = '\/api\/ai\/conversations';/);
   assert.match(editorSource, /function currentEditorLogKey\(\)[\s\S]*`log:\$\{state\.editingId\}`[\s\S]*`draft:\$\{editorAiDraftSessionId\}`/);
   assert.match(editorSource, /async function migrateEditorAiDraftConversation\(savedId\)/);
   assert.match(editorSource, /scope: 'editor'/);
   assert.match(editorSource, /logKey/);
+  assert.match(editorSource, /model:\s*isEditorAiModelId\(editorAiSettings\.model\) \? editorAiSettings\.model : DEFAULT_EDITOR_AI_MODEL/);
+  assert.match(editorSource, /function editorAiRequestOptions\(chat\)[\s\S]*reasoningMode[\s\S]*reasoningEffort/);
+  assert.match(editorSource, /document\.dispatchEvent\(new CustomEvent\('editor-ai-model-picker-request'/);
+  assert.match(editorSource, /document\.addEventListener\('editor-ai-model-selected', selectEditorAiModel\);/);
+  assert.match(editorSource, /function startEditorAiWindowDrag\(event\)[\s\S]*setPointerCapture/);
+  assert.match(editorSource, /function positionEditorAiWindow\([\s\S]*EDITOR_AI_WINDOW_POSITION_KEY/);
   assert.match(editorSource, /const DEFAULT_SEEDREAM_MODEL = 'doubao-seedream-5-0-260128';/);
   assert.doesNotMatch(editorSource, /function isEditorImageGenerationRequest\(text\)/);
   assert.doesNotMatch(editorSource, /isEditorImageGenerationRequest\(content\)/);
@@ -6258,6 +6286,7 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(editorSource, /contentEditor\.getSelection\(\)/);
   assert.match(editorSource, /apiFetch\('\/api\/ai\/editor'/);
   assert.match(editorSource, /body: JSON\.stringify\(\{[\s\S]*messages: requestMessages,[\s\S]*editorContext: requestContext,[\s\S]*\}\)/);
+  assert.match(editorSource, /body: JSON\.stringify\(\{[\s\S]*\.\.\.requestOptions,[\s\S]*messages: requestMessages/);
   assert.match(editorSource, /function renderEditorAiSuggestionPreview\(message, index\)/);
   assert.match(editorSource, /class="editor-ai-answer markdown-body"/);
   assert.match(editorSource, /class="editor-ai-suggestion-card\$\{expandable \? ' collapsed' : ' expanded'\}"/);
@@ -6284,8 +6313,8 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(editorSource, /function syncEditorSelectControls\(\)/);
   assert.match(editorSource, /document\.addEventListener\('editor-category-options-changed', syncEditorSelectControls\);/);
   assert.doesNotMatch(editorSource, /window\.(prompt|confirm)/);
-  assert.match(styleSource, /\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*flex-basis:\s*min\(388px, 30vw\);/);
-  assert.match(styleSource, /\.editor-ai-panel\s*\{[\s\S]*width:\s*0;[\s\S]*min-width:\s*0;/);
+  assert.match(styleSource, /\/\* Movable editor AI window \*\/[\s\S]*\.editor-ai-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*z-index:\s*160;[\s\S]*height:\s*min\(680px, calc\(100dvh - 48px\)\);/);
+  assert.match(styleSource, /\.editor-ai-panel\.is-dragging\s*\{[\s\S]*user-select:\s*none;[\s\S]*transition:\s*none;/);
   assert.match(styleSource, /\.editor-ai-history-popover\s*\{[\s\S]*position:\s*absolute;[\s\S]*top:\s*62px;/);
   assert.match(styleSource, /\.editor-ai-backdrop\s*\{[\s\S]*position:\s*fixed;/);
   assert.match(styleSource, /\.editor-ai-header\s*\{[\s\S]*display:\s*flex;[\s\S]*justify-content:\s*space-between;/);
@@ -6298,11 +6327,12 @@ test('editor AI panel sends current log context and applies suggestions explicit
   assert.match(styleSource, /\.editor-ai-suggestion-card\.expanded \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*360px;/);
   assert.match(styleSource, /\.editor-ai-empty\s*\{[\s\S]*background:\s*transparent;/);
   assert.match(styleSource, /\.editor-ai-empty-copy\s*\{[\s\S]*display:\s*grid;[\s\S]*max-width:\s*260px;/);
-  assert.match(styleSource, /\.editor-ai-composer textarea\s*\{[\s\S]*min-height:\s*76px;[\s\S]*padding:\s*12px 96px 14px 14px;/);
-  assert.match(styleSource, /\.editor-ai-inline-actions\s*\{[\s\S]*position:\s*absolute;[\s\S]*right:\s*10px;[\s\S]*bottom:\s*10px;/);
+  assert.match(styleSource, /\.editor-ai-composer-footer\s*\{[\s\S]*display:\s*flex;[\s\S]*justify-content:\s*space-between;/);
+  assert.match(styleSource, /\.editor-ai-input-shell:focus-within\s*\{[\s\S]*border-color:[\s\S]*box-shadow:/);
+  assert.match(styleSource, /\.editor-ai-inline-actions\s*\{[\s\S]*position:\s*static;/);
   assert.match(styleSource, /\.editor-ai-round-action\s*\{[\s\S]*width:\s*34px;[\s\S]*height:\s*34px;[\s\S]*border-radius:\s*999px;/);
   assert.match(styleSource, /\.editor-ai-send-action\s*\{[\s\S]*background:\s*rgba\(47, 125, 244, 0\.12\);/);
-  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-panel\s*\{[\s\S]*position:\s*fixed;[\s\S]*left:\s*10px;[\s\S]*max-height:\s*min\(78vh, 700px\);/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-panel,[\s\S]*\.editor-outline-layout\.editor-ai-open \.editor-ai-panel\s*\{[\s\S]*left:\s*10px;[\s\S]*max-height:\s*min\(78dvh, 700px\);/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-history-popover\s*\{[\s\S]*max-height:\s*190px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-history-popover\s*\{[\s\S]*top:\s*64px;/);
   assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*\.editor-ai-suggestion-card\.expanded \.editor-ai-suggestion-preview\s*\{[\s\S]*max-height:\s*260px;/);
