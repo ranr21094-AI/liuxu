@@ -1721,7 +1721,7 @@ async function fetchOpenRouterModelCatalog(apiKey, signal) {
   return models;
 }
 
-async function getOpenRouterModelCatalog(apiKey, { signal, force = false } = {}) {
+async function getOpenRouterModelCatalogResult(apiKey, { signal, force = false } = {}) {
   if (!apiKey) {
     const error = new Error('OpenRouter API key is not configured');
     error.status = 503;
@@ -1730,19 +1730,29 @@ async function getOpenRouterModelCatalog(apiKey, { signal, force = false } = {})
   const fingerprint = apiKeyFingerprint(apiKey);
   const now = Date.now();
   const cached = openrouterModelCatalogCache.get(fingerprint);
-  if (!force && cached?.freshUntil > now) return cached.models;
+  if (!force && cached?.freshUntil > now) {
+    return { models: cached.models, source: 'cache', fetchedAt: cached.fetchedAt };
+  }
   try {
     const models = await fetchOpenRouterModelCatalog(apiKey, signal);
+    const fetchedAt = Date.now();
     openrouterModelCatalogCache.set(fingerprint, {
       models,
-      freshUntil: now + OPENROUTER_MODELS_CACHE_TTL_MS,
-      staleUntil: now + OPENROUTER_MODELS_STALE_TTL_MS,
+      fetchedAt,
+      freshUntil: fetchedAt + OPENROUTER_MODELS_CACHE_TTL_MS,
+      staleUntil: fetchedAt + OPENROUTER_MODELS_STALE_TTL_MS,
     });
-    return models;
+    return { models, source: 'network', fetchedAt };
   } catch (error) {
-    if (cached?.staleUntil > now) return cached.models;
+    if (cached?.staleUntil > now) {
+      return { models: cached.models, source: 'stale', fetchedAt: cached.fetchedAt };
+    }
     throw error;
   }
+}
+
+async function getOpenRouterModelCatalog(apiKey, options = {}) {
+  return (await getOpenRouterModelCatalogResult(apiKey, options)).models;
 }
 
 async function resolveAiModelProfile(model, apiKey, signal) {
@@ -3068,10 +3078,23 @@ app.get('/api/ai/models', async (req, res) => {
     const settings = db.getAiSettings();
     const apiKey = openrouterApiKeyForUser(settings, req.user);
     let models = directAiModelRecords();
-    if (apiKey) models = models.concat(await getOpenRouterModelCatalog(apiKey));
+    let openrouterCatalog = null;
+    if (apiKey) {
+      openrouterCatalog = await getOpenRouterModelCatalogResult(apiKey, {
+        force: req.query?.refresh === '1',
+      });
+      models = models.concat(openrouterCatalog.models);
+    }
     const query = typeof req.query?.q === 'string' ? req.query.q.trim().toLowerCase().slice(0, 100) : '';
     if (query) models = models.filter(model => `${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query));
-    res.json({ models, openrouterConfigured: Boolean(apiKey) });
+    res.json({
+      models,
+      openrouterConfigured: Boolean(apiKey),
+      openrouterCatalog: openrouterCatalog ? {
+        source: openrouterCatalog.source,
+        fetchedAt: new Date(openrouterCatalog.fetchedAt).toISOString(),
+      } : null,
+    });
   } catch (err) {
     const status = err.status && [400, 503].includes(err.status) ? err.status : 500;
     res.status(status).json({ error: status === 500 ? 'Failed to load AI models' : err.message });

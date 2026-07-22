@@ -1152,11 +1152,20 @@
           <h3 id="aiModelPickerTitle">选择模型</h3>
           <p>模型来自直连供应商和当前账户的 OpenRouter 目录</p>
         </div>
-        <button class="btn-icon" id="btnAiModelPickerClose" type="button" aria-label="关闭模型选择">×</button>
+        <div class="ai-model-picker-header-actions">
+          <button class="ai-model-refresh-button" id="btnAiModelRefresh" type="button" aria-label="从 OpenRouter 刷新模型目录">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 6v5h-5"></path>
+              <path d="M19 11a7.5 7.5 0 1 0 .2 4"></path>
+            </svg>
+            <span>刷新</span>
+          </button>
+          <button class="btn-icon" id="btnAiModelPickerClose" type="button" aria-label="关闭模型选择">×</button>
+        </div>
       </div>
       <label class="sr-only" for="aiModelPickerSearch">搜索模型名称或 ID</label>
       <input class="ai-model-picker-search" id="aiModelPickerSearch" type="search" placeholder="搜索或粘贴模型 ID…" autocomplete="off" spellcheck="false">
-      <div class="ai-model-picker-summary" id="aiModelPickerSummary"></div>
+      <div class="ai-model-picker-summary" id="aiModelPickerSummary" role="status" aria-live="polite"></div>
       <div class="ai-model-picker-list" id="aiModelPickerList" role="listbox" aria-label="可用 AI 模型"></div>
     </div>
   </div>

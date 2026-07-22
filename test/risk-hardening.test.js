@@ -1917,12 +1917,14 @@ test('AI chat can include user profile and permitted logs without leaking locked
 test('OpenRouter discovers account models and preserves provider-specific reasoning, sources, ZDR, and media', async (t) => {
   const originalFetch = global.fetch;
   let catalogLoads = 0;
+  let catalogUnavailable = false;
   const chatCalls = [];
   global.fetch = async (target, options = {}) => {
     const url = String(target);
     if (url === 'https://openrouter.ai/api/v1/models/user') {
       catalogLoads += 1;
       assert.equal(options.headers.Authorization, 'Bearer sk-or-test-key');
+      if (catalogUnavailable) throw new Error('temporary catalog failure');
       return new Response(JSON.stringify({
         data: [{
           id: 'anthropic/test-reasoner',
@@ -1979,6 +1981,8 @@ test('OpenRouter discovers account models and preserves provider-specific reason
   const catalog = await modelsResponse.json();
   const openrouterModel = catalog.models.find(model => model.id === 'anthropic/test-reasoner');
   assert.equal(catalog.openrouterConfigured, true);
+  assert.equal(catalog.openrouterCatalog.source, 'network');
+  assert.equal(Number.isNaN(Date.parse(catalog.openrouterCatalog.fetchedAt)), false);
   assert.equal(openrouterModel.source, 'openrouter');
   assert.equal(openrouterModel.provider, 'anthropic');
   assert.equal(openrouterModel.contextLength, 128000);
@@ -1990,7 +1994,19 @@ test('OpenRouter discovers account models and preserves provider-specific reason
   assert.equal(catalog.models.some(model => model.id === 'vendor/no-text-output'), false);
   const searchedModels = await (await fetch(`${baseUrl}/api/ai/models?q=test-reasoner`)).json();
   assert.deepEqual(searchedModels.models.map(model => model.id), ['anthropic/test-reasoner']);
+  assert.equal(searchedModels.openrouterCatalog.source, 'cache');
   assert.equal(catalogLoads, 1);
+
+  const refreshedModels = await (await fetch(`${baseUrl}/api/ai/models?refresh=1`)).json();
+  assert.equal(refreshedModels.openrouterCatalog.source, 'network');
+  assert.equal(catalogLoads, 2);
+
+  catalogUnavailable = true;
+  const staleResponse = await fetch(`${baseUrl}/api/ai/models?refresh=1`);
+  assert.equal(staleResponse.status, 200);
+  assert.equal((await staleResponse.json()).openrouterCatalog.source, 'stale');
+  assert.equal(catalogLoads, 3);
+  catalogUnavailable = false;
 
   const settingsResponse = await fetch(`${baseUrl}/api/ai/settings`, {
     method: 'PUT',
@@ -2075,7 +2091,7 @@ test('OpenRouter discovers account models and preserves provider-specific reason
   });
   assert.equal(missing.status, 400);
   assert.match((await missing.json()).error, /unavailable for this account/);
-  assert.equal(catalogLoads, 1);
+  assert.equal(catalogLoads, 3);
 
   const tooSmall = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -4815,6 +4831,10 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#aiModelPickerOverlay').getAttribute('role'), 'dialog');
   assert.equal(document.querySelector('#aiModelPickerList').getAttribute('role'), 'listbox');
   assert.equal(document.querySelector('#aiModelPickerSearch').getAttribute('type'), 'search');
+  assert.equal(document.querySelector('#btnAiModelRefresh').getAttribute('aria-label'), '从 OpenRouter 刷新模型目录');
+  assert.equal(document.querySelector('#btnAiModelRefresh').textContent.trim(), '刷新');
+  assert.equal(document.querySelector('#aiModelPickerSummary').getAttribute('role'), 'status');
+  assert.equal(document.querySelector('#aiModelPickerSummary').getAttribute('aria-live'), 'polite');
   assert.equal(document.querySelector('#btnAiSkill').closest('.ai-chat-composer-actions') !== null, true);
   assert.equal(document.querySelector('#btnAiSkill').getAttribute('aria-label'), '选择技能');
   assert.equal(document.querySelector('#btnAiSkill').getAttribute('title'), '选择技能');
@@ -5644,7 +5664,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /async function sendMessage\(\{ forceImage = false \} = \{\}\)/);
   assert.match(aiSource, /if \(forceImage\) \{/);
   assert.match(aiSource, /\$\('#btnAiImage'\)\?\.addEventListener\('click', \(\) => sendMessage\(\{ forceImage: true \}\)\);/);
-  assert.match(aiSource, /const image = \$\('#btnAiImage'\);[\s\S]*if \(image\) image\.disabled = sending \|\| mediaUploading \|\| !hasText \|\| hasMedia;/);
+  assert.match(aiSource, /const image = \$\('#btnAiImage'\);[\s\S]*const currentSending = isConversationSending\(\);[\s\S]*if \(image\) image\.disabled = currentSending \|\| mediaUploading \|\| !hasText \|\| hasMedia;/);
   assert.doesNotMatch(aiSource, /btnAiSendMenu|aiSendMenu|btnAiImageMenu|setSendMenuOpen|closeSendMenu|toggleSendMenu/);
   assert.match(aiSource, /originalPrompt: prompt/);
   assert.match(aiSource, /optimizedPrompt/);
@@ -5771,15 +5791,32 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(aiSource, /正在思考/);
   assert.doesNotMatch(aiSource, /window\.(prompt|confirm)/);
   assert.match(aiSource, /aiThinkingMode/);
-  assert.match(aiSource, /const disabled = sending \|\| mediaUploading \|\| \(!hasText && !hasMedia\);[\s\S]*send\.disabled = disabled;/);
+  assert.match(aiSource, /const conversationRequests = new Map\(\);/);
+  assert.match(aiSource, /let conversationSaveQueue = Promise\.resolve\(\);/);
+  assert.match(aiSource, /messages: \(item\.messages \|\| \[\]\)\.filter\(message => !message\.streaming\)/);
+  assert.match(aiSource, /conversationSaveQueue\.then\(save, save\)/);
+  assert.match(aiSource, /function isConversationSending\(id = activeConversationId\)/);
+  assert.match(aiSource, /function beginConversationRequest\(chat\)[\s\S]*conversationRequests\.set\(chat\.id, request\);/);
+  assert.match(aiSource, /if \(!chat \|\| isConversationSending\(chat\.id\)\) return;/);
+  assert.match(aiSource, /sendStreamingMessage\(chat, requestSettings, request\.controller\.signal\)/);
+  assert.match(aiSource, /sendJsonMessage\(chat, requestSettings, \{ signal: request\.controller\.signal \}\)/);
+  assert.match(aiSource, /finishConversationRequest\(chat\.id\)/);
+  assert.match(aiSource, /class="ai-history-item[\s\S]*isConversationSending\(chat\.id\)[\s\S]*class="ai-history-running"/);
+  assert.match(aiSource, /const disabled = currentSending \|\| mediaUploading \|\| \(!hasText && !hasMedia\);[\s\S]*send\.disabled = disabled;/);
   assert.match(aiSource, /function resizeAiChatInput\(\)/);
   assert.match(aiSource, /input\.style\.height = 'auto';[\s\S]*Math\.min\(input\.scrollHeight, maxHeight\)/);
   assert.match(aiSource, /function announceAiStatus\(text\)/);
   assert.match(aiSource, /announceAiStatus\('AI 回答已完成'\)/);
-  assert.match(aiSource, /showToast\(`AI 对话失败：\$\{err\.message\}`/);
-  assert.match(aiSource, /async function readStreamingReply\(res, assistantMessage\)/);
+  assert.match(aiSource, /showToast\(`对话「\$\{chat\.title \|\| '新对话'\}」失败：\$\{err\.message\}`/);
+  assert.match(aiSource, /async function readStreamingReply\(res, assistantMessage, conversationId\)/);
   assert.match(aiSource, /const decoder = new TextDecoder\(\);/);
   assert.match(aiSource, /event\.type === 'delta'/);
+  assert.match(aiSource, /function renderReasoningDisclosure\(message\)/);
+  assert.match(aiSource, /class="ai-reasoning\$\{streaming \? ' is-streaming' : ''\}"\$\{streaming \? ' open' : ''\}/);
+  assert.match(aiSource, /renderToHtml\(message\.reasoningContent\)/);
+  assert.match(aiSource, /if \(event\.type === 'reasoning'\)[\s\S]*assistantMessage\.reasoningContent[\s\S]*scheduleStreamRender\(conversationId\);/);
+  assert.match(aiSource, /setAiSendingStatus\('正在推理\.\.\.', \{ conversationId \}\)/);
+  assert.match(aiSource, /setAiSendingStatus\('正在生成回答\.\.\.', \{ conversationId \}\)/);
   assert.match(aiSource, /renderToHtml\(message\.content\)/);
   assert.match(aiSource, /function scrollMessagesToBottom\(\)/);
   assert.match(aiSource, /const scroller = list\.closest\('\.ai-chat-body'\) \|\| list;/);
@@ -5813,6 +5850,9 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-history-item\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 32px;[\s\S]*height:\s*44px;/);
   assert.match(styleSource, /\.ai-history-item\.active\s*\{[\s\S]*background:\s*rgba\(var\(--color-primary-rgb\), 0\.07\);[\s\S]*box-shadow:\s*inset 3px 0 0 var\(--color-primary\);/);
   assert.match(styleSource, /\.ai-history-more\s*\{[\s\S]*width:\s*32px;[\s\S]*height:\s*32px;/);
+  assert.match(aiMessageFooterStyles, /\.ai-history-open\s*\{[\s\S]*display:\s*flex;[\s\S]*min-width:\s*0;[\s\S]*align-items:\s*center;/);
+  assert.match(styleSource, /\.ai-history-running\s*\{[\s\S]*background:\s*var\(--color-primary\);[\s\S]*animation:\s*ai-history-running-pulse/);
+  assert.match(styleSource, /@keyframes ai-history-running-pulse/);
   assert.match(styleSource, /\.ai-history-more svg circle\s*\{[\s\S]*fill:\s*currentColor;/);
   assert.match(styleSource, /\.ai-history-context-menu\s*\{[\s\S]*position:\s*fixed;[\s\S]*width:\s*156px;/);
   assert.match(styleSource, /\.ai-history-context-menu button\.danger\s*\{[\s\S]*color:\s*var\(--color-danger\);/);
@@ -5884,6 +5924,11 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(styleSource, /\.ai-message-bubble\s*\{[\s\S]*position:\s*relative;/);
   assert.match(aiMessageFooterStyles, /\.ai-message-copy:hover,[\s\S]*\.ai-message-copy:focus-visible\s*\{[\s\S]*background:\s*#f3f4f6;[\s\S]*color:\s*#111827;/);
   assert.match(aiMessageFooterStyles, /\.ai-message-time\s*\{[\s\S]*white-space:\s*nowrap;/);
+  assert.match(styleSource, /\.ai-reasoning\s*\{[\s\S]*border:\s*1px solid rgba\(var\(--color-primary-rgb\), 0\.16\);[\s\S]*border-radius:\s*12px;/);
+  assert.match(styleSource, /\.ai-reasoning summary\s*\{[\s\S]*min-height:\s*40px;[\s\S]*cursor:\s*pointer;/);
+  assert.match(styleSource, /\.ai-reasoning-content\s*\{[\s\S]*max-height:\s*min\(380px, 45vh\);[\s\S]*overflow:\s*auto;/);
+  assert.match(styleSource, /@keyframes ai-reasoning-pulse/);
+  assert.match(styleSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.ai-reasoning\.is-streaming \.ai-reasoning-indicator \{ animation:\s*none;/);
   const sourceStyleBlocks = styleSource.match(/\.ai-message-sources\s*\{[^}]*\}/g) || [];
   assert.equal(sourceStyleBlocks.some(block => /grid-column:\s*1(?:\s|;|\/)/.test(block)), true);
   assert.equal(sourceStyleBlocks.some(block => /grid-column:\s*2;/.test(block)), false);

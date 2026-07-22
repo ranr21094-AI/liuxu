@@ -29,7 +29,8 @@ const AI_SETTINGS_SELECT_IDS = ['aiReasoningMode', 'aiReasoningEffort', 'aiSeedr
 let conversations = [];
 let activeConversationId = '';
 let previousViewId = 'listView';
-let sending = false;
+const conversationRequests = new Map();
+let conversationSaveQueue = Promise.resolve();
 let renameConversationId = '';
 let availableSkills = [];
 let selectedSkillId = '';
@@ -49,6 +50,8 @@ let availableModels = Object.entries(DIRECT_AI_MODEL_LABELS).map(([id, name]) =>
 }));
 let modelPickerTarget = '';
 let modelPickerQuery = '';
+let modelCatalogMeta = { configured: false, source: 'none', fetchedAt: null };
+let modelsRefreshing = false;
 let settings = {
   apiKey: '',
   apiKeyConfigured: false,
@@ -104,9 +107,10 @@ function activeConversationModel() {
 }
 
 export function clearAiStateForDiaryLock() {
+  conversationRequests.forEach(request => request.controller?.abort());
+  conversationRequests.clear();
   conversations = [];
   activeConversationId = '';
-  sending = false;
   pendingMedia = [];
   mediaUploading = false;
   const messages = $('#aiChatMessages');
@@ -366,27 +370,37 @@ async function loadConversations() {
   await saveConversations();
 }
 
-async function saveConversations() {
-  try {
-    const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        scope: 'global',
-        conversations: conversations.map(item => ({ ...item, scope: 'global', logKey: '' })),
-        activeConversationId,
-      }),
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || 'AI 历史保存失败');
+function saveConversations() {
+  const save = async () => {
+    try {
+      const res = await apiFetch(AI_CONVERSATIONS_ENDPOINT, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'global',
+          conversations: conversations.map(item => ({
+            ...item,
+            messages: (item.messages || []).filter(message => !message.streaming),
+            scope: 'global',
+            logKey: '',
+          })),
+          activeConversationId,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'AI 历史保存失败');
+      }
+      return true;
+    } catch (err) {
+      console.warn('Failed to save AI conversations:', err);
+      showToast('AI 历史保存失败：' + err.message, 'error');
+      return false;
     }
-    return true;
-  } catch (err) {
-    console.warn('Failed to save AI conversations:', err);
-    showToast('AI 历史保存失败：' + err.message, 'error');
-    return false;
-  }
+  };
+  const pending = conversationSaveQueue.then(save, save);
+  conversationSaveQueue = pending.then(() => undefined, () => undefined);
+  return pending;
 }
 
 async function loadSettings() {
@@ -488,6 +502,29 @@ function activeConversation() {
 
 function activeMessages() {
   return activeConversation()?.messages || [];
+}
+
+function isConversationSending(id = activeConversationId) {
+  return Boolean(id && conversationRequests.has(id));
+}
+
+function beginConversationRequest(chat) {
+  const request = {
+    controller: new AbortController(),
+    status: '正在思考...',
+    startedAt: Date.now(),
+  };
+  conversationRequests.set(chat.id, request);
+  return request;
+}
+
+function finishConversationRequest(id) {
+  conversationRequests.delete(id);
+}
+
+function renderConversationIfActive(id) {
+  if (id === activeConversationId) renderMessages();
+  else renderHistory();
 }
 
 function visibleMainViewId() {
@@ -690,16 +727,24 @@ function normalizeModelCatalogItem(value) {
   };
 }
 
-async function loadModels({ quiet = true } = {}) {
+async function loadModels({ quiet = true, force = false } = {}) {
+  let result = { ok: false, data: null, error: null };
   try {
-    const res = await apiFetch(AI_MODELS_ENDPOINT);
+    const res = await apiFetch(force ? `${AI_MODELS_ENDPOINT}?refresh=1` : AI_MODELS_ENDPOINT);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '模型目录加载失败');
     const models = Array.isArray(data.models) ? data.models.map(normalizeModelCatalogItem).filter(Boolean) : [];
     if (models.length) availableModels = models;
+    modelCatalogMeta = {
+      configured: data.openrouterConfigured === true,
+      source: ['network', 'cache', 'stale'].includes(data.openrouterCatalog?.source) ? data.openrouterCatalog.source : 'none',
+      fetchedAt: typeof data.openrouterCatalog?.fetchedAt === 'string' ? data.openrouterCatalog.fetchedAt : null,
+    };
+    result = { ok: true, data, error: null };
   } catch (err) {
     if (!quiet) showToast('OpenRouter 模型目录加载失败：' + err.message, 'error');
     console.warn('Failed to load AI model catalog:', err);
+    result.error = err;
   }
   const configuredModelIds = new Set(availableModels.map(model => model.id));
   for (const modelId of [settings.model, ...conversations.map(chat => chat.model)]) {
@@ -716,6 +761,7 @@ async function loadModels({ quiet = true } = {}) {
     }
   }
   syncModelControls();
+  return result;
 }
 
 function formatModelContext(value) {
@@ -739,6 +785,13 @@ function modelModalityLabel(model) {
   return labels.join(' · ');
 }
 
+function formatModelCatalogTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+}
+
 function selectedModelForPicker() {
   return modelPickerTarget === 'default' ? ($('#aiModelSelect')?.value || settings.model) : activeConversationModel();
 }
@@ -749,7 +802,16 @@ function renderModelPicker() {
   const query = modelPickerQuery.trim().toLowerCase();
   const filtered = availableModels.filter(model => !query || `${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query));
   const summary = $('#aiModelPickerSummary');
-  if (summary) summary.textContent = query ? `${filtered.length} / ${availableModels.length} 个模型` : `${availableModels.length} 个模型`;
+  if (summary) {
+    const openrouterCount = availableModels.filter(model => model.source === 'openrouter' && !model.unavailable).length;
+    const countLabel = query ? `${filtered.length} / ${availableModels.length} 个模型` : `${availableModels.length} 个模型`;
+    const refreshedAt = formatModelCatalogTime(modelCatalogMeta.fetchedAt);
+    let catalogLabel = '未配置 OpenRouter Key';
+    if (modelCatalogMeta.configured && modelCatalogMeta.source === 'network') catalogLabel = `OpenRouter ${openrouterCount} 个 · 已于 ${refreshedAt || '刚刚'} 更新`;
+    if (modelCatalogMeta.configured && modelCatalogMeta.source === 'cache') catalogLabel = `OpenRouter ${openrouterCount} 个 · 缓存于 ${refreshedAt || '最近'}`;
+    if (modelCatalogMeta.configured && modelCatalogMeta.source === 'stale') catalogLabel = `OpenRouter ${openrouterCount} 个 · 正在使用 ${refreshedAt || '较早'} 的旧目录`;
+    summary.textContent = `${countLabel} · ${catalogLabel}`;
+  }
   if (!filtered.length) {
     list.innerHTML = '<div class="ai-model-picker-empty">没有匹配的可用模型</div>';
     return;
@@ -814,6 +876,40 @@ function closeModelPicker({ restoreFocus = true } = {}) {
   if (overlay) overlay.style.display = 'none';
   if (restoreFocus) (modelPickerTarget === 'default' ? $('#btnAiDefaultModel') : $('#btnAiChatModel'))?.focus();
   modelPickerTarget = '';
+}
+
+async function refreshModelsFromPicker() {
+  if (modelsRefreshing) return;
+  const button = $('#btnAiModelRefresh');
+  modelsRefreshing = true;
+  if (button) {
+    button.disabled = true;
+    button.classList.add('refreshing');
+    button.setAttribute('aria-busy', 'true');
+    const label = button.querySelector('span');
+    if (label) label.textContent = '刷新中';
+  }
+  try {
+    const result = await loadModels({ quiet: false, force: true });
+    if (!result.ok) return;
+    if (!result.data?.openrouterConfigured) {
+      showToast('请先在 AI 设置中配置 OpenRouter API Key', 'info');
+    } else if (modelCatalogMeta.source === 'stale') {
+      showToast('OpenRouter 暂时无法刷新，已继续使用旧模型目录', 'info');
+    } else {
+      const count = availableModels.filter(model => model.source === 'openrouter' && !model.unavailable).length;
+      showToast(`已从 OpenRouter 刷新 ${count} 个模型`, 'success');
+    }
+  } finally {
+    modelsRefreshing = false;
+    if (button) {
+      button.disabled = false;
+      button.classList.remove('refreshing');
+      button.removeAttribute('aria-busy');
+      const label = button.querySelector('span');
+      if (label) label.textContent = '刷新';
+    }
+  }
 }
 
 async function chooseModelFromPicker(modelId) {
@@ -949,9 +1045,10 @@ function renderHistory() {
     currentGroup = group;
     return `
       ${heading}
-      <div class="ai-history-item${chat.id === activeConversationId ? ' active' : ''}" data-id="${escHtml(chat.id)}">
+      <div class="ai-history-item${chat.id === activeConversationId ? ' active' : ''}${isConversationSending(chat.id) ? ' is-sending' : ''}" data-id="${escHtml(chat.id)}">
         <button type="button" class="ai-history-open" title="${escHtml(chat.title || '新对话')}">
           <span class="ai-history-title">${escHtml(chat.title || '新对话')}</span>
+          ${isConversationSending(chat.id) ? '<span class="ai-history-running" title="正在生成回答"><span class="sr-only">正在生成回答</span></span>' : ''}
         </button>
         <button type="button" class="ai-history-more" data-action="toggle-history-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="aiHistoryContextMenu" title="更多对话操作" aria-label="更多对话操作">${historyActionIcon('more')}</button>
       </div>
@@ -1013,10 +1110,30 @@ function scrollMessagesToBottom() {
   scroller.scrollTop = scroller.scrollHeight;
 }
 
+function renderReasoningDisclosure(message) {
+  if (message?.role !== 'assistant' || typeof message.reasoningContent !== 'string' || !message.reasoningContent.trim()) return '';
+  const characterCount = Array.from(message.reasoningContent).length;
+  const streaming = Boolean(message.streaming);
+  return `
+    <details class="ai-reasoning${streaming ? ' is-streaming' : ''}"${streaming ? ' open' : ''}>
+      <summary>
+        <span class="ai-reasoning-indicator" aria-hidden="true"></span>
+        <span class="ai-reasoning-label">${streaming ? '正在推理' : '推理过程'}</span>
+        <span class="ai-reasoning-count">${characterCount} 字</span>
+        <svg class="ai-reasoning-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m8 10 4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </summary>
+      <div class="ai-reasoning-content markdown-body">${renderToHtml(message.reasoningContent)}</div>
+    </details>
+  `;
+}
+
 function renderMessages() {
   const list = $('#aiChatMessages');
   const messages = activeMessages();
   const current = activeConversation();
+  const currentSending = isConversationSending(current?.id);
   syncModelControls();
   $('#aiChatView')?.classList.toggle('is-empty', !messages.length);
   updateAiChatHeader();
@@ -1041,6 +1158,7 @@ function renderMessages() {
     <div class="ai-message ${message.role}" data-message-index="${index}">
       <div class="ai-message-bubble">
         ${renderAiMediaAttachments(message.attachments)}
+        ${renderReasoningDisclosure(message)}
         <div class="ai-message-content${message.role === 'assistant' ? ' markdown-body' : ''}">${message.role === 'assistant' ? renderToHtml(message.content) : escHtml(message.content)}</div>
         ${message.role === 'assistant' && message.imageGeneration ? renderImageGenerationCard(message.imageGeneration, index, { insertable: false }) : ''}
         ${message.role === 'assistant' && message.toolCall ? renderToolCallCard(message.toolCall, message.toolResult, index) : ''}
@@ -1065,7 +1183,7 @@ function renderMessages() {
         </div>
       ` : ''}
     </div>
-  `).join('') + (sending && !messages.at(-1)?.streaming ? `
+  `).join('') + (currentSending && !messages.at(-1)?.streaming ? `
     <div class="ai-message assistant ai-message-thinking">
       <div class="ai-message-content">
         <span class="ai-thinking-text">正在思考</span>
@@ -1154,7 +1272,7 @@ async function handleAiChatPaste(event) {
   if (!pasted.found) return;
   event.preventDefault();
   event.stopPropagation();
-  if (sending || mediaUploading) {
+  if (isConversationSending() || mediaUploading) {
     showToast('请等待当前发送或上传完成后再粘贴图片', 'info');
     return;
   }
@@ -1428,7 +1546,7 @@ async function chooseImagePrompt(index, mode) {
   imageGeneration.prompt = imageGeneration.selectedPrompt;
   chat.updatedAt = Date.now();
   await saveConversations();
-  renderMessages();
+  renderConversationIfActive(chat.id);
 }
 
 async function copyMessageByIndex(index) {
@@ -1447,14 +1565,14 @@ async function generateImageForMessage(index) {
   const message = chat?.messages[index];
   const imageGeneration = message?.imageGeneration;
   const prompt = selectedImagePrompt(imageGeneration);
-  if (!chat || !prompt || sending) return;
+  if (!chat || !prompt || isConversationSending(chat.id)) return;
   imageGeneration.status = 'generating';
   imageGeneration.selectedPrompt = prompt;
   imageGeneration.prompt = prompt;
   message.content = '正在生成图片...';
   chat.updatedAt = Date.now();
   await saveConversations();
-  renderMessages();
+  renderConversationIfActive(chat.id);
   try {
     const res = await apiFetch('/api/ai/image/generate', {
       method: 'POST',
@@ -1477,14 +1595,14 @@ async function generateImageForMessage(index) {
     message.content = `图片已生成：\n\n![image](${data.url})`;
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
+    renderConversationIfActive(chat.id);
   } catch (err) {
     imageGeneration.status = 'error';
     imageGeneration.error = err.message;
     message.content = `生图失败：${err.message}`;
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
+    renderConversationIfActive(chat.id);
     showToast('生图失败：' + err.message, 'error');
   }
 }
@@ -1497,7 +1615,7 @@ async function cancelImageGeneration(index) {
   message.content = '已取消生图。';
   chat.updatedAt = Date.now();
   await saveConversations();
-  renderMessages();
+  renderConversationIfActive(chat.id);
 }
 
 async function copyImageMarkdown(index) {
@@ -1517,12 +1635,17 @@ function updateSendState() {
   const image = $('#btnAiImage');
   const hasText = input.value.trim().length > 0;
   const hasMedia = pendingMedia.length > 0;
-  const disabled = sending || mediaUploading || (!hasText && !hasMedia);
+  const currentSending = isConversationSending();
+  const disabled = currentSending || mediaUploading || (!hasText && !hasMedia);
   send.disabled = disabled;
-  if (image) image.disabled = sending || mediaUploading || !hasText || hasMedia;
+  if (image) image.disabled = currentSending || mediaUploading || !hasText || hasMedia;
   const attach = $('#btnAiAttach');
-  if (attach) attach.disabled = sending || mediaUploading || pendingMedia.length >= 4;
-  $('#aiChatSending').style.display = sending ? '' : 'none';
+  if (attach) attach.disabled = currentSending || mediaUploading || pendingMedia.length >= 4;
+  const sendingStatus = $('#aiChatSending');
+  if (sendingStatus) {
+    sendingStatus.style.display = currentSending ? '' : 'none';
+    if (currentSending) sendingStatus.textContent = conversationRequests.get(activeConversationId)?.status || '正在思考...';
+  }
   resizeAiChatInput();
 }
 
@@ -1547,7 +1670,10 @@ function announceAiStatus(text) {
   });
 }
 
-function setAiSendingStatus(text = '正在思考...', { announce = true } = {}) {
+function setAiSendingStatus(text = '正在思考...', { announce = true, conversationId = activeConversationId } = {}) {
+  const request = conversationRequests.get(conversationId);
+  if (request) request.status = text;
+  if (conversationId !== activeConversationId) return;
   const status = $('#aiChatSending');
   if (status) status.textContent = text;
   if (announce) announceAiStatus(text);
@@ -1918,18 +2044,20 @@ async function newConversation() {
   const chat = createConversation();
   conversations.unshift(chat);
   activeConversationId = chat.id;
-  await saveConversations();
   renderMessages();
+  updateSendState();
   $('#aiChatInput').focus();
+  await saveConversations();
 }
 
 async function switchConversation(id) {
   if (!conversations.some(chat => chat.id === id)) return;
   closeHistoryMenu();
   activeConversationId = id;
-  await saveConversations();
   renderMessages();
+  updateSendState();
   $('#aiChatInput').focus();
+  await saveConversations();
 }
 
 async function saveRenameConversation() {
@@ -1948,6 +2076,10 @@ async function deleteConversation(id) {
   const chat = conversations.find(item => item.id === id);
   if (!chat) return;
   closeHistoryMenu();
+  if (isConversationSending(id)) {
+    showToast('这个对话仍在生成回答，完成后再删除', 'info');
+    return;
+  }
   const confirmed = await confirmDialog({
     title: '删除对话',
     message: `删除对话「${chat.title || '新对话'}」？此操作只会删除本地历史记录。`,
@@ -1963,12 +2095,13 @@ async function deleteConversation(id) {
   renderMessages();
 }
 
-function scheduleStreamRender() {
+function scheduleStreamRender(conversationId = activeConversationId) {
+  if (conversationId !== activeConversationId) return;
   if (scheduleStreamRender.pending) return;
   scheduleStreamRender.pending = true;
   requestAnimationFrame(() => {
     scheduleStreamRender.pending = false;
-    renderMessages();
+    if (conversationId === activeConversationId) renderMessages();
   });
 }
 
@@ -1983,7 +2116,7 @@ function parseSseBlock(block) {
   return event;
 }
 
-async function readStreamingReply(res, assistantMessage) {
+async function readStreamingReply(res, assistantMessage, conversationId) {
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'AI 请求失败');
@@ -1994,6 +2127,8 @@ async function readStreamingReply(res, assistantMessage) {
   const decoder = new TextDecoder();
   let buffer = '';
   let done = false;
+  let reasoningStarted = false;
+  let answerStarted = false;
   while (!done) {
     const chunk = await reader.read();
     done = chunk.done;
@@ -2005,13 +2140,30 @@ async function readStreamingReply(res, assistantMessage) {
       if (!event.data) continue;
       const data = JSON.parse(event.data);
       if (event.type === 'delta') {
-        assistantMessage.content += data.content || '';
-        scheduleStreamRender();
+        const content = typeof data.content === 'string' ? data.content : '';
+        if (content) {
+          if (!answerStarted) {
+            answerStarted = true;
+            setAiSendingStatus('正在生成回答...', { conversationId });
+          }
+          assistantMessage.content += content;
+          scheduleStreamRender(conversationId);
+        }
       }
-      if (event.type === 'reasoning') assistantMessage.reasoningContent = (assistantMessage.reasoningContent || '') + (data.content || '');
+      if (event.type === 'reasoning') {
+        const content = typeof data.content === 'string' ? data.content : '';
+        if (content) {
+          if (!reasoningStarted && !answerStarted) {
+            reasoningStarted = true;
+            setAiSendingStatus('正在推理...', { conversationId });
+          }
+          assistantMessage.reasoningContent = (assistantMessage.reasoningContent || '') + content;
+          scheduleStreamRender(conversationId);
+        }
+      }
       if (event.type === 'sources' && Array.isArray(data.sources)) {
         assistantMessage.sources = data.sources;
-        scheduleStreamRender();
+        scheduleStreamRender(conversationId);
       }
       if (event.type === 'error') throw new Error(data.error || 'AI 流式请求失败');
       if (event.type === 'done') {
@@ -2044,11 +2196,11 @@ async function readLogBatchReply(res, chat) {
       if (!event.data) continue;
       const data = JSON.parse(event.data);
       if (event.type === 'context') {
-        setAiSendingStatus(`准备分析 ${data.logCount || 0} 条日志（${data.batchCount || 0} 批）...`);
+        setAiSendingStatus(`准备分析 ${data.logCount || 0} 条日志（${data.batchCount || 0} 批）...`, { conversationId: chat.id });
       } else if (event.type === 'progress' && data.phase === 'analyze') {
-        setAiSendingStatus(`正在分析第 ${data.completed || 0}/${data.total || 0} 批日志...`);
+        setAiSendingStatus(`正在分析第 ${data.completed || 0}/${data.total || 0} 批日志...`, { conversationId: chat.id });
       } else if (event.type === 'progress' && data.phase === 'merge') {
-        setAiSendingStatus(`正在合并日志证据（${data.completed || 0}/${data.total || 0}）...`);
+        setAiSendingStatus(`正在合并日志证据（${data.completed || 0}/${data.total || 0}）...`, { conversationId: chat.id });
       } else if (event.type === 'result') {
         if (!data.message?.content) throw new Error('AI 没有返回内容');
         const assistantMessage = {
@@ -2074,11 +2226,12 @@ async function readLogBatchReply(res, chat) {
   if (!resultReceived) throw new Error('AI 日志分析未返回完整结果');
 }
 
-async function sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch = false } = {}) {
+async function sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch = false, signal } = {}) {
   const res = await apiFetch('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages: chat.messages, ...requestSettings, confirmLargeLogBatch }),
+    signal,
   });
   if (res.status === 409) {
     const data = await res.json().catch(() => ({}));
@@ -2094,7 +2247,7 @@ async function sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch = f
         error.cancelled = true;
         throw error;
       }
-      return sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch: true });
+      return sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch: true, signal });
     }
     throw new Error(data.error || 'AI 请求失败');
   }
@@ -2118,7 +2271,7 @@ async function executeSkillTool(index) {
   const chat = activeConversation();
   const message = chat?.messages[index];
   const toolCall = message?.toolCall;
-  if (!chat || !toolCall || !['westock', 'perplexity', 'logs'].includes(toolCall.skillId) || sending) return;
+  if (!chat || !toolCall || !['westock', 'perplexity', 'logs'].includes(toolCall.skillId) || isConversationSending(chat.id)) return;
   if (toolCall.skillId === 'logs' && toolCall.tool === 'delete') {
     const confirmedDelete = await confirmDialog({
       title: '删除日志',
@@ -2134,7 +2287,7 @@ async function executeSkillTool(index) {
   toolCall.error = '';
   chat.updatedAt = Date.now();
   await saveConversations();
-  renderMessages();
+  renderConversationIfActive(chat.id);
   try {
     const endpoint = toolCall.skillId === 'logs'
       ? '/api/ai/logs/run'
@@ -2161,30 +2314,31 @@ async function executeSkillTool(index) {
     }
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
+    renderConversationIfActive(chat.id);
   } catch (err) {
     toolCall.status = 'error';
     toolCall.error = err.message;
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
+    renderConversationIfActive(chat.id);
     showToast(`${meta.errorText}：${err.message}`, 'error');
   }
 }
 
-async function sendStreamingMessage(chat, requestSettings) {
+async function sendStreamingMessage(chat, requestSettings, signal) {
   const model = requestSettings.model || activeConversationModel();
   const meta = aiModelMeta(model);
   const assistantMessage = { role: 'assistant', content: '', createdAt: Date.now(), streaming: true, modelId: model, provider: meta?.source === 'openrouter' ? 'openrouter' : meta?.provider };
   chat.messages.push(assistantMessage);
-  renderMessages();
+  renderConversationIfActive(chat.id);
   const res = await apiFetch('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ messages: chat.messages.filter(message => !message.streaming), ...requestSettings }),
+    signal,
   });
   try {
-    await readStreamingReply(res, assistantMessage);
+    await readStreamingReply(res, assistantMessage, chat.id);
     delete assistantMessage.streaming;
   } catch (err) {
     const index = chat.messages.indexOf(assistantMessage);
@@ -2194,12 +2348,12 @@ async function sendStreamingMessage(chat, requestSettings) {
 }
 
 async function sendMessage({ forceImage = false } = {}) {
-  if (sending) return;
   const input = $('#aiChatInput');
   const content = input.value.trim();
   const chat = activeConversation();
+  if (!chat || isConversationSending(chat.id)) return;
   const attachments = forceImage ? [] : pendingMedia.map(item => ({ ...item }));
-  if ((!content && !attachments.length) || !chat || mediaUploading) return;
+  if ((!content && !attachments.length) || mediaUploading) return;
   if (forceImage && pendingMedia.length) return showToast('生图和媒体理解是两个独立操作，请先发送或移除附件', 'info');
   const model = activeConversationModel();
   const modelMeta = aiModelMeta(model);
@@ -2242,7 +2396,7 @@ async function sendMessage({ forceImage = false } = {}) {
     chat.messages.push(assistantMessage);
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
+    renderConversationIfActive(chat.id);
     updateSendState();
     try {
       const optimizedPrompt = await optimizeImagePrompt(prompt);
@@ -2263,46 +2417,50 @@ async function sendMessage({ forceImage = false } = {}) {
     }
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
-    input.focus();
+    renderConversationIfActive(chat.id);
+    if (chat.id === activeConversationId) input.focus();
     return;
   }
-  await saveConversations();
-  renderMessages();
+  const requestSettings = currentSettings();
+  const request = beginConversationRequest(chat);
+  setAiSendingStatus('正在思考...', { conversationId: chat.id });
   updateSendState();
-
-  sending = true;
-  setAiSendingStatus();
-  updateSendState();
-  renderMessages();
+  renderConversationIfActive(chat.id);
   try {
-    const requestSettings = currentSettings();
+    await saveConversations();
     if (requestSettings.stream) {
-      await sendStreamingMessage(chat, requestSettings);
+      await sendStreamingMessage(chat, requestSettings, request.controller.signal);
     } else {
-      await sendJsonMessage(chat, requestSettings);
+      await sendJsonMessage(chat, requestSettings, { signal: request.controller.signal });
     }
     if (chat.messages.length > MAX_MESSAGES) chat.messages = chat.messages.slice(-MAX_MESSAGES);
     chat.updatedAt = Date.now();
     await saveConversations();
-    announceAiStatus('AI 回答已完成');
-    renderMessages();
+    if (chat.id === activeConversationId) announceAiStatus('AI 回答已完成');
+    else showToast(`对话「${chat.title || '新对话'}」回答已完成`, 'success');
+    renderConversationIfActive(chat.id);
   } catch (err) {
-    if (!err.cancelled) showToast(`AI 对话失败：${err.message}`, 'error');
-    announceAiStatus(err.cancelled ? '已取消全量日志分析' : `AI 对话失败：${err.message}`);
+    const cancelled = err.cancelled || err.name === 'AbortError';
+    if (!cancelled) showToast(`对话「${chat.title || '新对话'}」失败：${err.message}`, 'error');
+    if (chat.id === activeConversationId) {
+      announceAiStatus(cancelled ? '已取消 AI 请求' : `AI 对话失败：${err.message}`);
+    }
     const last = chat.messages.at(-1);
     if (last?.streaming) {
       chat.messages.pop();
     }
     chat.updatedAt = Date.now();
     await saveConversations();
-    renderMessages();
+    renderConversationIfActive(chat.id);
   } finally {
-    sending = false;
-    setAiSendingStatus('正在思考...', { announce: false });
-    updateSendState();
-    renderMessages();
-    input.focus();
+    finishConversationRequest(chat.id);
+    if (chat.id === activeConversationId) {
+      updateSendState();
+      renderMessages();
+      input.focus();
+    } else {
+      renderHistory();
+    }
   }
 }
 
@@ -2451,6 +2609,7 @@ export async function initAiChat() {
   $('#btnAiSkill')?.addEventListener('click', toggleSkillPicker);
   $('#btnAiChatModel')?.addEventListener('click', () => openModelPicker('conversation'));
   $('#btnAiDefaultModel')?.addEventListener('click', () => openModelPicker('default'));
+  $('#btnAiModelRefresh')?.addEventListener('click', refreshModelsFromPicker);
   $('#btnAiModelPickerClose')?.addEventListener('click', () => closeModelPicker());
   $('#aiModelPickerOverlay')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeModelPicker();
