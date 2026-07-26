@@ -1082,6 +1082,27 @@ test('AI chat requires DeepSeek configuration and validates request options', as
   });
   assert.equal(badBatchConfirmation.status, 400);
 
+  const unconfirmedLogSelection = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      confirmedLogSelection: { relevantLogIds: [1], contentLogIds: [1] },
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(unconfirmedLogSelection.status, 400);
+
+  const invalidConfirmedLogSelection = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      confirmLargeLogBatch: true,
+      confirmedLogSelection: { relevantLogIds: [1], contentLogIds: [2] },
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assert.equal(invalidConfirmedLogSelection.status, 400);
+
   const badSearchDepth = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1816,10 +1837,28 @@ test('AI chat can include user profile and permitted logs without leaking locked
   });
 
   const capturedPayloads = [];
+  const selectionPayloads = [];
   global.fetch = async (url, options = {}) => {
     const target = String(url);
     if (target.startsWith('http://127.0.0.1')) return originalFetch(url, options);
-    capturedPayloads.push(JSON.parse(options.body));
+    const payload = JSON.parse(options.body);
+    if (payload.messages.some(message => /Select relevant local work logs using metadata only/.test(message.content || ''))) {
+      selectionPayloads.push(payload);
+      const metadata = payload.messages.at(-1).content;
+      const ids = [...metadata.matchAll(/^<untrusted-log-meta id="(\d+)">/gm)].map(match => Number(match[1]));
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          relevantLogIds: ids,
+          contentLogIds: ids,
+          searchTerms: [],
+          readAllRequested: false,
+        }) } }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    capturedPayloads.push(payload);
     return new Response(JSON.stringify({
       choices: [{ message: { content: 'AI reply' } }],
     }), {
@@ -1865,6 +1904,8 @@ test('AI chat can include user profile and permitted logs without leaking locked
   assert.match(capturedPayloads[0].messages[0].content, /use Markdown links in the exact format \[log title\]\(#log\/id\)/);
   assert.match(capturedPayloads[0].messages[0].content, /Diary logs included: no/);
   assert.doesNotMatch(JSON.stringify(capturedPayloads[0]), /private diary content|private title|user-provided-key/);
+  assert.ok(selectionPayloads.length >= 1);
+  assert.doesNotMatch(JSON.stringify(selectionPayloads), /normal work log body|meeting body should be filtered|private diary content/);
 
   const filteredRes = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
@@ -2427,6 +2468,192 @@ test('AI media validates files, uploads Moonshot references, supports Range, and
   assert.equal((await fetch(`${baseUrl}/api/ai/media`, { method: 'POST', body: invalidForm })).status, 400);
 });
 
+test('AI staged log retrieval sends metadata first and reads only selected and local-search-matched bodies', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  const allowedLogs = Array.from({ length: 520 }, (_, index) => ({
+    id: index + 1,
+    title: index === 0 ? '身份认证复盘' : `普通开发记录 ${index + 1}`,
+    content: index === 0
+      ? '候选一完整正文'
+      : (index === 1 ? '正文中独有的 FOOBAR-NEEDLE 认证线索' : `不相关正文-${index + 1}`),
+    category: '开发',
+    hours: index % 8,
+    log_date: `2026-05-${String((index % 28) + 1).padStart(2, '0')}`,
+  }));
+  restoreTestLogs(db, [
+    ...allowedLogs,
+    { id: 1001, title: '禁止会议', content: 'FOOBAR-NEEDLE 禁止正文', category: '会议', log_date: '2026-05-01' },
+  ], ['开发', '会议']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+
+  const selectionPayloads = [];
+  const finalPayloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      if (payload.messages.some(message => /Select relevant local work logs using metadata only/.test(message.content || ''))) {
+        selectionPayloads.push(payload);
+        const metadata = payload.messages.at(-1).content;
+        const ids = [...metadata.matchAll(/^<untrusted-log-meta id="(\d+)">/gm)].map(match => Number(match[1]));
+        const relevantLogIds = ids.includes(1) ? [1] : [];
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({
+            relevantLogIds,
+            contentLogIds: relevantLogIds,
+            searchTerms: ['FOOBAR-NEEDLE'],
+            readAllRequested: false,
+          }) } }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      finalPayloads.push(payload);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '只读取了相关日志。' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '登录认证问题在哪些记录里讨论过？' }],
+      logContextEnabled: true,
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /text\/event-stream/);
+  const events = parseSseEvents(await response.text());
+  const context = events.find(event => event.type === 'context').data;
+  assert.equal(context.catalogCount, 520);
+  assert.equal(context.relevantCount, 2);
+  assert.equal(context.contentCount, 2);
+  assert.equal(context.localSearchHitCount, 1);
+  assert.ok(selectionPayloads.length >= 2);
+  assert.equal(finalPayloads.length, 1);
+  assert.ok(events.some(event => event.type === 'progress' && event.data.phase === 'select'));
+
+  const serializedSelections = JSON.stringify(selectionPayloads);
+  assert.match(serializedSelections, /contentChars:/);
+  assert.doesNotMatch(serializedSelections, /候选一完整正文|FOOBAR-NEEDLE 认证线索|不相关正文-520|禁止会议/);
+  const serializedFinal = JSON.stringify(finalPayloads[0]);
+  assert.match(serializedFinal, /候选一完整正文/);
+  assert.match(serializedFinal, /FOOBAR-NEEDLE 认证线索/);
+  assert.doesNotMatch(serializedFinal, /不相关正文-3|禁止正文/);
+});
+
+test('AI staged log retrieval can answer from metadata without exposing bodies and drops hallucinated ids', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  restoreTestLogs(db, [
+    { id: 1, title: '五月工时汇总', content: '不应发送的正文一', category: '开发', hours: 7, log_date: '2026-05-01' },
+    { id: 2, title: '其他记录', content: '不应发送的正文二', category: '开发', hours: 2, log_date: '2026-05-02' },
+  ], ['开发']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+
+  const payloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      payloads.push(payload);
+      const selecting = payload.messages.some(message => /Select relevant local work logs using metadata only/.test(message.content || ''));
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: selecting
+          ? JSON.stringify({
+              relevantLogIds: [1, 999],
+              contentLogIds: [2, 999],
+              searchTerms: [],
+              readAllRequested: false,
+            })
+          : '五月工时是 7 小时。' } }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '五月工时汇总是多少？' }],
+      logContextEnabled: true,
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(payloads.length, 2);
+  const selectionPayload = JSON.stringify(payloads[0]);
+  const finalPayload = JSON.stringify(payloads[1]);
+  assert.doesNotMatch(selectionPayload, /不应发送的正文/);
+  assert.match(finalPayload, /title: 五月工时汇总/);
+  assert.match(finalPayload, /contentIncluded: no/);
+  assert.doesNotMatch(finalPayload, /不应发送的正文一|不应发送的正文二|其他记录/);
+});
+
+test('AI staged log retrieval rejects invalid selector output without falling back to all bodies', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  restoreTestLogs(db, [
+    { id: 1, title: '选择失败保护', content: '绝不能作为回退发送的正文', category: '开发', log_date: '2026-05-01' },
+  ], ['开发']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+  const payloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      payloads.push(JSON.parse(options.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'not valid selection json' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const response = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: '找出相关记录' }],
+      logContextEnabled: true,
+    }),
+  });
+  assert.equal(response.status, 502);
+  assert.match((await response.json()).error, /invalid JSON/);
+  assert.equal(payloads.length, 1);
+  assert.doesNotMatch(JSON.stringify(payloads[0]), /绝不能作为回退发送的正文/);
+});
+
 test('AI log context snapshots every allowed log beyond pagination limits exactly once', async (t) => {
   const originalFetch = global.fetch;
   const { db, baseUrl } = loadFreshApp(t, {
@@ -2465,7 +2692,7 @@ test('AI log context snapshots every allowed log beyond pagination limits exactl
   global.fetch = async (target, options = {}) => {
     if (String(target) === 'https://deepseek.test/chat/completions') {
       const payload = JSON.parse(options.body);
-      if (payload.messages.some(message => /Analyze one batch from a complete work-log snapshot/.test(message.content || ''))) {
+      if (payload.messages.some(message => /Analyze one batch from a staged, permission-filtered work-log selection/.test(message.content || ''))) {
         mapPayloads.push(payload);
         return new Response(JSON.stringify({ choices: [{ message: { content: `批次证据-${mapPayloads.length}-` + '证据'.repeat(5000) } }] }), {
           status: 200,
@@ -2599,7 +2826,7 @@ test('AI log batches require confirmation, preserve long bodies, cap concurrency
   global.fetch = async (target, options = {}) => {
     if (String(target) === 'https://deepseek.test/chat/completions') {
       const payload = JSON.parse(options.body);
-      const isMap = payload.messages.some(message => /Analyze one batch from a complete work-log snapshot/.test(message.content || ''));
+      const isMap = payload.messages.some(message => /Analyze one batch from a staged, permission-filtered work-log selection/.test(message.content || ''));
       if (isMap) {
         mapPayloads.push(payload);
         active += 1;
@@ -2631,7 +2858,7 @@ test('AI log batches require confirmation, preserve long bodies, cap concurrency
   });
 
   const requestBody = {
-    messages: [{ role: 'user', content: '分析这些超长日志并提出修改建议' }],
+    messages: [{ role: 'user', content: '分析全部这些超长日志并提出修改建议' }],
     logContextEnabled: true,
   };
   const confirmation = await fetch(`${baseUrl}/api/ai/chat`, {
@@ -2650,7 +2877,11 @@ test('AI log batches require confirmation, preserve long bodies, cap concurrency
   const response = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...requestBody, confirmLargeLogBatch: true }),
+    body: JSON.stringify({
+      ...requestBody,
+      confirmLargeLogBatch: true,
+      confirmedLogSelection: confirmationBody.confirmedLogSelection,
+    }),
   });
   assert.equal(response.status, 200);
   const events = parseSseEvents(await response.text());
@@ -2678,6 +2909,72 @@ test('AI log batches require confirmation, preserve long bodies, cap concurrency
     assert.equal(parts.length, parts[0].total);
     assert.equal(parts.map(part => part.content).join(''), content);
   });
+});
+
+test('AI log confirmation retry revalidates the latest category permissions', async (t) => {
+  const originalFetch = global.fetch;
+  const { db, baseUrl } = loadFreshApp(t, {
+    deepseekApiKey: 'sk-env-key',
+    deepseekBaseUrl: 'https://deepseek.test',
+  });
+  restoreTestLogs(db, [{
+    id: 1,
+    title: '确认期间改分类',
+    content: `确认后不得泄露的正文\n${'私密内容'.repeat(70000)}`,
+    category: '开发',
+    log_date: '2026-06-01',
+  }], ['开发', '会议']);
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    logContextEnabled: true,
+    logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: {} },
+  });
+
+  const providerPayloads = [];
+  global.fetch = async (target, options = {}) => {
+    if (String(target) === 'https://deepseek.test/chat/completions') {
+      const payload = JSON.parse(options.body);
+      providerPayloads.push(payload);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '已按最新权限回答。' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return originalFetch(target, options);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+  });
+
+  const requestBody = {
+    messages: [{ role: 'user', content: '分析全部日志' }],
+    logContextEnabled: true,
+  };
+  const confirmation = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(requestBody),
+  });
+  assert.equal(confirmation.status, 409);
+  const confirmationBody = await confirmation.json();
+  assert.equal(confirmationBody.contentCount, 1);
+  assert.equal(providerPayloads.length, 0);
+
+  db.update(1, { category: '会议' });
+  const retry = await fetch(`${baseUrl}/api/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...requestBody,
+      confirmLargeLogBatch: true,
+      confirmedLogSelection: confirmationBody.confirmedLogSelection,
+    }),
+  });
+  assert.equal(retry.status, 200);
+  assert.equal(providerPayloads.length, 1);
+  const serialized = JSON.stringify(providerPayloads[0]);
+  assert.match(serialized, /no logs are currently allowed by the access settings/);
+  assert.doesNotMatch(serialized, /确认后不得泄露的正文|私密内容/);
 });
 
 test('AI log context rejects more than 32 batches before any provider call', async (t) => {
@@ -2768,7 +3065,7 @@ test('AI log batch failure emits an error without a partial result or mutation',
   const response = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: '分析失败场景' }], logContextEnabled: true }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: '分析全部日志的失败场景' }], logContextEnabled: true }),
   });
   assert.equal(response.status, 200);
   const events = parseSseEvents(await response.text());
@@ -2821,7 +3118,7 @@ test('AI log batch analysis aborts provider requests when the client closes the 
   const response = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: [{ role: 'user', content: '开始后取消' }], logContextEnabled: true }),
+    body: JSON.stringify({ messages: [{ role: 'user', content: '开始读取全部日志后取消' }], logContextEnabled: true }),
   });
   assert.equal(response.status, 200);
   const reader = response.body.getReader();
@@ -5578,9 +5875,11 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   assert.match(appSource, /if \(!diarySelected\) await refreshAll\(\);[\s\S]*syncMainViewWithSidebarMode\(\);/);
   assert.doesNotMatch(appSource, /fabCapture/);
   assert.match(appSource, /initAiChat\(\);/);
-  assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages, \.\.\.requestSettings, confirmLargeLogBatch \}\)/);
+  assert.match(aiSource, /const requestBody = \{ messages: chat\.messages, \.\.\.requestSettings, confirmLargeLogBatch \};/);
+  assert.match(aiSource, /if \(confirmedLogSelection\) requestBody\.confirmedLogSelection = confirmedLogSelection;/);
   assert.match(aiSource, /AI_LOG_BATCH_CONFIRMATION_REQUIRED/);
-  assert.match(aiSource, /正在分析第 \$\{data\.completed \|\| 0\}\/\$\{data\.total \|\| 0\} 批日志/);
+  assert.match(aiSource, /正在筛选日志元数据/);
+  assert.match(aiSource, /正在读取并分析第 \$\{data\.completed \|\| 0\}\/\$\{data\.total \|\| 0\} 批日志/);
   assert.match(aiSource, /body: JSON\.stringify\(\{ messages: chat\.messages\.filter\(message => !message\.streaming\), \.\.\.requestSettings \}\)/);
   assert.match(aiSource, /import \{ renderToHtml \} from '\.\/markdown\.js';/);
   assert.match(aiSource, /confirmDialog/);

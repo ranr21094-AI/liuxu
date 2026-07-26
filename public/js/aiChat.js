@@ -2216,9 +2216,19 @@ async function readLogBatchReply(res, chat) {
       if (!event.data) continue;
       const data = JSON.parse(event.data);
       if (event.type === 'context') {
-        setAiSendingStatus(`准备分析 ${data.logCount || 0} 条日志（${data.batchCount || 0} 批）...`, { conversationId: chat.id });
+        setAiSendingStatus(
+          `已从 ${data.catalogCount || 0} 条日志中选出 ${data.relevantCount || 0} 条，准备读取 ${data.contentCount || 0} 条正文（${data.contentBatchCount || 0} 批）...`,
+          { conversationId: chat.id },
+        );
+      } else if (event.type === 'progress' && data.phase === 'select') {
+        setAiSendingStatus(
+          `日志筛选完成：相关 ${data.relevantCount || 0} 条，正文 ${data.contentCount || 0} 条...`,
+          { conversationId: chat.id },
+        );
+      } else if (event.type === 'progress' && data.phase === 'read') {
+        setAiSendingStatus(`正在读取并分析第 ${data.completed || 0}/${data.total || 0} 批日志...`, { conversationId: chat.id });
       } else if (event.type === 'progress' && data.phase === 'analyze') {
-        setAiSendingStatus(`正在分析第 ${data.completed || 0}/${data.total || 0} 批日志...`, { conversationId: chat.id });
+        setAiSendingStatus(`正在读取并分析第 ${data.completed || 0}/${data.total || 0} 批日志...`, { conversationId: chat.id });
       } else if (event.type === 'progress' && data.phase === 'merge') {
         setAiSendingStatus(`正在合并日志证据（${data.completed || 0}/${data.total || 0}）...`, { conversationId: chat.id });
       } else if (event.type === 'result') {
@@ -2246,28 +2256,48 @@ async function readLogBatchReply(res, chat) {
   if (!resultReceived) throw new Error('AI 日志分析未返回完整结果');
 }
 
-async function sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch = false, signal } = {}) {
+async function sendJsonMessage(chat, requestSettings, {
+  confirmLargeLogBatch = false,
+  confirmedLogSelection = null,
+  signal,
+} = {}) {
+  const requestBody = { messages: chat.messages, ...requestSettings, confirmLargeLogBatch };
+  if (confirmedLogSelection) requestBody.confirmedLogSelection = confirmedLogSelection;
   const res = await apiFetch('/api/ai/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: chat.messages, ...requestSettings, confirmLargeLogBatch }),
+    body: JSON.stringify(requestBody),
     signal,
   });
   if (res.status === 409) {
     const data = await res.json().catch(() => ({}));
     if (data.code === 'AI_LOG_BATCH_CONFIRMATION_REQUIRED') {
+      const candidateTitles = Array.isArray(data.candidateLogs)
+        ? data.candidateLogs.slice(0, 8).map(item => `“${item.title || `日志 ${item.id}`}”`).join('、')
+        : '';
+      const displayedCandidateCount = Math.min(data.candidateLogs?.length || 0, 8);
+      const remaining = Math.max(0, (data.contentCount || 0) - displayedCandidateCount);
+      const candidateSummary = candidateTitles
+        ? `候选包括 ${candidateTitles}${remaining ? `等另外 ${remaining} 条` : ''}。`
+        : '';
       const confirmed = await confirmDialog({
-        title: '确认分析全部日志',
-        message: `将读取 ${data.logCount || 0} 条日志，分为 ${data.batchCount || 0} 批，预计调用 AI ${data.estimatedCalls || data.batchCount || 0} 次。是否继续？`,
+        title: '确认读取较多日志',
+        message: `已从 ${data.catalogCount || 0} 条日志中筛选出 ${data.relevantCount || 0} 条相关日志，需要读取 ${data.contentCount || data.logCount || 0} 条正文，共 ${data.contentBatchCount || data.batchCount || 0} 批。${candidateSummary}预计还需调用 AI ${data.estimatedCalls || data.batchCount || 0} 次。是否继续？`,
         confirmText: '继续分析',
         cancelText: '取消',
       });
       if (!confirmed) {
-        const error = new Error('已取消全量日志分析');
+        const error = new Error('已取消日志正文分析');
         error.cancelled = true;
         throw error;
       }
-      return sendJsonMessage(chat, requestSettings, { confirmLargeLogBatch: true, signal });
+      if (!data.confirmedLogSelection) throw new Error('日志候选确认信息缺失');
+      setAiSendingStatus('已确认候选，正在读取日志正文...', { conversationId: chat.id });
+      return sendJsonMessage(chat, requestSettings, {
+        confirmLargeLogBatch: true,
+        confirmedLogSelection: data.confirmedLogSelection,
+        signal,
+      });
     }
     throw new Error(data.error || 'AI 请求失败');
   }
@@ -2443,7 +2473,7 @@ async function sendMessage({ forceImage = false } = {}) {
   }
   const requestSettings = currentSettings();
   const request = beginConversationRequest(chat);
-  setAiSendingStatus('正在思考...', { conversationId: chat.id });
+  setAiSendingStatus(requestSettings.logContextEnabled ? '正在筛选日志元数据...' : '正在思考...', { conversationId: chat.id });
   updateSendState();
   renderConversationIfActive(chat.id);
   try {
