@@ -3468,6 +3468,17 @@ test('AI editor validates input and keeps Tavily search limited to the user mess
 
 test('AI image generation validates options and stores Seedream output locally', async (t) => {
   const originalFetch = global.fetch;
+  const dns = require('dns');
+  const originalLookup = dns.promises.lookup;
+  dns.promises.lookup = async (hostname, options) => {
+    if (['seedream.test', 'example.com'].includes(String(hostname))) {
+      return [{ address: '1.1.1.1', family: 4 }];
+    }
+    return originalLookup.call(dns.promises, hostname, options);
+  };
+  t.after(() => {
+    dns.promises.lookup = originalLookup;
+  });
   const missing = loadFreshApp(t);
   const missingKey = await fetch(`${missing.baseUrl}/api/ai/image/generate`, {
     method: 'POST',
@@ -4149,6 +4160,9 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, photoWall: { items: [{ id: 1, url: '/uploads/a.png', filename: 'a.png', width: 10 }] } }).error, /Invalid photo wall geometry/);
 
   assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'], photoWall: { items: [{ id: 1, url: '/uploads/wall.png', filename: 'wall.png', x: 1, y: 2, width: 320, height: 240, comment: 'ok' }] } }).success, true);
+  assert.equal(db.backup().format, 'structure');
+  assert.equal(db.backup().includesBinaries, false);
+  assert.match(db.restore({ ...base, aiChats: { conversations: [{ title: 'missing-id' }] } }).error, /Invalid AI conversation/);
   assert.equal(db.backup().logs[0].pinned, false);
   assert.equal(db.backup().logs[0].pinned_at, null);
   assert.equal(db.getAllTodos()[0].notes, '');
@@ -4877,7 +4891,7 @@ test('all frontend scripts pass parser checks before browser loading', () => {
 });
 
 test('primary controls expose accessible names and editor tab semantics', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const aiSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiChat.js'), 'utf8');
   const document = new JSDOM(html).window.document;
 
@@ -5244,7 +5258,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
 });
 
 test('log main page uses archive layout while preserving existing controls', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const logListSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'logList.js'), 'utf8');
   const document = new JSDOM(html).window.document;
@@ -5365,7 +5379,7 @@ test('log main page uses archive layout while preserving existing controls', () 
 test('category manager opens directly into subcategory log browsing', () => {
   const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
-  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const codexCategoryStyles = styleSource.match(/\/\* Codex-style category workspace refinements \*\/[\s\S]*$/)?.[0] || '';
 
   assert.doesNotMatch(categorySource, /cat-parent-log-count/);
@@ -5484,7 +5498,7 @@ test('category manager opens directly into subcategory log browsing', () => {
 });
 
 test('photo wall frontend supports sidebar mode, upload, canvas transform, and comments', () => {
-  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const photoWallSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'photoWall.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
@@ -5536,7 +5550,7 @@ test('photo wall frontend supports sidebar mode, upload, canvas transform, and c
 test('todo UI uses drag sorting, new priorities, and hides notes previews', () => {
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
-  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const priorityStyleBlock = styleSource.match(/\.todo-priority\s*\{[\s\S]*?\n\}/)?.[0] || '';
 
   assert.match(htmlSource, /<option value="none">无<\/option>[\s\S]*<option value="normal">普通<\/option>[\s\S]*<option value="important">重要<\/option>[\s\S]*<option value="urgent">紧急<\/option>/);
@@ -5645,7 +5659,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
 test('countdown UI provides a persistent independent card mode', () => {
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
-  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
 
   assert.match(htmlSource, /id="todoModeTabs"[\s\S]*data-mode="todos"[\s\S]*data-mode="countdowns"/);
   assert.match(htmlSource, /id="countdownPanel"[\s\S]*id="countdownGrid"/);
@@ -5667,7 +5681,7 @@ test('countdown UI provides a persistent independent card mode', () => {
 test('todo reminder UI loads, saves, and displays reminder status in the todo page', () => {
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
-  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
 
   assert.match(htmlSource, /id="todoReminderHeading">邮件提醒/);
   assert.match(htmlSource, /所有分类中当天到期的未完成待办/);
@@ -5707,7 +5721,7 @@ test('application initialization waits for auth and diary selection before refre
 });
 
 test('dedicated login and account management UI remove plaintext token handling and support responsive themes', () => {
-  const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const loginSource = fs.readFileSync(path.join(ROOT, 'public', 'login.html'), 'utf8');
   const loginScript = fs.readFileSync(path.join(ROOT, 'public', 'js', 'login.js'), 'utf8');
   const accountsSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'accounts.js'), 'utf8');
@@ -5754,7 +5768,7 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const calendarSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'calendar.js'), 'utf8');
   const logListSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'logList.js'), 'utf8');
-  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 
   assert.match(styleSource, /:root\s*\{[\s\S]*--color-sidebar:\s*#f0fdfa;[\s\S]*--color-sidebar-text:\s*#475569;[\s\S]*--color-sidebar-heading:\s*#0f766e;/);
@@ -5824,7 +5838,7 @@ test('AI chat frontend supports local history and refreshed workspace layout', (
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const categorySource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'categories.js'), 'utf8');
   const photoWallSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'photoWall.js'), 'utf8');
-  const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const indexSource = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const quoteSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'aiDailyQuotes.js'), 'utf8');
   const aiCleanupStyles = styleSource.match(/\/\* AI cleanup pass \*\/[\s\S]*?\/\* AI message footer and grouped history refinements \*\//)?.[0] || '';
@@ -6430,7 +6444,7 @@ test('CodeMirror editor is bundled as a deferred Markdown editing asset', () => 
 });
 
 test('editor exposes pasted image upload and common emoji insertion controls', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const document = new JSDOM(html).window.document;
@@ -6497,7 +6511,7 @@ test('editor fullscreen mode keeps only title and writing surface visible', () =
 });
 
 test('editor AI panel sends current log context and applies suggestions explicitly', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const editorSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const document = new JSDOM(html).window.document;
@@ -6634,7 +6648,7 @@ test('editor AI panel sends current log context and applies suggestions explicit
 });
 
 test('mobile layout uses compact on-demand sidebar panels and retains collapse controls', () => {
-  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'legacy.html'), 'utf8');
   const appSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
   const document = new JSDOM(html).window.document;
@@ -6777,4 +6791,45 @@ test('shortcut matching ignores IME composition keyboard events', async () => {
   assert.equal(eventMatches({ key: 's', ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }, null), false);
   assert.equal(findAction({ key: 'Process', keyCode: 229, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), null);
   assert.equal(findAction({ key: 's', isComposing: true, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false }), null);
+});
+
+test('new workspace exposes only Agent and knowledge modes in a shared two-column shell', () => {
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(ROOT, 'public', 'js', 'workbench.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(ROOT, 'public', 'css', 'workbench.css'), 'utf8');
+  const document = new JSDOM(html).window.document;
+  const modes = [...document.querySelectorAll('.mode-switch [data-mode]')].map(item => item.dataset.mode);
+  assert.deepEqual(modes, ['agent', 'knowledge']);
+  assert.equal(document.querySelector('[data-mode="tasks"]'), null);
+  assert.equal(document.querySelector('#agentSidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#knowledgeSidebarPanel') !== null, true);
+  assert.equal(document.querySelector('#knowledgeRootPanel') !== null, true);
+  assert.equal(document.querySelector('#knowledgeInsidePanel') !== null, true);
+  assert.equal(document.querySelector('#knowledgeBaseList') !== null, true);
+  assert.equal(document.querySelector('#knowledgeFolderTree') !== null, true);
+  assert.equal(document.querySelector('#knowledgeTypeFilter'), null);
+  assert.equal(document.querySelector('#knowledgeCollectionFilter'), null);
+  assert.equal(document.querySelector('#agentView') !== null, true);
+  assert.equal(document.querySelector('#knowledgeView') !== null, true);
+  assert.equal(document.querySelector('#annotationContent') !== null, true);
+  assert.equal(document.querySelector('#filePreviewHost') !== null, true);
+  assert.equal(document.querySelector('#fileExtractDetails') !== null, true);
+  assert.match(html, /image\/png/);
+  assert.match(source, /renderFilePreview/);
+  assert.match(source, /destroyFilePreview/);
+  assert.match(source, /knowledge\/filePreview\.js/);
+  assert.match(styles, /\.file-preview-host/);
+  assert.equal(document.querySelector('#settingsDialog a[href="/legacy.html"]') !== null, true);
+  assert.match(source, /baseVersion:\s*state\.activeDocument\?\.version/);
+  assert.match(source, /data-citation-document/);
+  assert.match(source, /knowledgeBase/);
+  assert.match(source, /loadKnowledgeTree/);
+  assert.match(source, /setTimeout\(\(\) => saveDocument\(\), 800\)/);
+  assert.match(styles, /grid-template-columns:\s*var\(--sidebar-width\) minmax\(0, 1fr\)/);
+  assert.match(styles, /\.brand-home[^{]*\{[^}]*flex:\s*0 1 auto/);
+  assert.match(styles, /\.sidebar-scroll\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styles, /\.note-editor,\s*\.file-reader\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(source, /brandHome\.setAttribute\('href', mode === 'knowledge' \? '#knowledge' : '#agent'\)/);
+  assert.match(styles, /@media \(max-width: 840px\)[\s\S]*body\.sidebar-visible \.workspace-sidebar/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'public', 'vendor', 'pdfjs', 'pdf.worker.min.js')), true);
 });

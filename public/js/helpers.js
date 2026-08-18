@@ -45,6 +45,20 @@ export function escHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+export function highlightSearch(text, query) {
+  const safe = escHtml(text || '');
+  const needle = String(query || '').trim();
+  if (!needle) return safe;
+  const escapedNeedle = escHtml(needle).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!escapedNeedle) return safe;
+  return safe.replace(new RegExp(`(${escapedNeedle})`, 'gi'), '<mark>$1</mark>');
+}
+
+export function cssNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
 /** Only allow http(s) URLs for href attributes, neutralizing javascript:/data:/vbscript: schemes. */
 export function safeExternalHref(value) {
   return (typeof value === 'string' && /^https?:\/\//i.test(value)) ? value : '#';

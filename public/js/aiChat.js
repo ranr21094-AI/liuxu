@@ -368,7 +368,6 @@ async function loadConversations() {
   if (!conversations.length) conversations = [createConversation()];
   if (!activeConversationId) activeConversationId = conversations[0].id;
   if (!activeConversation()) activeConversationId = conversations[0].id;
-  await saveConversations();
 }
 
 function saveConversations() {
@@ -1217,7 +1216,11 @@ function renderMessages() {
 
 function renderAiMediaAttachments(attachments = []) {
   if (!Array.isArray(attachments) || !attachments.length) return '';
-  return `<div class="ai-message-media">${attachments.map(item => item.kind === 'video' ? `
+  return `<div class="ai-message-media">${attachments.map(item => {
+    if (item.missing) {
+      return `<figure class="ai-message-media-item missing"><figcaption>${escHtml(item.name || '附件')}（引用缺失）</figcaption></figure>`;
+    }
+    return item.kind === 'video' ? `
     <figure class="ai-message-media-item video">
       <video src="/api/ai/media/${encodeURIComponent(item.id)}/content" controls preload="metadata" aria-label="${escHtml(item.name || '视频')}"></video>
       <figcaption>${escHtml(item.name || '视频')}</figcaption>
@@ -1227,7 +1230,8 @@ function renderAiMediaAttachments(attachments = []) {
       <img src="/api/ai/media/${encodeURIComponent(item.id)}/content" alt="${escHtml(item.name || '图片')}" data-ai-media-preview>
       <figcaption>${escHtml(item.name || '图片')}</figcaption>
     </figure>
-  `).join('')}</div>`;
+  `;
+  }).join('')}</div>`;
 }
 
 function renderPendingMedia() {

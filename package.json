@@ -22,10 +22,14 @@
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
     "express": "^4.21.0",
+    "jszip": "^3.10.1",
     "katex": "^0.16.47",
+    "mammoth": "^1.12.1",
     "marked": "^18.0.3",
+    "minisearch": "^7.2.0",
     "multer": "^2.1.1",
-    "nodemailer": "^6.9.7"
+    "nodemailer": "^6.9.7",
+    "pdfjs-dist": "^3.11.174"
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

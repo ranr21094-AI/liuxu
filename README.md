@@ -47,6 +47,10 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 ## Recent Updates
 
+- 默认首页已重构为 Agent / 知识库两个模式的双栏工作台：左侧管理会话或文档，右侧专注对话、编辑与阅读；任务仅作为 Agent 工具保留。
+- 新增账户级知识文档、MiniSearch 本地检索、文件导入（Markdown/TXT/PDF/DOCX）和 ZIP 工作区备份。
+- 新增独立 Agent Runtime、工具审批、分层记忆，以及可选的 Windows 受控执行和 Chrome 扩展桥。
+
 - 新增独立 `/login`、24 小时 HttpOnly Cookie 会话和管理员创建的多账户体系。
 - 每个账户拥有独立的日志、待办、倒数日、分类、上传、照片墙、AI 设置与历史、提醒配置、日记密码和备份恢复空间。
 - 现有根目录数据会原地归属首次管理员；新账户保存到 `data/accounts/<UUID>/`。
@@ -318,6 +322,24 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 - 启用日记锁后，备份和恢复需要先解锁日记。
 - 恢复支持替换和合并；不含倒数日、置顶字段等新字段的旧备份继续兼容。
 - 所有备份与恢复接口都要求当前账户的有效 Cookie 会话。
+- JSON 备份标记为 `format: structure`，只含结构数据；完整附件请使用 `/api/workspace/export` 的 ZIP 工作区备份。
+
+## Chrome 扩展与 Windows 原生执行
+
+- 仓库 `chrome-extension/` 是 Manifest V3 扩展。在 Chrome 打开 `chrome://extensions`，启用开发者模式后加载该目录。
+- 扩展只与 `127.0.0.1` / `localhost` 的应用页通信，并通过配对码绑定。Agent 只能控制用户明确附加的标签页，不会使用远程调试端口。
+- Windows 电脑工具默认关闭。管理员需在本机环回访问中重新输入密码，并配置目录白名单后才会开放文件和 `code.run`。
+- PowerShell / Python 一旦确认执行，即拥有当前 Windows 用户权限；目录白名单无法约束脚本内部自行访问其他路径。这不是安全沙箱。
+
+## Agent 工作台（当前默认入口）
+
+首页只有 Agent 和知识库两个模式，桌面端使用固定侧栏，窄屏自动切换为抽屉。Agent 模式的左侧按时间分组管理会话，右侧显示对话、运行轨迹、审批和记忆建议；知识库模式的左侧以“知识库 → 文件夹 → 文档”树统一管理所有知识，笔记、旧日志和导入文件混排，右侧编辑 Markdown 或只读查看文件正文。当前位置保存在 `#agent/:sessionId`、`#knowledge?base=...&folder=...` 或 `#knowledge/:documentId` Hash 路由中，知识引用可以直接打开并定位文档。
+
+知识库根节点沿用原有一级分类，原有带路径的分类映射为对应知识库下的文件夹；没有明确位置的新笔记和导入文件默认进入“其他”。新列表不按来源或文件格式筛选，`sourceType` 只在后端适配和权限判断中保留。知识树可新建、重命名和归档知识库/文件夹，`GET /api/knowledge/tree` 返回当前账户可见的树和文档数量。旧日志仍以 `logs.json` 为权威数据源，在新编辑器中只编辑标题、正文和日期，工时与置顶字段保持不变。
+
+任务不再占用首页入口，仍可由 Agent 在确认后创建、更新或完成。旧日志、待办、照片墙、模型设置与备份界面完整保留在 `/legacy.html`，可从新首页的“设置 → 打开旧版功能”进入。Agent 的本地检索不会把锁定日记加入索引结果，修改知识、任务写入、代码运行和浏览器写操作会先显示确认卡。
+
+知识文档接口为 `/api/knowledge/documents`、`/api/knowledge/search` 和 `/api/knowledge/imports`；文件原件只从认证接口 `/api/knowledge/files/:id/content` 读取。Agent 会话和运行记录分别保存到当前账户的 `agent-sessions.json` 与 `agent-runs.json`，长期记忆先写入提案，确认后才进入 `agent-memories.json`。完整 ZIP 工作区还会包含知识原件、上传图片、AI 媒体、Agent 资产和会话记忆。
 
 ## Mobile Access
 
@@ -411,6 +433,24 @@ http://<电脑局域网 IP>:<PORT>
 | `DELETE` | `/api/ai/media/:id` | 删除未被会话引用的 AI 媒体 |
 | `POST` | `/api/ai/image/prompt` | 生图 prompt 优化 |
 | `POST` | `/api/ai/image/generate` | Seedream 生图并保存到本地 |
+| `GET/POST` | `/api/knowledge/documents` | 查询或创建知识文档 |
+| `GET/PATCH` | `/api/knowledge/documents/:id` | 读取或更新知识文档 |
+| `GET/PUT` | `/api/knowledge/documents/:id/annotation` | 读取或保存导入文件的关联笔记 |
+| `POST` | `/api/knowledge/documents/:id/archive` | 归档知识文档 |
+| `POST` | `/api/knowledge/imports` | 导入 Markdown、TXT、PDF 或 DOCX |
+| `GET` | `/api/knowledge/search` | 本地分块检索并返回引用定位 |
+| `GET` | `/api/knowledge/files/:id/content` | 认证读取知识原文件 |
+| `GET/POST` | `/api/agent/sessions` | Agent 会话列表与创建 |
+| `GET/PATCH` | `/api/agent/sessions/:id` | 读取完整会话，或重命名/归档会话 |
+| `POST` | `/api/agent/sessions/:id/messages` | 创建一次 Agent 运行 |
+| `GET` | `/api/agent/runs/:id/events` | SSE 运行事件流 |
+| `POST` | `/api/agent/runs/:id/approvals/:approvalId` | 批准或拒绝动作 |
+| `POST` | `/api/agent/runs/:id/cancel` | 取消运行 |
+| `GET` | `/api/agent/memories` | 查询已确认的 L2/L3 记忆 |
+| `POST` | `/api/agent/memory-proposals/:id/approve` | 确认长期记忆提案 |
+| `GET/PUT` | `/api/admin/agent-policy` | 管理电脑工具开关与目录白名单 |
+| `GET` | `/api/workspace/export` | 导出完整 ZIP 工作区 |
+| `POST` | `/api/workspace/restore` | 恢复 ZIP 或旧 JSON |
 
 除登录和登录状态检查外，工作区 API 都要求有效的 `site_session` Cookie；`/api/admin/*` 还要求管理员角色。处于强制改密状态的会话只能查询或修改当前账户、修改密码和退出。
 

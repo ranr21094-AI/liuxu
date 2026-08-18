@@ -1,0 +1,43 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { exportWorkspace, restoreWorkspace } = require('../lib/workspace/zip');
+const { createKnowledgeService } = require('../lib/knowledge/documents');
+
+function tempDb(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  process.env.DATA_DIR = dir;
+  process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
+  delete require.cache[require.resolve('../database.js')];
+  const db = require('../database.js');
+  db.create({ title: 'zip log', content: 'body', category: '开发', log_date: '2026-05-16' });
+  fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'uploads', 'pic.png'), Buffer.from([1, 2, 3]));
+  return { db, dir };
+}
+
+test('workspace zip export includes binaries and restores them', async (t) => {
+  const { db, dir } = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  knowledge.createNote({ title: 'ZIP 知识', content: '知识正文' });
+  const buffer = await exportWorkspace(db);
+  assert.ok(buffer.length > 20);
+  fs.rmSync(path.join(dir, 'uploads'), { recursive: true, force: true });
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-b-'));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  process.env.DATA_DIR = other;
+  process.env.AI_SECRETS_KEY_FILE = path.join(other, 'ai-secrets.key');
+  delete require.cache[require.resolve('../database.js')];
+  const db2 = require('../database.js');
+  const result = await restoreWorkspace(db2, buffer);
+  assert.equal(result.success, true);
+  assert.equal(result.includesBinaries, true);
+  assert.equal(db2.getAllUnpaginated({}, true)[0].title, 'zip log');
+  assert.equal(fs.existsSync(path.join(other, 'uploads', 'pic.png')), true);
+  const restoredKnowledge = createKnowledgeService(db2);
+  assert.equal(restoredKnowledge.nativeDocuments()[0].title, 'ZIP 知识');
+  assert.equal(restoredKnowledge.createNote({ title: '第二篇', content: 'x' }).document.id, 'note:2');
+});

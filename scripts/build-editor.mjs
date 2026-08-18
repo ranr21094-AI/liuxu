@@ -43,6 +43,11 @@ await copyFile(path.join(rootDir, 'node_modules', 'katex', 'dist', 'katex.min.js
 await copyFile(path.join(rootDir, 'node_modules', 'katex', 'dist', 'katex.min.css'), path.join(vendorDir, 'katex', 'katex.min.css'));
 await cp(path.join(rootDir, 'node_modules', 'katex', 'dist', 'fonts'), path.join(vendorDir, 'katex', 'fonts'), { recursive: true, force: true });
 
+const pdfjsDir = path.join(vendorDir, 'pdfjs');
+await mkdir(pdfjsDir, { recursive: true });
+await copyFile(path.join(rootDir, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.min.js'), path.join(pdfjsDir, 'pdf.min.js'));
+await copyFile(path.join(rootDir, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.min.js'), path.join(pdfjsDir, 'pdf.worker.min.js'));
+
 await build({
   absWorkingDir: rootDir,
   stdin: {

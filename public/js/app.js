@@ -13,6 +13,7 @@ import { loadCategories, openCategoryManager } from './categories.js';
 import { loadTodos, showTodoView } from './todos.js';
 import { businessDateString } from './businessDate.js';
 import { initAccounts } from './accounts.js';
+import { initKnowledgeImport } from './knowledge/import.js';
 
 // Theme
 function initTheme() {
@@ -112,6 +113,10 @@ function syncSidebarViewportMode() {
 
 async function setSidebarMode(mode, { updateMain = true } = {}) {
   if (!['normal', 'todo', 'categories', 'photo-wall', 'ai', 'tools'].includes(mode)) mode = 'normal';
+  // The legacy sidebar remains available for old deep links, but the workbench
+  // navigation owns the default product surface.
+  document.body.classList.add('workbench-legacy');
+  document.body.classList.remove('workbench-default');
   if (updateMain && !(await leaveEditorSafely())) return;
   document.body.classList.toggle('sidebar-todo-mode', mode === 'todo');
   document.body.classList.toggle('sidebar-category-mode', mode === 'categories');
@@ -220,6 +225,8 @@ $('#btnSidebarExpand').addEventListener('click', collapseSidebar);
 function syncDiaryLockState(status) {
   state.diaryLockEnabled = status.enabled !== false;
   state.diaryUnlocked = !state.diaryLockEnabled || !status.locked;
+  const button = $('#workbenchDiaryToggle');
+  if (button) button.textContent = state.diaryUnlocked ? '私密知识：已解锁' : '私密知识：锁定';
 }
 
 window.addEventListener('request-diary-unlock', () => promptDiaryUnlock());
@@ -235,6 +242,9 @@ async function handleDiaryMagicPhrase() {
     syncDiaryLockState({ enabled: true, locked: true });
     await reloadAiChatHistory();
     showToast('日记已锁定', 'info');
+    state.search = '';
+    $('#searchInput').value = '';
+    $('#btnSearchClear')?.classList.remove('visible');
     if (state.category === '日记' || state.category.startsWith('日记/')) {
       state.category = '';
       state.currentPage = 1;
@@ -257,6 +267,7 @@ async function handleDiaryMagicPhrase() {
 }
 
 window.addEventListener('diary-magic-phrase', handleDiaryMagicPhrase);
+window.addEventListener('workbench-diary-toggle', handleDiaryMagicPhrase);
 
 function selectDiaryLogs() {
   state.category = '日记';
@@ -375,7 +386,7 @@ $('#restoreFileInput').addEventListener('change', async () => {
     const result = await res.json();
     clearMdCache();
     await refreshAll();
-    showToast(`导入成功！${result.logs} 条日志，${result.todos} 条待办，${result.countdowns || 0} 个倒数日，${result.categories} 个分类已恢复。`, 'success');
+    showToast(`导入成功！${result.logs} 条日志，${result.todos} 条待办，${result.countdowns || 0} 个倒数日，${result.categories} 个分类已恢复。${result.includesBinaries === false ? ' 当前备份仅含结构数据，未包含上传文件或 AI 媒体。' : ''}`, 'success');
   } catch (err) {
     showToast('导入失败：' + err.message, 'error');
   } finally {
@@ -384,7 +395,7 @@ $('#restoreFileInput').addEventListener('change', async () => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadLogs(), loadStats(), loadTodos(), loadCategories()]);
+  await Promise.all([loadLogs(), loadStats(), loadTodos(), loadCategories(), reloadAiChatHistory()]);
 }
 
 function syncMainViewWithSidebarMode() {
@@ -420,6 +431,7 @@ async function initializeApp() {
   if (!authenticated) return;
   await initAccounts();
   await initAiChat();
+  initKnowledgeImport();
   const diarySelected = await initDiaryLock();
   if (!diarySelected) await refreshAll();
   syncMainViewWithSidebarMode();

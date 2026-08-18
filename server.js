@@ -4,7 +4,6 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const net = require('net');
 const childProcess = require('child_process');
 const { AsyncLocalStorage } = require('async_hooks');
 const multer = require('multer');
@@ -12,6 +11,10 @@ const nodemailer = require('nodemailer');
 const database = require('./database');
 const { createAuthStore } = require('./auth-store');
 const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
+const { isPrivateIpLiteral, validateGeneratedImageUrl } = require('./lib/net/ssrf');
+const { defaultModelClient } = require('./lib/agent/model');
+const { toolResult } = require('./lib/agent/tools');
+const { serviceFor: knowledgeServiceFor } = require('./lib/knowledge/routes');
 
 const app = express();
 app.set('trust proxy', 'loopback');
@@ -421,60 +424,6 @@ async function readResponseTextWithLimit(response, maxBytes, errorMessage) {
   return Buffer.concat(chunks, total).toString('utf8');
 }
 
-function ipv4IsPrivateOrLocal(parts) {
-  return parts[0] === 0 || parts[0] === 10 || parts[0] === 127 ||
-    (parts[0] === 169 && parts[1] === 254) ||
-    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-    (parts[0] === 192 && parts[1] === 168);
-}
-
-function numericIpv4IsPrivateOrLocal(value) {
-  const n = Number(value);
-  if (!Number.isSafeInteger(n) || n <= 0 || n > 0xffffffff) return true; // out-of-range: reject as suspicious
-  return ipv4IsPrivateOrLocal([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
-}
-
-function isPrivateIpLiteral(hostname) {
-  if (typeof hostname !== 'string' || !hostname) return false;
-  let h = hostname.toLowerCase();
-  // Strip brackets from bracketed IPv6 literals (new URL("https://[::1]/").hostname === "[::1]").
-  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
-  // Strip a trailing dot ("127.0.0.1.") that some resolvers accept as the same address.
-  if (h.endsWith('.')) h = h.slice(0, -1);
-
-  if (net.isIP(h) === 4) {
-    return ipv4IsPrivateOrLocal(h.split('.').map(Number));
-  }
-
-  // IPv4-mapped / IPv4-compatible IPv6, e.g. ::ffff:127.0.0.1 or ::127.0.0.1.
-  const v4Tail = h.match(/^:(?::ffff)?:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (v4Tail) {
-    return ipv4IsPrivateOrLocal(v4Tail[1].split('.').map(Number));
-  }
-
-  if (net.isIP(h) === 6) {
-    if (h === '::1' || h === '::') return true;
-    return h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb');
-  }
-
-  // Numeric IPv4 literals that DNS resolves to private/loopback ranges (e.g. 2130706433 = 127.0.0.1).
-  if (/^\d{1,10}$/.test(h)) return numericIpv4IsPrivateOrLocal(h);
-  // Hex / octal IPv4 literals (e.g. 0x7f000001, 017700000001).
-  if (/^0x[0-9a-f]{1,8}$/i.test(h)) return numericIpv4IsPrivateOrLocal(h);
-  if (/^0[0-7]{1,11}$/.test(h)) return numericIpv4IsPrivateOrLocal(Number('0o' + h.slice(1)));
-  return false;
-}
-
-function validateGeneratedImageUrl(value) {
-  const url = new URL(value);
-  const hostname = url.hostname.toLowerCase();
-  if (url.protocol !== 'https:') throw new Error('Generated image URL must use HTTPS');
-  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIpLiteral(hostname)) {
-    throw new Error('Generated image URL is not allowed');
-  }
-  return url.toString();
-}
-
 function siteCookieOptions(req, token, maxAge) {
   const parts = [
     `${SITE_COOKIE_NAME}=${encodeURIComponent(token)}`,
@@ -847,10 +796,11 @@ function rateLimiter(maxAttempts, windowMs) {
 function authMiddleware(req, res, next) {
   const siteToken = getCookie(req, SITE_COOKIE_NAME);
   const authenticated = getSiteSession(req);
-  const protectedPath = req.path === '/' || req.path === '/index.html' || req.path.startsWith('/api/') || req.path.startsWith('/uploads/');
+  const isAppPage = req.path === '/' || req.path === '/index.html' || req.path === '/legacy.html';
+  const protectedPath = isAppPage || req.path.startsWith('/api/') || req.path.startsWith('/uploads/');
   if (!authenticated) {
     if (!protectedPath) return next();
-    if (req.path === '/' || req.path === '/index.html') {
+    if (isAppPage) {
       return res.redirect(302, `/login?next=${encodeURIComponent(req.originalUrl || '/')}`);
     }
     return res.status(401).json({ error: 'Unauthorized' });
@@ -860,7 +810,7 @@ function authMiddleware(req, res, next) {
   req.siteToken = siteToken;
   const passwordChangeAllowed = ['/api/auth/me', '/api/auth/password', '/api/auth/logout'].includes(req.path);
   if (req.user.must_change_password && !passwordChangeAllowed) {
-    if (req.path === '/' || req.path === '/index.html') return res.redirect(302, '/login?change=1');
+    if (isAppPage) return res.redirect(302, '/login?change=1');
     if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
       return res.status(403).json({ error: 'Password change required', code: 'PASSWORD_CHANGE_REQUIRED' });
     }
@@ -2072,7 +2022,7 @@ function extensionFromContentType(contentType, fallbackUrl = '') {
 async function fetchGeneratedImageWithRedirectGuard(url, timeoutMs) {
   let current = url;
   for (let hop = 0; hop < 4; hop++) {
-    const safeUrl = validateGeneratedImageUrl(current);
+    const safeUrl = await validateGeneratedImageUrl(current);
     const response = await fetchWithTimeout(safeUrl, { redirect: 'manual' }, timeoutMs);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
@@ -3975,23 +3925,41 @@ function markConversationSensitivity(conversation, existing) {
   };
 }
 
-function hydrateConversationMedia(conversation) {
+function hydrateConversationMedia(conversation, { requireExisting = false } = {}) {
   const messages = Array.isArray(conversation?.messages) ? conversation.messages.map(message => {
     if (!Array.isArray(message?.attachments) || !message.attachments.length) return message;
     const attachments = message.attachments.map((attachment) => {
       const item = db.getAiMediaById(attachment?.id);
-      if (!item) throw new Error('AI conversation references missing media');
+      if (!item) {
+        if (requireExisting) throw new Error('AI conversation references missing media');
+        return {
+          id: attachment?.id || '',
+          kind: attachment?.kind === 'video' ? 'video' : 'image',
+          name: attachment?.name || '附件',
+          mimeType: attachment?.mimeType || '',
+          bytes: Number(attachment?.bytes) || 0,
+          missing: true,
+        };
+      }
       return {
         id: item.id,
         kind: item.kind,
         name: item.name,
         mimeType: item.mimeType,
         bytes: item.bytes,
+        missing: false,
       };
     });
     return { ...message, attachments };
   }) : [];
   return { ...conversation, messages };
+}
+
+function annotateConversationsMedia(payload) {
+  const conversations = Array.isArray(payload?.conversations)
+    ? payload.conversations.map(item => hydrateConversationMedia(item))
+    : [];
+  return { ...payload, conversations };
 }
 
 function referencedMediaIdsInConversations(conversations) {
@@ -4007,10 +3975,15 @@ function referencedMediaIdsInConversations(conversations) {
 app.get('/api/ai/conversations', (req, res) => {
   try {
     const saved = db.getAiChats();
-    if (hasDiaryAccess(req)) return res.json(saved);
-    const conversations = saved.conversations.filter(item => !conversationIsProtectedWhenDiaryLocked(item));
-    const activeConversationId = conversations.some(item => item.id === saved.activeConversationId)
-      ? saved.activeConversationId
+    const visible = hasDiaryAccess(req)
+      ? saved
+      : {
+        conversations: saved.conversations.filter(item => !conversationIsProtectedWhenDiaryLocked(item)),
+        activeConversationId: saved.activeConversationId,
+      };
+    const conversations = annotateConversationsMedia(visible).conversations;
+    const activeConversationId = conversations.some(item => item.id === visible.activeConversationId)
+      ? visible.activeConversationId
       : (conversations[0]?.id || '');
     res.json({ conversations, activeConversationId });
   } catch (err) {
@@ -4572,6 +4545,11 @@ app.put('/api/categories/:oldName', (req, res) => {
     }
     const result = db.renameCategory(oldName, newName);
     if (result.error) return res.status(400).json(result);
+    const categorySeparator = oldName.indexOf('/');
+    const rewrittenPath = categorySeparator >= 0
+      ? `${oldName.slice(0, categorySeparator)}/${newName}`
+      : newName;
+    knowledgeServiceFor(db).knowledge.rewriteCollectionPath(oldName, rewrittenPath);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4585,6 +4563,7 @@ app.delete('/api/categories/:name', (req, res) => {
     if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const ok = db.deleteCategory(name);
     if (!ok) return res.status(404).json({ error: 'Category not found' });
+    knowledgeServiceFor(db).knowledge.reassignCollectionPath(name, '其他');
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -5222,6 +5201,85 @@ function releaseProcessLock(lock) {
     }
   } catch {}
 }
+
+function createAgentModelClient(req) {
+  return {
+    async complete({ goal, messages, tools, memories }) {
+      let options;
+      try {
+        options = await resolveAiChatOptions({ stream: false, logContextEnabled: false, diaryContextEnabled: false }, req.user);
+      } catch {
+        options = null;
+      }
+      if (!options?.apiKey) return (await defaultModelClient()).complete({ goal, messages, tools, memories });
+      const toolList = (tools || []).map(item => `${item.name}: ${item.description}`).join('\n');
+      const system = [
+        'You are the local Work Log Agent. Work only from tool results and the user goal.',
+        'Return exactly one JSON object, with no Markdown fences.',
+        'For a tool call: {"action":"tool","tools":[{"name":"knowledge.search","arguments":{"query":"..."}}]} .',
+        'For a final answer: {"action":"final","answer":"...","citations":[{"documentId":"...","id":"...","title":"..."}]} .',
+        'Never invent local evidence. If no evidence exists, say so. Writes and external actions are proposed for confirmation.',
+        `Available tools:\n${toolList}`,
+        `Memory context:\n${JSON.stringify(memories || {})}`,
+      ].join('\n');
+      const providerConversation = (messages || []).slice(-24).map(message => message.role === 'tool'
+        ? { role: 'user', content: `Tool result (${message.name || 'tool'}):\n${message.content || ''}` }
+        : message);
+      const providerMessages = await buildAiProviderMessages([
+        { role: 'system', content: system },
+        ...providerConversation,
+      ], options);
+      const reply = await fetchAiProviderReply({
+        options,
+        payload: aiProviderPayload({ options, messages: providerMessages, stream: false }),
+      });
+      const nativeCalls = (reply.toolCalls || []).map(call => {
+        const name = call?.function?.name || call?.name || '';
+        let args = call?.function?.arguments || call?.arguments || {};
+        if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+        return { name, arguments: args };
+      }).filter(call => call.name);
+      return { text: reply.content || '', toolCalls: nativeCalls, citations: reply.sources || [] };
+    },
+  };
+}
+
+function createAgentWebSearch(req) {
+  return async function agentWebSearch(args = {}) {
+    const query = String(args.query || '').trim().slice(0, 400);
+    if (!query) return toolResult({ ok: false, summary: 'Search query is required', errorCode: 'invalid' });
+    const options = await resolveAiChatOptions({ stream: false, webSearchEnabled: true }, req.user);
+    const result = await collectWebSearches(query, {
+      tavilyApiKey: options.tavilyApiKey,
+      perplexityApiKey: options.perplexityApiKey,
+      webSearchEnabled: true,
+      webSearchDepth: options.webSearchDepth,
+    });
+    return toolResult({
+      ok: true,
+      summary: result.sources.length ? `Found ${result.sources.length} web sources` : 'No web sources found',
+      data: result,
+      evidence: result.sources.slice(0, 10).map(source => ({ type: 'web', url: source.url, title: source.title })),
+    });
+  };
+}
+
+function createAgentWestock(req) {
+  return async function agentWestock(args = {}) {
+    if (!westockEnabled()) return toolResult({ ok: false, summary: 'WeStock is disabled', errorCode: 'disabled' });
+    const tool = typeof args.tool === 'string' ? args.tool : '';
+    if (!WESTOCK_ALLOWED_TOOLS.has(tool)) return toolResult({ ok: false, summary: 'Unsupported WeStock tool', errorCode: 'invalid' });
+    try {
+      const content = await runWestockCli(tool, args.args || {});
+      return toolResult({ ok: true, summary: `WeStock ${tool} completed`, data: { tool, content }, evidence: [{ type: 'westock', tool }] });
+    } catch (error) {
+      return toolResult({ ok: false, summary: error.message, errorCode: 'westock_failed', retryable: true });
+    }
+  };
+}
+
+const { mountNewApis } = require('./lib/http/mount');
+mountNewApis(app, { db, authStore, hasDiaryAccess, rejectLockedDiary, requireAdmin, modelClientFor: createAgentModelClient, webSearchFor: createAgentWebSearch, westockRunFor: createAgentWestock });
 
 function startServer(port = PORT, host = HOST) {
   if (!isLoopbackHost(host) && authStore.disabled) {

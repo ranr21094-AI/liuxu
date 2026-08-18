@@ -1,5 +1,5 @@
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, confirmDialog, $ } from './helpers.js';
+import { showToast, escHtml, cssNumber, confirmDialog, $ } from './helpers.js';
 
 const PHOTO_WALL_ENDPOINT = '/api/photo-wall';
 const VIEWPORT_STORAGE_KEY = 'photoWallViewport';
@@ -67,7 +67,7 @@ function renderPhotoWall() {
     .slice()
     .sort((a, b) => a.z - b.z || a.id - b.id)
     .map(item => `
-      <article class="photo-wall-item ${item.id === selectedId ? 'selected' : ''}" data-id="${item.id}" style="left:${item.x}px;top:${item.y}px;width:${item.width}px;z-index:${item.z};">
+      <article class="photo-wall-item ${item.id === selectedId ? 'selected' : ''}" data-id="${item.id}" style="left:${cssNumber(item.x)}px;top:${cssNumber(item.y)}px;width:${cssNumber(item.width, DEFAULT_ITEM_WIDTH)}px;z-index:${cssNumber(item.z)};">
         <div class="photo-wall-image-frame">
           <img src="${escHtml(item.url)}" alt="${escHtml(item.comment || '照片墙图片')}" draggable="false">
           <button class="photo-wall-resize-handle" type="button" data-action="resize-photo" aria-label="缩放图片"></button>

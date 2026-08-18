@@ -1,6 +1,6 @@
 import { state, DIARY_MAGIC_PHRASE } from './state.js';
 import { apiFetch } from './auth.js';
-import { formatDate, escHtml, setupDragAndDrop, showToast, $ } from './helpers.js';
+import { formatDate, escHtml, highlightSearch, setupDragAndDrop, showToast, $ } from './helpers.js';
 import { renderToHtml } from './markdown.js';
 import { renderCalendar } from './calendar.js';
 import { handleInternalLogLinkClick, openEditor, openEditorFromNavigation } from './editor.js';
@@ -380,13 +380,8 @@ function renderLogList(data) {
   }
 
   logList.innerHTML = items.map((log) => {
-    // Highlight search term in title
-    let title = escHtml(log.title);
+    const title = highlightSearch(log.title, state.search);
     const previewHtml = `<div class="preview-md markdown-body">${renderToHtml(log.content)}</div>`;
-    if (state.search) {
-      const re = new RegExp('(' + state.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-      title = title.replace(re, '<mark>$1</mark>');
-    }
     const dateLabel = formatShortDateLabel(log.log_date);
     const pinned = log.pinned === true;
     const pinLabel = pinned ? '取消置顶' : '置顶';
@@ -578,6 +573,7 @@ $('#searchInput').addEventListener('input', (() => {
       const value = $('#searchInput').value.trim();
       // Magic phrase toggles the hidden diary instead of searching.
       if (value === DIARY_MAGIC_PHRASE) {
+        state.search = '';
         $('#searchInput').value = '';
         const btn = $('#btnSearchClear');
         if (btn) btn.classList.remove('visible');

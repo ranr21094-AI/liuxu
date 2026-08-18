@@ -1887,6 +1887,8 @@ function checkDataIntegrity() {
 
 function backup() {
   return {
+    format: 'structure',
+    includesBinaries: false,
     logs: readLogs(),
     todos: getAllTodos(),
     countdowns: getAllCountdowns(),
@@ -2131,9 +2133,15 @@ function normalizePhotoWallForRestore(photoWall) {
 function normalizeAiChatsForRestore(value) {
   if (value === undefined) return { aiChats: { conversations: [], activeConversationId: '' } };
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { error: 'Invalid AI chat data' };
-  const conversations = Array.isArray(value.conversations)
-    ? value.conversations.map(normalizeAiConversation).filter(Boolean)
-    : [];
+  if (value.conversations !== undefined && !Array.isArray(value.conversations)) {
+    return { error: 'Invalid AI conversation list' };
+  }
+  const conversations = [];
+  for (const item of value.conversations || []) {
+    const normalized = normalizeAiConversation(item);
+    if (!normalized) return { error: 'Invalid AI conversation' };
+    conversations.push(normalized);
+  }
   const activeConversationId = conversations.some(item => item.id === value.activeConversationId)
     ? value.activeConversationId
     : (conversations[0]?.id || '');
@@ -2345,7 +2353,7 @@ function restore(data, mode = 'replace') {
       photoWall: mergedPhotoWall,
       aiChats: mergedAiChats,
     });
-    return { success: true, logs: mergedLogs.length, todos: mergedTodos.length, countdowns: mergedCountdowns.length, categories: mergedCats.length };
+    return { success: true, format: 'structure', includesBinaries: false, logs: mergedLogs.length, todos: mergedTodos.length, countdowns: mergedCountdowns.length, categories: mergedCats.length };
   }
 
   const categories = (data.categories.length > 0 && typeof data.categories[0] === 'string')
@@ -2364,7 +2372,7 @@ function restore(data, mode = 'replace') {
     photoWall: data.photoWall,
     aiChats: data.aiChats,
   });
-  return { success: true, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };
+  return { success: true, format: 'structure', includesBinaries: false, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };
 }
 
 function reorderCategories(orderedCats) {
