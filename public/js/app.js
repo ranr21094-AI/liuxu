@@ -1,7 +1,7 @@
 // Main entry point — imports all modules and initializes the app
-import { state } from './state.js';
+import { state, DIARY_MAGIC_PHRASE } from './state.js';
 import { apiFetch, checkAuth, getDiaryStatus, unlockDiary, lockDiary } from './auth.js';
-import { showToast, confirmDialog, openModal, closeModal, $ } from './helpers.js';
+import { showToast, confirmDialog, $ } from './helpers.js';
 import { clearMdCache } from './markdown.js';
 import { populateCalendarSelects, renderCalendar } from './calendar.js';
 import { loadLogs, populateMonthFilter, syncArchiveFilterControls } from './logList.js';
@@ -222,65 +222,41 @@ function syncDiaryLockState(status) {
   state.diaryUnlocked = !state.diaryLockEnabled || !status.locked;
 }
 
-function openDiaryUnlockModal() {
-  openModal($('#diaryUnlockOverlay'), '#diaryPasswordInput');
+window.addEventListener('request-diary-unlock', () => promptDiaryUnlock());
+
+// Toggle the hidden diary lock when the magic phrase is typed in the search box.
+async function handleDiaryMagicPhrase() {
+  if (state.diaryUnlocked) {
+    // Currently unlocked → lock again.
+    if (!(await leaveEditorSafely({ showList: true }))) return;
+    clearEditorForDiaryLock();
+    clearAiStateForDiaryLock();
+    await lockDiary();
+    syncDiaryLockState({ enabled: true, locked: true });
+    await reloadAiChatHistory();
+    showToast('日记已锁定', 'info');
+    if (state.category === '日记' || state.category.startsWith('日记/')) {
+      state.category = '';
+      state.currentPage = 1;
+      $('#filterCategory').value = '';
+    }
+    await refreshAll();
+  } else {
+    // Currently locked → unlock and jump straight to the diary list.
+    const ok = await unlockDiary(DIARY_MAGIC_PHRASE);
+    if (ok) {
+      syncDiaryLockState({ enabled: true, locked: false });
+      showToast('日记已解锁', 'success');
+      await loadCategories();
+      selectDiaryLogs();
+      await Promise.all([loadLogs(), loadStats(), loadTodos(), reloadAiChatHistory()]);
+    } else {
+      showToast('解锁失败', 'error');
+    }
+  }
 }
 
-$('#btnDiaryUnlock').addEventListener('click', openDiaryUnlockModal);
-
-window.addEventListener('request-diary-unlock', openDiaryUnlockModal);
-
-$('#btnDiaryLock').addEventListener('click', async () => {
-  if (!(await leaveEditorSafely({ showList: true }))) return;
-  clearEditorForDiaryLock();
-  clearAiStateForDiaryLock();
-  await lockDiary();
-  syncDiaryLockState({ enabled: true, locked: true });
-  await reloadAiChatHistory();
-  $('#btnDiaryUnlock').style.display = '';
-  $('#btnDiaryLock').style.display = 'none';
-  showToast('日记已锁定', 'info');
-  if (state.category === '日记' || state.category.startsWith('日记/')) {
-    state.category = '';
-    state.currentPage = 1;
-    $('#filterCategory').value = '';
-  }
-  await refreshAll();
-});
-
-$('#diaryUnlockOverlay').addEventListener('click', (e) => {
-  if (e.target === $('#diaryUnlockOverlay')) {
-    closeModal($('#diaryUnlockOverlay'));
-  }
-});
-
-$('#btnDiaryUnlockCancel').addEventListener('click', () => {
-  closeModal($('#diaryUnlockOverlay'));
-});
-
-$('#btnDiaryUnlockSubmit').addEventListener('click', async () => {
-  const password = $('#diaryPasswordInput').value;
-  if (!password) return;
-  const preserveCurrentDiaryFilter = state.category === '日记' || state.category.startsWith('日记/');
-  const ok = await unlockDiary(password);
-  if (ok) {
-    syncDiaryLockState({ enabled: true, locked: false });
-    closeModal($('#diaryUnlockOverlay'));
-    $('#diaryPasswordInput').value = '';
-    $('#btnDiaryUnlock').style.display = 'none';
-    $('#btnDiaryLock').style.display = '';
-    showToast('日记已解锁', 'success');
-    await loadCategories();
-    if (!preserveCurrentDiaryFilter) selectDiaryLogs();
-    await Promise.all([loadLogs(), loadStats(), loadTodos(), reloadAiChatHistory()]);
-  } else {
-    showToast('密码错误', 'error');
-  }
-});
-
-$('#diaryPasswordInput').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('#btnDiaryUnlockSubmit').click();
-});
+window.addEventListener('diary-magic-phrase', handleDiaryMagicPhrase);
 
 function selectDiaryLogs() {
   state.category = '日记';
@@ -302,8 +278,6 @@ async function initDiaryLock() {
   const status = await getDiaryStatus();
   syncDiaryLockState(status);
   if (state.diaryLockEnabled && state.diaryUnlocked) {
-    $('#btnDiaryUnlock').style.display = 'none';
-    $('#btnDiaryLock').style.display = '';
     await loadCategories();
     selectDiaryLogs();
     await Promise.all([loadLogs(), loadStats(), loadTodos()]);
@@ -313,8 +287,10 @@ async function initDiaryLock() {
 }
 
 function promptDiaryUnlock() {
-  showToast('请先解锁日记再执行此操作', 'error');
-  openModal($('#diaryUnlockOverlay'), '#diaryPasswordInput');
+  showToast('请先在搜索框输入「如意如意」解锁日记', 'error');
+  const input = $('#searchInput');
+  input?.focus();
+  input?.select?.();
 }
 
 async function ensureFullDataDiaryAccess() {
@@ -380,7 +356,7 @@ $('#restoreFileInput').addEventListener('change', async () => {
 
     const confirmed = await confirmDialog({
       title: '确认导入',
-      message: '导入将覆盖当前所有数据（日志、待办、分类），此操作不可撤销。\n建议先「备份数据 JSON」保存当前数据。',
+      message: '导入将覆盖当前所有数据（日志、待办、倒数日、分类、照片墙、AI 对话历史），此操作不可撤销。\n建议先「备份数据 JSON」保存当前数据。',
       confirmText: '确认导入',
     });
     if (!confirmed) return;

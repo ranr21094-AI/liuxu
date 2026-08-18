@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { apiFetch, redirectToLogin } from './auth.js';
-import { showToast, escHtml, confirmDialog, openModal, closeModal, $, $$ } from './helpers.js';
+import { showToast, escHtml, safeExternalHref, confirmDialog, openModal, closeModal, $, $$ } from './helpers.js';
 import { renderToHtmlUncached } from './markdown.js';
 import { loadLogs, listView, syncArchiveFilterControls } from './logList.js';
 import { loadStats } from './stats.js';
@@ -1136,7 +1136,7 @@ function renderEditorAiMessages() {
       ${message.role === 'assistant' ? renderEditorAiAssistantBubble(message, index) : `<div class="editor-ai-bubble">${escHtml(message.content)}</div>`}
       ${message.role === 'assistant' && Array.isArray(message.sources) && message.sources.length ? `
         <div class="editor-ai-sources" aria-label="联网搜索来源">
-          ${message.sources.map((source, sourceIndex) => `<a href="${escHtml(source.url)}" target="_blank" rel="noopener noreferrer">${sourceIndex + 1}. ${escHtml(source.title || source.url)}</a>`).join('')}
+          ${message.sources.map((source, sourceIndex) => `<a href="${safeExternalHref(source.url)}" target="_blank" rel="noopener noreferrer">${sourceIndex + 1}. ${escHtml(source.title || source.url)}</a>`).join('')}
         </div>
       ` : ''}
     </div>
@@ -1998,7 +1998,6 @@ function closeAllModals() {
   closeModal($('#logLinkOverlay'));
   closeModal($('#templateModalOverlay'));
   closeModal($('#shortcutHelpOverlay'));
-  closeModal($('#diaryUnlockOverlay'));
 }
 
 // Keyboard shortcuts
@@ -2057,7 +2056,7 @@ document.addEventListener('keydown', (e) => {
         e.preventDefault();
       } else if ($('#aiModelPickerOverlay')?.style.display === 'flex') {
         e.preventDefault();
-      } else if ($('#logLinkOverlay').style.display === 'flex' || $('#templateModalOverlay').style.display === 'flex' || $('#shortcutHelpOverlay').style.display === 'flex' || $('#diaryUnlockOverlay').style.display === 'flex') {
+      } else if ($('#logLinkOverlay').style.display === 'flex' || $('#templateModalOverlay').style.display === 'flex' || $('#shortcutHelpOverlay').style.display === 'flex') {
         e.preventDefault(); closeAllModals();
       } else if (categoryView.style.display !== 'none') {
         e.preventDefault(); closeCategoryManager();
@@ -2484,7 +2483,7 @@ function insertTemplateContent(content) {
 }
 
 function applyTemplate(template) {
-  if (template.id === 'diary' && $('#btnDiaryLock').style.display !== 'none' &&
+  if (template.id === 'diary' && state.diaryUnlocked &&
       [...editCategory.options].some(option => option.value === '日记')) {
     editCategory.value = '日记';
     populateEditorSubCategory('日记');

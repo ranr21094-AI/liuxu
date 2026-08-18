@@ -45,6 +45,11 @@ export function escHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+/** Only allow http(s) URLs for href attributes, neutralizing javascript:/data:/vbscript: schemes. */
+export function safeExternalHref(value) {
+  return (typeof value === 'string' && /^https?:\/\//i.test(value)) ? value : '#';
+}
+
 export function debounce(fn, ms) {
   let timer;
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };

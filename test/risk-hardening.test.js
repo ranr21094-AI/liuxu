@@ -16,13 +16,10 @@ const businessDate = require('../business-date');
 const ROOT = path.resolve(__dirname, '..');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
+const DIARY_MAGIC_PHRASE = '\u5982\u610f\u5982\u610f'; // 如意如意 — the fixed diary unlock phrase
 
 function validPngBlob() {
   return new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' });
-}
-
-function sha256(text) {
-  return crypto.createHash('sha256').update(text).digest('hex');
 }
 
 function makeTempDataDir(t) {
@@ -37,15 +34,10 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, moonshotApiKey, moonshotBaseUrl, openrouterApiKey, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode } = {}) {
+function loadFreshApp(t, { authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, moonshotApiKey, moonshotBaseUrl, openrouterApiKey, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
-  if (diaryPassword) {
-    process.env.DIARY_PASSWORD_HASH = sha256(diaryPassword);
-  } else {
-    process.env.DIARY_PASSWORD_HASH = '';
-  }
   process.env.AUTH_TOKEN = authToken || '';
   process.env.ALLOW_INSECURE_NO_AUTH = authToken ? '' : '1';
   process.env.DEEPSEEK_API_KEY = deepseekApiKey || '';
@@ -75,7 +67,6 @@ function loadFreshApp(t, { diaryPassword, authToken, deepseekApiKey, deepseekBas
   t.after(() => {
     delete process.env.DATA_DIR;
     delete process.env.AI_SECRETS_KEY_FILE;
-    delete process.env.DIARY_PASSWORD_HASH;
     delete process.env.AUTH_TOKEN;
     delete process.env.ALLOW_INSECURE_NO_AUTH;
     delete process.env.DEEPSEEK_API_KEY;
@@ -114,10 +105,12 @@ function loadFreshDb(t) {
   return db;
 }
 
-async function unlockDiary(baseUrl, password = 'secret') {
+async function unlockDiary(baseUrl, password = DIARY_MAGIC_PHRASE, cookie) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (cookie) headers.Cookie = cookie;
   const res = await fetch(`${baseUrl}/api/auth/diary`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ password }),
   });
   assert.equal(res.status, 200);
@@ -221,7 +214,7 @@ function parseSseEvents(text) {
 }
 
 test('diary lock protects detail, mutation, backup, restore, and reorder routes', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { db, baseUrl } = loadFreshApp(t);
   const diary = db.create({
     title: 'private',
     content: 'hidden',
@@ -311,7 +304,7 @@ test('diary lock protects detail, mutation, backup, restore, and reorder routes'
 });
 
 test('diary category root is reserved and subcategory details require unlock', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { db, baseUrl } = loadFreshApp(t);
   db.addCategory(DIARY_CATEGORY, null);
   db.addCategory('notes', DIARY_CATEGORY);
   const diary = db.create({
@@ -322,7 +315,7 @@ test('diary category root is reserved and subcategory details require unlock', a
   });
 
   const lockedCategories = await (await fetch(`${baseUrl}/api/categories`)).json();
-  assert.deepEqual(lockedCategories.find(c => c.name === DIARY_CATEGORY).sub, []);
+  assert.equal(lockedCategories.some(c => c.name === DIARY_CATEGORY), false);
   assert.equal((await fetch(`${baseUrl}/api/categories`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -366,7 +359,7 @@ test('diary category root is reserved and subcategory details require unlock', a
 });
 
 test('unlocked system diary category can receive a new subcategory without prior stored root', async (t) => {
-  const { baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { baseUrl } = loadFreshApp(t);
   const cookie = await unlockDiary(baseUrl);
 
   const categories = await (await fetch(`${baseUrl}/api/categories`, {
@@ -496,31 +489,38 @@ test('category route parameters are decoded exactly once', async (t) => {
   assert.equal(categories.some(category => category.name === literalName), false);
 });
 
-test('diary routes remain compatible when diary lock is disabled', async (t) => {
+test('diary routes are always protected until the magic phrase unlocks them', async (t) => {
   const { db, baseUrl } = loadFreshApp(t);
   const diary = db.create({
     title: 'private',
-    content: 'visible without lock',
+    content: 'hidden until unlocked',
     category: DIARY_CATEGORY,
     log_date: '2026-05-16',
   });
 
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`)).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/backup`)).status, 200);
   assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/diary/status`)).json(), {
-    enabled: false,
-    locked: false,
+    enabled: true,
+    locked: true,
   });
+  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`)).status, 403);
+  assert.equal((await fetch(`${baseUrl}/api/backup`)).status, 403);
   assert.equal((await fetch(`${baseUrl}/api/logs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       title: 'new private',
-      content: 'allowed',
+      content: 'not allowed while locked',
       category: DIARY_CATEGORY,
       log_date: '2026-05-16',
     }),
-  })).status, 201);
+  })).status, 403);
+
+  const cookie = await unlockDiary(baseUrl);
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/diary/status`, { headers: { Cookie: cookie } })).json(), {
+    enabled: true,
+    locked: false,
+  });
+  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`, { headers: { Cookie: cookie } })).status, 200);
 });
 
 test('site auth rejects the legacy bearer token and allows an authenticated account backup', async (t) => {
@@ -529,7 +529,8 @@ test('site auth rejects the legacy bearer token and allows an authenticated acco
   assert.equal((await fetch(`${baseUrl}/api/backup`)).status, 401);
   assert.equal((await fetch(`${baseUrl}/api/backup`, { headers: { Authorization: 'Bearer backup-secret' } })).status, 401);
   const { cookie } = await loginAndChangeBootstrapPassword(baseUrl, 'backup-secret');
-  const authorized = await fetch(`${baseUrl}/api/backup`, { headers: { Cookie: cookie } });
+  const diaryCookie = await unlockDiary(baseUrl, DIARY_MAGIC_PHRASE, cookie);
+  const authorized = await fetch(`${baseUrl}/api/backup`, { headers: { Cookie: `${cookie}; ${diaryCookie}` } });
   assert.equal(authorized.status, 200);
   assert.match(
     authorized.headers.get('content-disposition') || '',
@@ -564,7 +565,6 @@ test('account registry hashes credentials, persists sessions, expires them, and 
   const store = createAuthStore({
     dataDir,
     bootstrapPassword: '123456',
-    bootstrapDiaryHash: sha256('legacy-diary'),
     now: () => clock,
   });
   const admin = store.authenticate('ADMIN', '123456');
@@ -578,7 +578,7 @@ test('account registry hashes credentials, persists sessions, expires them, and 
   const usersText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
   const sessionsText = fs.readFileSync(path.join(dataDir, 'auth-sessions.json'), 'utf8');
   assert.match(usersText, /scrypt\$/);
-  assert.doesNotMatch(usersText, /123456|legacy-diary/);
+  assert.doesNotMatch(usersText, /123456/);
   assert.doesNotMatch(sessionsText, new RegExp(session.token));
   assert.match(sessionsText, /token_hash/);
 
@@ -619,14 +619,12 @@ test('first account migration validates existing data before creating users.json
   process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
   process.env.AUTH_TOKEN = '123456';
   process.env.ALLOW_INSECURE_NO_AUTH = '';
-  process.env.DIARY_PASSWORD_HASH = '';
   clearAppModules();
   t.after(() => {
     delete process.env.DATA_DIR;
     delete process.env.AI_SECRETS_KEY_FILE;
     delete process.env.AUTH_TOKEN;
     delete process.env.ALLOW_INSECURE_NO_AUTH;
-    delete process.env.DIARY_PASSWORD_HASH;
     clearAppModules();
   });
 
@@ -925,8 +923,10 @@ test('logs, todos, countdowns, categories, AI state, reminders, photo wall, uplo
   assert.equal((await (await jsonRequest(baseUrl, '/api/todo-reminder-settings', adminCookie)).json()).recipientEmail, 'admin@example.com');
   assert.equal((await (await jsonRequest(baseUrl, '/api/todo-reminder-settings', memberCookie)).json()).recipientEmail, 'member@example.com');
 
-  const adminBackup = await (await jsonRequest(baseUrl, '/api/backup', adminCookie)).json();
-  const memberBackup = await (await jsonRequest(baseUrl, '/api/backup', memberCookie)).json();
+  const adminDiaryCookie = await unlockDiary(baseUrl, DIARY_MAGIC_PHRASE, adminCookie);
+  const memberDiaryCookie = await unlockDiary(baseUrl, DIARY_MAGIC_PHRASE, memberCookie);
+  const adminBackup = await (await jsonRequest(baseUrl, '/api/backup', `${adminCookie}; ${adminDiaryCookie}`)).json();
+  const memberBackup = await (await jsonRequest(baseUrl, '/api/backup', `${memberCookie}; ${memberDiaryCookie}`)).json();
   assert.deepEqual(adminBackup.logs.map(log => log.title), ['admin workspace log']);
   assert.deepEqual(memberBackup.logs.map(log => log.title), ['member workspace log']);
   assert.equal(Object.hasOwn(adminBackup, 'users'), false);
@@ -935,7 +935,7 @@ test('logs, todos, countdowns, categories, AI state, reminders, photo wall, uplo
   assert.equal(Object.hasOwn(memberBackup, 'aiMedia'), false);
 
   memberBackup.logs[0].title = 'member restored log';
-  const memberRestore = await jsonRequest(baseUrl, '/api/restore', memberCookie, {
+  const memberRestore = await jsonRequest(baseUrl, '/api/restore', `${memberCookie}; ${memberDiaryCookie}`, {
     method: 'POST', body: memberBackup,
   });
   assert.equal(memberRestore.status, 200);
@@ -951,8 +951,8 @@ test('logs, todos, countdowns, categories, AI state, reminders, photo wall, uplo
   assert.doesNotMatch(registryText, /admin workspace log|member workspace log|AI profile|AI history/);
 });
 
-test('diary passwords and unlock sessions are isolated per account and reset with account credentials', async (t) => {
-  const { baseUrl } = loadFreshApp(t, { authToken: '123456', diaryPassword: 'admin-diary' });
+test('diary unlock uses the shared magic phrase and diary sessions are isolated per account', async (t) => {
+  const { baseUrl } = loadFreshApp(t, { authToken: '123456' });
   const { cookie: adminCookie } = await loginAndChangeBootstrapPassword(baseUrl, '123456', 'admin-diary-account');
   const memberResponse = await jsonRequest(baseUrl, '/api/admin/users', adminCookie, {
     method: 'POST',
@@ -963,33 +963,29 @@ test('diary passwords and unlock sessions are isolated per account and reset wit
   const memberChanged = await changeAccountPassword(baseUrl, memberLogin.cookie, 'diary-member-temp', 'diary-member-account');
   let memberCookie = memberChanged.cookie;
 
+  // Diary protection is always enabled for every account.
   assert.deepEqual(await (await jsonRequest(baseUrl, '/api/auth/diary/status', adminCookie)).json(), { enabled: true, locked: true });
-  assert.deepEqual(await (await jsonRequest(baseUrl, '/api/auth/diary/status', memberCookie)).json(), { enabled: false, locked: false });
-
-  const setMemberDiary = await jsonRequest(baseUrl, '/api/auth/diary/password', memberCookie, {
-    method: 'PUT', body: { account_password: 'diary-member-account', new_password: 'member-diary-password' },
-  });
-  assert.equal(setMemberDiary.status, 200);
   assert.deepEqual(await (await jsonRequest(baseUrl, '/api/auth/diary/status', memberCookie)).json(), { enabled: true, locked: true });
 
   const adminUnlock = await jsonRequest(baseUrl, '/api/auth/diary', adminCookie, {
-    method: 'POST', body: { password: 'admin-diary' },
+    method: 'POST', body: { password: DIARY_MAGIC_PHRASE },
   });
   assert.equal(adminUnlock.status, 200);
   const adminDiaryCookie = (adminUnlock.headers.get('set-cookie') || '').split(';')[0];
   assert.match(adminDiaryCookie, /^diary_session=/);
 
+  // An admin diary session does not unlock the member's account.
   const wrongAccountStatus = await fetch(`${baseUrl}/api/auth/diary/status`, {
     headers: { Cookie: `${memberCookie}; ${adminDiaryCookie}` },
   });
   assert.deepEqual(await wrongAccountStatus.json(), { enabled: true, locked: true });
-  const wrongPassword = await jsonRequest(baseUrl, '/api/auth/diary', memberCookie, {
-    method: 'POST', body: { password: 'admin-diary' },
+  const wrongPhrase = await jsonRequest(baseUrl, '/api/auth/diary', memberCookie, {
+    method: 'POST', body: { password: 'not-the-phrase' },
   });
-  assert.equal(wrongPassword.status, 403);
+  assert.equal(wrongPhrase.status, 403);
 
   const memberUnlock = await jsonRequest(baseUrl, '/api/auth/diary', memberCookie, {
-    method: 'POST', body: { password: 'member-diary-password' },
+    method: 'POST', body: { password: DIARY_MAGIC_PHRASE },
   });
   assert.equal(memberUnlock.status, 200);
   const memberDiaryCookie = (memberUnlock.headers.get('set-cookie') || '').split(';')[0];
@@ -1006,6 +1002,7 @@ test('diary passwords and unlock sessions are isolated per account and reset wit
     body: JSON.stringify(diaryLog),
   })).status, 201);
 
+  // Resetting the member account password revokes their diary session.
   assert.equal((await jsonRequest(baseUrl, `/api/admin/users/${member.id}/reset-password`, adminCookie, {
     method: 'POST', body: { temporary_password: 'diary-member-reset' },
   })).status, 200);
@@ -1554,7 +1551,7 @@ test('AI chat injects selected skill prompts only when selected and returns tool
 });
 
 test('AI log tool requires confirmation, write permissions, and diary unlock', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { db, baseUrl } = loadFreshApp(t);
 
   const disabled = await fetch(`${baseUrl}/api/ai/logs/run`, {
     method: 'POST',
@@ -1812,7 +1809,6 @@ test('AI chat sends only explicit conversation messages to DeepSeek', async (t) 
 test('AI chat can include user profile and permitted logs without leaking locked diary entries', async (t) => {
   const originalFetch = global.fetch;
   const { db, baseUrl } = loadFreshApp(t, {
-    diaryPassword: 'secret',
     deepseekBaseUrl: 'https://deepseek.test',
   });
   db.create({
@@ -1935,7 +1931,7 @@ test('AI chat can include user profile and permitted logs without leaking locked
   assert.match(capturedPayloads[2].messages[0].content, /no logs are currently allowed by the access settings/);
   assert.doesNotMatch(capturedPayloads[2].messages[0].content, /public planning|normal work log body|meeting secret|private diary content/);
 
-  const cookie = await unlockDiary(baseUrl, 'secret');
+  const cookie = await unlockDiary(baseUrl);
   const unlockedRes = await fetch(`${baseUrl}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', cookie },
@@ -2753,7 +2749,6 @@ test('AI log context snapshots every allowed log beyond pagination limits exactl
 test('AI log context cannot be expanded beyond the saved category and diary policy', async (t) => {
   const originalFetch = global.fetch;
   const { db, baseUrl } = loadFreshApp(t, {
-    diaryPassword: 'secret',
     deepseekApiKey: 'sk-env-key',
     deepseekBaseUrl: 'https://deepseek.test',
   });
@@ -3786,7 +3781,7 @@ test('AI conversations persist to local data storage separate from logs', async 
 });
 
 test('diary lock hides diary-sensitive AI conversations', async (t) => {
-  const { baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { baseUrl } = loadFreshApp(t);
   const cookie = await unlockDiary(baseUrl);
   const saved = await fetch(`${baseUrl}/api/ai/conversations`, {
     method: 'PUT',
@@ -3886,7 +3881,7 @@ test('log and todo APIs reject malformed field types without poisoning persisted
 });
 
 test('log pinning persists and is promoted only within category-filtered results', async (t) => {
-  const { db, baseUrl, dataDir } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { db, baseUrl, dataDir } = loadFreshApp(t);
   const newest = db.create({ title: 'newest normal', content: 'normal', category: '开发', log_date: '2026-12-01' });
   const firstPinned = db.create({ title: 'first pinned', content: 'pin one', category: '开发', log_date: '2025-01-01' });
   const nestedPinned = db.create({ title: 'nested pinned', content: 'pin two', category: '开发/前端', log_date: '2024-01-01' });
@@ -4020,7 +4015,7 @@ test('photo wall API stores layout comments and leaves uploaded files intact on 
 });
 
 test('diary images require unlocked cookie and remain private after reclassification', async (t) => {
-  const { baseUrl } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { baseUrl } = loadFreshApp(t);
 
   const rejectedPrivate = new FormData();
   rejectedPrivate.append('image', validPngBlob(), 'locked.png');
@@ -4095,7 +4090,7 @@ test('diary images require unlocked cookie and remain private after reclassifica
 });
 
 test('historical diary image references are protected without a saved private marker', async (t) => {
-  const { baseUrl, dataDir } = loadFreshApp(t, { diaryPassword: 'secret' });
+  const { baseUrl, dataDir } = loadFreshApp(t);
   const markdownForm = new FormData();
   markdownForm.append('image', validPngBlob(), 'markdown.png');
   const markdownImage = await (await fetch(`${baseUrl}/api/upload`, {
@@ -5002,7 +4997,6 @@ test('primary controls expose accessible names and editor tab semantics', () => 
   assert.equal(document.querySelector('#calendarMiniSummary'), null);
   assert.equal(document.querySelector('#calendarMiniLogHint'), null);
   assert.equal(document.querySelector('#calendarBody').closest('#calendarWidget') !== null, true);
-  assert.equal(document.querySelector('#diaryLockPanel').closest('.sidebar') !== null, true);
   assert.equal(document.querySelector('#btnBackup').closest('.backup-buttons') !== null, true);
   assert.equal(document.querySelector('#btnRestore').closest('.backup-buttons') !== null, true);
   assert.equal(document.querySelector('#todoView') !== null, true);
@@ -5185,7 +5179,7 @@ test('primary controls expose accessible names and editor tab semantics', () => 
     'max',
   ]);
   assert.equal(document.querySelector('#fabCapture'), null);
-  assert.equal(document.querySelector('#diaryUnlockOverlay').getAttribute('aria-labelledby'), 'diaryUnlockTitle');
+  assert.equal(document.querySelector('#diaryUnlockOverlay'), null);
   assert.equal(document.querySelector('#btnCategoryBack'), null);
   assert.equal(document.querySelector('#categoryView .category-page-title h2')?.textContent, '分类控制台');
   assert.equal(document.querySelector('#categoryView .category-page-kicker')?.textContent, '分类管理');
@@ -5703,8 +5697,9 @@ test('application initialization waits for auth and diary selection before refre
   assert.match(appSource, /import \{ apiFetch, checkAuth, getDiaryStatus, unlockDiary, lockDiary \} from '\.\/auth\.js';/);
   assert.match(appSource, /import \{ initAccounts \} from '\.\/accounts\.js';/);
   assert.match(appSource, /function syncDiaryLockState\(status\)[\s\S]*state\.diaryLockEnabled = status\.enabled !== false;[\s\S]*state\.diaryUnlocked = !state\.diaryLockEnabled \|\| !status\.locked;/);
-  assert.match(appSource, /window\.addEventListener\('request-diary-unlock', openDiaryUnlockModal\);/);
-  assert.match(appSource, /const preserveCurrentDiaryFilter = state\.category === '日记' \|\| state\.category\.startsWith\('日记\/'\);[\s\S]*if \(!preserveCurrentDiaryFilter\) selectDiaryLogs\(\);/);
+  assert.match(appSource, /window\.addEventListener\('request-diary-unlock', \(\) => promptDiaryUnlock\(\)\);/);
+  assert.match(appSource, /window\.addEventListener\('diary-magic-phrase', handleDiaryMagicPhrase\);/);
+  assert.match(appSource, /function handleDiaryMagicPhrase\(\)[\s\S]*if \(ok\) \{[\s\S]*syncDiaryLockState\(\{ enabled: true, locked: false \}\);/);
   assert.match(appSource, /const status = await getDiaryStatus\(\);[\s\S]*syncDiaryLockState\(status\);/);
   assert.match(authSource, /export async function getDiaryStatus\(\)/);
   assert.match(authSource, /window\.location\.assign\(`\/login\?\$\{params\.toString\(\)\}`\);/);
@@ -5726,7 +5721,8 @@ test('dedicated login and account management UI remove plaintext token handling 
   assert.doesNotMatch(indexSource, /loginOverlay|login-overlay/);
   assert.match(indexSource, /id="accountPanel"[\s\S]*id="btnAccountSettings"[\s\S]*id="btnAdminUsers"[\s\S]*id="btnLogout"/);
   assert.match(indexSource, /id="userManagerOverlay"[\s\S]*管理员只能管理账户资料，不能查看成员工作区/);
-  assert.match(indexSource, /id="accountSettingsOverlay"[\s\S]*id="btnSaveDiaryPassword"/);
+  assert.match(indexSource, /id="accountSettingsOverlay"[\s\S]*id="btnChangeAccountPassword"/);
+  assert.doesNotMatch(indexSource, /btnSaveDiaryPassword|diaryPasswordSettingsTitle|newDiaryPassword|disableDiaryPassword/);
 
   assert.match(loginScript, /target\.origin !== window\.location\.origin/);
   assert.match(loginScript, /window\.location\.replace\(safeNextPath\(\)\)/);
@@ -5784,7 +5780,7 @@ test('default sidebar uses card navigation and a collapsible calendar', () => {
   assert.doesNotMatch(styleSource, /\.calendar-widget:not\(\.collapsed\) ~ \.card-nav-panel/);
   assert.match(styleSource, /\.calendar-widget\.collapsed \.calendar-body\s*\{[\s\S]*display:\s*none;/);
   assert.equal(/data-mode="tools">更多工具/.test(htmlSource), true);
-  assert.match(htmlSource, /class="sidebar-tools-panel"[\s\S]*id="diaryLockPanel"[\s\S]*class="backup-buttons"[\s\S]*id="accountPanel"/);
+  assert.match(htmlSource, /class="sidebar-tools-panel"[\s\S]*class="backup-buttons"[\s\S]*id="accountPanel"/);
   assert.match(styleSource, /\.sidebar-tools-panel\s*\{[\s\S]*display:\s*none;[\s\S]*overflow-y:\s*auto;/);
   assert.match(styleSource, /body\.sidebar-tools-mode \.sidebar-tools-panel\s*\{[\s\S]*display:\s*flex;/);
   assert.match(styleSource, /\/\* Balanced log workspace:[\s\S]*@media \(min-width: 769px\)[\s\S]*\.sidebar\s*\{[\s\S]*overflow:\s*hidden;[\s\S]*\.card-nav-panel\s*\{[\s\S]*min-height:\s*120px;/);
@@ -6648,7 +6644,7 @@ test('mobile layout uses compact on-demand sidebar panels and retains collapse c
   assert.equal(document.querySelector('#sidebarModeTrigger') !== null, true);
   assert.equal(document.querySelector('#sidebarModeMenu') !== null, true);
   assert.equal(document.querySelector('#sidebarModeMenu [data-mode="tools"]').textContent, '更多工具');
-  assert.equal(document.querySelector('#diaryLockPanel').closest('#sidebarToolsPanel') !== null, true);
+  assert.equal(document.querySelector('#diaryLockPanel'), null);
   assert.equal(document.querySelector('#accountPanel').closest('#sidebarToolsPanel') !== null, true);
   assert.doesNotMatch(mobileStyles, /\.btn-sidebar-toggle\s*\{\s*display:\s*none/);
   assert.match(mobileStyles, /\.btn-theme-toggle,[\s\S]*\.btn-sidebar-toggle\s*\{[\s\S]*min-width:\s*36px;[\s\S]*min-height:\s*36px;/);

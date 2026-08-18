@@ -119,10 +119,6 @@
     </section>
 
     <div class="sidebar-tools-panel" id="sidebarToolsPanel" aria-label="更多工具">
-      <div class="diary-lock-panel" id="diaryLockPanel">
-        <button class="btn-diary-unlock" id="btnDiaryUnlock" title="解锁日记分类">🔒 解锁日记</button>
-        <button class="btn-diary-lock" id="btnDiaryLock" style="display:none" title="锁定日记分类">🔓 锁定日记</button>
-      </div>
       <div class="backup-buttons">
         <button class="btn-export" id="btnBackup">备份数据 JSON</button>
         <button class="btn-export btn-restore" id="btnRestore">导入恢复 JSON</button>
@@ -1251,22 +1247,6 @@
     </div>
   </div>
 
-  <!-- Diary Unlock Modal -->
-  <div class="modal-overlay" id="diaryUnlockOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="diaryUnlockTitle">
-    <div class="modal modal-sm">
-      <div class="modal-header"><h2 id="diaryUnlockTitle">解锁日记</h2></div>
-      <div class="modal-body">
-        <p style="margin-bottom:12px;">日记分类已被密码保护，请输入密码查看。</p>
-        <label class="sr-only" for="diaryPasswordInput">日记密码</label>
-        <input type="password" id="diaryPasswordInput" placeholder="日记密码" autocomplete="off" style="width:100%;padding:10px 14px;border:1px solid var(--color-border);border-radius:var(--radius);font-size:0.9rem;outline:none;background:var(--color-input-bg);color:var(--color-text);box-sizing:border-box;">
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" id="btnDiaryUnlockCancel">取消</button>
-        <button class="btn-primary" id="btnDiaryUnlockSubmit">解锁</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Account Settings Modal -->
   <div class="modal-overlay" id="accountSettingsOverlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="accountSettingsTitle">
     <div class="modal account-settings-modal">
@@ -1290,17 +1270,6 @@
           <label for="accountConfirmPassword">确认新密码</label>
           <input id="accountConfirmPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password">
           <button class="btn-primary btn-sm" id="btnChangeAccountPassword" type="button">修改密码</button>
-        </section>
-        <section class="account-settings-section" aria-labelledby="diaryPasswordSettingsTitle">
-          <h3 id="diaryPasswordSettingsTitle">日记密码</h3>
-          <p class="account-settings-note" id="accountDiaryStatus">加载状态中…</p>
-          <label for="diaryAccountPassword">账户密码</label>
-          <input id="diaryAccountPassword" type="password" maxlength="128" autocomplete="current-password">
-          <label for="newDiaryPassword">新的日记密码</label>
-          <input id="newDiaryPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" aria-describedby="diaryPasswordHint">
-          <p class="account-settings-note" id="diaryPasswordHint">至少 10 个字符；如需关闭日记密码，请勾选下方选项。</p>
-          <label class="account-disable-diary"><input id="disableDiaryPassword" type="checkbox"> 关闭日记密码保护</label>
-          <button class="btn-primary btn-sm" id="btnSaveDiaryPassword" type="button">保存日记密码</button>
         </section>
       </div>
     </div>

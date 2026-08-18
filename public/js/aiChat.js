@@ -1,5 +1,5 @@
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, openModal, closeModal, confirmDialog, $ } from './helpers.js';
+import { showToast, escHtml, safeExternalHref, openModal, closeModal, confirmDialog, $ } from './helpers.js';
 import { renderToHtml } from './markdown.js';
 import { handleInternalLogLinkClick } from './editor.js';
 import { businessDateString } from './businessDate.js';
@@ -1198,7 +1198,7 @@ function renderMessages() {
           <span>来源</span>
           ${message.sources.map((source, index) => {
             const provider = source.provider ? `${source.provider}: ` : '';
-            return `<a href="${escHtml(source.url)}" target="_blank" rel="noopener noreferrer">${index + 1}. ${escHtml(provider + (source.title || source.url))}</a>`;
+            return `<a href="${safeExternalHref(source.url)}" target="_blank" rel="noopener noreferrer">${index + 1}. ${escHtml(provider + (source.title || source.url))}</a>`;
           }).join('')}
         </div>
       ` : ''}

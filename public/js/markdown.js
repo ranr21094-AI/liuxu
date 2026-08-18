@@ -111,7 +111,9 @@ function sanitize(html) {
     ADD_TAGS: ['semantics', 'annotation'],
     ADD_ATTR: ['encoding']
   });
-  return html;
+  // DOMPurify unavailable (vendor failed to load): never return unsanitized HTML.
+  // Fall back to escaped text so no script markup can execute.
+  return escHtml(html);
 }
 
 /** Render markdown to sanitized HTML, with LRU cache */

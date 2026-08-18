@@ -7,6 +7,9 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const PASSWORD_MIN_LENGTH = 10;
 const PASSWORD_MAX_LENGTH = 128;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+// Precomputed scrypt hash used only to equalize login timing when a username does not
+// exist, so the response time cannot be used to enumerate valid usernames.
+const DUMMY_PASSWORD_HASH = hashSecret('timing-equalization-dummy');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -98,7 +101,6 @@ function publicUser(user) {
     role: user.role,
     status: user.status,
     must_change_password: user.must_change_password === true,
-    diary_lock_enabled: Boolean(user.diary_password_hash),
     created_at: user.created_at,
     updated_at: user.updated_at,
     last_login_at: user.last_login_at || '',
@@ -115,11 +117,6 @@ function validateStoredUser(user) {
   if (!['active', 'disabled'].includes(user.status)) throw new Error('Invalid stored user status');
   if (user.storage_key !== 'legacy' && !UUID_PATTERN.test(user.storage_key || '')) throw new Error('Invalid stored storage key');
   if (typeof user.must_change_password !== 'boolean') throw new Error('Invalid stored password-change flag');
-  if (user.diary_password_hash !== null &&
-      !/^scrypt\$[0-9a-f]{32}\$[0-9a-f]{128}$/i.test(user.diary_password_hash || '') &&
-      !/^sha256\$[0-9a-f]{64}$/i.test(user.diary_password_hash || '')) {
-    throw new Error('Invalid stored diary password hash');
-  }
   if (!Number.isFinite(Date.parse(user.created_at)) || !Number.isFinite(Date.parse(user.updated_at))) {
     throw new Error('Invalid stored user timestamps');
   }
@@ -128,7 +125,6 @@ function validateStoredUser(user) {
     ...user,
     username: normalizeUsername(user.username),
     must_change_password: user.must_change_password === true,
-    diary_password_hash: user.diary_password_hash || null,
     last_login_at: typeof user.last_login_at === 'string' ? user.last_login_at : '',
   };
 }
@@ -136,16 +132,12 @@ function validateStoredUser(user) {
 function createAuthStore({
   dataDir,
   bootstrapPassword = '',
-  bootstrapDiaryHash = '',
   allowInsecureNoAuth = false,
   now = () => Date.now(),
 } = {}) {
   const root = path.resolve(dataDir || path.join(__dirname, 'data'));
   const usersFile = path.join(root, 'users.json');
   const sessionsFile = path.join(root, 'auth-sessions.json');
-  if (bootstrapDiaryHash && !/^[0-9a-f]{64}$/i.test(bootstrapDiaryHash)) {
-    throw new Error('DIARY_PASSWORD_HASH must be a SHA-256 hex digest');
-  }
   const disabled = !fs.existsSync(usersFile) && !bootstrapPassword && allowInsecureNoAuth;
   const localUser = {
     id: 'local-insecure-user',
@@ -156,7 +148,6 @@ function createAuthStore({
     status: 'active',
     must_change_password: false,
     storage_key: 'legacy',
-    diary_password_hash: bootstrapDiaryHash ? `sha256$${bootstrapDiaryHash}` : null,
     created_at: '',
     updated_at: '',
     last_login_at: '',
@@ -251,7 +242,6 @@ function createAuthStore({
         status: 'active',
         must_change_password: true,
         storage_key: 'legacy',
-        diary_password_hash: bootstrapDiaryHash ? `sha256$${bootstrapDiaryHash}` : null,
         created_at: timestamp,
         updated_at: timestamp,
         last_login_at: '',
@@ -286,7 +276,13 @@ function createAuthStore({
   function authenticate(username, password) {
     if (disabled) return clone(localUser);
     const user = getUserByUsername(username);
-    if (!user || user.status !== 'active' || !verifySecret(password, user.password_hash)) return null;
+    if (!user) {
+      // Username does not exist: run a dummy scrypt to keep timing consistent with a
+      // real password check, preventing username enumeration through response time.
+      verifySecret(password, DUMMY_PASSWORD_HASH);
+      return null;
+    }
+    if (user.status !== 'active' || !verifySecret(password, user.password_hash)) return null;
     const users = readUsers();
     const target = users.find(item => item.id === user.id);
     target.last_login_at = new Date(now()).toISOString();
@@ -377,7 +373,6 @@ function createAuthStore({
       status: 'active',
       must_change_password: true,
       storage_key: crypto.randomUUID(),
-      diary_password_hash: null,
       created_at: timestamp,
       updated_at: timestamp,
       last_login_at: '',
@@ -433,24 +428,6 @@ function createAuthStore({
     return { user: publicUser(user) };
   }
 
-  function setDiaryPassword(userId, accountPassword, newPassword) {
-    if (typeof newPassword !== 'string' || newPassword.length > PASSWORD_MAX_LENGTH || (newPassword && newPassword.length < PASSWORD_MIN_LENGTH)) {
-      return { error: '日记密码必须为空或 10-128 个字符' };
-    }
-    const users = readUsers();
-    const user = users.find(item => item.id === userId);
-    if (!user || !verifySecret(accountPassword, user.password_hash)) return { error: '账户密码错误' };
-    user.diary_password_hash = newPassword ? hashSecret(newPassword) : null;
-    user.updated_at = new Date(now()).toISOString();
-    writeUsers(users);
-    return { user: publicUser(user) };
-  }
-
-  function verifyDiaryPassword(userId, password) {
-    const user = getUserById(userId);
-    return Boolean(user && user.diary_password_hash && verifySecret(password, user.diary_password_hash));
-  }
-
   ensureInitialized();
 
   return {
@@ -471,8 +448,6 @@ function createAuthStore({
     createUser,
     updateUser,
     resetPassword,
-    setDiaryPassword,
-    verifyDiaryPassword,
   };
 }
 

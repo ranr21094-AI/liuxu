@@ -18,6 +18,8 @@ const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.
 const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
 const PHOTO_WALL_FILE = path.join(DATA_DIR, 'photo-wall.json');
 const COUNTDOWNS_FILE = path.join(DATA_DIR, 'countdowns.json');
+const AI_CHAT_MAX_MESSAGES = 50;
+const AI_CHAT_MAX_CONVERSATIONS = 200;
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   moonshotApiKey: '',
@@ -688,9 +690,13 @@ function normalizeAiChatMessage(message) {
 
 function normalizeAiConversation(item) {
   if (!isPlainObject(item) || typeof item.id !== 'string' || !item.id) return null;
-  const messages = Array.isArray(item.messages)
-    ? item.messages.map(normalizeAiChatMessage).filter(Boolean).slice(-50)
+  const rawMessages = Array.isArray(item.messages)
+    ? item.messages.map(normalizeAiChatMessage).filter(Boolean)
     : [];
+  // Preserve a "truncated" marker so silent history loss stays observable: once older
+  // messages are dropped to stay within AI_CHAT_MAX_MESSAGES, the flag persists on disk.
+  const truncated = item.truncated === true || rawMessages.length > AI_CHAT_MAX_MESSAGES;
+  const messages = rawMessages.slice(-AI_CHAT_MAX_MESSAGES);
   const title = typeof item.title === 'string' && item.title.trim()
     ? item.title.trim().slice(0, 40)
     : '\u65b0\u5bf9\u8bdd';
@@ -699,7 +705,7 @@ function normalizeAiConversation(item) {
   const logKey = scope === 'editor' && typeof item.logKey === 'string'
     ? item.logKey.trim().slice(0, 120)
     : '';
-  return {
+  const result = {
     id: item.id.slice(0, 80),
     title,
     messages,
@@ -709,6 +715,10 @@ function normalizeAiConversation(item) {
     model: isStoredAiModel(item.model) ? item.model : '',
     diarySensitive: item.diarySensitive === true,
   };
+  // Only persist a "truncated" marker when history was actually dropped, so the
+  // stored schema stays clean for untruncated conversations.
+  if (truncated) result.truncated = true;
+  return result;
 }
 
 function readAiChats() {
@@ -735,9 +745,16 @@ function readAiChats() {
 
 function writeAiChats(data) {
   ensureDataDir();
-  const conversations = Array.isArray(data?.conversations)
-    ? data.conversations.map(normalizeAiConversation).filter(Boolean).slice(0, 200)
-    : [];
+  const sourceConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+  const conversations = sourceConversations
+    .map(normalizeAiConversation)
+    .filter(Boolean)
+    .slice(0, AI_CHAT_MAX_CONVERSATIONS);
+  if (sourceConversations.length > AI_CHAT_MAX_CONVERSATIONS) {
+    console.warn(
+      `[work-log] AI chat history truncated: dropped ${sourceConversations.length - AI_CHAT_MAX_CONVERSATIONS} conversation(s) to stay within ${AI_CHAT_MAX_CONVERSATIONS}`,
+    );
+  }
   const activeConversationId = conversations.some(item => item.id === data?.activeConversationId)
     ? data.activeConversationId
     : (conversations[0]?.id || '');
@@ -1668,17 +1685,17 @@ function getCategoryLogCounts(diaryUnlocked = true) {
 
 function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
   const { counts, subCounts } = getCategoryLogCounts(diaryUnlocked);
-  const categories = readCategories().map(category => ({
-    name: category.name,
-    sub: !diaryUnlocked && category.name === DIARY_CATEGORY ? [] : [...(category.sub || [])],
-    log_count: counts.get(category.name) || 0,
-    sub_log_counts: !diaryUnlocked && category.name === DIARY_CATEGORY
-      ? {}
-      : Object.fromEntries(
+  const categories = readCategories()
+    .filter(category => diaryUnlocked || category.name !== DIARY_CATEGORY)
+    .map(category => ({
+      name: category.name,
+      sub: [...(category.sub || [])],
+      log_count: counts.get(category.name) || 0,
+      sub_log_counts: Object.fromEntries(
         (category.sub || []).map(sub => [sub, subCounts.get(`${category.name}/${sub}`) || 0])
       ),
-    calendar_day_visible: category.calendar_day_visible !== false,
-  }));
+      calendar_day_visible: category.calendar_day_visible !== false,
+    }));
   if (includeDiaryRoot && !categories.some(category => category.name === DIARY_CATEGORY)) {
     categories.push({
       name: DIARY_CATEGORY,
@@ -1877,6 +1894,7 @@ function backup() {
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
     photoWall: getPhotoWall(),
+    aiChats: readAiChats(),
     exportedAt: new Date().toISOString(),
   };
 }
@@ -2110,6 +2128,32 @@ function normalizePhotoWallForRestore(photoWall) {
   return { photoWall: normalized };
 }
 
+function normalizeAiChatsForRestore(value) {
+  if (value === undefined) return { aiChats: { conversations: [], activeConversationId: '' } };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { error: 'Invalid AI chat data' };
+  const conversations = Array.isArray(value.conversations)
+    ? value.conversations.map(normalizeAiConversation).filter(Boolean)
+    : [];
+  const activeConversationId = conversations.some(item => item.id === value.activeConversationId)
+    ? value.activeConversationId
+    : (conversations[0]?.id || '');
+  return { aiChats: { conversations, activeConversationId } };
+}
+
+function mergeAiChats(existing, incoming) {
+  const map = new Map();
+  for (const chat of existing) map.set(chat.id, chat);
+  for (const chat of incoming) {
+    const existingChat = map.get(chat.id);
+    if (!existingChat || new Date(chat.updatedAt || 0) > new Date(existingChat.updatedAt || 0)) {
+      map.set(chat.id, chat);
+    }
+  }
+  const conversations = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+  const activeConversationId = conversations[0]?.id || '';
+  return { conversations, activeConversationId };
+}
+
 function normalizeRestoreData(data) {
   if (!data || typeof data !== 'object') return { error: 'Invalid backup data' };
   if (!Array.isArray(data.logs)) return { error: 'Missing logs data' };
@@ -2137,6 +2181,9 @@ function normalizeRestoreData(data) {
   const photoWall = normalizePhotoWallForRestore(data.photoWall);
   if (photoWall.error) return photoWall;
 
+  const aiChats = normalizeAiChatsForRestore(data.aiChats);
+  if (aiChats.error) return aiChats;
+
   return {
     logs: logs.logs,
     todos: todos.todos,
@@ -2145,6 +2192,7 @@ function normalizeRestoreData(data) {
     categories: categories.categories,
     privateUploads: privateUploads.privateUploads,
     photoWall: photoWall.photoWall,
+    aiChats: aiChats.aiChats,
   };
 }
 
@@ -2157,11 +2205,40 @@ function capturePersistentState() {
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
     photoWall: readPhotoWall(),
+    aiChats: readAiChats(),
   };
+}
+
+// Copy current persistent files to timestamped .restore-bak snapshots so a process that
+// dies mid-restore leaves recoverable backups instead of a half-written state.
+function snapshotPersistentFiles() {
+  const files = [
+    DATA_FILE, TODOS_FILE, COUNTDOWNS_FILE, TODO_CATEGORIES_FILE,
+    CATEGORIES_FILE, PRIVATE_UPLOADS_FILE, PHOTO_WALL_FILE, AI_CHATS_FILE,
+  ];
+  const snapshots = [];
+  for (const file of files) {
+    if (fs.existsSync(file)) {
+      const backupPath = `${file}.restore-bak-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      try {
+        fs.copyFileSync(file, backupPath, fs.constants.COPYFILE_EXCL);
+        snapshots.push({ source: file, backup: backupPath });
+      } catch { /* a file we cannot snapshot is left as-is */ }
+    }
+  }
+  return snapshots;
+}
+
+function cleanupSnapshots(snapshots) {
+  for (const { backup } of snapshots) {
+    try { fs.unlinkSync(backup); } catch {}
+  }
 }
 
 function writePersistentState(next) {
   const previous = capturePersistentState();
+  const snapshots = snapshotPersistentFiles();
+  let rollbackFailed = false;
   try {
     writeLogs(next.logs);
     writeTodos(next.todos);
@@ -2170,6 +2247,7 @@ function writePersistentState(next) {
     writeCategories(next.categories);
     writePrivateUploads(next.privateUploads);
     writePhotoWall(next.photoWall);
+    writeAiChats(next.aiChats);
   } catch (err) {
     try {
       writeLogs(previous.logs);
@@ -2179,11 +2257,16 @@ function writePersistentState(next) {
       writeCategories(previous.categories);
       writePrivateUploads(previous.privateUploads);
       writePhotoWall(previous.photoWall);
+      writeAiChats(previous.aiChats);
     } catch (rollbackError) {
+      rollbackFailed = true;
       err.message += `; rollback failed: ${rollbackError.message}`;
     }
+    if (rollbackFailed) throw err; // keep snapshots for manual recovery
+    cleanupSnapshots(snapshots);
     throw err;
   }
+  cleanupSnapshots(snapshots);
 }
 
 function restore(data, mode = 'replace') {
@@ -2251,6 +2334,7 @@ function restore(data, mode = 'replace') {
     const diaryUploads = mergedLogs
       .filter(log => isDiaryCategory(log.category))
       .flatMap(log => extractLocalUploadFilenames(log.content));
+    const mergedAiChats = mergeAiChats(readAiChats().conversations, data.aiChats.conversations);
     writePersistentState({
       logs: mergedLogs,
       todos: mergedTodos,
@@ -2259,6 +2343,7 @@ function restore(data, mode = 'replace') {
       categories: mergedCats,
       privateUploads: [...new Set([...mergedPrivateUploads, ...historicalPrivateUploads, ...diaryUploads])],
       photoWall: mergedPhotoWall,
+      aiChats: mergedAiChats,
     });
     return { success: true, logs: mergedLogs.length, todos: mergedTodos.length, countdowns: mergedCountdowns.length, categories: mergedCats.length };
   }
@@ -2277,6 +2362,7 @@ function restore(data, mode = 'replace') {
     categories,
     privateUploads: [...new Set([...data.privateUploads, ...historicalPrivateUploads, ...diaryUploads])],
     photoWall: data.photoWall,
+    aiChats: data.aiChats,
   });
   return { success: true, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };
 }

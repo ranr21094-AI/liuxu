@@ -1,4 +1,4 @@
-import { state } from './state.js';
+import { state, DIARY_MAGIC_PHRASE } from './state.js';
 import { apiFetch } from './auth.js';
 import { formatDate, escHtml, setupDragAndDrop, showToast, $ } from './helpers.js';
 import { renderToHtml } from './markdown.js';
@@ -225,7 +225,7 @@ export async function loadLogs() {
     renderCardNavigator(data);
   } catch (err) {
     if (err.message !== 'Unauthorized') {
-      logList.innerHTML = `<div class="empty-state">加载失败: ${err.message}</div>`;
+      logList.innerHTML = `<div class="empty-state">加载失败: ${escHtml(err.message)}</div>`;
       renderPagination({ totalPages: 0, page: 1 });
       renderCardNavigator({ items: [], total: 0, page: 1, totalPages: 0 });
     }
@@ -575,7 +575,16 @@ $('#searchInput').addEventListener('input', (() => {
   return () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      state.search = $('#searchInput').value.trim();
+      const value = $('#searchInput').value.trim();
+      // Magic phrase toggles the hidden diary instead of searching.
+      if (value === DIARY_MAGIC_PHRASE) {
+        $('#searchInput').value = '';
+        const btn = $('#btnSearchClear');
+        if (btn) btn.classList.remove('visible');
+        window.dispatchEvent(new CustomEvent('diary-magic-phrase'));
+        return;
+      }
+      state.search = value;
       state.currentPage = 1;
       state.selectedDate = null;
       loadLogs();

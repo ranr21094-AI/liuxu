@@ -68,6 +68,7 @@ const AI_USER_PROFILE_MAX_CHARS = 2000;
 const AI_LOG_BATCH_MAX_CHARS = 30000;
 const AI_LOG_BATCH_AUTO_LIMIT = 8;
 const AI_LOG_BATCH_HARD_LIMIT = 32;
+const AI_LOG_METADATA_HARD_LIMIT = 32;
 const AI_LOG_BATCH_CONCURRENCY = 2;
 const AI_LOG_SUMMARY_MAX_CHARS = 8000;
 const AI_LOG_SELECTION_MAX_TERMS = 8;
@@ -125,14 +126,14 @@ const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
   hourCycle: 'h23',
 });
 
-// Diary lock (optional — set DIARY_PASSWORD_HASH env var to enable)
-const DIARY_PASSWORD_HASH = process.env.DIARY_PASSWORD_HASH || null;
+// Diary is always hidden; unlock by typing the magic phrase in the search box.
+// The phrase is fixed in code and kept in sync with public/js/state.js.
+const DIARY_MAGIC_PHRASE = '如意如意';
 database.checkDataIntegrity();
 database.resetCache();
 const authStore = createAuthStore({
   dataDir: DATA_DIR,
   bootstrapPassword: AUTH_TOKEN || '',
-  bootstrapDiaryHash: DIARY_PASSWORD_HASH || '',
   allowInsecureNoAuth: ALLOW_INSECURE_NO_AUTH,
 });
 const databaseContext = new AsyncLocalStorage();
@@ -188,10 +189,6 @@ const diaryTokenCleanup = setInterval(() => {
 }, 3600000);
 if (diaryTokenCleanup.unref) diaryTokenCleanup.unref();
 
-function hashPassword(pw) {
-  return crypto.createHash('sha256').update(pw).digest('hex');
-}
-
 function generateToken() {
   return crypto.randomBytes(24).toString('hex');
 }
@@ -234,8 +231,9 @@ function diaryCookieOptions(req, token, maxAge) {
     'SameSite=Strict',
     `Max-Age=${maxAge}`,
   ];
-  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
-  if (req.secure || forwardedProtocol === 'https') parts.push('Secure');
+  // Only trust req.secure: Express gates forwarded headers behind app.set('trust proxy'),
+  // so a client-injected X-Forwarded-Proto on a plain HTTP connection cannot force Secure.
+  if (req.secure) parts.push('Secure');
   return parts.join('; ');
 }
 
@@ -423,25 +421,55 @@ async function readResponseTextWithLimit(response, maxBytes, errorMessage) {
   return Buffer.concat(chunks, total).toString('utf8');
 }
 
+function ipv4IsPrivateOrLocal(parts) {
+  return parts[0] === 0 || parts[0] === 10 || parts[0] === 127 ||
+    (parts[0] === 169 && parts[1] === 254) ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168);
+}
+
+function numericIpv4IsPrivateOrLocal(value) {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n <= 0 || n > 0xffffffff) return true; // out-of-range: reject as suspicious
+  return ipv4IsPrivateOrLocal([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+}
+
 function isPrivateIpLiteral(hostname) {
-  if (net.isIP(hostname) === 4) {
-    const parts = hostname.split('.').map(Number);
-    return parts[0] === 10 || parts[0] === 127 ||
-      (parts[0] === 169 && parts[1] === 254) ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168);
+  if (typeof hostname !== 'string' || !hostname) return false;
+  let h = hostname.toLowerCase();
+  // Strip brackets from bracketed IPv6 literals (new URL("https://[::1]/").hostname === "[::1]").
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  // Strip a trailing dot ("127.0.0.1.") that some resolvers accept as the same address.
+  if (h.endsWith('.')) h = h.slice(0, -1);
+
+  if (net.isIP(h) === 4) {
+    return ipv4IsPrivateOrLocal(h.split('.').map(Number));
   }
-  if (net.isIP(hostname) === 6) {
-    const normalized = hostname.toLowerCase();
-    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe8') || normalized.startsWith('fe9') || normalized.startsWith('fea') || normalized.startsWith('feb');
+
+  // IPv4-mapped / IPv4-compatible IPv6, e.g. ::ffff:127.0.0.1 or ::127.0.0.1.
+  const v4Tail = h.match(/^:(?::ffff)?:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4Tail) {
+    return ipv4IsPrivateOrLocal(v4Tail[1].split('.').map(Number));
   }
+
+  if (net.isIP(h) === 6) {
+    if (h === '::1' || h === '::') return true;
+    return h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb');
+  }
+
+  // Numeric IPv4 literals that DNS resolves to private/loopback ranges (e.g. 2130706433 = 127.0.0.1).
+  if (/^\d{1,10}$/.test(h)) return numericIpv4IsPrivateOrLocal(h);
+  // Hex / octal IPv4 literals (e.g. 0x7f000001, 017700000001).
+  if (/^0x[0-9a-f]{1,8}$/i.test(h)) return numericIpv4IsPrivateOrLocal(h);
+  if (/^0[0-7]{1,11}$/.test(h)) return numericIpv4IsPrivateOrLocal(Number('0o' + h.slice(1)));
   return false;
 }
 
 function validateGeneratedImageUrl(value) {
   const url = new URL(value);
   const hostname = url.hostname.toLowerCase();
-  if (url.protocol !== 'https:' || hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIpLiteral(hostname)) {
+  if (url.protocol !== 'https:') throw new Error('Generated image URL must use HTTPS');
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || isPrivateIpLiteral(hostname)) {
     throw new Error('Generated image URL is not allowed');
   }
   return url.toString();
@@ -455,8 +483,7 @@ function siteCookieOptions(req, token, maxAge) {
     'SameSite=Strict',
     `Max-Age=${maxAge}`,
   ];
-  const forwardedProtocol = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
-  if (req.secure || forwardedProtocol === 'https') parts.push('Secure');
+  if (req.secure) parts.push('Secure');
   return parts.join('; ');
 }
 
@@ -476,7 +503,6 @@ function getSiteSession(req) {
 }
 
 function isValidDiaryToken(req, token) {
-  if (!req.user?.diary_password_hash) return true;
   if (!token) return false;
   const entry = diaryTokens.get(token);
   if (!entry || entry.userId !== req.user.id || Date.now() - entry.createdAt > DIARY_TOKEN_TTL) {
@@ -487,7 +513,7 @@ function isValidDiaryToken(req, token) {
 }
 
 function hasDiaryAccess(req) {
-  return !req.user?.diary_password_hash || isValidDiaryToken(req, getDiaryToken(req));
+  return isValidDiaryToken(req, getDiaryToken(req));
 }
 
 function revokeDiaryTokensForUser(userId) {
@@ -509,7 +535,7 @@ function logRequiresDiaryAccess(log) {
 }
 
 function restoreRequiresDiaryAccess(req) {
-  return Boolean(req.user?.diary_password_hash);
+  return true;
 }
 
 function isDiaryRoot(category) {
@@ -842,18 +868,24 @@ function authMiddleware(req, res, next) {
   return databaseContext.run(databaseForUser(req.user), next);
 }
 
-function concurrencyLimiter(maxConcurrent) {
-  let active = 0;
-  return (_req, res, next) => {
-    if (active >= maxConcurrent) {
+function concurrencyLimiter(maxConcurrent, keyFn = () => 'global') {
+  const buckets = new Map();
+  return (req, res, next) => {
+    const key = keyFn(req);
+    let state = buckets.get(key);
+    if (!state) {
+      state = { active: 0 };
+      buckets.set(key, state);
+    }
+    if (state.active >= maxConcurrent) {
       return res.status(503).json({ error: '服务繁忙，请稍后再试' });
     }
-    active += 1;
+    state.active += 1;
     let released = false;
     const release = () => {
       if (released) return;
       released = true;
-      active = Math.max(0, active - 1);
+      state.active = Math.max(0, state.active - 1);
     };
     res.once('finish', release);
     res.once('close', release);
@@ -907,7 +939,7 @@ app.get(['/', '/index.html'], (_req, res) => {
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 app.use('/api/ai', rateLimiter(60, 60 * 1000));
-app.use('/api/ai', concurrencyLimiter(4));
+app.use('/api/ai', concurrencyLimiter(4, req => req.user?.id || 'anon'));
 app.use('/api/upload', rateLimiter(20, 60 * 1000));
 
 // Image upload setup
@@ -1235,14 +1267,6 @@ app.put('/api/auth/password', (req, res) => {
   res.json({ success: true, user: result.user });
 });
 
-app.put('/api/auth/diary/password', (req, res) => {
-  const result = authStore.setDiaryPassword(req.user.id, req.body?.account_password, req.body?.new_password);
-  if (result.error) return res.status(400).json({ error: result.error });
-  revokeDiaryTokensForUser(req.user.id);
-  clearDiaryCookie(req, res);
-  res.json({ success: true, user: result.user });
-});
-
 function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Administrator access required' });
   next();
@@ -1276,12 +1300,12 @@ app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
   res.json(result.user);
 });
 
-// Diary unlock
-app.post('/api/auth/diary', rateLimiter(5, 15 * 60 * 1000), (req, res) => {
-  if (!req.user.diary_password_hash) return res.json({ unlocked: true });
+// Diary unlock — the magic phrase replaces the old per-account password. The
+// limit is generous so unlock/lock toggling via the search box never trips it.
+app.post('/api/auth/diary', rateLimiter(20, 15 * 60 * 1000), (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: '请输入密码' });
-  if (authStore.verifyDiaryPassword(req.user.id, password)) {
+  if (typeof password === 'string' && password.trim() === DIARY_MAGIC_PHRASE) {
     const token = generateToken();
     diaryTokens.set(token, { userId: req.user.id, createdAt: Date.now() });
     setDiaryCookie(req, res, token);
@@ -1298,12 +1322,10 @@ app.post('/api/auth/diary/lock', (req, res) => {
   res.json({ locked: true });
 });
 
-// Diary status
+// Diary status — diary protection is always enabled now.
 app.get('/api/auth/diary/status', (req, res) => {
-  if (!req.user.diary_password_hash) return res.json({ enabled: false, locked: false });
   const token = getDiaryToken(req);
-  if (!token) return res.json({ enabled: true, locked: true });
-  res.json({ enabled: true, locked: !isValidDiaryToken(req, token) });
+  res.json({ enabled: true, locked: !token || !isValidDiaryToken(req, token) });
 });
 
 function normalizeAiAttachmentInput(value) {
@@ -2045,9 +2067,27 @@ function extensionFromContentType(contentType, fallbackUrl = '') {
   return ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'].includes(ext) ? ext : '.png';
 }
 
+// Fetch the generated image with redirect: 'manual' and re-validate every hop,
+// so a 3xx redirect to an internal/loopback address cannot bypass SSRF guards.
+async function fetchGeneratedImageWithRedirectGuard(url, timeoutMs) {
+  let current = url;
+  for (let hop = 0; hop < 4; hop++) {
+    const safeUrl = validateGeneratedImageUrl(current);
+    const response = await fetchWithTimeout(safeUrl, { redirect: 'manual' }, timeoutMs);
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      await response.body?.cancel().catch(() => {});
+      if (!location) throw new Error('Generated image redirect has no location');
+      current = new URL(location, safeUrl).toString();
+      continue;
+    }
+    return response;
+  }
+  throw new Error('Generated image redirect limit exceeded');
+}
+
 async function downloadGeneratedImage(url) {
-  const safeUrl = validateGeneratedImageUrl(url);
-  const imageResponse = await fetchWithTimeout(safeUrl, {}, 30000);
+  const imageResponse = await fetchGeneratedImageWithRedirectGuard(url, 30000);
   if (!imageResponse.ok) {
     throw new Error(`Generated image download failed (${imageResponse.status})`);
   }
@@ -2078,7 +2118,7 @@ async function downloadGeneratedImage(url) {
   if (!buffer.length) throw new Error('Generated image size is invalid');
   const uploadsDirectory = currentUploadsDirectory();
   fs.mkdirSync(uploadsDirectory, { recursive: true });
-  const ext = extensionFromContentType(contentType, safeUrl);
+  const ext = extensionFromContentType(contentType, url);
   const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
   fs.writeFileSync(path.join(uploadsDirectory, filename), buffer);
   return { filename, url: `/uploads/${filename}` };
@@ -2808,7 +2848,13 @@ function splitCommand(command) {
 
 function safeWestockArg(value, name, { maxLength = 120 } = {}) {
   const text = String(value ?? '').trim();
-  if (!text || text.length > maxLength || /[\r\n;&|<>`$]/.test(text)) {
+  if (!text || text.length > maxLength) {
+    throw new Error(`Invalid WeStock argument: ${name}`);
+  }
+  // We keep shell:true (npx resolves to npx.cmd on Windows, which cannot run under shell:false),
+  // so argument values must be inert to both POSIX shells and cmd.exe. Reject every
+  // command separator, redirect, glob, quote, escape and env-expansion character.
+  if (/[\u0000-\u001f\u007f]/.test(text) || /[;&|<>`$!^"'()\[\]{}%=\\*?]/.test(text)) {
     throw new Error(`Invalid WeStock argument: ${name}`);
   }
   return text;
@@ -3583,6 +3629,17 @@ app.post('/api/ai/chat', async (req, res) => {
       });
       const metadataBatches = buildLogMetadataBatches(fullLogSnapshot, aiLogBatchMaxChars(options));
       metadataBatchCount = metadataBatches.length;
+
+      if (metadataBatchCount > AI_LOG_METADATA_HARD_LIMIT) {
+        return res.status(413).json({
+          error: `日志目录过大（${fullLogSnapshot.logs.length} 条），元数据筛选需要 ${metadataBatchCount} 批，超过 ${AI_LOG_METADATA_HARD_LIMIT} 批上限，请缩小分类范围。`,
+          code: 'AI_LOG_METADATA_TOO_LARGE',
+          phase: 'metadata',
+          catalogCount: fullLogSnapshot.logs.length,
+          batchCount: metadataBatchCount,
+          maxBatchCount: AI_LOG_METADATA_HARD_LIMIT,
+        });
+      }
 
       if (confirmedLogSelection) {
         selection = finalizeLogSelection(fullLogSnapshot, confirmedLogSelection);
@@ -4432,7 +4489,7 @@ app.delete('/api/uploads/:filename', (req, res) => {
 app.get('/api/categories', (req, res) => {
   try {
     const diaryUnlocked = hasDiaryAccess(req);
-    res.json(db.getAllCategories(diaryUnlocked, Boolean(req.user?.diary_password_hash) && diaryUnlocked));
+    res.json(db.getAllCategories(diaryUnlocked, diaryUnlocked));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

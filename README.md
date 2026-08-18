@@ -211,7 +211,6 @@ AI 设置、加密后的 API Key 和历史会话保存在当前账户的数据�
 | `HOST` | 监听地址；对外监听时必须启用账户认证 | `127.0.0.1` |
 | `DATA_DIR` | 用户注册表、账户数据和上传图片保存目录 | `./data` |
 | `AUTH_TOKEN` | 仅在没有 `users.json` 时初始化 `admin` 的一次性密码 | required on first start |
-| `DIARY_PASSWORD_HASH` | 仅首次迁移时导入给 `admin` 的旧 SHA-256 日记密码哈希 | empty |
 | `DEEPSEEK_API_KEY` | 旧管理员工作区可使用的服务端 DeepSeek 回退 Key | empty |
 | `DEEPSEEK_BASE_URL` | DeepSeek API 基础地址 | `https://api.deepseek.com` |
 | `DEEPSEEK_DEFAULT_MODEL` | 默认 DeepSeek 模型 | `deepseek-v4-flash` |
@@ -256,9 +255,15 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 - 如果 `DATA_DIR` 中还没有 `users.json`，启动时必须提供 `AUTH_TOKEN`。
 - 服务会先检查现有 JSON 数据，再原子创建 `admin` 账户；现有日志、待办、分类、照片墙、AI 历史和上传文件不会移动。
 - 旧的 `AUTH_TOKEN` 可以是现有 6 位密码，但它只作为一次性密码；首次登录后必须换成至少 10 个字符的新密码。
-- 如果提供了 `DIARY_PASSWORD_HASH`，它只在首次迁移时导入给 `admin`。新成员默认不启用日记密码，可在个人设置中自行开启。
-- 创建用户注册表后，`AUTH_TOKEN` 和 `DIARY_PASSWORD_HASH` 不再覆盖账户配置，可以从 `.env` 删除。
+- 创建用户注册表后，`AUTH_TOKEN` 不再覆盖账户配置，可以从 `.env` 删除。
 - `users.json` 或 `auth-sessions.json` 损坏时，服务会保留 `.corrupt-*.bak` 副本并拒绝登录，不会降级成无密码模式。
+
+## 隐藏日记
+
+- 日记分类（`日记` 及其子分类）**始终隐藏**，界面上不提供任何解锁/锁定按钮。
+- 在搜索框输入「如意如意」（与 `server.js` 中的 `DIARY_MAGIC_PHRASE` 保持一致）即可解锁并自动进入日记列表；再次输入同一暗语则重新锁定。
+- 解锁状态通过 `diary_session` Cookie 维持（24 小时有效），且按账户隔离；备份/恢复、AI 上下文等涉及日记数据的操作同样受此保护。
+- 暗语是固定写入代码的，属个人应用的“安全通过隐蔽”手段，无法作为普通搜索词使用。
 
 ## Data And Privacy
 

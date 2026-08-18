@@ -15,7 +15,6 @@ function syncAccountPanel() {
   $('#accountMeta').textContent = `@${currentUser.username} · ${currentUser.role === 'admin' ? '管理员' : '成员'}`;
   $('#btnAdminUsers').hidden = currentUser.role !== 'admin';
   $('#accountDisplayNameInput').value = currentUser.display_name;
-  $('#accountDiaryStatus').textContent = currentUser.diary_lock_enabled ? '当前已启用独立日记密码。' : '当前未启用日记密码。';
 }
 
 async function readJsonResponse(res, fallback) {
@@ -32,9 +31,8 @@ export async function loadCurrentAccount() {
 }
 
 function clearPasswordInputs() {
-  ['accountCurrentPassword', 'accountNewPassword', 'accountConfirmPassword', 'diaryAccountPassword', 'newDiaryPassword']
+  ['accountCurrentPassword', 'accountNewPassword', 'accountConfirmPassword']
     .forEach(id => { $(`#${id}`).value = ''; });
-  $('#disableDiaryPassword').checked = false;
 }
 
 async function saveProfile() {
@@ -68,27 +66,6 @@ async function changePassword() {
     clearPasswordInputs();
     syncAccountPanel();
     showToast('登录密码已修改，其他会话已退出', 'success');
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-}
-
-async function saveDiaryPassword() {
-  const disable = $('#disableDiaryPassword').checked;
-  const newPassword = disable ? '' : $('#newDiaryPassword').value;
-  if (!disable && newPassword.length < 10) return showToast('日记密码至少需要 10 个字符', 'error');
-  try {
-    const res = await apiFetch('/api/auth/diary/password', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account_password: $('#diaryAccountPassword').value, new_password: newPassword }),
-    });
-    const data = await readJsonResponse(res, '日记密码保存失败');
-    currentUser = data.user;
-    clearPasswordInputs();
-    syncAccountPanel();
-    showToast(disable ? '日记密码已关闭' : '日记密码已更新', 'success');
-    window.location.reload();
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -200,7 +177,6 @@ export async function initAccounts() {
   $('#userManagerClose').addEventListener('click', () => closeModal($('#userManagerOverlay')));
   $('#btnSaveAccountProfile').addEventListener('click', saveProfile);
   $('#btnChangeAccountPassword').addEventListener('click', changePassword);
-  $('#btnSaveDiaryPassword').addEventListener('click', saveDiaryPassword);
   $('#userCreateForm').addEventListener('submit', createUser);
   $('#accountSettingsOverlay').addEventListener('click', event => {
     if (event.target === $('#accountSettingsOverlay')) closeModal($('#accountSettingsOverlay'));
