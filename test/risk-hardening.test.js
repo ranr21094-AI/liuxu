@@ -2451,9 +2451,11 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(todoSource, /let todoSearchQuery = '';/);
   assert.match(todoSource, /\$\('#todoSearchInput'\)\.addEventListener\('input'/);
   assert.match(todoSource, /const TODO_SELECT_IDS = \['todoFullCategory', 'todoFullPriority', 'todoFullRecurrence'\];/);
+  assert.match(todoSource, /from '\.\/selectControl\.js'/);
   assert.match(todoSource, /function syncTodoSelectControls\(\)/);
-  assert.match(todoSource, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/);
-  assert.match(todoSource, /todo-select-option/);
+  const selectControlSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'selectControl.js'), 'utf8');
+  assert.match(selectControlSource, /select\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/);
+  assert.match(selectControlSource, /todo-select-option/);
   assert.match(todoSource, /data-action="clear-completed"/);
   assert.match(todoSource, /message: '清除所有已完成待办，此操作不可撤销。'/);
   assert.doesNotMatch(todoSource, /todoFullSummary|btnTodoFullClear/);

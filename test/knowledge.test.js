@@ -421,6 +421,19 @@ test('knowledge tree maps category roots to bases and children to folders', () =
   assert.equal(tree[1].visibility, 'diary');
 });
 
+test('knowledge tree folder counts include nested folder paths', () => {
+  const db = { isDiaryCategory: () => false };
+  const tree = treeForDocuments([
+    { name: '投资', sub: ['行业洞悉'] },
+  ], [
+    { knowledgeBase: '投资', folderPath: '行业洞悉/子目录', visibility: 'standard' },
+    { knowledgeBase: '投资', folderPath: '行业洞悉', visibility: 'standard' },
+  ], db);
+  const folder = tree[0].folders.find(item => item.path === '行业洞悉');
+  assert.equal(folder.documentCount, 2);
+  assert.equal(tree[0].documentCount, 2);
+});
+
 test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', async (t) => {
   const chinese = '测试.png';
   const mojibake = Buffer.from(chinese, 'utf8').toString('latin1');

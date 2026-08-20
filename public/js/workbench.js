@@ -13,10 +13,13 @@ import { renderToHtml, renderToHtmlUncached } from './markdown.js';
 import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
 import { fillAccountSettings, initAccounts } from './accounts.js';
 import { createBackupActions } from './workbench-backup.js';
+import { initSelectControls, syncSelectControls } from './selectControl.js';
 
 const $ = selector => document.querySelector(selector);
+const DOCUMENT_SELECT_IDS = ['documentKnowledgeBase', 'documentFolderPath'];
 const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'cancelled']);
-const ACTIVE_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool']);
+const ACTIVE_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool', 'waiting_user']);
+const BLOCKING_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool']);
 
 const state = {
   mode: 'agent',
@@ -30,6 +33,9 @@ const state = {
   eventSource: null,
   memoryRefreshSource: null,
   runEventKeys: new Set(),
+  childEventSources: new Map(),
+  childRunEventKeys: new Map(),
+  activeChildRunId: '',
   documents: [],
   activeDocument: null,
   annotation: null,
@@ -51,6 +57,7 @@ const state = {
   memoryLayer: '',
   memories: { items: [], proposals: [] },
   runImages: [],
+  delegateTitle: '',
   computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
 };
 
@@ -1220,9 +1227,137 @@ async function loadSessions() {
 function stopLiveTrace() {
   state.eventSource?.close();
   state.eventSource = null;
+  for (const source of state.childEventSources.values()) source.close();
+  state.childEventSources.clear();
+  state.childRunEventKeys.clear();
   state.runId = '';
+  state.activeChildRunId = '';
   state.runEventKeys = new Set();
   state.runImages = [];
+}
+
+function delegateTraceHost(childRunId) {
+  if (!childRunId) return null;
+  return document.querySelector(`[data-delegate-run-id="${CSS.escape(childRunId)}"]`);
+}
+
+function upsertDelegateTrace(child, parentRunId, { live = false } = {}) {
+  if (!child?.id || !parentRunId) return null;
+  const parent = runTraceHost(parentRunId) || upsertRunTrace({ id: parentRunId, trace: [] }, { live });
+  if (!parent) return null;
+  let host = parent.querySelector('.delegate-traces');
+  if (!host) {
+    host = document.createElement('div');
+    host.className = 'delegate-traces';
+    parent.querySelector('.trace-events')?.after(host);
+  }
+  let details = delegateTraceHost(child.id);
+  if (!details) {
+    details = document.createElement('details');
+    details.className = 'execution-trace execution-trace-delegate';
+    details.dataset.delegateRunId = child.id;
+    details.innerHTML = `
+      <summary><span class="trace-state-dot"></span><span class="trace-summary">子任务</span></summary>
+      <div class="trace-events"></div>`;
+    host.append(details);
+  }
+  if (live) details.open = true;
+  const title = child.delegateTitle || '委派任务';
+  details.dataset.delegateTitle = title;
+  const lines = Array.isArray(child.trace) ? child.trace.map(item => String(item || '').trim()).filter(Boolean) : [];
+  const eventsEl = details.querySelector('.trace-events');
+  const summaryEl = details.querySelector('.trace-summary');
+  summaryEl.textContent = lines.length ? `子任务「${title}」 · ${lines.at(-1)}` : `子任务「${title}」`;
+  eventsEl.innerHTML = lines.map(text => `<div class="trace-event">${escHtml(text)}</div>`).join('');
+  eventsEl.scrollTop = eventsEl.scrollHeight;
+  return details;
+}
+
+function delegateTrace(text, childRunId) {
+  if (!text || !childRunId) return;
+  const details = delegateTraceHost(childRunId)
+    || upsertDelegateTrace({ id: childRunId, delegateTitle: state.delegateTitle || '委派任务', trace: [] }, state.runId, { live: true });
+  if (!details) return;
+  const eventsEl = details.querySelector('.trace-events');
+  const summaryEl = details.querySelector('.trace-summary');
+  const title = state.delegateTitle || details.dataset.delegateTitle || '委派任务';
+  const last = eventsEl.lastElementChild;
+  if (last && last.textContent === text) {
+    summaryEl.textContent = `子任务「${title}」 · ${text}`;
+    return;
+  }
+  const event = document.createElement('div');
+  event.className = 'trace-event';
+  event.textContent = text;
+  eventsEl.append(event);
+  eventsEl.scrollTop = eventsEl.scrollHeight;
+  summaryEl.textContent = `子任务「${title}」 · ${text}`;
+}
+
+function unsubscribeDelegateRun(childRunId) {
+  const source = state.childEventSources.get(childRunId);
+  if (source) {
+    source.close();
+    state.childEventSources.delete(childRunId);
+  }
+  state.childRunEventKeys.delete(childRunId);
+  if (state.activeChildRunId === childRunId) state.activeChildRunId = '';
+}
+
+function handleDelegateRunEvent(childRunId, event) {
+  let keys = state.childRunEventKeys.get(childRunId);
+  if (!keys) {
+    keys = new Set();
+    state.childRunEventKeys.set(childRunId, keys);
+  }
+  const key = runEventKey(event);
+  if (keys.has(key)) return;
+  keys.add(key);
+  const payload = event.payload || {};
+  if (event.type === 'run.started') delegateTrace('正在分析目标', childRunId);
+  if (event.type === 'assistant.delta' && payload.text) delegateTrace('正在组织回答', childRunId);
+  if (event.type === 'tool.proposed') {
+    delegateTrace(`准备使用 ${payload.calls?.map(call => call.name).join('、') || '工具'}`, childRunId);
+  }
+  if (event.type === 'tool.started') {
+    delegateTrace(`正在执行 ${payload.name || payload.call?.name || '工具'}`, childRunId);
+  }
+  if (event.type === 'tool.completed') {
+    delegateTrace(payload.result?.summary || payload.call?.name || '工具执行完成', childRunId);
+  }
+  if (event.type === 'checkpoint.updated') delegateTrace('已更新工作进度', childRunId);
+  if (event.type === 'user_input.required') {
+    delegateTrace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', childRunId);
+  }
+  if (event.type === 'approval.required') delegateTrace('等待你的确认', childRunId);
+  if (event.type === 'client_tool.requested') delegateTrace('等待浏览器返回结果', childRunId);
+  if (event.type === 'run.completed') delegateTrace('运行完成', childRunId);
+  if (event.type === 'run.failed') {
+    const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
+    delegateTrace(message, childRunId);
+  }
+}
+
+function subscribeDelegateRun(childRunId, delegateTitle = '', parentRunId = '') {
+  if (!childRunId || state.childEventSources.has(childRunId)) return;
+  const parentId = parentRunId || state.runId;
+  state.activeChildRunId = childRunId;
+  if (delegateTitle) state.delegateTitle = delegateTitle;
+  upsertDelegateTrace({ id: childRunId, delegateTitle: delegateTitle || '委派任务', trace: [] }, parentId, { live: true });
+  const source = new EventSource(`/api/agent/runs/${encodeURIComponent(childRunId)}/events`);
+  state.childEventSources.set(childRunId, source);
+  [
+    'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
+    'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required',
+    'run.completed', 'run.failed',
+  ].forEach(type => source.addEventListener(type, raw => {
+    try { handleDelegateRunEvent(childRunId, JSON.parse(raw.data)); } catch { /* ignore */ }
+  }));
+  source.onerror = () => {
+    if (state.childEventSources.get(childRunId) === source && ACTIVE_RUN_STATES.has(state.runStatus)) {
+      delegateTrace('连接暂时中断，正在自动重连', childRunId);
+    }
+  };
 }
 
 function showEmptySession() {
@@ -1571,6 +1706,9 @@ function upsertRunTrace(run, { live = false } = {}) {
   eventsEl.innerHTML = lines.map(text => `<div class="trace-event">${escHtml(text)}</div>`).join('');
   if (lines.length) summaryEl.textContent = lines.at(-1);
   eventsEl.scrollTop = eventsEl.scrollHeight;
+  for (const child of Array.isArray(run.delegateRuns) ? run.delegateRuns : []) {
+    upsertDelegateTrace(child, run.id, { live: live && state.activeChildRunId === child.id });
+  }
   return details;
 }
 
@@ -1596,16 +1734,28 @@ function trace(text) {
 function setRunStatus(status, text = '') {
   state.runStatus = status;
   const active = ACTIVE_RUN_STATES.has(status);
+  const blocking = BLOCKING_RUN_STATES.has(status);
   $('#runStatus').hidden = !active;
   $('#stopRunButton').hidden = !active;
-  $('#sendAgentButton').disabled = active;
+  $('#sendAgentButton').disabled = blocking;
   $('#agentSidebarStatus').classList.toggle('busy', active);
   const labels = {
     queued: '正在排队', running: '正在运行', waiting_approval: '等待确认', waiting_client_tool: '等待浏览器',
+    waiting_user: '等待你的回答',
   };
   const label = text || labels[status] || idleAgentLabel();
   $('#runStatusText').textContent = label;
   $('#agentSidebarStatus span:last-child').textContent = label;
+  const input = $('#agentInput');
+  if (input) {
+    if (status === 'waiting_user') {
+      input.placeholder = state.delegateTitle
+        ? `回答子任务「${state.delegateTitle}」的问题…`
+        : '回答 Agent 的问题…';
+    } else {
+      input.placeholder = '用 @ 引用知识库或日期，然后描述你想完成什么…';
+    }
+  }
 }
 
 function approvalBodyHtml(approval) {
@@ -1622,6 +1772,26 @@ function approvalBodyHtml(approval) {
       <div class="approval-risk"><strong>提示词</strong><pre>${escHtml(prompt || '（空）')}</pre>${extras.length ? `<p>${escHtml(extras.join(' · '))}</p>` : ''}</div>`;
   }
   return `<div class="approval-risk"><strong>参数</strong><pre>${escHtml(JSON.stringify(args, null, 2))}</pre></div>`;
+}
+
+function renderAgentQuestion(question, delegateTitle = '') {
+  const text = String(question || '').trim();
+  if (!text) return;
+  const cardKey = delegateTitle ? `${delegateTitle}::${text}` : text;
+  if (document.querySelector(`[data-agent-question="${CSS.escape(cardKey)}"]`)) return;
+  const card = document.createElement('section');
+  card.className = 'approval-card agent-question-card';
+  card.dataset.agentQuestion = cardKey;
+  const delegateHint = delegateTitle
+    ? `<p class="approval-delegate-hint muted">子任务：${escHtml(delegateTitle)}</p>`
+    : '';
+  card.innerHTML = `
+    <h3>Agent 需要你补充信息</h3>
+    ${delegateHint}
+    <p>${escHtml(text)}</p>
+    <p class="muted">直接在下方输入框回复即可。</p>`;
+  $('#agentMessageList').append(card);
+  scrollMessagesToBottom();
 }
 
 function renderApproval(payload) {
@@ -1642,6 +1812,7 @@ function renderApproval(payload) {
     card.dataset.approvalCard = approval.id;
     card.innerHTML = `
       <h3>确认执行 ${escHtml(name)}</h3>
+      ${approval.delegateTitle ? `<p class="approval-delegate-hint muted">子任务：${escHtml(approval.delegateTitle)}</p>` : ''}
       ${name === 'image.generate' ? '' : '<p>Agent 请求执行一个会改变数据或访问外部服务的动作。</p>'}
       ${approvalBodyHtml(approval)}
       <div class="card-actions">
@@ -1709,8 +1880,55 @@ function handleRunEvent(event) {
     }
   }
   if (event.type === 'checkpoint.updated') trace('已更新工作进度');
-  if (event.type === 'approval.required') { setRunStatus('waiting_approval'); trace('等待你的确认'); renderApproval(payload); }
-  if (event.type === 'client_tool.requested') { setRunStatus('waiting_client_tool'); trace('等待浏览器返回结果'); }
+  if (event.type === 'delegate.started') {
+    const childRunId = payload.childRunId || payload.child_run_id || '';
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (delegateTitle) state.delegateTitle = delegateTitle;
+    trace(delegateTitle ? `已委派子任务「${delegateTitle}」` : '已委派子任务');
+    if (childRunId) subscribeDelegateRun(childRunId, delegateTitle, state.runId);
+  }
+  if (event.type === 'delegate.completed') {
+    const childRunId = payload.childRunId || payload.child_run_id || '';
+    if (childRunId) unsubscribeDelegateRun(childRunId);
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    trace(delegateTitle ? `子任务「${delegateTitle}」已完成` : '子任务已完成');
+  }
+  if (event.type === 'user_input.required') {
+    setRunStatus('waiting_user');
+    state.delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    renderAgentQuestion(payload.question, state.delegateTitle);
+    const childRunId = payload.delegatedRunId || payload.delegated_run_id || state.activeChildRunId;
+    if (childRunId) {
+      subscribeDelegateRun(childRunId, state.delegateTitle, state.runId);
+      delegateTrace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', childRunId);
+    } else {
+      trace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答');
+    }
+  }
+  if (event.type === 'approval.required') {
+    setRunStatus('waiting_approval');
+    state.delegateTitle = payload.delegateTitle || payload.delegate_title || state.delegateTitle;
+    renderApproval(payload);
+    const childRunId = payload.approvals?.[0]?.delegatedRunId || state.activeChildRunId;
+    if (payload.delegated && childRunId) {
+      subscribeDelegateRun(childRunId, state.delegateTitle, state.runId);
+      delegateTrace('等待你的确认', childRunId);
+    } else {
+      trace('等待你的确认');
+    }
+  }
+  if (event.type === 'client_tool.requested') {
+    setRunStatus('waiting_client_tool');
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (delegateTitle) state.delegateTitle = delegateTitle;
+    const childRunId = payload.delegatedRunId || payload.delegated_run_id || state.activeChildRunId;
+    if (childRunId) {
+      subscribeDelegateRun(childRunId, delegateTitle || state.delegateTitle, state.runId);
+      delegateTrace('等待浏览器返回结果', childRunId);
+    } else {
+      trace('等待浏览器返回结果');
+    }
+  }
   if (event.type === 'memory.proposed') {
     renderMemoryProposal(payload);
     refreshMemoryPendingCount().catch(() => {});
@@ -1727,18 +1945,25 @@ function handleRunEvent(event) {
     }
     trace('运行完成');
     setRunStatus('');
+    state.delegateTitle = '';
+    for (const childRunId of [...state.childEventSources.keys()]) unsubscribeDelegateRun(childRunId);
     state.eventSource?.close();
     state.eventSource = null;
     loadSessions().catch(() => {});
   }
   if (event.type === 'run.failed') {
     const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
+    if (payload.error === 'cancelled') {
+      document.querySelectorAll('[data-approval-card]').forEach(card => card.remove());
+    }
     const card = document.createElement('div');
     card.className = 'run-error';
     card.textContent = message;
     $('#agentMessageList').append(card);
     trace(message);
     setRunStatus('');
+    state.delegateTitle = '';
+    for (const childRunId of [...state.childEventSources.keys()]) unsubscribeDelegateRun(childRunId);
     state.eventSource?.close();
     state.eventSource = null;
     scrollMessagesToBottom();
@@ -1750,14 +1975,16 @@ function subscribeRun(runId, initialStatus = 'queued') {
   state.runId = runId;
   state.runEventKeys = new Set();
   state.runImages = [];
+  state.delegateTitle = '';
+  state.activeChildRunId = '';
   upsertRunTrace({ id: runId, trace: [] }, { live: true });
   setRunStatus(initialStatus);
   const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
   state.eventSource = source;
   [
     'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
-    'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'memory.proposed',
-    'run.completed', 'run.failed',
+    'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required', 'memory.proposed',
+    'delegate.started', 'delegate.completed', 'run.completed', 'run.failed',
   ].forEach(type => source.addEventListener(type, raw => {
     try { handleRunEvent(JSON.parse(raw.data)); } catch { trace('收到无法识别的运行事件'); }
   }));
@@ -1769,8 +1996,9 @@ function subscribeRun(runId, initialStatus = 'queued') {
 async function sendAgentMessage(content) {
   let session = state.activeSession;
   if (!session) session = await createSession(content.slice(0, 30));
+  const resuming = state.runStatus === 'waiting_user' && state.runId;
   addMessage('user', content);
-  setRunStatus('queued');
+  setRunStatus(resuming ? 'running' : 'queued');
   const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(session.id)}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1778,11 +2006,16 @@ async function sendAgentMessage(content) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    setRunStatus('');
+    setRunStatus(resuming ? 'waiting_user' : '');
     throw new Error(data.error || 'Agent 启动失败');
   }
-  subscribeRun(data.runId, data.status);
-  trace('目标已提交');
+  if (data.resumed) {
+    subscribeRun(data.runId, data.status || 'running');
+    trace('已收到你的回答，继续运行');
+  } else {
+    subscribeRun(data.runId, data.status);
+    trace('目标已提交');
+  }
   loadSessions().catch(() => {});
 }
 
@@ -1883,7 +2116,6 @@ function renderKnowledgeBaseList() {
         </span>
       </div>`;
   }).join('');
-  $('#knowledgeBaseOptions').innerHTML = state.knowledgeBases.map(base => `<option value="${escHtml(base.name)}"></option>`).join('');
 }
 
 function knowledgeFiltersActive() {
@@ -1978,8 +2210,6 @@ function renderKnowledgeTree() {
         <span class="tree-actions"><button class="tree-action" type="button" data-tree-rename-folder="${escHtml(base.name)}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button><button class="tree-action" type="button" data-tree-delete-folder="${escHtml(base.name)}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">⌫</button></span>
       </div>`;
     }).join('')}`;
-  const folderOptions = folders.map(folder => `<option value="${escHtml(folder.path)}"></option>`).join('');
-  $('#folderOptions').innerHTML = folderOptions;
 }
 
 async function loadKnowledgeTree() {
@@ -1989,6 +2219,7 @@ async function loadKnowledgeTree() {
   state.knowledgeBases = Array.isArray(data.knowledgeBases) ? data.knowledgeBases : [];
   renderKnowledgeBaseList();
   if (state.selectedKnowledgeBase) renderKnowledgeTree();
+  syncDocumentSelectOptions();
 }
 
 async function manageKnowledgeTree(action, baseName, folderPath = '') {
@@ -2073,8 +2304,6 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
   } else if (action === 'rename-folder' && state.selectedKnowledgeBase === baseName && state.selectedFolderPath === folderPath) {
     state.selectedFolderPath = name;
   }
-  renderKnowledgeBaseList();
-  renderKnowledgeTree();
   await navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath });
 }
 
@@ -2132,7 +2361,8 @@ function renderDocuments() {
   $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
 }
 
-async function loadDocuments({ append = false } = {}) {
+async function loadDocuments({ append = false, refreshTree = true } = {}) {
+  if (!append && refreshTree) await loadKnowledgeTree();
   const q = $('#knowledgeSearch').value.trim();
   const archived = $('#knowledgeArchivedFilter').checked;
   if (q && !archived) {
@@ -2153,7 +2383,6 @@ async function loadDocuments({ append = false } = {}) {
     state.knowledgeTotal = Number(data.total) || 0;
     state.knowledgeNextCursor = data.nextCursor || null;
   }
-  renderKnowledgeTree();
   renderDocuments();
   if (state.mode === 'knowledge' && !state.activeDocument) {
     $('#topbarSubtitle').textContent = `${state.knowledgeTotal} 条知识`;
@@ -2180,10 +2409,59 @@ function showEmptyDocument() {
   updateInsertImageButton();
 }
 
+function syncDocumentSelectOptions({ knowledgeBase, folderPath } = {}) {
+  const kbSelect = $('#documentKnowledgeBase');
+  const folderSelect = $('#documentFolderPath');
+  if (!kbSelect || !folderSelect) return;
+
+  const bases = state.knowledgeBases.length
+    ? state.knowledgeBases
+    : [{ name: '其他', folders: [] }];
+  const currentKb = knowledgeBase ?? kbSelect.value ?? state.selectedKnowledgeBase ?? '其他';
+  kbSelect.innerHTML = bases.map(base => `<option value="${escHtml(base.name)}">${escHtml(base.name)}</option>`).join('');
+  const base = bases.find(item => item.name === currentKb) || bases[0];
+  kbSelect.value = base?.name || '其他';
+
+  const folders = Array.isArray(base?.folders) ? base.folders : [];
+  const currentFolder = folderPath ?? folderSelect.value ?? '';
+  folderSelect.innerHTML = [
+    '<option value="">根目录</option>',
+    ...folders.map(folder => `<option value="${escHtml(folder.path)}">${escHtml(folder.name || folder.path)}</option>`),
+  ].join('');
+  const folderExists = !currentFolder || folders.some(item => item.path === currentFolder);
+  folderSelect.value = folderExists ? currentFolder : '';
+
+  syncSelectControls({ ids: DOCUMENT_SELECT_IDS });
+  updateDocumentMetaSummary();
+}
+
+function updateDocumentMetaSummary() {
+  const summary = $('#documentMetaSummary');
+  if (!summary) return;
+  const kbSelect = $('#documentKnowledgeBase');
+  const folderSelect = $('#documentFolderPath');
+  const kb = kbSelect?.selectedOptions?.[0]?.textContent?.trim() || '其他';
+  const folder = folderSelect?.selectedOptions?.[0]?.textContent?.trim() || '根目录';
+  const date = $('#documentDate')?.value || '';
+  const tagsRaw = $('#documentTags')?.value.trim() || '';
+  const dateLabel = date || '无日期';
+  const tagsLabel = tagsRaw
+    ? (tagsRaw.length > 28 ? `${tagsRaw.slice(0, 28)}…` : tagsRaw)
+    : '无标签';
+  summary.textContent = `${kb} · ${folder} · ${dateLabel} · ${tagsLabel}`;
+}
+
+function setDocumentFormDisabled(disabled) {
+  $('#documentKnowledgeBase').disabled = disabled;
+  $('#documentFolderPath').disabled = disabled;
+  syncSelectControls({ ids: DOCUMENT_SELECT_IDS });
+}
+
 function setDocumentSaveState(text, className = '') {
   const element = $('#documentSaveState');
   element.textContent = text;
-  element.className = `save-state ${className}`.trim();
+  const stateClass = className || (text === '已保存' ? 'saved' : '');
+  element.className = `save-state ${stateClass}`.trim();
 }
 
 async function renderActiveDocument(document) {
@@ -2198,10 +2476,15 @@ async function renderActiveDocument(document) {
   $('#knowledgeEmptyState').hidden = true;
   $('#documentWorkspace').hidden = false;
   $('#documentTitle').value = document.title || '';
-  $('#documentKnowledgeBase').value = state.selectedKnowledgeBase;
-  $('#documentFolderPath').value = state.selectedFolderPath;
+  syncDocumentSelectOptions({
+    knowledgeBase: state.selectedKnowledgeBase,
+    folderPath: state.selectedFolderPath,
+  });
   $('#documentDate').value = document.documentDate || '';
   $('#documentTags').value = (document.tags || []).join(', ');
+  const metaPanel = $('#documentMetaPanel');
+  if (metaPanel) metaPanel.open = false;
+  updateDocumentMetaSummary();
   $('#documentContent').value = document.content || '';
   $('#topbarSubtitle').textContent = document.title || '未命名';
   setDocumentSaveState('已保存');
@@ -2213,8 +2496,7 @@ async function renderActiveDocument(document) {
   $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
   $('#documentTitle').readOnly = document.status === 'archived';
-  $('#documentKnowledgeBase').readOnly = document.status === 'archived';
-  $('#documentFolderPath').readOnly = document.status === 'archived';
+  setDocumentFormDisabled(document.status === 'archived');
   $('#documentDate').readOnly = document.status === 'archived';
   $('#documentTags').readOnly = document.status === 'archived';
   $('#documentContent').readOnly = document.status === 'archived';
@@ -2409,11 +2691,20 @@ async function saveDocument() {
     showToast(data.error || '文档保存失败', 'error');
     return false;
   }
+  const previous = state.activeDocument;
   state.activeDocument = data;
   state.documentDirty = false;
   setDocumentSaveState('已保存');
   $('#topbarSubtitle').textContent = data.title || '未命名';
   updateDocumentSummary(data);
+  const locationChanged = previous && (
+    (previous.knowledgeBase || '其他') !== (data.knowledgeBase || '其他')
+    || String(previous.folderPath || '') !== String(data.folderPath || '')
+  );
+  await loadKnowledgeTree();
+  if (locationChanged && state.mode === 'knowledge') {
+    await loadDocuments({ refreshTree: false });
+  }
   return true;
 }
 
@@ -2591,7 +2882,6 @@ async function restoreActiveDocument() {
   if (!response.ok) return showToast(data.error || '恢复失败', 'error');
   showToast('文档已恢复', 'success');
   $('#knowledgeArchivedFilter').checked = false;
-  await loadKnowledgeTree();
   await loadDocuments();
   await renderActiveDocument(data);
 }
@@ -2718,7 +3008,7 @@ function bindEvents() {
     event.preventDefault();
     const input = $('#agentInput');
     const content = input.value.trim();
-    if (!content || ACTIVE_RUN_STATES.has(state.runStatus)) return;
+    if (!content || BLOCKING_RUN_STATES.has(state.runStatus)) return;
     input.value = '';
     autoResizeComposer();
     try { await sendAgentMessage(content); } catch (error) { showToast(error.message, 'error'); }
@@ -2902,7 +3192,25 @@ function bindEvents() {
       navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
     }
   });
-  ['documentTitle', 'documentKnowledgeBase', 'documentFolderPath', 'documentDate', 'documentTags', 'documentContent'].forEach(id => $(`#${id}`).addEventListener('input', scheduleDocumentSave));
+  ['documentTitle', 'documentDate', 'documentTags', 'documentContent'].forEach(id => {
+    $(`#${id}`).addEventListener('input', () => {
+      if (id === 'documentDate' || id === 'documentTags') updateDocumentMetaSummary();
+      scheduleDocumentSave();
+    });
+  });
+  $('#documentKnowledgeBase').addEventListener('change', () => {
+    syncDocumentSelectOptions({
+      knowledgeBase: $('#documentKnowledgeBase').value,
+      folderPath: '',
+    });
+    updateDocumentMetaSummary();
+    scheduleDocumentSave();
+  });
+  $('#documentFolderPath').addEventListener('change', () => {
+    updateDocumentMetaSummary();
+    scheduleDocumentSave();
+  });
+  initSelectControls({ ids: DOCUMENT_SELECT_IDS });
   $('#documentContent').addEventListener('input', refreshDocumentPreview);
   $('#editorModeSwitch').addEventListener('click', event => {
     const button = event.target.closest('[data-editor-mode]');

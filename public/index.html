@@ -213,17 +213,9 @@
         <article class="document-workspace" id="documentWorkspace" hidden>
           <header class="document-header">
             <div class="document-title-row">
-              <input class="document-title-input" id="documentTitle" maxlength="200" aria-label="文档标题">
-              <span class="save-state" id="documentSaveState">已保存</span>
-            </div>
-            <div class="document-toolbar">
-             <div class="document-meta-fields">
-                <label>知识库<input id="documentKnowledgeBase" list="knowledgeBaseOptions" maxlength="120"></label>
-                <datalist id="knowledgeBaseOptions"></datalist>
-                <label>文件夹<input id="documentFolderPath" list="folderOptions" maxlength="240" placeholder="根目录"></label>
-                <datalist id="folderOptions"></datalist>
-                <label>日期<input id="documentDate" type="date"></label>
-                <label>标签<input id="documentTags" maxlength="300" placeholder="用逗号分隔"></label>
+              <div class="document-title-main">
+                <input class="document-title-input" id="documentTitle" maxlength="200" aria-label="文档标题">
+                <span class="save-state saved" id="documentSaveState">已保存</span>
               </div>
               <div class="document-toolbar-actions">
                 <div class="editor-mode-switch" id="editorModeSwitch">
@@ -238,6 +230,50 @@
                 <button class="icon-button danger" id="deleteDocumentButton" type="button" title="删除文档" aria-label="删除文档">⌫</button>
               </div>
             </div>
+            <details class="document-meta-panel" id="documentMetaPanel">
+              <summary class="document-meta-summary">
+                <span class="document-meta-summary-label">属性</span>
+                <span class="document-meta-summary-text" id="documentMetaSummary">其他 · 根目录 · 无日期 · 无标签</span>
+                <span class="document-meta-summary-caret" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="document-meta-grid">
+                <div class="document-field">
+                  <span>知识库</span>
+                  <div class="select-control" data-select-control data-select-id="documentKnowledgeBase">
+                    <label class="sr-only" for="documentKnowledgeBase">知识库</label>
+                    <select class="select-native" id="documentKnowledgeBase" title="知识库"></select>
+                    <button class="select-control-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="documentKnowledgeBaseMenu">
+                      <span class="select-control-value">其他</span>
+                      <span class="select-control-caret" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="select-control-menu" id="documentKnowledgeBaseMenu" role="listbox" hidden></div>
+                  </div>
+                </div>
+                <div class="document-field">
+                  <span>文件夹</span>
+                  <div class="select-control" data-select-control data-select-id="documentFolderPath">
+                    <label class="sr-only" for="documentFolderPath">文件夹</label>
+                    <select class="select-native" id="documentFolderPath" title="文件夹"></select>
+                    <button class="select-control-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="documentFolderPathMenu">
+                      <span class="select-control-value">根目录</span>
+                      <span class="select-control-caret" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="select-control-menu" id="documentFolderPathMenu" role="listbox" hidden></div>
+                  </div>
+                </div>
+                <label class="document-field" for="documentDate">
+                  <span>日期</span>
+                  <span class="document-date-field">
+                    <input id="documentDate" type="date" title="日期">
+                    <span class="document-date-icon" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="document-field" for="documentTags">
+                  <span>标签</span>
+                  <input id="documentTags" maxlength="300" placeholder="用逗号分隔">
+                </label>
+              </div>
+            </details>
           </header>
 
           <div class="note-editor" id="noteEditor">

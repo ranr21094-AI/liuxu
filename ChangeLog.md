@@ -2,6 +2,14 @@
 
 ## 2026-08-20
 
+### Agent 工具扩展与 sub-agent
+
+- 新增 **`knowledge.search`**（MiniSearch 全文索引，与工作台搜索同源）、**`knowledge.tree`**、**`knowledge.list`**（分页列文档）只读工具。
+- 新增 **`memory.search`**：在已保存 L2/L3 长期记忆中按关键词检索。
+- 新增 **`agent.delegate`**：完整委派子任务（子 run 可用全部工具，写入仍走审批）；最大嵌套深度 1；子 run 等待审批/提问/浏览器时冒泡到父 run UI（含「子任务：{title}」提示）。
+- 新增 **`web.fetch`**：用户确认后抓取 http/https URL（超时与大小上限）。
+- **`code.run`** 描述明确为 PowerShell/Python 本地脚本运行（无独立 `shell.run` 工具）。
+
 ### 旧版 AI 退役与 Agent 迁移
 
 - 启动 Agent 时自动将 `ai-chats.json` 中有内容的会话迁移为 **归档** Agent 会话（标题前缀 `[旧AI]` / `[旧AI·日志]`）；原文件备份到 `ai-chats.migrated.json`。

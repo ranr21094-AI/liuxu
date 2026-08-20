@@ -2,6 +2,7 @@ import { apiFetch } from './auth.js';
 import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { businessDateString, parseBusinessDate } from './businessDate.js';
 import { countdownTiming } from './countdownDate.js';
+import { initSelectControls, syncSelectControls } from './selectControl.js';
 
 const DEFAULT_TODO_CATEGORY = '待办';
 const TODO_SELECT_IDS = ['todoFullCategory', 'todoFullPriority', 'todoFullRecurrence'];
@@ -191,132 +192,12 @@ function sortTodosForView(todos, mode) {
   return list.sort(manualTodoOrder);
 }
 
-function todoSelectControls() {
-  return TODO_SELECT_IDS
-    .map(id => document.querySelector(`[data-todo-select-control][data-select-id="${id}"]`))
-    .filter(Boolean);
-}
-
-function closeTodoSelectControl(control) {
-  if (!control) return;
-  control.classList.remove('open');
-  control.querySelector('.todo-select-trigger')?.setAttribute('aria-expanded', 'false');
-  const menu = control.querySelector('.todo-select-menu');
-  if (menu) menu.hidden = true;
-}
-
-function closeTodoSelectControls(except = null) {
-  todoSelectControls().forEach(control => {
-    if (control !== except) closeTodoSelectControl(control);
-  });
-}
-
-function selectFromTodoOption(control, optionButton) {
-  const select = document.getElementById(control.dataset.selectId);
-  if (!select || !optionButton) return;
-  select.value = optionButton.dataset.value || '';
-  closeTodoSelectControl(control);
-  select.dispatchEvent(new Event('change', { bubbles: true }));
-  syncTodoSelectControls();
-  control.querySelector('.todo-select-trigger')?.focus();
-}
-
-function focusTodoOption(control, direction = 1) {
-  const options = [...control.querySelectorAll('.todo-select-option')];
-  if (!options.length) return;
-  const activeIndex = options.indexOf(document.activeElement);
-  const selectedIndex = options.findIndex(option => option.getAttribute('aria-selected') === 'true');
-  const baseIndex = activeIndex >= 0 ? activeIndex : (selectedIndex >= 0 ? selectedIndex : 0);
-  const nextIndex = (baseIndex + direction + options.length) % options.length;
-  options[nextIndex].focus();
-}
-
-function openTodoSelectControl(control, { focusSelected = false } = {}) {
-  const trigger = control.querySelector('.todo-select-trigger');
-  const menu = control.querySelector('.todo-select-menu');
-  if (!trigger || !menu) return;
-  syncTodoSelectControls();
-  closeTodoSelectControls(control);
-  control.classList.add('open');
-  trigger.setAttribute('aria-expanded', 'true');
-  menu.hidden = false;
-  if (focusSelected) {
-    const selected = menu.querySelector('.todo-select-option[aria-selected="true"]');
-    (selected || menu.querySelector('.todo-select-option'))?.focus();
-  }
-}
-
-function toggleTodoSelectControl(control) {
-  if (control.classList.contains('open')) closeTodoSelectControl(control);
-  else openTodoSelectControl(control);
-}
-
 function syncTodoSelectControls() {
-  todoSelectControls().forEach(control => {
-    const select = document.getElementById(control.dataset.selectId);
-    const trigger = control.querySelector('.todo-select-trigger');
-    const value = control.querySelector('.todo-select-value');
-    const menu = control.querySelector('.todo-select-menu');
-    if (!select || !trigger || !value || !menu) return;
-
-    const options = [...select.options];
-    const selected = select.selectedOptions[0] || options.find(option => option.value === select.value) || options[0];
-    const hasValue = Boolean(select.value && select.value !== 'none');
-    value.textContent = selected?.textContent || '';
-    control.classList.toggle('has-value', hasValue);
-    trigger.setAttribute('aria-label', `${select.labels?.[0]?.textContent || '选择'}：${selected?.textContent || '未选择'}`);
-    menu.innerHTML = options.map(option => `
-      <button
-        class="todo-select-option${option.value === select.value ? ' selected' : ''}"
-        type="button"
-        role="option"
-        data-value="${escHtml(option.value)}"
-        aria-selected="${option.value === select.value}"
-        tabindex="-1"
-      >${escHtml(option.textContent)}</button>
-    `).join('');
-  });
+  syncSelectControls({ ids: TODO_SELECT_IDS });
 }
 
 function initTodoSelectControls() {
-  todoSelectControls().forEach(control => {
-    const trigger = control.querySelector('.todo-select-trigger');
-    const menu = control.querySelector('.todo-select-menu');
-    trigger?.addEventListener('click', () => toggleTodoSelectControl(control));
-    trigger?.addEventListener('keydown', (event) => {
-      if (!['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(event.key)) return;
-      event.preventDefault();
-      openTodoSelectControl(control, { focusSelected: true });
-      if (event.key === 'ArrowUp') focusTodoOption(control, -1);
-    });
-    menu?.addEventListener('click', (event) => {
-      const option = event.target.closest('.todo-select-option');
-      if (option) selectFromTodoOption(control, option);
-    });
-    menu?.addEventListener('keydown', (event) => {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        focusTodoOption(control, 1);
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        focusTodoOption(control, -1);
-      } else if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        selectFromTodoOption(control, event.target.closest('.todo-select-option'));
-      } else if (event.key === 'Escape') {
-        event.preventDefault();
-        closeTodoSelectControl(control);
-        trigger?.focus();
-      }
-    });
-  });
-  document.addEventListener('click', (event) => {
-    if (!event.target.closest('[data-todo-select-control]')) closeTodoSelectControls();
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeTodoSelectControls();
-  });
-  syncTodoSelectControls();
+  initSelectControls({ ids: TODO_SELECT_IDS });
 }
 
 function dueHtml(todo) {

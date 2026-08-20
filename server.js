@@ -3043,20 +3043,32 @@ function releaseProcessLock(lock) {
 
 function createAgentModelClient(req) {
   return {
-    async complete({ goal, messages, tools, memories }) {
+    async complete({ goal, messages, tools, memories, checkpoint }) {
       const options = await resolveAiChatOptions({}, req.user);
       if (!options?.apiKey) throw new Error('Agent model is not configured');
       const toolList = (tools || []).map(item => `${item.name}: ${item.description}`).join('\n');
+      const checkpointBlock = checkpoint && typeof checkpoint === 'object'
+        ? `Working checkpoint:\n${JSON.stringify(checkpoint)}`
+        : '';
       const system = [
         'You are the local Work Log Agent. Work only from @ injected local knowledge, tool results, and the user goal.',
         'Prefer native function tools. When you need a tool, call it instead of chatting.',
         'You may also return exactly one JSON object with no Markdown fences.',
         'For a tool call: {"action":"tool","tools":[{"name":"knowledge.read","arguments":{"id":"..."}}]} .',
         'For a final answer: {"action":"final","answer":"...","citations":[{"documentId":"...","id":"...","title":"..."}]} .',
+        'For a clarifying question: {"action":"ask","question":"..."} .',
+        'Use update_working_checkpoint during multi-step work to record next steps, notes, and verified facts.',
+        'Use countdown.create for birthdays and anniversaries; do not use task.create for countdown entries.',
+        'For todo reminders only, use task.create once with recurrence yearly and due_date. For countdown cards, use countdown.create once.',
+        'Use knowledge.search and knowledge.tree to discover local notes before reading them with knowledge.read.',
+        'Use knowledge.list to browse documents in a knowledge base or folder; use memory.search to find saved L2/L3 memories.',
+        'Use code.run for short PowerShell or Python scripts (there is no separate shell.run tool).',
+        'For complex sub-tasks use agent.delegate once; it requires confirmation and child write actions still need approval.',
         'Never invent local evidence. If the user did not @ a knowledge base or date and no evidence exists, say so. Writes and external actions are proposed for confirmation.',
+        checkpointBlock,
         `Available tools:\n${toolList}`,
         `Memory context:\n${JSON.stringify(memories || {})}`,
-      ].join('\n');
+      ].filter(Boolean).join('\n');
       const providerConversation = (messages || []).slice(-24).map(message => message.role === 'tool'
         ? { role: 'user', content: `Tool result (${message.name || 'tool'}):\n${message.content || ''}` }
         : message);
@@ -3126,6 +3138,58 @@ function createAgentWebSearch(req) {
   };
 }
 
+function createAgentWebFetch(req) {
+  const WEB_FETCH_MAX_BYTES = 512 * 1024;
+  const WEB_FETCH_TIMEOUT_MS = 15000;
+  return async function agentWebFetch(args = {}) {
+    const url = String(args.url || '').trim();
+    if (!url) return toolResult({ ok: false, summary: 'URL is required', errorCode: 'invalid' });
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return toolResult({ ok: false, summary: 'Invalid URL', errorCode: 'invalid' });
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return toolResult({ ok: false, summary: 'Only http and https URLs are allowed', errorCode: 'denied' });
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: { 'User-Agent': 'WorkLog-Agent/1.0' },
+      });
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length > WEB_FETCH_MAX_BYTES) {
+        return toolResult({ ok: false, summary: `Response too large (${buffer.length} bytes)`, errorCode: 'too_large' });
+      }
+      const contentType = response.headers.get('content-type') || '';
+      let text = buffer.toString('utf8');
+      if (contentType.includes('html')) {
+        text = text
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+      }
+      return toolResult({
+        ok: true,
+        summary: `Fetched ${url}`,
+        data: { url, status: response.status, contentType, text: text.slice(0, WEB_FETCH_MAX_BYTES) },
+        evidence: [{ type: 'web', url }],
+      });
+    } catch (error) {
+      const message = error?.name === 'AbortError' ? 'Fetch timed out' : error.message;
+      return toolResult({ ok: false, summary: message, errorCode: 'fetch_failed', retryable: true });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
 function createAgentWestock(req) {
   return async function agentWestock(args = {}) {
     if (!westockEnabled()) return toolResult({ ok: false, summary: 'WeStock is disabled', errorCode: 'disabled' });
@@ -3187,7 +3251,7 @@ function createAgentImageGenerate(req) {
 }
 
 const { mountNewApis } = require('./lib/http/mount');
-mountNewApis(app, { db, authStore, hasDiaryAccess, rejectLockedDiary, requireAdmin, modelClientFor: createAgentModelClient, agentStatusFor: createAgentStatus, webSearchFor: createAgentWebSearch, westockRunFor: createAgentWestock, imageGenerateFor: createAgentImageGenerate });
+mountNewApis(app, { db, authStore, hasDiaryAccess, rejectLockedDiary, requireAdmin, modelClientFor: createAgentModelClient, agentStatusFor: createAgentStatus, webSearchFor: createAgentWebSearch, webFetchFor: createAgentWebFetch, westockRunFor: createAgentWestock, imageGenerateFor: createAgentImageGenerate });
 
 function startServer(port = PORT, host = HOST) {
   if (!isLoopbackHost(host) && authStore.disabled) {

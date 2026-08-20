@@ -43,7 +43,12 @@ test('provider tools use native function calling shape', () => {
   assert.equal(read.type, 'function');
   assert.equal(read.function.parameters.type, 'object');
   assert.equal(read.function.parameters.additionalProperties, true);
-  assert.equal(tools.some(item => item.function.name === 'knowledge_search'), false);
+  assert.equal(tools.some(item => item.function.name === 'knowledge_search'), true);
+  assert.equal(tools.some(item => item.function.name === 'knowledge_tree'), true);
+  assert.equal(tools.some(item => item.function.name === 'knowledge_list'), true);
+  assert.equal(tools.some(item => item.function.name === 'memory_search'), true);
+  assert.equal(tools.some(item => item.function.name === 'agent_delegate'), true);
+  assert.equal(tools.some(item => item.function.name === 'web_fetch'), true);
   for (const tool of tools) {
     assert.match(tool.function.name, /^[a-zA-Z0-9_-]+$/);
   }
@@ -814,4 +819,730 @@ test('knowledge.import from an allowlisted path stores a document after approval
   assert.equal(imported.length, 1);
   assert.equal(imported[0].fileMeta.filename, 'from-disk.md');
   assert.match(imported[0].content, /disk import body/);
+});
+
+test('update_working_checkpoint merges model progress and injects checkpoint into model calls', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const seenCheckpoints = [];
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ checkpoint }) {
+        seenCheckpoints.push(checkpoint);
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'update_working_checkpoint',
+              arguments: {
+                next: 'Compare the two notes',
+                notes: 'Read both candidate docs',
+                verified: ['Found note A'],
+              },
+            }],
+          };
+        }
+        return { text: '对比完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('checkpoint');
+  const run = await runtime.start({ session, goal: '对比笔记', userMessage: '对比笔记' });
+  const done = await waitForRun(store, run.id);
+  assert.equal(done.status, 'completed');
+  const saved = store.getSession(session.id);
+  assert.equal(saved.checkpoint.notes, 'Read both candidate docs');
+  assert.ok(saved.checkpoint.verified.includes('Found note A'));
+  assert.equal(saved.checkpoint.next, 'complete');
+  assert.ok(seenCheckpoints.length >= 2);
+  assert.equal(seenCheckpoints[1]?.next, 'Compare the two notes');
+});
+
+test('ask_user pauses the run until the user replies', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'ask_user', arguments: { question: '你要改哪篇笔记？' } }] };
+        }
+        return { text: '已按你的选择处理', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('ask-user');
+  const run = await runtime.start({ session, goal: '修改笔记', userMessage: '修改笔记' });
+  const paused = await waitForRun(store, run.id);
+  assert.equal(paused.status, 'waiting_user');
+  assert.equal(paused.pendingQuestion, '你要改哪篇笔记？');
+  assert.ok((paused.events || []).some(event => event.type === 'user_input.required'));
+  const resumed = await runtime.resumeUserInput(run.id, '改 note:123');
+  assert.equal(resumed.run.status, 'completed');
+  assert.equal(resumed.run.finalText, '已按你的选择处理');
+  assert.ok(resumed.run.messages.some(item => item.role === 'user' && item.content === '改 note:123'));
+});
+
+test('action envelope ask pauses the run for user input', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        return { text: '{"action":"ask","question":"需要哪个日期？"}', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('ask-envelope');
+  const run = await runtime.start({ session, goal: '查日志', userMessage: '查日志' });
+  const paused = await waitForRun(store, run.id);
+  assert.equal(paused.status, 'waiting_user');
+  assert.equal(paused.pendingQuestion, '需要哪个日期？');
+});
+
+test('countdown.create stores a birthday countdown after approval', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'countdown.create',
+              arguments: {
+                title: '心心生日',
+                target_date: '2002-10-19',
+                repeat_yearly: true,
+                notes: '朋友生日',
+              },
+            }],
+          };
+        }
+        return { text: '已添加倒数日', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('birthday');
+  const run = await runtime.start({ session, goal: '加生日倒数日', userMessage: '加生日倒数日' });
+  const live = await waitForRun(store, run.id);
+  assert.equal(live.status, 'waiting_approval');
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  const done = await waitForRun(store, run.id);
+  assert.equal(done.status, 'completed');
+  const countdowns = db.getAllCountdowns().filter(item => item.title === '心心生日');
+  assert.equal(countdowns.length, 1);
+  assert.equal(countdowns[0].target_date, '2002-10-19');
+  assert.equal(countdowns[0].repeat_yearly, true);
+});
+
+test('task.create with empty title does not enter approval queue', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'task.create', arguments: {} }] };
+        }
+        return { text: '已停止重试', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('empty-create');
+  const run = await runtime.start({ session, goal: '添加待办', userMessage: '添加待办' });
+  const done = await waitForRun(store, run.id, 800);
+  assert.notEqual(done.status, 'waiting_approval');
+  assert.equal(done.status, 'completed');
+  const toolMsg = done.messages.find(item => item.role === 'tool' && item.name === 'task.create');
+  assert.match(toolMsg.content, /requires a non-empty title/);
+});
+
+test('task.create is rejected for countdown goals before approval', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '心心生日' } }] };
+        }
+        if (round === 2) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'countdown.create',
+              arguments: { title: '心心生日', target_date: '2002-10-19', repeat_yearly: true },
+            }],
+          };
+        }
+        return { text: '已添加倒数日', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('countdown-goal');
+  const run = await runtime.start({ session, goal: '加入倒数日', userMessage: '加入倒数日' });
+  const live = await waitForRun(store, run.id);
+  const rejected = live.messages.find(item => item.role === 'tool' && item.name === 'task.create');
+  assert.match(rejected.content, /countdown\.create/);
+  assert.equal(live.status, 'waiting_approval');
+  assert.equal(live.pendingApprovals[0].call.name, 'countdown.create');
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  const done = await waitForRun(store, run.id);
+  assert.equal(done.status, 'completed');
+  assert.equal(db.getAllCountdowns().filter(item => item.title === '心心生日').length, 1);
+});
+
+test('duplicate countdown.create in the same run does not create a second entry', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round <= 2) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'countdown.create',
+              arguments: { title: '测试生日', target_date: '2000-01-01', repeat_yearly: true },
+            }],
+          };
+        }
+        return { text: '完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('dup-countdown');
+  const run = await runtime.start({ session, goal: '加倒数日', userMessage: '加倒数日' });
+  let live = await waitForRun(store, run.id);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 800);
+  assert.equal(db.getAllCountdowns().filter(item => item.title === '测试生日').length, 1);
+  const dupMsg = live.messages.filter(item => item.role === 'tool' && item.name === 'countdown.create').at(-1);
+  assert.match(dupMsg.content, /Already/);
+});
+
+test('premature countdown success checkpoint is rejected', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'update_working_checkpoint',
+              arguments: { next: '确认倒数日创建成功', notes: '已添加' },
+            }],
+          };
+        }
+        return { text: '已修正', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('checkpoint');
+  const run = await runtime.start({ session, goal: '加入倒数日', userMessage: '加入倒数日' });
+  const done = await waitForRun(store, run.id);
+  const checkpointMsg = done.messages.find(item => item.role === 'tool' && item.name === 'update_working_checkpoint');
+  assert.match(checkpointMsg.content, /premature_checkpoint|Countdown not created/);
+});
+
+test('cancel clears pending approvals', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '测试' } }] };
+      },
+    },
+  });
+  const session = store.createSession('cancel');
+  const run = await runtime.start({ session, goal: '添加待办', userMessage: '添加待办' });
+  const live = await waitForRun(store, run.id);
+  assert.equal(live.status, 'waiting_approval');
+  runtime.cancel(run.id);
+  const cancelled = store.getRun(run.id);
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal((cancelled.pendingApprovals || []).length, 0);
+});
+
+test('shouldPauseForRepeatedMutations detects three similar creates', () => {
+  const { shouldPauseForRepeatedMutations } = require('../lib/agent/guards');
+  const run = {
+    mutationHistory: [
+      { name: 'task.create', fingerprint: 'task.create:生日::none' },
+      { name: 'task.create', fingerprint: 'task.create:生日::none' },
+      { name: 'task.create', fingerprint: 'task.create:生日::none' },
+    ],
+  };
+  assert.ok(shouldPauseForRepeatedMutations(run));
+});
+
+test('knowledge.search finds matching documents via MiniSearch', async (t) => {
+  const db = tempDb(t);
+  const knowledge = openKnowledge(db);
+  knowledge.createNote({ title: 'Agent搜索笔记', content: '唯一标记 xyzzy-agent-search-test' });
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const { serviceFor } = require('../lib/knowledge/routes');
+  const adapters = createToolAdapters({
+    db,
+    knowledgeSearch: serviceFor(db),
+    hasDiaryAccessFlag: false,
+  });
+  const result = await adapters.execute('knowledge.search', { query: 'xyzzy-agent-search-test' });
+  assert.equal(result.ok, true);
+  assert.ok(result.data.documents.some(item => item.title === 'Agent搜索笔记'));
+  assert.ok(result.data.documents[0].searchSnippet || result.data.documents[0].searchScore);
+});
+
+test('knowledge.tree lists knowledge base structure', async (t) => {
+  const db = tempDb(t);
+  const knowledge = openKnowledge(db);
+  knowledge.createNote({
+    title: '树结构笔记',
+    content: 'hello',
+    knowledgeBase: '测试库',
+    folderPath: '子文件夹',
+  });
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const { serviceFor } = require('../lib/knowledge/routes');
+  const adapters = createToolAdapters({
+    db,
+    knowledgeSearch: serviceFor(db),
+    hasDiaryAccessFlag: false,
+  });
+  const result = await adapters.execute('knowledge.tree', {});
+  assert.equal(result.ok, true);
+  const base = result.data.knowledgeBases.find(item => item.name === '测试库');
+  assert.ok(base);
+  assert.ok(base.documentCount >= 1);
+});
+
+test('knowledge.list paginates documents in a folder', async (t) => {
+  const db = tempDb(t);
+  const knowledge = openKnowledge(db);
+  knowledge.createNote({ title: '列表笔记A', content: 'a', knowledgeBase: '列表库', folderPath: '目录' });
+  knowledge.createNote({ title: '列表笔记B', content: 'b', knowledgeBase: '列表库', folderPath: '目录' });
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const { serviceFor } = require('../lib/knowledge/routes');
+  const memory = createMemoryService(createAgentStore(db));
+  const adapters = createToolAdapters({
+    db,
+    knowledgeSearch: serviceFor(db),
+    hasDiaryAccessFlag: false,
+    memory,
+  });
+  const result = await adapters.execute('knowledge.list', {
+    knowledgeBase: '列表库',
+    folderPath: '目录',
+    limit: 10,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.total, 2);
+  assert.equal(result.data.documents.length, 2);
+});
+
+test('memory.search finds matching L2 items', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  memory.approve(memory.propose({
+    runId: 'test',
+    layer: 'L2',
+    title: '写作偏好',
+    content: '周报用简洁中文',
+    evidence: [{ type: 'test' }],
+  }).proposal.id);
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const result = await adapters.execute('memory.search', { query: '简洁中文', layer: 'L2' });
+  assert.equal(result.ok, true);
+  assert.ok(result.data.items.some(item => item.title === '写作偏好'));
+});
+
+test('agent.delegate completes a read-only sub-task', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  db.createTodo({ title: '委派可见待办' });
+  let parentRound = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('列出所有待办'));
+        if (inChild) {
+          const listed = (messages || []).some(item => item.role === 'tool' && item.name === 'task.list');
+          if (!listed) return { text: '', toolCalls: [{ name: 'task.list', arguments: {} }] };
+          return { text: '子任务：已列出待办', toolCalls: [] };
+        }
+        parentRound += 1;
+        if (parentRound === 1) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'agent.delegate',
+              arguments: { prompt: '列出所有待办', title: '列待办' },
+            }],
+          };
+        }
+        return { text: '父任务完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('delegate-read');
+  const run = await runtime.start({ session, goal: '了解待办', userMessage: '了解待办' });
+  let live = await waitForRun(store, run.id);
+  assert.equal(live.status, 'waiting_approval');
+  assert.equal(live.pendingApprovals[0].call.name, 'agent.delegate');
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 1200);
+  assert.equal(live.status, 'completed');
+  const delegateResult = live.messages.find(item => item.role === 'tool' && item.name === 'agent.delegate');
+  assert.ok(delegateResult);
+  assert.match(delegateResult.content, /子任务：已列出待办/);
+});
+
+test('agent.delegate bubbles write approval to parent run', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentDelegated = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('创建待办'));
+        if (inChild) {
+          const created = (messages || []).some(item => item.role === 'tool' && item.name === 'task.create');
+          if (!created) return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '委派创建' } }] };
+          return { text: '子任务已创建', toolCalls: [] };
+        }
+        if (!parentDelegated) {
+          parentDelegated = true;
+          return {
+            text: '',
+            toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '创建待办', title: '建待办' } }],
+          };
+        }
+        return { text: '父任务完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('delegate-write');
+  const run = await runtime.start({ session, goal: '添加待办', userMessage: '添加待办' });
+  let live = await waitForRun(store, run.id);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 1200);
+  assert.equal(live.status, 'waiting_approval');
+  assert.equal(live.pendingApprovals[0].call.name, 'task.create');
+  assert.equal(live.pendingApprovals[0].delegatedRunId, live.activeChildRunId);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 1200);
+  assert.equal(live.status, 'completed');
+  assert.ok(db.getAllTodos().some(item => item.title === '委派创建'));
+});
+
+test('nested agent.delegate is rejected inside child run', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentDelegated = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('嵌套委派'));
+        if (inChild) {
+          const nested = (messages || []).some(item => item.role === 'tool' && item.name === 'agent.delegate');
+          if (!nested) return { text: '', toolCalls: [{ name: 'agent.delegate', arguments: { prompt: 'again' } }] };
+          return { text: '子任务结束', toolCalls: [] };
+        }
+        if (!parentDelegated) {
+          parentDelegated = true;
+          return {
+            text: '',
+            toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '嵌套委派测试', title: '外层' } }],
+          };
+        }
+        return { text: '父任务完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('delegate-nested');
+  const run = await runtime.start({ session, goal: '测试嵌套', userMessage: '测试嵌套' });
+  let live = await waitForRun(store, run.id);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 1200);
+  const delegateResult = live.messages.find(item => item.role === 'tool' && item.name === 'agent.delegate');
+  assert.ok(delegateResult);
+  const parsed = JSON.parse(delegateResult.content);
+  const child = store.getRun(parsed.data?.childRunId);
+  assert.ok(child);
+  const nestedTool = child.messages.find(item => item.role === 'tool' && item.name === 'agent.delegate');
+  assert.ok(nestedTool);
+  assert.match(nestedTool.content, /Nested delegate is not allowed/);
+});
+
+test('cancel cascades to active delegate child run', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('慢子任务'));
+        if (inChild) {
+          return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '不应创建' } }] };
+        }
+        return {
+          text: '',
+          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '慢子任务', title: '慢' } }],
+        };
+      },
+    },
+  });
+  const session = store.createSession('delegate-cancel');
+  const run = await runtime.start({ session, goal: '取消测试', userMessage: '取消测试' });
+  let live = await waitForRun(store, run.id);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 800);
+  assert.equal(live.status, 'waiting_approval');
+  assert.ok(live.activeChildRunId);
+  const childBefore = store.getRun(live.activeChildRunId);
+  runtime.cancel(run.id);
+  const childAfter = store.getRun(live.activeChildRunId);
+  assert.equal(childAfter.status, 'cancelled');
+  assert.equal((childBefore.pendingApprovals || []).length >= 0, true);
+});
+
+test('agent tools exclude locked diary from search, tree, and list', async (t) => {
+  const db = tempDb(t);
+  const knowledge = openKnowledge(db);
+  db.create({ title: '日记秘密', content: 'agent-diary-marker-xyzzy', category: '日记', log_date: '2026-05-16' });
+  knowledge.createNote({ title: '普通笔记', content: 'agent-diary-marker-visible', knowledgeBase: '开发' });
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const { serviceFor } = require('../lib/knowledge/routes');
+  const adapters = createToolAdapters({
+    db,
+    knowledgeSearch: serviceFor(db),
+    hasDiaryAccessFlag: false,
+  });
+  const search = await adapters.execute('knowledge.search', { query: 'agent-diary-marker' });
+  assert.equal(search.ok, true);
+  assert.equal(search.data.documents.some(item => item.title === '日记秘密'), false);
+  assert.equal(search.data.documents.some(item => item.title === '普通笔记'), true);
+  const tree = await adapters.execute('knowledge.tree', {});
+  assert.equal(tree.ok, true);
+  const list = await adapters.execute('knowledge.list', { knowledgeBase: '开发' });
+  assert.equal(list.ok, true);
+  assert.equal(list.data.documents.some(item => item.title === '日记秘密'), false);
+});
+
+test('web.fetch uses injected fetch handler', async (t) => {
+  const db = tempDb(t);
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const { toolResult } = require('../lib/agent/tools');
+  const adapters = createToolAdapters({
+    db,
+    webFetch: async (args) => toolResult({
+      ok: true,
+      summary: `Fetched ${args.url}`,
+      data: { url: args.url, text: 'hello world' },
+      evidence: [{ type: 'web', url: args.url }],
+    }),
+  });
+  const result = await adapters.execute('web.fetch', { url: 'https://example.com/page' });
+  assert.equal(result.ok, true);
+  assert.equal(result.data.text, 'hello world');
+});
+
+test('agent.delegate shared tool budget stops child run when combined limit is exceeded', async (t) => {
+  const db = tempDb(t);
+  db.saveAiSettings({ ...db.getAiSettings(), agentMaxRounds: 4 });
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentRound = 0;
+  let parentDelegated = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('耗尽预算'));
+        if (inChild) {
+          return {
+            text: '',
+            toolCalls: Array.from({ length: 8 }, (_, index) => ({
+              name: 'task.list',
+              arguments: { note: String(index) },
+            })),
+          };
+        }
+        parentRound += 1;
+        if (parentRound === 1) {
+          return { text: '', toolCalls: [{ name: 'task.list', arguments: {} }] };
+        }
+        if (parentDelegated) {
+          return { text: '预算测试完成', toolCalls: [] };
+        }
+        parentDelegated = true;
+        return {
+          text: '',
+          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '耗尽预算', title: '预算子任务' } }],
+        };
+      },
+    },
+  });
+  const session = store.createSession('delegate-budget');
+  const run = await runtime.start({ session, goal: '预算测试', userMessage: '预算测试' });
+  let live = await waitForRun(store, run.id, 1200);
+  while (live?.status === 'waiting_approval' && (live.pendingApprovals || []).length) {
+    await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+    live = await waitForRun(store, run.id, 1200);
+  }
+  const child = store.listChildRuns(run.id).at(-1);
+  assert.ok(child);
+  const failedChild = await waitForRun(store, child.id, 1200);
+  assert.equal(failedChild.status, 'failed');
+  assert.equal(failedChild.error, 'Tool call limit exceeded');
+});
+
+test('session API includes delegate run traces nested under parent run', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentDelegated = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('列出待办'));
+        if (inChild) {
+          return { text: '', toolCalls: [{ name: 'task.list', arguments: {} }] };
+        }
+        if (parentDelegated) {
+          return { text: '父任务完成', toolCalls: [] };
+        }
+        parentDelegated = true;
+        return {
+          text: '',
+          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '列出待办', title: '待办子任务' } }],
+        };
+      },
+    },
+  });
+  const session = store.createSession('delegate-trace');
+  const run = await runtime.start({ session, goal: 'trace', userMessage: 'trace' });
+  let live = await waitForRun(store, run.id, 1200);
+  while (live?.status === 'waiting_approval' && (live.pendingApprovals || []).length) {
+    await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+    live = await waitForRun(store, run.id, 2000);
+  }
+  assert.equal(live.status, 'completed');
+  const child = store.listChildRuns(run.id)[0];
+  assert.ok(child);
+  assert.equal(child.delegateTitle, '待办子任务');
+
+  const app = express();
+  registerAgentRoutes(app, { db, hasDiaryAccess: () => false });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/agent/sessions/${encodeURIComponent(session.id)}`);
+  const data = await response.json();
+  assert.equal(data.runs.length, 1);
+  assert.equal(Array.isArray(data.runs[0].delegateRuns), true);
+  assert.equal(data.runs[0].delegateRuns[0].id, child.id);
+  assert.equal(data.runs[0].delegateRuns[0].delegateTitle, '待办子任务');
+  assert.ok(data.runs[0].delegateRuns[0].trace.length >= 1);
+});
+
+test('trace lines include delegate lifecycle labels', () => {
+  const { traceLinesFromEvents } = require('../lib/agent/trace');
+  assert.deepEqual(traceLinesFromEvents([
+    { type: 'delegate.started', payload: { delegateTitle: '整理笔记' } },
+    { type: 'delegate.completed', payload: { delegateTitle: '整理笔记' } },
+  ]), ['已委派子任务「整理笔记」', '子任务「整理笔记」已完成']);
 });

@@ -86,7 +86,7 @@ See `README.md` § Relevant API for the full table. Notable groups:
 ### Notable Files
 
 - `lib/knowledge/` — documents, search, migrate-logs, routes
-- `lib/agent/` — runtime, routes, tools, `memory-settings.js` (Memory tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`)
+- `lib/agent/` — runtime, routes, tools, `memory-settings.js` (Memory tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.search`, `agent.delegate` (one-level sub-run with approval bubbling), `web.fetch`, `code.run` (PowerShell/Python shell runner), `ask_user`, `update_working_checkpoint`
 - `lib/workspace/` — ZIP export/restore
 - `lib/http/backup-routes.js` — JSON backup/restore HTTP handlers
 - `gen_images.py` — standalone script, unrelated to the web app

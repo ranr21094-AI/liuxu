@@ -81,7 +81,8 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 - 左侧按「今天 / 最近 7 天 / 更早」分组展示会话；每行显示标题，副行显示**最后更新时间 · 消息数**（不再显示最后一条消息预览）。
 - 支持新建会话、搜索（仍匹配标题与消息正文）、重命名、归档。
-- 对话区用 `@知识库` 或 `@日期` 注入本地材料；写入类工具、联网搜索、生图、代码运行等需先确认。
+- 对话区用 `@知识库` 或 `@日期` 注入本地材料；Agent 也可用 `knowledge.search` / `knowledge.tree` / `knowledge.list` 检索与浏览笔记；`memory.search` 可查找已保存的长期记忆；复杂子任务可用 `agent.delegate` 委派（需确认，子任务写入仍单独审批）。本地脚本用 `code.run`（PowerShell/Python）。
+- 写入类工具、联网搜索/抓取、生图、代码运行等需先确认。
 - 长期记忆以提案形式出现，确认后才写入 L2/L3；Memory 模式可浏览、归档或刷新提案。
 - 模型、联网、Seedream 生图、电脑工具策略在设置中配置；Agent 侧栏底部可快速打开模型设置。
 
@@ -124,7 +125,7 @@ AI 设置保存在当前账户的 `ai-settings.json`（Key 经 AES-256-GCM 加�
 
 - **设置 → 模型**：DeepSeek、Moonshot/Kimi、OpenRouter Key、默认模型、Agent 最大循环轮数（`agentMaxRounds`，默认 12）、`file.read` 单次读取上限 MB（`agentFileReadMaxMb`，默认 4）、思考模式等。
 - **设置 → Memory**：记忆刷新轮次/提案数、近期会话扫描条数与字符预算、L2/L3 标题与内容上限、注入 Agent 上下文的 L2/L3 条数（见上节）。
-- **设置 → 联网**：Tavily、Perplexity；Agent 通过 `web.search` 等工具在确认后调用。
+- **设置 → 联网**：Tavily、Perplexity；Agent 通过 `web.search` / `web.fetch` 等工具在确认后调用。
 - **设置 → 生图**：Seedream Key 与默认参数；Agent 通过 `image.generate` 在确认后生图。
 - **设置 → 技能**：WeStock 等工具策略（具体以 Agent 工具注册为准）。
 - OpenRouter 模型目录通过 `GET /api/ai/models` 拉取；旧管理员工作区仍可使用 `.env` 中的服务端回退 Key。
