@@ -9,10 +9,9 @@ const { createKnowledgeService } = require('../lib/knowledge/documents');
 function tempDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.DATA_DIR = dir;
   process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
-  delete require.cache[require.resolve('../database.js')];
-  const db = require('../database.js');
+  const { createDatabase } = require('../database.js');
+  const db = createDatabase(dir);
   db.create({ title: 'zip log', content: 'body', category: '开发', log_date: '2026-05-16' });
   fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'uploads', 'pic.png'), Buffer.from([1, 2, 3]));
@@ -28,10 +27,9 @@ test('workspace zip export includes binaries and restores them', async (t) => {
   fs.rmSync(path.join(dir, 'uploads'), { recursive: true, force: true });
   const other = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-b-'));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
-  process.env.DATA_DIR = other;
   process.env.AI_SECRETS_KEY_FILE = path.join(other, 'ai-secrets.key');
-  delete require.cache[require.resolve('../database.js')];
-  const db2 = require('../database.js');
+  const { createDatabase } = require('../database.js');
+  const db2 = createDatabase(other);
   const result = await restoreWorkspace(db2, buffer);
   assert.equal(result.success, true);
   assert.equal(result.includesBinaries, true);

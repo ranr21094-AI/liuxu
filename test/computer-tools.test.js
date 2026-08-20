@@ -7,6 +7,7 @@ const { resolveAllowed, isSensitivePath, recentlyReauthed, markReauth, defaultPo
 const { createCodeRunner } = require('../lib/computer/code');
 const { sign } = require('../lib/computer/chrome');
 const { createComputerFacade } = require('../lib/computer/routes');
+const { createFileTools } = require('../lib/computer/files');
 
 test('allowlist rejects path escape and sensitive directories', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allow-'));
@@ -77,4 +78,27 @@ test('computer facade lists and deletes files without reauth', async (t) => {
   const deleted = await facade.execute('file.delete', { path: note });
   assert.equal(deleted.ok, true);
   assert.equal(fs.existsSync(note), false);
+});
+
+test('file.read honors configurable max bytes', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'file-read-limit-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const policy = { allowedDirectories: [dir] };
+  const small = path.join(dir, 'small.txt');
+  const large = path.join(dir, 'large.txt');
+  fs.writeFileSync(small, 'a'.repeat(512 * 1024));
+  fs.writeFileSync(large, 'b'.repeat(5 * 1024 * 1024));
+
+  const fourMb = createFileTools(policy, { fileReadMaxBytes: 4 * 1024 * 1024 });
+  const ok = await fourMb.execute('file.read', { path: small });
+  assert.equal(ok.ok, true);
+  const blocked = await fourMb.execute('file.read', { path: large });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.errorCode, 'too_large');
+  assert.match(blocked.summary, /4MB read limit/);
+
+  const eightMb = createFileTools(policy, { fileReadMaxBytes: 8 * 1024 * 1024 });
+  const allowed = await eightMb.execute('file.read', { path: large });
+  assert.equal(allowed.ok, true);
+  assert.equal(allowed.data.content.length, 5 * 1024 * 1024);
 });

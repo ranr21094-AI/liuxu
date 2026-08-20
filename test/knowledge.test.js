@@ -4,52 +4,61 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
+const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
 const { createSearchIndex } = require('../lib/knowledge/search');
 const { treeForDocuments, documentSummary } = require('../lib/knowledge/routes');
 const { extractText, inferPreviewKind } = require('../lib/knowledge/import');
 const { chunkDocument } = require('../lib/knowledge/chunk');
 const { decodeUploadedFilename, contentDisposition } = require('../lib/util/filename');
 
+function openKnowledge(db) {
+  ensureLogsMigrated(db);
+  return createKnowledgeService(db);
+}
+
 function tempDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.DATA_DIR = dir;
   process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
-  delete require.cache[require.resolve('../database.js')];
-  const db = require('../database.js');
+  const { createDatabase } = require('../database.js');
+  const db = createDatabase(dir);
   db.create({ title: '公开日志', content: '混合检索正文苹果香蕉', category: '开发', hours: 2, pinned: true, log_date: '2026-05-16' });
   db.create({ title: '日记秘密', content: '不应出现', category: '日记', log_date: '2026-05-16' });
   return { db, dir };
 }
 
-test('knowledge adapter maps logs without rewriting them', (t) => {
-  const { db } = tempDb(t);
+test('knowledge migrates legacy logs into native notes', (t) => {
+  const { db, dir } = tempDb(t);
+  ensureLogsMigrated(db);
   const knowledge = createKnowledgeService(db);
   const docs = knowledge.allDocuments({ diaryUnlocked: false });
-  assert.equal(docs.some(doc => doc.id === 'log:1'), true);
-  assert.equal(docs.find(doc => doc.id === 'log:1').knowledgeBase, '开发');
-  assert.equal(docs.find(doc => doc.id === 'log:1').folderPath, '');
-  assert.equal(docs.find(doc => doc.id === 'log:1').documentDate, '2026-05-16');
+  assert.equal(docs.some(doc => doc.id === 'note:1'), true);
+  assert.equal(docs.find(doc => doc.id === 'note:1').knowledgeBase, '开发');
+  assert.equal(docs.find(doc => doc.id === 'note:1').folderPath, '');
+  assert.equal(docs.find(doc => doc.id === 'note:1').documentDate, '2026-05-16');
   assert.equal(docs.some(doc => doc.visibility === 'diary'), false);
   const unlocked = knowledge.allDocuments({ diaryUnlocked: true });
   assert.equal(unlocked.some(doc => doc.visibility === 'diary'), true);
-  assert.equal(db.getById(1).title, '公开日志');
+  assert.equal(db.getAllUnpaginated().length, 0);
+  assert.ok(fs.existsSync(path.join(dir, 'logs.migrated.json')));
+  const again = createKnowledgeService(db);
+  assert.equal(again.nativeDocuments().filter(doc => doc.title === '公开日志').length, 1);
 });
 
 test('knowledge search filters diary chunks and returns citations', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const search = createSearchIndex(knowledge);
   const locked = search.search('秘密', { diaryUnlocked: false });
-  assert.equal(locked.some(item => item.documentId.startsWith('log:2')), false);
+  assert.equal(locked.some(item => item.documentId.startsWith('note:2')), false);
   const open = search.search('苹果', { diaryUnlocked: false });
-  assert.equal(open.some(item => item.documentId === 'log:1'), true);
+  assert.equal(open.some(item => item.documentId === 'note:1'), true);
   assert.ok(open[0].id.includes('#'));
 });
 
 test('knowledge searchDocuments applies tag and date filters before minisearch', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   knowledge.createNote({
     title: '苹果笔记',
     content: '正文里有苹果',
@@ -81,7 +90,7 @@ test('knowledge searchDocuments applies tag and date filters before minisearch',
 
 test('knowledge searchDocuments aggregates chunk hits by document', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   knowledge.createNote({
     title: '长文',
     content: `${'苹果'.repeat(700)}\n\n中间\n\n${'苹果'.repeat(700)}`,
@@ -93,7 +102,7 @@ test('knowledge searchDocuments aggregates chunk hits by document', (t) => {
     diaryUnlocked: false,
     summarize: documentSummary,
   });
-  const noteHits = docs.filter(item => item.id.startsWith('note:'));
+  const noteHits = docs.filter(item => item.title === '长文');
   assert.equal(noteHits.length, 1);
   assert.ok(noteHits[0].searchSnippet);
   assert.equal(typeof noteHits[0].searchOffset, 'number');
@@ -112,7 +121,7 @@ test('parseSearchOptions defaults to smart preset and clamps fuzzy', () => {
 
 test('searchDocuments honors strict mode and field filters', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   knowledge.createNote({
     title: '会议摘要',
     content: '正文不含关键词',
@@ -182,7 +191,7 @@ test('markdown and txt extraction stay under limits', async () => {
 
 test('image imports are recognized and stored with preview metadata', async (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const png = await extractText(Buffer.from([137, 80, 78, 71]), 'photo.png', 'image/png');
   assert.equal(png.status, 'active');
   assert.equal(png.previewKind, 'image');
@@ -281,7 +290,7 @@ test('docx imports embed images as data uris in preview html', async () => {
 
 test('imported files keep Unicode stored filenames', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const imported = knowledge.saveImportedFile({
     buffer: Buffer.from('docx content'),
     filename: '高质量学科标签数据.docx',
@@ -306,7 +315,7 @@ test('legacy imported files infer preview kind from filename and hydrate missing
   assert.equal(inferPreviewKind('', 'readme.txt'), 'text');
 
   const { db, dir } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const saved = knowledge.saveImportedFile({
     buffer: Buffer.from('%PDF-1.4 legacy'),
     filename: 'scan.pdf',
@@ -341,7 +350,7 @@ test('chunks keep document id and heading', () => {
 
 test('knowledge notes reject stale versions and imported file bodies stay read-only', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const created = knowledge.createNote({ title: '方案', content: '第一版' }).document;
   const updated = knowledge.updateDocument(created.id, { content: '第二版', baseVersion: created.version }).document;
   assert.equal(updated.content, '第二版');
@@ -367,9 +376,9 @@ test('knowledge notes reject stale versions and imported file bodies stay read-o
   assert.equal(knowledge.getAnnotation(file.id).content, '我的批注');
 });
 
-test('knowledge bases and folders normalize legacy paths and preserve log metadata', (t) => {
+test('knowledge bases and folders normalize legacy paths for migrated notes', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const note = knowledge.createNote({
     title: '行业笔记',
     content: '正文',
@@ -382,24 +391,19 @@ test('knowledge bases and folders normalize legacy paths and preserve log metada
   assert.equal(note.folderPath, '行业洞悉');
   assert.equal(note.documentDate, '2026-08-18');
 
-  const moved = knowledge.updateDocument('log:1', {
+  const moved = knowledge.updateDocument('note:1', {
     knowledgeBase: '投资',
     folderPath: '行业洞悉',
     documentDate: '2026-08-18',
   }, { diaryUnlocked: false }).document;
   assert.equal(moved.collectionPath, '投资/行业洞悉');
   assert.equal(moved.documentDate, '2026-08-18');
-  const raw = db.getById(1);
-  assert.equal(raw.category, '投资/行业洞悉');
-  assert.equal(raw.log_date, '2026-08-18');
-  assert.equal(raw.hours, 2);
-  assert.equal(raw.pinned, true);
 
   knowledge.rewriteCollectionPath('投资/行业洞悉', '投资/事件');
   const rewritten = knowledge.getDocument(note.id);
   assert.equal(rewritten.collectionPath, '投资/事件');
-  const rewrittenLog = knowledge.getDocument('log:1');
-  assert.equal(rewrittenLog.collectionPath, '投资/行业洞悉');
+  const rewrittenLegacy = knowledge.getDocument('note:1');
+  assert.equal(rewrittenLegacy.collectionPath, '投资/事件');
 });
 
 test('knowledge tree maps category roots to bases and children to folders', () => {
@@ -426,7 +430,7 @@ test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', asy
   assert.match(contentDisposition(mojibake), /filename\*=UTF-8''%E6%B5%8B%E8%AF%95\.png/);
 
   const { db, dir } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const imported = knowledge.saveImportedFile({
     buffer: Buffer.from('fake-image-bytes-cn'),
     filename: mojibake,
@@ -474,7 +478,7 @@ test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', asy
 
 test('knowledge documents can be permanently deleted', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
 
   const note = knowledge.createNote({ title: '草稿', content: '正文' }).document;
   const deletedNote = knowledge.deleteDocument(note.id);
@@ -500,11 +504,10 @@ test('knowledge documents can be permanently deleted', (t) => {
   assert.equal(knowledge.getDocument(file.id), null);
   assert.equal(knowledge.getDocument(annotation.id), null);
 
-  assert.equal(knowledge.getDocument('log:1') !== null, true);
-  const deletedLog = knowledge.deleteDocument('log:1');
-  assert.equal(deletedLog.deleted, true);
-  assert.equal(knowledge.getDocument('log:1'), null);
-  assert.equal(db.getById(1), null);
+  assert.equal(knowledge.getDocument('note:1') !== null, true);
+  const deletedLegacyNote = knowledge.deleteDocument('note:1');
+  assert.equal(deletedLegacyNote.deleted, true);
+  assert.equal(knowledge.getDocument('note:1'), null);
 
   const diaryNote = knowledge.createNote({
     title: '日记笔记',
@@ -519,9 +522,9 @@ test('knowledge documents can be permanently deleted', (t) => {
   assert.equal(knowledge.getDocument(diaryNote.id, { diaryUnlocked: true }), null);
 });
 
-test('knowledge archive hides documents, rejects logs, and blocks updates', (t) => {
+test('knowledge archive hides documents and blocks updates', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const note = knowledge.createNote({ title: '待归档', content: '正文' }).document;
   const archived = knowledge.archiveDocument(note.id).document;
   assert.equal(archived.status, 'archived');
@@ -531,14 +534,14 @@ test('knowledge archive hides documents, rejects logs, and blocks updates', (t) 
   const blocked = knowledge.updateDocument(note.id, { content: '改写' });
   assert.equal(blocked.status, 403);
 
-  const logArchive = knowledge.archiveDocument('log:1');
-  assert.equal(logArchive.status, 400);
-  assert.equal(knowledge.getDocument('log:1') !== null, true);
+  const migratedArchive = knowledge.archiveDocument('note:1');
+  assert.equal(migratedArchive.document.status, 'archived');
+  assert.equal(knowledge.allDocuments().some(item => item.id === 'note:1'), false);
 });
 
 test('knowledge restore brings archived notes back and cascades file annotations', (t) => {
   const { db } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const note = knowledge.createNote({ title: '归档笔记', content: '正文' }).document;
   knowledge.archiveDocument(note.id);
   const restored = knowledge.restoreDocument(note.id).document;
@@ -569,7 +572,7 @@ test('knowledge restore brings archived notes back and cascades file annotations
 
 test('archived imports dedupe by sha256 without creating duplicate files', (t) => {
   const { db, dir } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const buffer = Buffer.from('same-content');
   const first = knowledge.saveImportedFile({
     buffer,
@@ -600,7 +603,7 @@ test('archived imports dedupe by sha256 without creating duplicate files', (t) =
 
 test('docx hydrate does not rewrite store when preview html already exists', async (t) => {
   const { db, dir } = tempDb(t);
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const saved = knowledge.saveImportedFile({
     buffer: Buffer.from('docx-bytes'),
     filename: 'brief.docx',
@@ -626,4 +629,16 @@ test('docx hydrate does not rewrite store when preview html already exists', asy
   const persisted = after.documents.find(item => item.id === saved.id);
   assert.equal(persisted.updatedAt, updatedAt);
   assert.equal(persisted.version, version);
+});
+
+test('workbench settings include backup and restore controls', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'workbench-backup.js'), 'utf8');
+  assert.match(html, /data-settings-panel="data"/);
+  assert.match(html, /id="exportJsonBackupButton"/);
+  assert.match(html, /id="exportZipBackupButton"/);
+  assert.match(html, /id="restoreJsonBackupButton"/);
+  assert.match(html, /id="restoreZipBackupButton"/);
+  assert.match(source, /createBackupActions/);
+  assert.match(source, /\/api\/workspace\/restore/);
 });

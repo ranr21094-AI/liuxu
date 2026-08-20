@@ -349,7 +349,7 @@ test('diary category root is reserved and subcategory details require unlock', a
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
     body: JSON.stringify({ name: 'renamed' }),
   })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`, {
+  assert.equal((await fetch(`${baseUrl}/api/knowledge/documents/note:1`, {
     headers: { Cookie: cookie },
   })).status, 200);
 });
@@ -809,10 +809,10 @@ test('logs, todos, countdowns, categories, AI state, reminders, uploads, and bac
   })).status, 201);
 
   assert.equal((await jsonRequest(baseUrl, '/api/ai/settings', adminCookie, {
-    method: 'PUT', body: { userProfile: 'admin AI profile' },
+    method: 'PUT', body: { webSearchEnabled: true },
   })).status, 200);
   assert.equal((await jsonRequest(baseUrl, '/api/ai/settings', memberCookie, {
-    method: 'PUT', body: { userProfile: 'member AI profile' },
+    method: 'PUT', body: { webSearchEnabled: false },
   })).status, 200);
 
   assert.equal((await jsonRequest(baseUrl, '/api/todo-reminder-settings', adminCookie, {
@@ -863,8 +863,8 @@ test('logs, todos, countdowns, categories, AI state, reminders, uploads, and bac
   assert.equal(memberCategories.some(category => category.name === '管理员分类'), false);
   const adminAiSettings = await (await jsonRequest(baseUrl, '/api/ai/settings', adminCookie)).json();
   const memberAiSettings = await (await jsonRequest(baseUrl, '/api/ai/settings', memberCookie)).json();
-  assert.equal(adminAiSettings.userProfile, 'admin AI profile');
-  assert.equal(memberAiSettings.userProfile, 'member AI profile');
+  assert.equal(adminAiSettings.webSearchEnabled, true);
+  assert.equal(memberAiSettings.webSearchEnabled, false);
   assert.equal(adminAiSettings.apiKeyConfigured, true);
   assert.equal(adminAiSettings.perplexityApiKeyConfigured, true);
   assert.equal(adminAiSettings.seedreamApiKeyConfigured, true);
@@ -882,19 +882,29 @@ test('logs, todos, countdowns, categories, AI state, reminders, uploads, and bac
   assert.deepEqual(memberBackup.logs.map(log => log.title), ['member workspace log']);
   assert.equal(Object.hasOwn(adminBackup, 'users'), false);
   assert.equal(Object.hasOwn(memberBackup, 'sessions'), false);
+  assert.equal(Object.hasOwn(adminBackup, 'aiChats'), false);
+  assert.equal(Object.hasOwn(memberBackup, 'aiChats'), false);
   assert.equal(Object.hasOwn(adminBackup, 'aiMedia'), false);
-  assert.equal(Object.hasOwn(memberBackup, 'aiMedia'), false);
 
   memberBackup.logs[0].title = 'member restored log';
   const memberRestore = await jsonRequest(baseUrl, '/api/restore', `${memberCookie}; ${memberDiaryCookie}`, {
     method: 'POST', body: memberBackup,
   });
   assert.equal(memberRestore.status, 200);
-  assert.equal((await (await jsonRequest(baseUrl, `/api/logs/${memberLog.id}`, memberCookie)).json()).title, 'member restored log');
+  const memberDocs = await (await jsonRequest(
+    baseUrl,
+    '/api/knowledge/documents',
+    `${memberCookie}; ${memberDiaryCookie}`,
+  )).json();
+  assert.equal(memberDocs.documents.find(doc => doc.id === 'note:1')?.title, 'member restored log');
   assert.equal((await (await jsonRequest(baseUrl, `/api/logs/${adminLog.id}`, adminCookie)).json()).title, 'admin workspace log');
 
   assert.equal((await jsonRequest(baseUrl, `/api/logs/${adminLog.id}`, adminCookie, { method: 'DELETE' })).status, 200);
-  const memberStillExists = await jsonRequest(baseUrl, `/api/logs/${memberLog.id}`, memberCookie);
+  const memberStillExists = await jsonRequest(
+    baseUrl,
+    `/api/knowledge/documents/note:1`,
+    memberCookie,
+  );
   assert.equal(memberStillExists.status, 200);
   assert.equal((await memberStillExists.json()).title, 'member restored log');
 
@@ -984,10 +994,6 @@ test('AI settings persist to local data storage and validate options', async (t)
     reasoningEffort: 'high',
     reasoningMode: 'effort',
     thinkingMode: 'enabled',
-    stream: false,
-    userProfile: '',
-    logContextEnabled: false,
-    diaryContextEnabled: false,
     tavilyApiKey: '',
     tavilyApiKeyConfigured: false,
     perplexityApiKey: '',
@@ -1001,12 +1007,12 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamModel: 'doubao-seedream-5-0-260128',
     seedreamSize: '2K',
     seedreamWatermark: true,
-    logAccessPolicy: null,
     skills: {
       westock: { enabled: true },
       perplexity: { enabled: true },
     },
     agentMaxRounds: 12,
+    agentFileReadMaxMb: 4,
   });
 
   const saved = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -1019,10 +1025,6 @@ test('AI settings persist to local data storage and validate options', async (t)
       model: 'deepseek-v4-pro',
       reasoningEffort: 'max',
       reasoningMode: 'default',
-      stream: true,
-      userProfile: 'I prefer concise Chinese replies.',
-      logContextEnabled: true,
-      diaryContextEnabled: true,
       tavilyApiKey: 'tvly-local-settings',
       perplexityApiKey: 'pplx-local-settings',
       webSearchEnabled: true,
@@ -1033,15 +1035,12 @@ test('AI settings persist to local data storage and validate options', async (t)
       seedreamModel: 'doubao-seedream-4-5-251128',
       seedreamSize: '2848x1600',
       seedreamWatermark: false,
-      logAccessPolicy: {
-        allowedParents: ['开发', '日记'],
-        deniedSubcategories: { 开发: ['秘密'] },
-      },
       skills: {
         westock: { enabled: false },
         perplexity: { enabled: false },
       },
-      agentMaxRounds: 20,
+      agentMaxRounds: 100,
+      agentFileReadMaxMb: 64,
     }),
   });
   assert.equal(saved.status, 200);
@@ -1056,10 +1055,6 @@ test('AI settings persist to local data storage and validate options', async (t)
     reasoningEffort: 'max',
     reasoningMode: 'default',
     thinkingMode: 'enabled',
-    stream: true,
-    userProfile: 'I prefer concise Chinese replies.',
-    logContextEnabled: true,
-    diaryContextEnabled: true,
     tavilyApiKey: '',
     tavilyApiKeyConfigured: true,
     perplexityApiKey: '',
@@ -1073,15 +1068,12 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamModel: 'doubao-seedream-4-5-251128',
     seedreamSize: '2848x1600',
     seedreamWatermark: false,
-    logAccessPolicy: {
-      allowedParents: ['开发', '日记'],
-      deniedSubcategories: { 开发: ['秘密'] },
-    },
     skills: {
       westock: { enabled: false },
       perplexity: { enabled: false },
     },
-    agentMaxRounds: 20,
+    agentMaxRounds: 100,
+    agentFileReadMaxMb: 64,
   });
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
   const encryptedSettings = fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8');
@@ -1099,7 +1091,8 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.equal(preservedBody.apiKeyConfigured, true);
   assert.equal(preservedBody.moonshotApiKeyConfigured, true);
   assert.equal(preservedBody.openrouterApiKeyConfigured, true);
-  assert.equal(preservedBody.agentMaxRounds, 20);
+  assert.equal(preservedBody.agentMaxRounds, 100);
+  assert.equal(preservedBody.agentFileReadMaxMb, 64);
   assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings/);
 
   const cleared = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -1119,10 +1112,6 @@ test('AI settings persist to local data storage and validate options', async (t)
     { reasoningEffort: 'extreme' },
     { reasoningMode: 'sometimes' },
     { thinkingMode: 'sometimes' },
-    { stream: 'true' },
-    { userProfile: 123 },
-    { logContextEnabled: 'true' },
-    { diaryContextEnabled: 'true' },
     { webSearchEnabled: 'true' },
     { kimiWebSearchEnabled: 'true' },
     { openrouterZdrEnabled: 'true' },
@@ -1130,14 +1119,12 @@ test('AI settings persist to local data storage and validate options', async (t)
     { seedreamModel: 'bad-seedream' },
     { seedreamSize: 'bad-size' },
     { seedreamWatermark: 'true' },
-    { logAccessPolicy: 'all' },
-    { logAccessPolicy: { allowedParents: '开发' } },
-    { logAccessPolicy: { allowedParents: ['开发'], deniedSubcategories: { 开发: '秘密' } } },
     { skills: { westock: { enabled: 'true' } } },
     { skills: { perplexity: { enabled: 'true' } } },
     { agentMaxRounds: 3 },
-    { agentMaxRounds: 49 },
     { agentMaxRounds: 12.5 },
+    { agentFileReadMaxMb: 0 },
+    { agentFileReadMaxMb: 4.5 },
   ]) {
     const invalid = await fetch(`${baseUrl}/api/ai/settings`, {
       method: 'PUT',
@@ -1194,8 +1181,8 @@ test('workbench frontend no longer exposes chat, editor AI, or user profile', ()
   assert.equal(workbench.querySelector('#editorAiPanel'), null);
   assert.equal(workbench.querySelector('#agentUserProfile'), null);
   assert.doesNotMatch(indexHtml, /legacy\.html/);
-  assert.match(workbenchSource, /delete payload\.userProfile;/);
   assert.doesNotMatch(workbenchSource, /#agentUserProfile|userProfile: \$/);
+  assert.doesNotMatch(indexHtml, /agentStreamToggle/);
 });
 
 test('OpenRouter discovers account models and preserves provider-specific reasoning, sources, ZDR, and media', async (t) => {
@@ -1591,7 +1578,19 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'] }).success, true);
   assert.equal(db.backup().format, 'structure');
   assert.equal(db.backup().includesBinaries, false);
-  assert.match(db.restore({ ...base, aiChats: { conversations: [{ title: 'missing-id' }] } }).error, /Invalid AI conversation/);
+  assert.equal(Object.hasOwn(db.backup(), 'aiChats'), false);
+  db.stageLegacyAiChatsForMigration({
+    aiChats: {
+      conversations: [{
+        id: 'legacy-restore-1',
+        title: '恢复测试',
+        scope: 'global',
+        updatedAt: Date.now(),
+        messages: [{ role: 'user', content: 'hello' }, { role: 'assistant', content: 'world' }],
+      }],
+    },
+  });
+  assert.equal(fs.existsSync(path.join(db.dataDir, 'ai-chats.json')), true);
   assert.equal(db.backup().logs[0].pinned, false);
   assert.equal(db.backup().logs[0].pinned_at, null);
   assert.equal(db.getAllTodos()[0].notes, '');
@@ -2672,6 +2671,12 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#deleteDocumentButton') !== null, true);
   assert.equal(document.querySelector('#insertImageButton') !== null, true);
   assert.equal(document.querySelector('#documentImageInput') !== null, true);
+  assert.equal(document.querySelector('#knowledgeNameDialog') !== null, true);
+  assert.equal(document.querySelector('#knowledgeNameInput') !== null, true);
+  assert.match(html, /id="knowledgeNameDialog"[\s\S]*id="knowledgeNameForm"[\s\S]*id="knowledgeNameInput"[\s\S]*id="knowledgeNameSubmit"/);
+  assert.match(source, /function promptKnowledgeName/);
+  assert.match(source, /initKnowledgeNameDialog/);
+  assert.doesNotMatch(source, /window\.prompt/);
   assert.match(source, /uploadNoteImage/);
   assert.match(source, /handleDocumentImageUpload/);
   assert.match(html, /image\/png/);
@@ -2710,6 +2715,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#agentModelSelect') !== null, true);
   assert.equal(document.querySelector('#saveAgentSettings') !== null, true);
   assert.equal(document.querySelector('#agentMaxRounds') !== null, true);
+  assert.equal(document.querySelector('#agentFileReadMaxMb') !== null, true);
   assert.equal(document.querySelector('#refreshAgentMemory') !== null, true);
   assert.equal(document.querySelector('#agentMemoryItems') !== null, true);
   assert.equal(document.querySelector('#executionTrace'), null);
@@ -2768,9 +2774,27 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /data-search-offset/);
   assert.equal(document.querySelector('#knowledgeSearchModeHint') !== null, true);
   assert.equal(document.querySelector('[data-settings-nav="knowledge"]') !== null, true);
+  assert.equal(document.querySelector('[data-settings-nav="data"]') !== null, true);
+  assert.equal(document.querySelector('#exportJsonBackupButton') !== null, true);
+  assert.equal(document.querySelector('#exportZipBackupButton') !== null, true);
+  assert.equal(document.querySelector('#memoryPendingBadge') !== null, true);
+  assert.equal(document.querySelector('[data-editor-mode="split"]') !== null, true);
+  assert.match(source, /refreshMemoryPendingCount/);
+  assert.match(source, /updateMemoryPendingBadge/);
+  assert.match(source, /cycleEditorMode/);
+  assert.match(source, /event\.shiftKey && event\.key\.toLowerCase\(\) === 'p'/);
+  assert.match(html, /Ctrl\+Shift\+P/);
+  assert.match(styles, /\.mode-pending-badge/);
+  assert.match(styles, /\.note-editor\.is-split/);
+  assert.match(source, /from '\.\/workbench-backup\.js'/);
   assert.match(source, /knowledgeSearchOptions/);
   assert.match(source, /knowledgeSearchOptionsQuery/);
   assert.match(styles, /\.knowledge-search-mode-hint/);
+  assert.match(source, /highlightSearch/);
+  assert.match(source, /documentRowSubtitleHtml/);
+  assert.match(source, /documentRowTitleHtml/);
+  assert.match(styles, /\.document-row small mark/);
+  assert.match(styles, /\.file-reader mark/);
   assert.equal(fs.existsSync(path.join(ROOT, 'public', 'js', 'markdown.js')), true);
   assert.match(html, /vendor\/katex\/katex\.min\.css/);
   assert.match(html, /vendor\/katex\/katex\.min\.js/);

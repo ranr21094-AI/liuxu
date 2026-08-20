@@ -185,12 +185,14 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 | --- | --- |
 | `users.json` | 账户、scrypt 密码哈希、存储目录键 |
 | `auth-sessions.json` | 会话令牌哈希与过期时间 |
-| `logs.json` | 工作日志（知识库 `log:<id>` 数据源） |
+| `logs.json` | 遗留工作日志；首次访问知识库时自动迁移至 `knowledge-documents.json`，原内容备份为 `logs.migrated.json` |
+| `logs.migrated.json` / `.logs-migrated.json` | 迁移备份与 id 映射 |
 | `todos.json` / `countdowns.json` | 待办与倒数日 |
 | `todo-categories.json` / `todo-reminder-*.json` | 待办分类与邮件提醒 |
 | `categories.json` | 知识库/文件夹树与日历显示设置 |
 | `knowledge-documents.json` / `knowledge-files/` | 笔记与导入文件 |
 | `agent-sessions.json` / `agent-runs.json` / `agent-memories.json` | Agent 会话、运行与长期记忆 |
+| `ai-chats.migrated.json` | 旧独立 AI 对话归档备份；有内容时 Agent 启动会自动迁入 `agent-sessions.json`（归档，`[旧AI]` 标题） |
 | `ai-settings.json` | 加密后的模型与工具 Key |
 | `uploads/` | Markdown 内嵌图与 Agent 生图 |
 | `private-uploads.json` | 私密图片保护标记 |
@@ -199,7 +201,7 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 
 ## Backup And Restore
 
-- **JSON 备份**（`GET /api/backup`）：结构数据（日志、待办、分类等），标记 `format: structure`，不含二进制；旧版 `aiChats` 字段仅用于恢复兼容。
+- **JSON 备份**（`GET /api/backup`）：结构数据（待办、分类、遗留 logs 等），标记 `format: structure`，不含二进制。旧备份中的 `aiChats` 在恢复时会落盘并由 Agent 自动迁移为归档会话。
 - **ZIP 工作区**（`GET /api/workspace/export`）：含知识附件、上传、Agent 数据等完整副本；恢复用 `POST /api/workspace/restore`（支持 JSON 或 ZIP，`?mode=merge` 可合并）。
 - 不含 `users.json` 或其它账户凭据；私密知识需解锁后才能备份/恢复。
 
@@ -232,7 +234,7 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 | `POST` | `/api/auth/diary/lock` | 锁定 |
 | `GET` | `/api/auth/diary/status` | 锁定状态 |
 | `GET/POST/PATCH` | `/api/admin/users` … | 管理员账户管理 |
-| `GET/POST/PUT/DELETE` | `/api/logs` … | 日志 CRUD（兼容层） |
+| `GET/POST/PUT/DELETE` | `/api/logs` … | 遗留日志 CRUD（兼容；新内容请用知识库笔记） |
 | `GET/POST/PUT/DELETE` | `/api/todos` … | 待办 |
 | `GET/POST/PUT/DELETE` | `/api/countdowns` … | 倒数日 |
 | `GET/PUT` | `/api/todo-reminder-settings` | 邮件提醒 |

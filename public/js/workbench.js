@@ -6,12 +6,13 @@ import {
   lockDiary,
   logoutSite,
 } from './auth.js';
-import { debounce, escHtml, showToast } from './helpers.js';
+import { debounce, escHtml, highlightSearch, showToast } from './helpers.js';
 import { destroyFilePreview, renderFilePreview, shouldCollapseExtractText } from './knowledge/filePreview.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { renderToHtml, renderToHtmlUncached } from './markdown.js';
 import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
 import { fillAccountSettings, initAccounts } from './accounts.js';
+import { createBackupActions } from './workbench-backup.js';
 
 const $ = selector => document.querySelector(selector);
 const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'cancelled']);
@@ -89,8 +90,7 @@ function renderDocumentPreview() {
 }
 
 const refreshDocumentPreview = debounce(() => {
-  if (state.editorMode !== 'preview') return;
-  renderDocumentPreview();
+  if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
 }, 300);
 
 function formatTime(value) {
@@ -730,13 +730,14 @@ async function loadAgentSettingsForm() {
     $('#agentSeedreamWatermark').checked = settings.seedreamWatermark !== false;
     populateAgentModelSelect(modelsResponse.ok ? modelsData.models : [], settings.model);
     const rounds = Number(settings.agentMaxRounds);
-    $('#agentMaxRounds').value = Number.isFinite(rounds) ? Math.min(48, Math.max(4, Math.round(rounds))) : 12;
+    $('#agentMaxRounds').value = Number.isFinite(rounds) ? Math.max(4, Math.round(rounds)) : 12;
+    const fileReadMb = Number(settings.agentFileReadMaxMb);
+    $('#agentFileReadMaxMb').value = Number.isFinite(fileReadMb) ? Math.max(1, Math.round(fileReadMb)) : 4;
     $('#agentReasoningMode').value = ['default', 'disabled', 'effort'].includes(settings.reasoningMode) ? settings.reasoningMode : 'effort';
     $('#agentThinkingMode').value = settings.thinkingMode === 'disabled' ? 'disabled' : 'enabled';
     $('#agentReasoningEffort').value = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.reasoningEffort)
       ? settings.reasoningEffort
       : 'high';
-    $('#agentStreamToggle').checked = Boolean(settings.stream);
     $('#agentOpenRouterZdr').checked = settings.openrouterZdrEnabled !== false;
     $('#agentWebSearchToggle').checked = Boolean(settings.webSearchEnabled);
     $('#agentWebSearchDepth').value = settings.webSearchDepth === 'advanced' ? 'advanced' : 'basic';
@@ -752,7 +753,7 @@ async function loadAgentSettingsForm() {
 }
 
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'network', 'image', 'skills', 'knowledge', 'computer', 'account'];
+  const allowed = ['appearance', 'sessions', 'model', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'account'];
   let next = allowed.includes(panel) ? panel : 'appearance';
   if (next === 'computer' && state.user?.role !== 'admin') next = 'appearance';
   state.settingsPanel = next;
@@ -765,7 +766,7 @@ function setSettingsPanel(panel) {
     section.hidden = section.dataset.settingsPanel !== next;
   });
   const saveButton = $('#saveAgentSettings');
-  if (saveButton) saveButton.hidden = next === 'account' || next === 'knowledge';
+  if (saveButton) saveButton.hidden = next === 'account' || next === 'knowledge' || next === 'data';
   if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
   if (next === 'account') fillAccountSettings().catch(error => showToast(error.message, 'error'));
   if (next === 'knowledge') fillKnowledgeSearchOptionsForm();
@@ -785,7 +786,6 @@ function settingsSavePayload() {
   ['apiKeyConfigured', 'moonshotApiKeyConfigured', 'openrouterApiKeyConfigured', 'tavilyApiKeyConfigured', 'perplexityApiKeyConfigured', 'seedreamApiKeyConfigured'].forEach(key => {
     delete payload[key];
   });
-  delete payload.userProfile;
   payload.apiKey = $('#agentDeepseekKey').value.trim();
   payload.moonshotApiKey = $('#agentMoonshotKey').value.trim();
   payload.openrouterApiKey = $('#agentOpenrouterKey').value.trim();
@@ -799,7 +799,6 @@ function settingsSavePayload() {
   payload.reasoningMode = $('#agentReasoningMode').value || current.reasoningMode || 'effort';
   payload.thinkingMode = $('#agentThinkingMode').value || current.thinkingMode || 'enabled';
   payload.reasoningEffort = $('#agentReasoningEffort').value || current.reasoningEffort || 'high';
-  payload.stream = $('#agentStreamToggle').checked;
   payload.openrouterZdrEnabled = $('#agentOpenRouterZdr').checked;
   payload.webSearchEnabled = $('#agentWebSearchToggle').checked;
   payload.webSearchDepth = $('#agentWebSearchDepth').value === 'advanced' ? 'advanced' : 'basic';
@@ -809,9 +808,13 @@ function settingsSavePayload() {
     perplexity: { enabled: $('#agentPerplexityToggle').checked },
   };
   const rounds = Number($('#agentMaxRounds').value);
-  payload.agentMaxRounds = Number.isInteger(rounds) && rounds >= 4 && rounds <= 48
+  payload.agentMaxRounds = Number.isInteger(rounds) && rounds >= 4
     ? rounds
     : (Number.isInteger(Number(current.agentMaxRounds)) ? Number(current.agentMaxRounds) : 12);
+  const fileReadMb = Number($('#agentFileReadMaxMb').value);
+  payload.agentFileReadMaxMb = Number.isInteger(fileReadMb) && fileReadMb >= 1
+    ? fileReadMb
+    : (Number.isInteger(Number(current.agentFileReadMaxMb)) ? Number(current.agentFileReadMaxMb) : 4);
   return payload;
 }
 
@@ -953,6 +956,28 @@ function renderMemoryItems(items) {
     </article>`).join('');
 }
 
+function updateMemoryPendingBadge(pendingCount) {
+  const count = Math.max(0, Number(pendingCount) || 0);
+  const badge = $('#memoryPendingBadge');
+  const memoryButton = document.querySelector('.topbar-mode-switch [data-mode="memory"]');
+  if (badge) {
+    if (count > 0) {
+      badge.hidden = false;
+      badge.removeAttribute('aria-hidden');
+      badge.textContent = count > 9 ? '9+' : String(count);
+      badge.setAttribute('aria-label', `${count} 条记忆待确认`);
+    } else {
+      badge.hidden = true;
+      badge.setAttribute('aria-hidden', 'true');
+      badge.textContent = '';
+      badge.removeAttribute('aria-label');
+    }
+  }
+  memoryButton?.classList.toggle('has-pending', count > 0);
+  const sidebarCount = $('#memorySidebarCount');
+  if (sidebarCount) sidebarCount.classList.toggle('is-pending', count > 0);
+}
+
 function renderMemorySidebar() {
   const list = $('#memorySidebarList');
   const count = $('#memorySidebarCount');
@@ -964,6 +989,7 @@ function renderMemorySidebar() {
       ? `${items.length} 条已保存 · ${proposals.length} 条待确认`
       : `${items.length} 条已保存`;
   }
+  updateMemoryPendingBadge(proposals.length);
   document.querySelectorAll('[data-memory-layer]').forEach(button => {
     const active = (button.dataset.memoryLayer || '') === (state.memoryLayer || '');
     button.classList.toggle('active', active);
@@ -1025,6 +1051,18 @@ function setMemoryRefreshBusy(busy, message = '') {
   if (!status) return;
   status.hidden = !message;
   status.textContent = message;
+}
+
+async function refreshMemoryPendingCount() {
+  try {
+    const response = await apiFetch('/api/agent/memories');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return;
+    const next = { items: data.items || [], proposals: data.proposals || [] };
+    state.memories = next;
+    updateMemoryPendingBadge(next.proposals.length);
+    if (state.mode === 'memory') renderMemoryWorkspace();
+  } catch {}
 }
 
 async function loadMemoriesPanel() {
@@ -1101,6 +1139,7 @@ async function handleMemoryProposalAction(id, action) {
   }
   document.querySelector(`[data-memory-card="${CSS.escape(id)}"]`)?.remove();
   if (state.mode === 'memory') await loadMemoriesPanel();
+  else await refreshMemoryPendingCount();
   showToast(action === 'approve' ? '长期记忆已保存' : '已忽略这项记忆草稿', 'success');
 }
 
@@ -1314,6 +1353,78 @@ function confirmAction({ title, message, confirmText = '确认' }) {
   });
 }
 
+let pendingKnowledgeNameResolve = null;
+
+function validateKnowledgeName(name) {
+  const value = String(name || '').trim();
+  if (!value) return '名称不能为空';
+  if (value.length > 80) return '名称不能超过 80 个字符';
+  if (/[\\/]/.test(value)) return '名称不能包含 / 或 \\';
+  return '';
+}
+
+function finishKnowledgeNameDialog(value) {
+  const dialog = $('#knowledgeNameDialog');
+  const resolve = pendingKnowledgeNameResolve;
+  pendingKnowledgeNameResolve = null;
+  if (dialog?.open) dialog.close();
+  if (resolve) resolve(value);
+}
+
+function promptKnowledgeName({ title, label, defaultValue = '', hint = '', submitText = '确认', selectOnOpen = false }) {
+  const dialog = $('#knowledgeNameDialog');
+  const input = $('#knowledgeNameInput');
+  const hintEl = $('#knowledgeNameHint');
+  if (!dialog || !input) return Promise.resolve(null);
+  if (pendingKnowledgeNameResolve) finishKnowledgeNameDialog(null);
+  $('#knowledgeNameTitle').textContent = title;
+  $('#knowledgeNameLabel').textContent = label;
+  $('#knowledgeNameSubmit').textContent = submitText;
+  input.value = defaultValue;
+  if (hint) {
+    hintEl.textContent = hint;
+    hintEl.hidden = false;
+  } else {
+    hintEl.textContent = '';
+    hintEl.hidden = true;
+  }
+  if (dialog.open) dialog.close();
+  dialog.showModal();
+  return new Promise(resolve => {
+    pendingKnowledgeNameResolve = resolve;
+    requestAnimationFrame(() => {
+      input.focus();
+      if (selectOnOpen && defaultValue) input.select();
+    });
+  });
+}
+
+function submitKnowledgeNameForm(event) {
+  event.preventDefault();
+  const input = $('#knowledgeNameInput');
+  const name = input.value.trim();
+  const error = validateKnowledgeName(name);
+  if (error) {
+    showToast(error, 'error');
+    input.focus();
+    return;
+  }
+  finishKnowledgeNameDialog(name);
+}
+
+function initKnowledgeNameDialog() {
+  const dialog = $('#knowledgeNameDialog');
+  const form = $('#knowledgeNameForm');
+  if (!dialog || !form) return;
+  form.addEventListener('submit', submitKnowledgeNameForm);
+  $('#knowledgeNameCancel').addEventListener('click', () => finishKnowledgeNameDialog(null));
+  $('#knowledgeNameClose').addEventListener('click', () => finishKnowledgeNameDialog(null));
+  dialog.addEventListener('click', event => {
+    if (event.target === dialog) finishKnowledgeNameDialog(null);
+  });
+  dialog.addEventListener('cancel', () => finishKnowledgeNameDialog(null));
+}
+
 async function archiveSession(id) {
   const session = state.sessions.find(item => item.id === id);
   if (!session) return;
@@ -1414,7 +1525,7 @@ function upsertRunTrace(run, { live = false } = {}) {
       <div class="trace-events"></div>`;
     list.append(details);
   }
-  if (live) details.open = true;
+  if (live) details.open = false;
   const lines = Array.isArray(run.trace) ? run.trace.map(item => String(item || '').trim()).filter(Boolean) : [];
   const eventsEl = details.querySelector('.trace-events');
   const summaryEl = details.querySelector('.trace-summary');
@@ -1428,7 +1539,6 @@ function trace(text) {
   if (!text) return;
   const details = runTraceHost(state.runId) || upsertRunTrace({ id: state.runId, trace: [] }, { live: true });
   if (!details) return;
-  details.open = true;
   const eventsEl = details.querySelector('.trace-events');
   const summaryEl = details.querySelector('.trace-summary');
   const last = eventsEl.lastElementChild;
@@ -1562,7 +1672,10 @@ function handleRunEvent(event) {
   if (event.type === 'checkpoint.updated') trace('已更新工作进度');
   if (event.type === 'approval.required') { setRunStatus('waiting_approval'); trace('等待你的确认'); renderApproval(payload); }
   if (event.type === 'client_tool.requested') { setRunStatus('waiting_client_tool'); trace('等待浏览器返回结果'); }
-  if (event.type === 'memory.proposed') renderMemoryProposal(payload);
+  if (event.type === 'memory.proposed') {
+    renderMemoryProposal(payload);
+    refreshMemoryPendingCount().catch(() => {});
+  }
   if (event.type === 'run.completed') {
     let text = payload.text || '已完成。';
     for (const url of state.runImages) {
@@ -1770,6 +1883,10 @@ function documentListHeadingText() {
   return `文档 · ${total}`;
 }
 
+function activeKnowledgeSearchQuery() {
+  return $('#knowledgeSearch')?.value.trim() || '';
+}
+
 function documentRowSubtitle(document) {
   if (document.searchSnippet) {
     return String(document.searchSnippet).replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -1782,6 +1899,23 @@ function documentRowSubtitle(document) {
   if (state.selectedFolderPath) return date || '';
   if (document.folderPath) return date ? `${document.folderPath} · ${date}` : document.folderPath;
   return date || '';
+}
+
+function documentRowTitleHtml(document) {
+  const title = document.title || '未命名';
+  const q = activeKnowledgeSearchQuery();
+  return q ? highlightSearch(title, q) : escHtml(title);
+}
+
+function documentRowSubtitleHtml(document) {
+  const q = activeKnowledgeSearchQuery();
+  if (document.searchSnippet) {
+    const snippet = String(document.searchSnippet).replace(/\s+/g, ' ').trim().slice(0, 120);
+    return highlightSearch(snippet, q);
+  }
+  const text = documentRowSubtitle(document);
+  if (!text) return '';
+  return q ? highlightSearch(text, q) : escHtml(text);
 }
 
 function renderKnowledgeTree() {
@@ -1846,12 +1980,37 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
     await navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath });
     return;
   }
-  let name = '';
-  if (action === 'add-base') name = window.prompt('新知识库名称', '') || '';
-  if (action === 'add-folder') name = window.prompt(`在“${baseName}”下新建文件夹`, '') || '';
-  if (action === 'rename-base') name = window.prompt('新的知识库名称', baseName) || '';
-  if (action === 'rename-folder') name = window.prompt('新的文件夹名称', folderPath) || '';
-  name = name.trim();
+  let name = null;
+  if (action === 'add-base') {
+    name = await promptKnowledgeName({
+      title: '新建知识库',
+      label: '知识库名称',
+      submitText: '创建',
+    });
+  } else if (action === 'add-folder') {
+    name = await promptKnowledgeName({
+      title: '新建文件夹',
+      label: '文件夹名称',
+      hint: `位于「${baseName}」`,
+      submitText: '创建',
+    });
+  } else if (action === 'rename-base') {
+    name = await promptKnowledgeName({
+      title: '重命名知识库',
+      label: '新名称',
+      defaultValue: baseName,
+      submitText: '保存',
+      selectOnOpen: true,
+    });
+  } else if (action === 'rename-folder') {
+    name = await promptKnowledgeName({
+      title: '重命名文件夹',
+      label: '新名称',
+      defaultValue: folderPath,
+      submitText: '保存',
+      selectOnOpen: true,
+    });
+  }
   if (!name || name === (action === 'rename-base' ? baseName : folderPath)) return;
   const response = action === 'add-base' || action === 'add-folder'
     ? await apiFetch('/api/categories', {
@@ -1921,12 +2080,12 @@ function renderDocuments() {
     list.innerHTML = '<p class="empty-list">没有符合条件的知识文档。</p>';
   } else {
     list.innerHTML = state.documents.map(document => {
-      const subtitle = documentRowSubtitle(document);
+      const subtitleHtml = documentRowSubtitleHtml(document);
       return `
         <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
           <span class="document-row-body">
-            <span class="document-row-title"><strong>${escHtml(document.title || '未命名')}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
-            ${subtitle ? `<small>${escHtml(subtitle)}</small>` : ''}
+            <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
+            ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}
           </span>
         </div>`;
     }).join('');
@@ -2002,7 +2161,7 @@ async function renderActiveDocument(document) {
   $('#documentTitle').value = document.title || '';
   $('#documentKnowledgeBase').value = state.selectedKnowledgeBase;
   $('#documentFolderPath').value = state.selectedFolderPath;
-  $('#documentDate').value = document.documentDate || document.logDate || '';
+  $('#documentDate').value = document.documentDate || '';
   $('#documentTags').value = (document.tags || []).join(', ');
   $('#documentContent').value = document.content || '';
   $('#topbarSubtitle').textContent = document.title || '未命名';
@@ -2011,8 +2170,8 @@ async function renderActiveDocument(document) {
   $('#noteEditor').hidden = isFile;
   $('#fileReader').hidden = !isFile;
   $('#editorModeSwitch').hidden = isFile;
-  $('#archiveDocumentButton').hidden = document.sourceType === 'log' || document.status === 'archived';
-  $('#restoreDocumentButton').hidden = document.sourceType === 'log' || document.status !== 'archived';
+  $('#archiveDocumentButton').hidden = document.status === 'archived';
+  $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
   $('#documentTitle').readOnly = document.status === 'archived';
   $('#documentKnowledgeBase').readOnly = document.status === 'archived';
@@ -2039,7 +2198,9 @@ async function renderFile(document) {
   const extractText = document.content || (document.status === 'needs_ocr'
     ? '这是扫描型 PDF，当前版本尚未提供 OCR。'
     : '没有提取到正文。');
-  $('#fileContent').textContent = extractText;
+  const searchQuery = activeKnowledgeSearchQuery();
+  if (searchQuery) $('#fileContent').innerHTML = highlightSearch(extractText, searchQuery);
+  else $('#fileContent').textContent = extractText;
   const extractDetails = $('#fileExtractDetails');
   if (extractDetails) extractDetails.open = !shouldCollapseExtractText(document);
   $('#openOriginalFile').href = meta.url || `/api/knowledge/files/${encodeURIComponent(document.id)}/content`;
@@ -2079,31 +2240,58 @@ async function openKnowledgeDocument(id, { block = '', offset = 0, serial = stat
 
 function locateDocumentPosition(offset, content) {
   const position = Math.max(0, Math.min(Number(offset) || 0, content.length));
+  const q = activeKnowledgeSearchQuery();
+  const selectionEnd = q
+    ? Math.min(content.length, position + q.length)
+    : Math.min(content.length, position + 120);
   if (state.activeDocument?.sourceType === 'file') {
     const reader = $('#fileContent');
-    requestAnimationFrame(() => { reader.scrollTop = content.length ? reader.scrollHeight * (position / content.length) : 0; });
+    requestAnimationFrame(() => {
+      const mark = reader.querySelector('mark');
+      if (mark) mark.scrollIntoView({ block: 'center' });
+      else reader.scrollTop = content.length ? reader.scrollHeight * (position / content.length) : 0;
+    });
     return;
   }
   setEditorMode('edit');
   const editor = $('#documentContent');
   requestAnimationFrame(() => {
     editor.focus();
-    editor.setSelectionRange(position, Math.min(content.length, position + 120));
+    editor.setSelectionRange(position, selectionEnd);
     editor.scrollTop = content.length ? editor.scrollHeight * (position / content.length) : 0;
   });
 }
 
 function setEditorMode(mode) {
-  state.editorMode = mode === 'preview' ? 'preview' : 'edit';
-  document.querySelectorAll('[data-editor-mode]').forEach(button => button.classList.toggle('active', button.dataset.editorMode === state.editorMode));
-  const preview = state.editorMode === 'preview';
-  $('#documentContent').hidden = preview;
-  $('#documentPreview').hidden = !preview;
-  if (preview) renderDocumentPreview();
+  const next = mode === 'preview' ? 'preview' : mode === 'split' ? 'split' : 'edit';
+  state.editorMode = next;
+  document.querySelectorAll('[data-editor-mode]').forEach(button => {
+    button.classList.toggle('active', button.dataset.editorMode === next);
+  });
+  const editor = $('#noteEditor');
+  const textarea = $('#documentContent');
+  const preview = $('#documentPreview');
+  editor?.classList.toggle('is-split', next === 'split');
+  textarea.hidden = next === 'preview';
+  preview.hidden = next === 'edit';
+  if (next === 'preview' || next === 'split') renderDocumentPreview();
   else if (documentPreviewCleanup) {
     documentPreviewCleanup();
     documentPreviewCleanup = null;
   }
+}
+
+function cycleEditorMode() {
+  const order = ['edit', 'split', 'preview'];
+  const index = order.indexOf(state.editorMode);
+  setEditorMode(order[(index + 1) % order.length]);
+}
+
+function isNoteEditorActive() {
+  return state.mode === 'knowledge'
+    && state.activeDocument?.sourceType === 'note'
+    && !$('#noteEditor')?.hidden
+    && !$('#documentWorkspace')?.hidden;
 }
 
 function currentDocumentPatch() {
@@ -2128,7 +2316,7 @@ function updateDocumentSummary(document) {
     collectionPath: document.collectionPath,
     knowledgeBase: document.knowledgeBase,
     folderPath: document.folderPath,
-    documentDate: document.documentDate || document.logDate || '',
+    documentDate: document.documentDate || '',
     tags: document.tags,
     version: document.version,
     updatedAt: document.updatedAt,
@@ -2341,7 +2529,7 @@ async function handleDocumentImagePaste(event) {
 
 async function archiveActiveDocument() {
   const document = state.activeDocument;
-  if (!document || document.sourceType === 'log') return;
+  if (!document) return;
   const confirmed = await confirmAction({
     title: '归档知识文档',
     message: `“${document.title || '未命名'}”将从默认列表和检索结果中隐藏，原文件不会被删除。`,
@@ -2358,7 +2546,7 @@ async function archiveActiveDocument() {
 
 async function restoreActiveDocument() {
   const document = state.activeDocument;
-  if (!document || document.sourceType === 'log' || document.status !== 'archived') return;
+  if (!document || document.status !== 'archived') return;
   const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/restore`, { method: 'POST' });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '恢复失败', 'error');
@@ -2371,12 +2559,6 @@ async function restoreActiveDocument() {
 
 function deleteConfirmCopy(document) {
   const title = document.title || '未命名';
-  if (document.sourceType === 'log') {
-    return {
-      title: '删除工作日志',
-      message: `“${title}”将永久删除这条工作日志，不可恢复。`,
-    };
-  }
   if (document.sourceType === 'file') {
     return {
       title: '删除知识文件',
@@ -2459,6 +2641,7 @@ function applyTheme(value) {
 }
 
 function bindEvents() {
+  initKnowledgeNameDialog();
   document.querySelector('.topbar-mode-switch').addEventListener('click', async event => {
     const button = event.target.closest('[data-mode]');
     if (!button) return;
@@ -2699,6 +2882,11 @@ function bindEvents() {
   $('#deleteDocumentButton').addEventListener('click', deleteActiveDocument);
   ['annotationTitle', 'annotationContent'].forEach(id => $(`#${id}`).addEventListener('input', scheduleAnnotationSave));
   document.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p' && isNoteEditorActive()) {
+      event.preventDefault();
+      cycleEditorMode();
+      return;
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && state.mode === 'knowledge') {
       event.preventDefault();
       flushPendingSaves();
@@ -2743,6 +2931,13 @@ function bindEvents() {
     const button = event.target.closest('[data-settings-nav]');
     if (button) setSettingsPanel(button.dataset.settingsNav);
   });
+  createBackupActions({
+    confirmAction,
+    reloadKnowledge: async () => {
+      await loadKnowledgeTree();
+      await loadDocuments();
+    },
+  }).bindBackupEvents();
   $('#btnComputerAllowlistAdd').addEventListener('click', addComputerAllowlistEntry);
   $('#computerAllowlistInput').addEventListener('keydown', event => {
     if (event.key === 'Enter') {
@@ -2817,8 +3012,7 @@ async function initialize() {
   const savedTheme = localStorage.getItem('theme');
   $('#themeSelect').value = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'system';
   await Promise.all([loadAccount(), syncDiaryStatus(), loadAgentStatus()]);
-  await loadKnowledgeTree();
-  await loadSessions();
+  await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();
 }

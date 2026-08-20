@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createAgentStore } = require('../lib/agent/store');
 const { createMemoryService, normalizeMemoryProposalArgs, buildMemoryRefreshUserMessage, MEMORY_CONTENT_MAX } = require('../lib/agent/memory');
-const { createRuntime, parseActionEnvelope } = require('../lib/agent/runtime');
+const { createRuntime, parseActionEnvelope, clampMaxRounds } = require('../lib/agent/runtime');
 const { toProviderTools, fromProviderName, definitions } = require('../lib/agent/tools');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
 const { savePolicy } = require('../lib/computer/policy');
@@ -17,10 +17,16 @@ const express = require('express');
 function tempDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.DATA_DIR = dir;
   process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
-  delete require.cache[require.resolve('../database.js')];
-  return require('../database.js');
+  const { createDatabase } = require('../database.js');
+  return createDatabase(dir);
+}
+
+function openKnowledge(db) {
+  const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
+  const { createKnowledgeService } = require('../lib/knowledge/documents');
+  ensureLogsMigrated(db);
+  return createKnowledgeService(db);
 }
 
 test('action envelope parses tool calls', () => {
@@ -353,7 +359,7 @@ test('@ mentions inject matching documents and skip locked diary', (t) => {
   const db = tempDb(t);
   db.create({ title: '发布流程', content: '先评审再发布', category: '开发', log_date: '2026-05-16' });
   db.create({ title: '日记秘密', content: '不应出现', category: '日记', log_date: '2026-05-16' });
-  const knowledge = createKnowledgeService(db);
+  const knowledge = openKnowledge(db);
   const locked = expandMentions('@开发 @2026-05-16', { knowledge, db, diaryUnlocked: false });
   assert.equal(locked.documents.some(doc => doc.title === '发布流程'), true);
   assert.match(locked.context, /先评审再发布/);
@@ -371,7 +377,7 @@ test('runtime injects @ knowledge for the model without storing it in the sessio
     db,
     store,
     memory: createMemoryService(store),
-    knowledgeSearch: { knowledge: createKnowledgeService(db) },
+    knowledgeSearch: { knowledge: openKnowledge(db) },
     hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
@@ -493,6 +499,34 @@ test('runtime honors saved agentMaxRounds', async (t) => {
   assert.equal(done.status, 'failed');
   assert.equal(done.error, 'Round limit exceeded');
   assert.equal(done.round, 4);
+});
+
+test('clampMaxRounds has no upper cap', () => {
+  assert.equal(clampMaxRounds(64), 64);
+  assert.equal(clampMaxRounds(100), 100);
+  assert.equal(clampMaxRounds(3), 4);
+});
+
+test('runtime honors high saved agentMaxRounds without an upper cap', async (t) => {
+  const db = tempDb(t);
+  db.saveAiSettings({ ...db.getAiSettings(), agentMaxRounds: 64 });
+  const store = createAgentStore(db);
+  const runtime = createRuntime({
+    db,
+    store,
+    memory: createMemoryService(store),
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        return { text: 'done', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('high-rounds');
+  const run = await runtime.start({ session, goal: 'ok', userMessage: 'ok' });
+  const done = await waitForRun(store, run.id, 800);
+  assert.equal(done.status, 'completed');
+  assert.ok(done.round <= 64);
 });
 
 test('memory dismiss rejects a pending proposal', (t) => {

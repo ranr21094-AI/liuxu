@@ -10,15 +10,11 @@ const DATA_FILE = path.join(DATA_DIR, 'logs.json');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
 const PRIVATE_UPLOADS_FILE = path.join(DATA_DIR, 'private-uploads.json');
-const AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
-const AI_MEDIA_FILE = path.join(DATA_DIR, 'ai-media.json');
-const AI_MEDIA_DIR = path.join(DATA_DIR, 'ai-media');
+const LEGACY_AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
 const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
 const COUNTDOWNS_FILE = path.join(DATA_DIR, 'countdowns.json');
-const AI_CHAT_MAX_MESSAGES = 50;
-const AI_CHAT_MAX_CONVERSATIONS = 200;
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   moonshotApiKey: '',
@@ -27,10 +23,6 @@ const DEFAULT_AI_SETTINGS = {
   reasoningEffort: 'high',
   reasoningMode: 'effort',
   thinkingMode: 'enabled',
-  stream: false,
-  userProfile: '',
-  logContextEnabled: false,
-  diaryContextEnabled: false,
   tavilyApiKey: '',
   perplexityApiKey: '',
   webSearchEnabled: false,
@@ -41,12 +33,12 @@ const DEFAULT_AI_SETTINGS = {
   seedreamModel: 'doubao-seedream-5-0-260128',
   seedreamSize: '2K',
   seedreamWatermark: true,
-  logAccessPolicy: null,
   skills: {
     westock: { enabled: true },
     perplexity: { enabled: true },
   },
   agentMaxRounds: 12,
+  agentFileReadMaxMb: 4,
 };
 
 // In-memory cache
@@ -57,9 +49,7 @@ const cache = {
   todoCategories: null,
   categories: null,
   privateUploads: null,
-  aiChats: null,
   aiSettings: null,
-  aiMedia: null,
   todoReminderSettings: null,
   todoReminderState: null,
   maxLogId: 0,
@@ -77,9 +67,7 @@ function resetCache() {
   cache.todoCategories = null;
   cache.categories = null;
   cache.privateUploads = null;
-  cache.aiChats = null;
   cache.aiSettings = null;
-  cache.aiMedia = null;
   cache.todoReminderSettings = null;
   cache.todoReminderState = null;
   cache.maxLogId = 0;
@@ -369,229 +357,6 @@ function writePrivateUploads(filenames) {
   cache.privateUploads = next;
 }
 
-function normalizeAiAttachment(attachment) {
-  if (!isPlainObject(attachment)) return null;
-  const id = normalizeString(attachment.id, '').trim();
-  if (!/^[a-f0-9-]{16,80}$/i.test(id)) return null;
-  const kind = attachment.kind === 'video' ? 'video' : (attachment.kind === 'image' ? 'image' : '');
-  if (!kind) return null;
-  const name = normalizeString(attachment.name, '').trim().slice(0, 255);
-  const mimeType = normalizeString(attachment.mimeType, '').trim().slice(0, 100);
-  const bytes = Number(attachment.bytes);
-  return {
-    id,
-    kind,
-    name: name || `${kind}-${id.slice(0, 8)}`,
-    mimeType,
-    bytes: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : 0,
-  };
-}
-
-function normalizeAiProviderToolCall(call) {
-  if (!isPlainObject(call)) return null;
-  const id = normalizeString(call.id, '').trim().slice(0, 160);
-  const type = call.type === 'function' ? 'function' : '';
-  const fn = isPlainObject(call.function) ? call.function : {};
-  const name = normalizeString(fn.name, '').trim().slice(0, 80);
-  const args = normalizeString(fn.arguments, '');
-  if (!id || !type || !name || !args) return null;
-  return { id, type, function: { name, arguments: args } };
-}
-
-function normalizeAiProviderTrace(trace) {
-  if (!Array.isArray(trace)) return [];
-  return trace.slice(0, 24).map((entry) => {
-    if (!isPlainObject(entry) || !['assistant', 'tool'].includes(entry.role)) return null;
-    if (entry.role === 'tool') {
-      const toolCallId = normalizeString(entry.tool_call_id, '').trim().slice(0, 160);
-      const content = normalizeString(entry.content, '');
-      return toolCallId && content ? { role: 'tool', tool_call_id: toolCallId, content } : null;
-    }
-    const normalized = {
-      role: 'assistant',
-      content: normalizeString(entry.content, ''),
-    };
-    const reasoningContent = normalizeString(entry.reasoning_content ?? entry.reasoningContent, '');
-    if (reasoningContent) normalized.reasoning_content = reasoningContent;
-    const toolCalls = Array.isArray(entry.tool_calls)
-      ? entry.tool_calls.map(normalizeAiProviderToolCall).filter(Boolean).slice(0, 6)
-      : [];
-    if (toolCalls.length) normalized.tool_calls = toolCalls;
-    return normalized.content || normalized.reasoning_content || normalized.tool_calls ? normalized : null;
-  }).filter(Boolean);
-}
-
-function normalizeOpenRouterReasoningDetails(value) {
-  if (!Array.isArray(value) || value.length > 128) return [];
-  try {
-    const serialized = JSON.stringify(value);
-    if (Buffer.byteLength(serialized, 'utf8') > 1024 * 1024) return [];
-    const cloned = JSON.parse(serialized);
-    return cloned.every(item => isPlainObject(item)) ? cloned : [];
-  } catch {
-    return [];
-  }
-}
-
-function normalizeAiChatMessage(message) {
-  const role = message && message.role;
-  const content = typeof message?.content === 'string' ? message.content.slice(0, 4000) : '';
-  const attachments = Array.isArray(message?.attachments)
-    ? message.attachments.map(normalizeAiAttachment).filter(Boolean).slice(0, 4)
-    : [];
-  if (!['user', 'assistant'].includes(role) || (!content.trim() && !attachments.length)) return null;
-  const sources = Array.isArray(message.sources)
-    ? message.sources.slice(0, 10).map(source => ({
-      title: normalizeString(source?.title, '').trim().slice(0, 120),
-      url: normalizeString(source?.url, '').trim().slice(0, 800),
-    })).filter(source => source.url)
-    : [];
-  const editorSuggestion = isPlainObject(message.editorSuggestion)
-    ? {
-      reply: normalizeString(message.editorSuggestion.reply, '').trim().slice(0, 4000),
-      suggestedTitle: normalizeString(message.editorSuggestion.suggestedTitle, '').trim().slice(0, 200),
-      suggestedContent: normalizeString(message.editorSuggestion.suggestedContent, '').slice(0, 20000),
-      insertText: normalizeString(message.editorSuggestion.insertText, '').slice(0, 8000),
-    }
-    : null;
-  const normalized = sources.length ? { role, content, sources } : { role, content };
-  if (attachments.length) normalized.attachments = attachments;
-  if (role === 'assistant') {
-    const provider = ['deepseek', 'moonshot', 'openrouter'].includes(message.provider) ? message.provider : '';
-    const modelId = isStoredAiModel(message.modelId) ? message.modelId : '';
-    if (provider) normalized.provider = provider;
-    if (modelId) normalized.modelId = modelId;
-    const reasoningContent = normalizeString(message.reasoningContent, '');
-    if (reasoningContent) normalized.reasoningContent = reasoningContent;
-    const providerTrace = normalizeAiProviderTrace(message.providerTrace);
-    if (providerTrace.length) normalized.providerTrace = providerTrace;
-    const openrouterReasoningDetails = normalizeOpenRouterReasoningDetails(message.openrouterReasoningDetails);
-    if (openrouterReasoningDetails.length) normalized.openrouterReasoningDetails = openrouterReasoningDetails;
-  }
-  if (editorSuggestion) {
-    Object.keys(editorSuggestion).forEach(key => {
-      if (!editorSuggestion[key]) delete editorSuggestion[key];
-    });
-    if (Object.keys(editorSuggestion).length) normalized.editorSuggestion = editorSuggestion;
-  }
-  if (isPlainObject(message.imageGeneration)) {
-    const imageGeneration = {
-      status: ['optimizing', 'pending', 'generating', 'done', 'error', 'cancelled'].includes(message.imageGeneration.status) ? message.imageGeneration.status : 'pending',
-      originalPrompt: normalizeString(message.imageGeneration.originalPrompt, '').trim().slice(0, 1200),
-      optimizedPrompt: normalizeString(message.imageGeneration.optimizedPrompt, '').trim().slice(0, 1200),
-      selectedPrompt: normalizeString(message.imageGeneration.selectedPrompt, '').trim().slice(0, 1200),
-      promptMode: ['original', 'optimized'].includes(message.imageGeneration.promptMode) ? message.imageGeneration.promptMode : '',
-      prompt: normalizeString(message.imageGeneration.prompt, '').trim().slice(0, 800),
-      url: normalizeString(message.imageGeneration.url, '').trim().slice(0, 800),
-      filename: normalizeString(message.imageGeneration.filename, '').trim().slice(0, 160),
-      markdown: normalizeString(message.imageGeneration.markdown, '').trim().slice(0, 1000),
-      error: normalizeString(message.imageGeneration.error, '').trim().slice(0, 240),
-      model: normalizeString(message.imageGeneration.model, '').trim().slice(0, 80),
-      size: normalizeString(message.imageGeneration.size, '').trim().slice(0, 40),
-    };
-    Object.keys(imageGeneration).forEach(key => {
-      if (!imageGeneration[key]) delete imageGeneration[key];
-    });
-    normalized.imageGeneration = imageGeneration;
-  }
-  if (isPlainObject(message.toolCall)) {
-    const toolCall = {
-      skillId: normalizeString(message.toolCall.skillId, '').trim().slice(0, 40),
-      tool: normalizeString(message.toolCall.tool, '').trim().slice(0, 40),
-      args: isPlainObject(message.toolCall.args) ? message.toolCall.args : {},
-      requiresConfirmation: message.toolCall.requiresConfirmation !== false,
-      status: ['pending', 'running', 'done', 'error'].includes(message.toolCall.status) ? message.toolCall.status : 'pending',
-      error: normalizeString(message.toolCall.error, '').trim().slice(0, 240),
-    };
-    if (toolCall.skillId && toolCall.tool) normalized.toolCall = toolCall;
-  }
-  if (isPlainObject(message.toolResult)) {
-    const toolResult = {
-      skillId: normalizeString(message.toolResult.skillId, '').trim().slice(0, 40),
-      tool: normalizeString(message.toolResult.tool, '').trim().slice(0, 40),
-      content: normalizeString(message.toolResult.content, '').slice(0, 60000),
-    };
-    if (toolResult.skillId && toolResult.tool && toolResult.content) normalized.toolResult = toolResult;
-  }
-  return normalized;
-}
-
-function normalizeAiConversation(item) {
-  if (!isPlainObject(item) || typeof item.id !== 'string' || !item.id) return null;
-  const rawMessages = Array.isArray(item.messages)
-    ? item.messages.map(normalizeAiChatMessage).filter(Boolean)
-    : [];
-  // Preserve a "truncated" marker so silent history loss stays observable: once older
-  // messages are dropped to stay within AI_CHAT_MAX_MESSAGES, the flag persists on disk.
-  const truncated = item.truncated === true || rawMessages.length > AI_CHAT_MAX_MESSAGES;
-  const messages = rawMessages.slice(-AI_CHAT_MAX_MESSAGES);
-  const title = typeof item.title === 'string' && item.title.trim()
-    ? item.title.trim().slice(0, 40)
-    : '\u65b0\u5bf9\u8bdd';
-  const updatedAt = Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now();
-  const scope = item.scope === 'editor' ? 'editor' : 'global';
-  const logKey = scope === 'editor' && typeof item.logKey === 'string'
-    ? item.logKey.trim().slice(0, 120)
-    : '';
-  const result = {
-    id: item.id.slice(0, 80),
-    title,
-    messages,
-    updatedAt,
-    scope,
-    logKey,
-    model: isStoredAiModel(item.model) ? item.model : '',
-    diarySensitive: item.diarySensitive === true,
-  };
-  // Only persist a "truncated" marker when history was actually dropped, so the
-  // stored schema stays clean for untruncated conversations.
-  if (truncated) result.truncated = true;
-  return result;
-}
-
-function readAiChats() {
-  if (cache.aiChats !== null) return cloneJson(cache.aiChats);
-  ensureDataDir();
-  if (!fs.existsSync(AI_CHATS_FILE)) {
-    cache.aiChats = { conversations: [], activeConversationId: '' };
-    return cloneJson(cache.aiChats);
-  }
-  try {
-    const saved = JSON.parse(fs.readFileSync(AI_CHATS_FILE, 'utf-8'));
-    const conversations = Array.isArray(saved?.conversations)
-      ? saved.conversations.map(normalizeAiConversation).filter(Boolean)
-      : [];
-    const activeConversationId = conversations.some(item => item.id === saved?.activeConversationId)
-      ? saved.activeConversationId
-      : (conversations[0]?.id || '');
-    cache.aiChats = { conversations, activeConversationId };
-    return cloneJson(cache.aiChats);
-  } catch (err) {
-    return failCorruptData('ai-chats.json', AI_CHATS_FILE, err);
-  }
-}
-
-function writeAiChats(data) {
-  ensureDataDir();
-  const sourceConversations = Array.isArray(data?.conversations) ? data.conversations : [];
-  const conversations = sourceConversations
-    .map(normalizeAiConversation)
-    .filter(Boolean)
-    .slice(0, AI_CHAT_MAX_CONVERSATIONS);
-  if (sourceConversations.length > AI_CHAT_MAX_CONVERSATIONS) {
-    console.warn(
-      `[work-log] AI chat history truncated: dropped ${sourceConversations.length - AI_CHAT_MAX_CONVERSATIONS} conversation(s) to stay within ${AI_CHAT_MAX_CONVERSATIONS}`,
-    );
-  }
-  const activeConversationId = conversations.some(item => item.id === data?.activeConversationId)
-    ? data.activeConversationId
-    : (conversations[0]?.id || '');
-  const next = { conversations, activeConversationId };
-  atomicWriteJson(AI_CHATS_FILE, next);
-  cache.aiChats = cloneJson(next);
-  return cloneJson(next);
-}
-
 function isStoredAiModel(value) {
   return typeof value === 'string' && (
     ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'].includes(value) ||
@@ -635,30 +400,6 @@ function normalizeAiSettings(data) {
   const skillsSource = isPlainObject(source.skills) ? source.skills : {};
   const westockSource = isPlainObject(skillsSource.westock) ? skillsSource.westock : {};
   const perplexitySource = isPlainObject(skillsSource.perplexity) ? skillsSource.perplexity : {};
-  const policySource = isPlainObject(source.logAccessPolicy) ? source.logAccessPolicy : null;
-  const normalizePolicy = (policy) => {
-    if (!policy) return null;
-    const deniedSource = isPlainObject(policy.deniedSubcategories) ? policy.deniedSubcategories : {};
-    const deniedSubcategories = {};
-    Object.entries(deniedSource).forEach(([parent, subs]) => {
-      if (typeof parent !== 'string' || !Array.isArray(subs)) return;
-      const cleanParent = parent.trim().slice(0, 80);
-      const cleanSubs = [...new Set(subs
-        .filter(sub => typeof sub === 'string')
-        .map(sub => sub.trim().slice(0, 80))
-        .filter(Boolean))];
-      if (cleanParent && cleanSubs.length) deniedSubcategories[cleanParent] = cleanSubs;
-    });
-    return {
-      allowedParents: Array.isArray(policy.allowedParents)
-        ? [...new Set(policy.allowedParents
-          .filter(parent => typeof parent === 'string')
-          .map(parent => parent.trim().slice(0, 80))
-          .filter(Boolean))]
-        : [],
-      deniedSubcategories,
-    };
-  };
   return {
     apiKey: typeof source.apiKey === 'string' ? source.apiKey.trim().slice(0, 500) : '',
     moonshotApiKey: typeof source.moonshotApiKey === 'string' ? source.moonshotApiKey.trim().slice(0, 500) : '',
@@ -669,10 +410,6 @@ function normalizeAiSettings(data) {
       ? source.reasoningMode
       : DEFAULT_AI_SETTINGS.reasoningMode,
     thinkingMode: ['enabled', 'disabled'].includes(source.thinkingMode) ? source.thinkingMode : DEFAULT_AI_SETTINGS.thinkingMode,
-    stream: typeof source.stream === 'boolean' ? source.stream : DEFAULT_AI_SETTINGS.stream,
-    userProfile: typeof source.userProfile === 'string' ? source.userProfile.trim().slice(0, 2000) : DEFAULT_AI_SETTINGS.userProfile,
-    logContextEnabled: typeof source.logContextEnabled === 'boolean' ? source.logContextEnabled : DEFAULT_AI_SETTINGS.logContextEnabled,
-    diaryContextEnabled: typeof source.diaryContextEnabled === 'boolean' ? source.diaryContextEnabled : DEFAULT_AI_SETTINGS.diaryContextEnabled,
     tavilyApiKey: typeof source.tavilyApiKey === 'string' ? source.tavilyApiKey.trim().slice(0, 500) : '',
     perplexityApiKey: typeof source.perplexityApiKey === 'string' ? source.perplexityApiKey.trim().slice(0, 500) : '',
     webSearchEnabled: typeof source.webSearchEnabled === 'boolean' ? source.webSearchEnabled : DEFAULT_AI_SETTINGS.webSearchEnabled,
@@ -689,7 +426,6 @@ function normalizeAiSettings(data) {
       ? source.seedreamSize.trim().slice(0, 40)
       : DEFAULT_AI_SETTINGS.seedreamSize,
     seedreamWatermark: typeof source.seedreamWatermark === 'boolean' ? source.seedreamWatermark : DEFAULT_AI_SETTINGS.seedreamWatermark,
-    logAccessPolicy: normalizePolicy(policySource),
     skills: {
       westock: {
         enabled: typeof westockSource.enabled === 'boolean' ? westockSource.enabled : true,
@@ -699,13 +435,24 @@ function normalizeAiSettings(data) {
       },
     },
     agentMaxRounds: normalizeAgentMaxRounds(source.agentMaxRounds),
+    agentFileReadMaxMb: normalizeAgentFileReadMaxMb(source.agentFileReadMaxMb),
   };
 }
 
 function normalizeAgentMaxRounds(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return DEFAULT_AI_SETTINGS.agentMaxRounds;
-  return Math.min(48, Math.max(4, Math.round(n)));
+  return Math.max(4, Math.round(n));
+}
+
+function normalizeAgentFileReadMaxMb(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return DEFAULT_AI_SETTINGS.agentFileReadMaxMb;
+  return Math.max(1, Math.round(n));
+}
+
+function agentFileReadMaxBytes(value) {
+  return normalizeAgentFileReadMaxMb(value) * 1024 * 1024;
 }
 
 function readAiSettings() {
@@ -732,88 +479,6 @@ function writeAiSettings(data) {
   atomicWriteJson(AI_SETTINGS_FILE, serializeAiSettings(next));
   cache.aiSettings = cloneJson(next);
   return cloneJson(next);
-}
-
-function normalizeAiMediaEntry(item) {
-  if (!isPlainObject(item)) return null;
-  const id = normalizeString(item.id, '').trim();
-  const storedFilename = normalizeString(item.storedFilename, '').trim();
-  const kind = item.kind === 'video' ? 'video' : (item.kind === 'image' ? 'image' : '');
-  const bytes = Number(item.bytes);
-  if (!/^[a-f0-9-]{16,80}$/i.test(id) || !/^[a-f0-9-]{16,100}\.[a-z0-9]{2,8}$/i.test(storedFilename) || !kind) return null;
-  return {
-    id,
-    storedFilename,
-    name: normalizeString(item.name, '').trim().slice(0, 255) || storedFilename,
-    mimeType: normalizeString(item.mimeType, '').trim().slice(0, 100),
-    kind,
-    bytes: Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : 0,
-    createdAt: Number.isFinite(Number(item.createdAt)) ? Number(item.createdAt) : Date.now(),
-    updatedAt: Number.isFinite(Number(item.updatedAt)) ? Number(item.updatedAt) : Date.now(),
-    moonshotFileId: normalizeString(item.moonshotFileId, '').trim().slice(0, 200),
-    moonshotKeyFingerprint: normalizeString(item.moonshotKeyFingerprint, '').trim().slice(0, 64),
-    moonshotStatus: normalizeString(item.moonshotStatus, '').trim().slice(0, 40),
-    moonshotVerifiedAt: Number.isFinite(Number(item.moonshotVerifiedAt)) ? Number(item.moonshotVerifiedAt) : 0,
-  };
-}
-
-function readAiMedia() {
-  if (cache.aiMedia !== null) return cloneJson(cache.aiMedia);
-  ensureDataDir();
-  if (!fs.existsSync(AI_MEDIA_FILE)) {
-    cache.aiMedia = [];
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(AI_MEDIA_FILE, 'utf-8'));
-    if (!Array.isArray(parsed)) throw new Error('media registry must be an array');
-    cache.aiMedia = parsed.map(normalizeAiMediaEntry).filter(Boolean);
-    return cloneJson(cache.aiMedia);
-  } catch (err) {
-    return failCorruptData('ai-media.json', AI_MEDIA_FILE, err);
-  }
-}
-
-function writeAiMedia(items) {
-  const normalized = Array.isArray(items) ? items.map(normalizeAiMediaEntry).filter(Boolean) : [];
-  atomicWriteJson(AI_MEDIA_FILE, normalized);
-  cache.aiMedia = cloneJson(normalized);
-  return cloneJson(normalized);
-}
-
-function getAiMediaById(id) {
-  const item = readAiMedia().find(entry => entry.id === id);
-  return item ? cloneJson(item) : null;
-}
-
-function createAiMedia(item) {
-  const normalized = normalizeAiMediaEntry(item);
-  if (!normalized) throw new Error('Invalid AI media metadata');
-  const items = readAiMedia();
-  if (items.some(entry => entry.id === normalized.id)) throw new Error('AI media id already exists');
-  fs.mkdirSync(AI_MEDIA_DIR, { recursive: true });
-  writeAiMedia([...items, normalized]);
-  return cloneJson(normalized);
-}
-
-function updateAiMedia(id, patch) {
-  const items = readAiMedia();
-  const index = items.findIndex(entry => entry.id === id);
-  if (index === -1) return null;
-  const normalized = normalizeAiMediaEntry({ ...items[index], ...patch, id, updatedAt: Date.now() });
-  if (!normalized) throw new Error('Invalid AI media metadata');
-  items[index] = normalized;
-  writeAiMedia(items);
-  return cloneJson(normalized);
-}
-
-function removeAiMedia(id) {
-  const items = readAiMedia();
-  const index = items.findIndex(entry => entry.id === id);
-  if (index === -1) return null;
-  const [removed] = items.splice(index, 1);
-  writeAiMedia(items);
-  return cloneJson(removed);
 }
 
 function readTodoReminderSettings() {
@@ -1038,6 +703,11 @@ function remove(id) {
   if (isDiaryCategory(logs[index].category)) markPrivateUploadsFromContent(logs[index].content);
   logs.splice(index, 1);
   writeLogs(logs);
+  return true;
+}
+
+function clearLogs() {
+  writeLogs([]);
   return true;
 }
 
@@ -1689,9 +1359,7 @@ function checkDataIntegrity() {
   readCountdowns();
   readTodoCategories();
   readPrivateUploads();
-  readAiChats();
   readAiSettings();
-  readAiMedia();
   readTodoReminderSettings();
   readTodoReminderState();
 
@@ -1729,9 +1397,14 @@ function backup() {
     todoCategories: getTodoCategories(),
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
-    aiChats: readAiChats(),
     exportedAt: new Date().toISOString(),
   };
+}
+
+function stageLegacyAiChatsForMigration(data) {
+  if (!data?.aiChats || typeof data.aiChats !== 'object' || Array.isArray(data.aiChats)) return;
+  if (!Array.isArray(data.aiChats.conversations) || !data.aiChats.conversations.length) return;
+  atomicWriteJson(LEGACY_AI_CHATS_FILE, data.aiChats);
 }
 
 function normalizePrivateUploadsForRestore(privateUploads) {
@@ -1957,38 +1630,6 @@ function normalizeCountdownsForRestore(countdowns) {
   return { countdowns: normalized };
 }
 
-function normalizeAiChatsForRestore(value) {
-  if (value === undefined) return { aiChats: { conversations: [], activeConversationId: '' } };
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return { error: 'Invalid AI chat data' };
-  if (value.conversations !== undefined && !Array.isArray(value.conversations)) {
-    return { error: 'Invalid AI conversation list' };
-  }
-  const conversations = [];
-  for (const item of value.conversations || []) {
-    const normalized = normalizeAiConversation(item);
-    if (!normalized) return { error: 'Invalid AI conversation' };
-    conversations.push(normalized);
-  }
-  const activeConversationId = conversations.some(item => item.id === value.activeConversationId)
-    ? value.activeConversationId
-    : (conversations[0]?.id || '');
-  return { aiChats: { conversations, activeConversationId } };
-}
-
-function mergeAiChats(existing, incoming) {
-  const map = new Map();
-  for (const chat of existing) map.set(chat.id, chat);
-  for (const chat of incoming) {
-    const existingChat = map.get(chat.id);
-    if (!existingChat || new Date(chat.updatedAt || 0) > new Date(existingChat.updatedAt || 0)) {
-      map.set(chat.id, chat);
-    }
-  }
-  const conversations = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt);
-  const activeConversationId = conversations[0]?.id || '';
-  return { conversations, activeConversationId };
-}
-
 function normalizeRestoreData(data) {
   if (!data || typeof data !== 'object') return { error: 'Invalid backup data' };
   if (!Array.isArray(data.logs)) return { error: 'Missing logs data' };
@@ -2013,9 +1654,6 @@ function normalizeRestoreData(data) {
   const privateUploads = normalizePrivateUploadsForRestore(data.privateUploads);
   if (privateUploads.error) return privateUploads;
 
-  const aiChats = normalizeAiChatsForRestore(data.aiChats);
-  if (aiChats.error) return aiChats;
-
   return {
     logs: logs.logs,
     todos: todos.todos,
@@ -2023,7 +1661,7 @@ function normalizeRestoreData(data) {
     todoCategories: todoCategories.todoCategories,
     categories: categories.categories,
     privateUploads: privateUploads.privateUploads,
-    aiChats: aiChats.aiChats,
+    legacyAiChats: data.aiChats,
   };
 }
 
@@ -2035,7 +1673,6 @@ function capturePersistentState() {
     todoCategories: readTodoCategories(),
     categories: readCategories(),
     privateUploads: readPrivateUploads(),
-    aiChats: readAiChats(),
   };
 }
 
@@ -2044,7 +1681,7 @@ function capturePersistentState() {
 function snapshotPersistentFiles() {
   const files = [
     DATA_FILE, TODOS_FILE, COUNTDOWNS_FILE, TODO_CATEGORIES_FILE,
-    CATEGORIES_FILE, PRIVATE_UPLOADS_FILE, AI_CHATS_FILE,
+    CATEGORIES_FILE, PRIVATE_UPLOADS_FILE,
   ];
   const snapshots = [];
   for (const file of files) {
@@ -2076,7 +1713,6 @@ function writePersistentState(next) {
     writeTodoCategories(next.todoCategories);
     writeCategories(next.categories);
     writePrivateUploads(next.privateUploads);
-    writeAiChats(next.aiChats);
   } catch (err) {
     try {
       writeLogs(previous.logs);
@@ -2085,7 +1721,6 @@ function writePersistentState(next) {
       writeTodoCategories(previous.todoCategories);
       writeCategories(previous.categories);
       writePrivateUploads(previous.privateUploads);
-      writeAiChats(previous.aiChats);
     } catch (rollbackError) {
       rollbackFailed = true;
       err.message += `; rollback failed: ${rollbackError.message}`;
@@ -2154,7 +1789,6 @@ function restore(data, mode = 'replace') {
     const diaryUploads = mergedLogs
       .filter(log => isDiaryCategory(log.category))
       .flatMap(log => extractLocalUploadFilenames(log.content));
-    const mergedAiChats = mergeAiChats(readAiChats().conversations, data.aiChats.conversations);
     writePersistentState({
       logs: mergedLogs,
       todos: mergedTodos,
@@ -2162,8 +1796,8 @@ function restore(data, mode = 'replace') {
       todoCategories: mergedTodoCategories,
       categories: mergedCats,
       privateUploads: [...new Set([...mergedPrivateUploads, ...historicalPrivateUploads, ...diaryUploads])],
-      aiChats: mergedAiChats,
     });
+    stageLegacyAiChatsForMigration(data);
     return { success: true, format: 'structure', includesBinaries: false, logs: mergedLogs.length, todos: mergedTodos.length, countdowns: mergedCountdowns.length, categories: mergedCats.length };
   }
 
@@ -2180,8 +1814,8 @@ function restore(data, mode = 'replace') {
     todoCategories: data.todoCategories,
     categories,
     privateUploads: [...new Set([...data.privateUploads, ...historicalPrivateUploads, ...diaryUploads])],
-    aiChats: data.aiChats,
   });
+  stageLegacyAiChatsForMigration(data);
   return { success: true, format: 'structure', includesBinaries: false, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };
 }
 
@@ -2248,13 +1882,13 @@ function mergeCategoryTrees(existing, incoming) {
 
 return {
   dataDir: DATA_DIR,
-  aiMediaDir: AI_MEDIA_DIR,
   getAll,
   getAllUnpaginated,
   getById,
   create,
   update,
   remove,
+  clearLogs,
   getStats,
   reorderLogs,
   getAllTodos,
@@ -2281,17 +1915,11 @@ return {
   reorderCategories,
   reorderSubcategories,
   setCategoryCalendarDayVisible,
-  getAiChats: readAiChats,
-  saveAiChats: writeAiChats,
   getAiSettings: readAiSettings,
   saveAiSettings: writeAiSettings,
-  getAiMedia: readAiMedia,
-  getAiMediaById,
-  createAiMedia,
-  updateAiMedia,
-  removeAiMedia,
   backup,
   restore,
+  stageLegacyAiChatsForMigration,
   checkDataIntegrity,
   resetCache,
   isDiaryCategory,

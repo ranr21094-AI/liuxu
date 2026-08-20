@@ -147,7 +147,7 @@
           <nav class="mode-switch topbar-mode-switch" aria-label="工作模式">
             <button type="button" data-mode="agent" class="active">Agent</button>
             <button type="button" data-mode="knowledge">知识库</button>
-            <button type="button" data-mode="memory">Memory</button>
+            <button type="button" data-mode="memory">Memory<span class="mode-pending-badge" id="memoryPendingBadge" hidden aria-hidden="true"></span></button>
             <button type="button" data-mode="todos">待办</button>
           </nav>
           <span class="run-status" id="runStatus" hidden><span class="status-dot"></span><span id="runStatusText">运行中</span></span>
@@ -227,8 +227,9 @@
               </div>
               <div class="document-toolbar-actions">
                 <div class="editor-mode-switch" id="editorModeSwitch">
-                  <button type="button" data-editor-mode="edit" class="active">编辑</button>
-                  <button type="button" data-editor-mode="preview">预览</button>
+                  <button type="button" data-editor-mode="edit" class="active" title="编辑 (Ctrl+Shift+P 切换)">编辑</button>
+                  <button type="button" data-editor-mode="split" title="分屏 (Ctrl+Shift+P 切换)">分屏</button>
+                  <button type="button" data-editor-mode="preview" title="预览 (Ctrl+Shift+P 切换)">预览</button>
                 </div>
                 <button class="icon-button" id="insertImageButton" type="button" title="插入图片" aria-label="插入图片" hidden>图</button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
@@ -432,6 +433,7 @@
           <button type="button" data-settings-nav="image">生图</button>
           <button type="button" data-settings-nav="skills">技能</button>
           <button type="button" data-settings-nav="knowledge">知识库搜索</button>
+          <button type="button" data-settings-nav="data">数据</button>
           <button type="button" data-settings-nav="computer" hidden>电脑</button>
           <button type="button" data-settings-nav="account">账户</button>
         </nav>
@@ -453,8 +455,12 @@
             <label class="settings-field" for="agentOpenrouterKey">OpenRouter API Key<input id="agentOpenrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-..."></label>
             <label class="settings-row" for="agentModelSelect"><span><strong>默认模型</strong><small>Agent 运行时使用这个模型</small></span><select id="agentModelSelect"></select></label>
             <label class="settings-field" for="agentMaxRounds">最大循环轮数
-              <input id="agentMaxRounds" type="number" min="4" max="48" step="1" value="12">
-              <small>一轮 = 模型想一次，必要时再调工具。范围 4–48，默认 12。</small>
+              <input id="agentMaxRounds" type="number" min="4" step="1" value="12">
+              <small>一轮 = 模型想一次，必要时再调工具。至少 4，默认 12，无上限。</small>
+            </label>
+            <label class="settings-field" for="agentFileReadMaxMb">本地文件读取上限（MB）
+              <input id="agentFileReadMaxMb" type="number" min="1" step="1" value="4">
+              <small>Agent 的 file.read / file.patch 单文件大小上限。至少 1MB，默认 4，无上限。</small>
             </label>
             <label class="settings-row" for="agentReasoningMode"><span><strong>思考模式</strong><small>模型默认、关闭或指定强度</small></span>
               <select id="agentReasoningMode">
@@ -479,7 +485,6 @@
                 <option value="max">最高</option>
               </select>
             </label>
-            <label class="settings-row" for="agentStreamToggle"><span><strong>流式输出</strong><small>部分直连对话接口会逐字返回</small></span><input id="agentStreamToggle" type="checkbox"></label>
             <label class="settings-row" for="agentOpenRouterZdr"><span><strong>OpenRouter 零数据保留</strong><small>默认仅路由到 ZDR 端点；可能减少可用供应商</small></span><input id="agentOpenRouterZdr" type="checkbox"></label>
           </section>
           <section class="settings-section" data-settings-panel="network" hidden>
@@ -563,6 +568,26 @@
               </div>
               <small>只允许已存在的目录。敏感路径（如 .ssh）无法加入。</small>
             </div>
+          </section>
+          <section class="settings-section" data-settings-panel="data" hidden>
+            <h3>备份与恢复</h3>
+            <p class="settings-copy">JSON 备份仅含结构数据（分类、待办、倒计时等，不含知识附件）；ZIP 工作区包含笔记、附件与 Agent 数据。恢复含日记的数据前请先解锁日记。</p>
+            <div class="settings-actions">
+              <button type="button" class="secondary-action compact" id="exportJsonBackupButton">导出 JSON</button>
+              <button type="button" class="secondary-action compact" id="exportZipBackupButton">导出 ZIP</button>
+            </div>
+            <label class="settings-row" for="restoreModeSelect"><span><strong>恢复模式</strong><small>合并保留现有数据，替换会覆盖</small></span>
+              <select id="restoreModeSelect">
+                <option value="replace">替换</option>
+                <option value="merge">合并</option>
+              </select>
+            </label>
+            <div class="settings-actions">
+              <button type="button" class="secondary-action compact" id="restoreJsonBackupButton">从 JSON 恢复</button>
+              <button type="button" class="secondary-action compact" id="restoreZipBackupButton">从 ZIP 恢复</button>
+            </div>
+            <input id="restoreJsonInput" type="file" accept="application/json,.json" hidden>
+            <input id="restoreZipInput" type="file" accept="application/zip,.zip" hidden>
           </section>
           <section class="settings-section" data-settings-panel="account" hidden>
             <h3>个人资料</h3>
@@ -674,6 +699,27 @@
       <div class="dialog-actions">
         <button type="button" class="secondary-action" id="btnTodoCategoryCancel">取消</button>
         <button type="submit" class="primary-action compact" id="btnTodoCategoryAdd">添加</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="workspace-dialog" id="knowledgeNameDialog" aria-labelledby="knowledgeNameTitle">
+    <form class="dialog-card compact-dialog" id="knowledgeNameForm" autocomplete="off">
+      <header>
+        <div>
+          <span class="dialog-eyebrow">知识库</span>
+          <h2 id="knowledgeNameTitle">新建知识库</h2>
+        </div>
+        <button class="icon-button" id="knowledgeNameClose" type="button" aria-label="关闭">×</button>
+      </header>
+      <p class="dialog-hint" id="knowledgeNameHint" hidden></p>
+      <label class="dialog-field" for="knowledgeNameInput">
+        <span id="knowledgeNameLabel">名称</span>
+        <input type="text" id="knowledgeNameInput" maxlength="80" required>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="secondary-action" id="knowledgeNameCancel">取消</button>
+        <button type="submit" class="primary-action compact" id="knowledgeNameSubmit">确认</button>
       </div>
     </form>
   </dialog>

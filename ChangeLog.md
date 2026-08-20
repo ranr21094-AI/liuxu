@@ -2,6 +2,31 @@
 
 ## 2026-08-20
 
+### 旧版 AI 退役与 Agent 迁移
+
+- 启动 Agent 时自动将 `ai-chats.json` 中有内容的会话迁移为 **归档** Agent 会话（标题前缀 `[旧AI]` / `[旧AI·日志]`）；原文件备份到 `ai-chats.migrated.json`。
+- 移除 `ai-media/` 与相关 HTTP/调度代码；Seedream 生图仍使用 `uploads/`。
+- JSON/ZIP 备份不再包含 `aiChats`；从旧备份恢复时若带 `aiChats` 字段，会先落盘再由 Agent 迁移。
+- 设置 schema 移除 `userProfile`、`logContext*`、`stream` 等旧独立 AI 字段。
+
+### P2 体验优化
+
+- Memory 待审批草稿：顶栏 Memory 标签显示待处理数量角标；Agent 侧栏「记忆草稿」区块同步高亮。
+- Agent 运行轨迹默认折叠，展开后查看工具调用与事件详情。
+- 知识库笔记编辑器新增「分屏」模式（编辑 + 预览同屏），`Ctrl+Shift+P` 在编辑 / 分屏 / 预览间循环切换。
+
+### P3 工程与维护
+
+- 重写 [`AGENTS.md`](AGENTS.md) 与 [`README.md`](README.md) 数据/路由说明：四模式（含 `#todos`）、笔记迁移、`ai-chats` 恢复兼容、移除 CSV/photo-wall。
+- 备份 HTTP 路由抽至 [`lib/http/backup-routes.js`](lib/http/backup-routes.js)；前端备份逻辑抽至 [`public/js/workbench-backup.js`](public/js/workbench-backup.js)。
+- 测试补充设置 → 数据面板与 `workbench-backup` 模块断言。
+
+### 日志迁移与备份入口
+
+- 启动知识库服务时自动将 `logs.json` 工作日志迁移为 `knowledge-documents.json` 原生笔记，备份原日志到 `logs.migrated.json` 并清空 `logs.json`。
+- 移除 `log:<id>` 虚拟适配层及笔记上的 `hours`、`pinned`、`logDate` 等冗余字段；分类重命名/删除仍通过知识库路径改写生效。
+- 设置 → 数据：新增 JSON 结构备份、ZIP 工作区导出，以及 JSON/ZIP 恢复（支持合并/替换）；恢复后自动再次迁移遗留日志。
+
 ### 移除照片墙与笔记插图
 
 - 删除遗留 `photo-wall.json` 数据、`/api/photo-wall*` API 及知识库虚拟映射（`file:photo:*`）。

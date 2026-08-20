@@ -80,9 +80,33 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   border-radius: 9px;
 }
 .topbar-mode-switch button {
+  position: relative;
   min-height: 32px;
   padding: 0 10px;
   font-size: 12px;
+}
+.mode-pending-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+.topbar-mode-switch button.has-pending:not(.active) {
+  color: var(--text);
+}
+.document-count.is-pending {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .sidebar-panel { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; padding: 12px 12px 12px; }
@@ -194,6 +218,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .document-row-title strong { min-width: 0; flex: 1; overflow: hidden; font-size: 13px; font-weight: 560; text-overflow: ellipsis; white-space: nowrap; }
 .private-mark { flex: 0 0 auto; color: var(--warning); font-size: 10px; }
 .document-row small { display: block; overflow: hidden; margin-top: 4px; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.document-row-title mark,
+.document-row small mark { padding: 0 1px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; font-weight: 600; }
+.file-reader mark { padding: 0 2px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 28%, transparent); color: inherit; font-weight: 600; }
 .load-more { width: 100%; margin-top: 5px; min-height: 32px; font-size: 11px; }
 
 .workspace-main { display: flex; min-width: 0; min-height: 0; height: 100%; flex-direction: column; overflow: hidden; background: var(--bg); }
@@ -361,6 +388,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .editor-mode-switch button { min-height: 27px; border: 0; border-radius: 6px; background: transparent; padding: 0 9px; color: var(--muted); cursor: pointer; font-size: 10px; }
 .editor-mode-switch button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 .note-editor, .file-reader { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 50%, transparent) transparent; }
+.note-editor.is-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+}
+.note-editor.is-split > .markdown-preview {
+  border-left: 1px solid var(--line);
+}
 .note-editor > textarea { display: block; width: 100%; height: 100%; min-height: 0; resize: none; overflow: auto; border: 0; outline: 0; background: transparent; padding: 24px var(--doc-pad-x) 64px; color: var(--text); font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 14px; line-height: 1.8; tab-size: 2; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 50%, transparent) transparent; }
 .markdown-preview { height: 100%; min-height: 0; overflow: auto; padding: 24px var(--doc-pad-x) 64px; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 50%, transparent) transparent; }
 .prose { color: var(--text); font-size: 14px; line-height: 1.85; overflow-wrap: anywhere; }
@@ -513,6 +548,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .memory-card .memory-body { margin-top: 10px; }
 .agent-setup-hint button { margin-left: 6px; border: 0; background: none; padding: 0; color: var(--text); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; font: inherit; }
 .dialog-field { display: grid; gap: 6px; margin-top: 18px; color: var(--muted); font-size: 11px; }
+.dialog-hint { margin: 12px 0 0; color: var(--faint); font-size: 12px; line-height: 1.45; }
 .dialog-field input { height: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 0 10px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 
@@ -577,6 +613,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .document-meta-fields label { grid-template-columns: auto minmax(0, 1fr); }
   .document-toolbar-actions { justify-content: space-between; }
   .note-editor > textarea, .markdown-preview { height: 100%; min-height: 0; padding: 20px var(--doc-pad-x) 56px; }
+  .note-editor.is-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  .note-editor.is-split > .markdown-preview { border-left: 0; border-top: 1px solid var(--line); }
   .file-reader { padding: 20px var(--doc-pad-x) 56px; }
   .file-summary { flex-direction: column; }
 }
