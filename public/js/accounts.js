@@ -1,5 +1,5 @@
-import { apiFetch, logoutSite } from './auth.js';
-import { showToast, escHtml, openModal, closeModal, $ } from './helpers.js';
+import { apiFetch } from './auth.js';
+import { showToast, escHtml, $ } from './helpers.js';
 
 let currentUser = null;
 
@@ -11,10 +11,22 @@ function formatAccountTime(value) {
 
 function syncAccountPanel() {
   if (!currentUser) return;
-  $('#accountDisplayName').textContent = currentUser.display_name;
-  $('#accountMeta').textContent = `@${currentUser.username} · ${currentUser.role === 'admin' ? '管理员' : '成员'}`;
-  $('#btnAdminUsers').hidden = currentUser.role !== 'admin';
-  $('#accountDisplayNameInput').value = currentUser.display_name;
+  const name = currentUser.display_name || currentUser.username || '用户';
+  const displayInput = $('#accountDisplayNameInput');
+  if (displayInput) displayInput.value = currentUser.display_name || '';
+  const meta = $('#accountMeta');
+  if (meta) meta.textContent = `@${currentUser.username} · ${currentUser.role === 'admin' ? '管理员' : '成员'}`;
+  const adminSection = $('#adminUsersSection');
+  if (adminSection) adminSection.hidden = currentUser.role !== 'admin';
+  const adminButton = $('#btnAdminUsers');
+  if (adminButton) adminButton.hidden = currentUser.role !== 'admin';
+  const accountName = $('#accountName');
+  if (accountName) accountName.textContent = name;
+  const initial = $('#accountInitial');
+  if (initial) initial.textContent = [...name][0] || '用';
+  const role = $('#accountRole');
+  if (role) role.textContent = currentUser.role === 'admin' ? '管理员账户' : '普通账户';
+  window.dispatchEvent(new CustomEvent('account-updated', { detail: currentUser }));
 }
 
 async function readJsonResponse(res, fallback) {
@@ -32,7 +44,10 @@ export async function loadCurrentAccount() {
 
 function clearPasswordInputs() {
   ['accountCurrentPassword', 'accountNewPassword', 'accountConfirmPassword']
-    .forEach(id => { $(`#${id}`).value = ''; });
+    .forEach(id => {
+      const field = $(`#${id}`);
+      if (field) field.value = '';
+    });
 }
 
 async function saveProfile() {
@@ -51,10 +66,10 @@ async function saveProfile() {
 }
 
 async function changePassword() {
-  const currentPassword = $('#accountCurrentPassword').value;
-  const newPassword = $('#accountNewPassword').value;
+  const currentPassword = $('#accountCurrentPassword')?.value || '';
+  const newPassword = $('#accountNewPassword')?.value || '';
   if (newPassword.length < 10) return showToast('新密码至少需要 10 个字符', 'error');
-  if (newPassword !== $('#accountConfirmPassword').value) return showToast('两次输入的新密码不一致', 'error');
+  if (newPassword !== $('#accountConfirmPassword')?.value) return showToast('两次输入的新密码不一致', 'error');
   try {
     const res = await apiFetch('/api/auth/password', {
       method: 'PUT',
@@ -86,24 +101,27 @@ function userCard(user) {
         <label>状态<select data-field="status"><option value="active"${user.status === 'active' ? ' selected' : ''}>启用</option><option value="disabled"${user.status === 'disabled' ? ' selected' : ''}>停用</option></select></label>
       </div>
       <div class="managed-user-actions">
-        <button class="btn-secondary btn-sm" type="button" data-action="save-user">保存账户</button>
-        <button class="btn-secondary btn-sm" type="button" data-action="toggle-reset">重置密码</button>
+        <button class="secondary-action compact" type="button" data-action="save-user">保存账户</button>
+        <button class="secondary-action compact" type="button" data-action="toggle-reset">重置密码</button>
       </div>
       <div class="managed-user-reset" hidden>
         <label>新的临时密码<input data-field="temporary_password" type="password" minlength="10" maxlength="128" autocomplete="new-password"></label>
-        <button class="btn-primary btn-sm" type="button" data-action="reset-password">确认重置并撤销旧会话</button>
+        <button class="primary-action compact" type="button" data-action="reset-password">确认重置并撤销旧会话</button>
       </div>
     </article>`;
 }
 
 async function loadUsers() {
+  const list = $('#userManagerList');
+  if (!list) return;
   try {
     const res = await apiFetch('/api/admin/users');
     const users = await readJsonResponse(res, '账户列表加载失败');
-    $('#userListCount').textContent = `${users.length} 个`;
-    $('#userManagerList').innerHTML = users.map(userCard).join('') || '<div class="empty-state">暂无账户</div>';
+    const count = $('#userListCount');
+    if (count) count.textContent = `${users.length} 个`;
+    list.innerHTML = users.map(userCard).join('') || '<p class="empty-list">暂无账户</p>';
   } catch (err) {
-    $('#userManagerList').innerHTML = `<div class="empty-state">${escHtml(err.message)}</div>`;
+    list.innerHTML = `<p class="empty-list">${escHtml(err.message)}</p>`;
   }
 }
 
@@ -157,39 +175,44 @@ async function resetManagedPassword(card) {
   await loadUsers();
 }
 
-function openAccountSettings() {
-  syncAccountPanel();
-  clearPasswordInputs();
-  openModal($('#accountSettingsOverlay'), '#accountDisplayNameInput');
-}
-
 async function openUserManager() {
-  openModal($('#userManagerOverlay'), '#newUserUsername');
+  const dialog = $('#userManagerDialog');
+  if (!dialog) return;
+  dialog.showModal();
+  requestAnimationFrame(() => $('#newUserUsername')?.focus());
   await loadUsers();
 }
 
-export async function initAccounts() {
+export async function fillAccountSettings() {
   await loadCurrentAccount();
-  $('#btnLogout').addEventListener('click', logoutSite);
-  $('#btnAccountSettings').addEventListener('click', openAccountSettings);
-  $('#btnAdminUsers').addEventListener('click', openUserManager);
-  $('#accountSettingsClose').addEventListener('click', () => closeModal($('#accountSettingsOverlay')));
-  $('#userManagerClose').addEventListener('click', () => closeModal($('#userManagerOverlay')));
+  clearPasswordInputs();
+}
+
+export async function initAccounts() {
+  if (!$('#btnSaveAccountProfile')) return;
   $('#btnSaveAccountProfile').addEventListener('click', saveProfile);
-  $('#btnChangeAccountPassword').addEventListener('click', changePassword);
-  $('#userCreateForm').addEventListener('submit', createUser);
-  $('#accountSettingsOverlay').addEventListener('click', event => {
-    if (event.target === $('#accountSettingsOverlay')) closeModal($('#accountSettingsOverlay'));
+  $('#btnChangeAccountPassword')?.addEventListener('click', changePassword);
+  $('#btnAdminUsers')?.addEventListener('click', () => openUserManager().catch(err => showToast(err.message, 'error')));
+  $('#userManagerClose')?.addEventListener('click', () => $('#userManagerDialog')?.close());
+  $('#userCreateForm')?.addEventListener('submit', createUser);
+  $('#userManagerDialog')?.addEventListener('click', event => {
+    if (event.target === $('#userManagerDialog')) $('#userManagerDialog').close();
   });
-  $('#userManagerOverlay').addEventListener('click', event => {
-    if (event.target === $('#userManagerOverlay')) closeModal($('#userManagerOverlay'));
+  $('#accountDisplayNameInput')?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveProfile();
+    }
   });
-  document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
-    if ($('#userManagerOverlay').style.display !== 'none') closeModal($('#userManagerOverlay'));
-    else if ($('#accountSettingsOverlay').style.display !== 'none') closeModal($('#accountSettingsOverlay'));
+  ['accountCurrentPassword', 'accountNewPassword', 'accountConfirmPassword'].forEach(id => {
+    $(`#${id}`)?.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        changePassword();
+      }
+    });
   });
-  $('#userManagerList').addEventListener('click', async event => {
+  $('#userManagerList')?.addEventListener('click', async event => {
     const action = event.target.closest('[data-action]')?.dataset.action;
     const card = event.target.closest('.managed-user-card');
     if (!action || !card) return;

@@ -1,6 +1,6 @@
 # Work Log
 
-本地优先、支持多账户隔离的工作日志、待办、倒数日、照片墙和 AI 辅助应用。它使用 JSON 文件保存数据，提供 Markdown/LaTeX 日志编辑、分类与日历、重复待办、账户级备份、图片上传，以及可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream 和 WeStock 能力。
+本地优先、支持多账户隔离的 Agent 工作台。日志作为知识库文档，另有待办、倒数日和可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream、WeStock 能力。数据保存在 JSON 文件中。
 
 更新记录见 [ChangeLog.md](ChangeLog.md)。
 
@@ -29,7 +29,7 @@ npm run build
 npm test
 ```
 
-`npm start` 和 `npm test` 会自动构建编辑器资源；如果直接运行 `node server.js`，请先执行 `npm run build`。
+`npm start` 和 `npm test` 会自动把 marked、DOMPurify、KaTeX、pdf.js 拷到 `public/vendor/`；如果直接运行 `node server.js`，请先执行 `npm run build`。
 
 默认仅监听 `127.0.0.1:3000`。若已有 `users.json`，后续启动不再需要 `AUTH_TOKEN`；若既没有用户注册表又没有 `AUTH_TOKEN`，服务会拒绝启动并给出初始化提示。
 
@@ -70,23 +70,18 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 - 会话 Cookie 为 HttpOnly、SameSite=Strict，有效期 24 小时；磁盘中只保存令牌哈希、账户 ID 和过期时间。
 - 新账户和管理员重置密码后的账户必须首次改密；修改或重置密码、停用账户都会撤销相关会话。
 - 管理员可管理账户元数据，但没有成员工作区、备份、数据量或内容的读取入口。
-- 普通成员可修改自己的显示名称、登录密码和日记密码。
+- 普通成员可在设置 → 账户中修改自己的显示名称和登录密码。
 
-### 日志
+### 知识库与日志
 
-- 横向卡片列表：支持搜索、日期、月份、父分类、子分类和页码筛选；卡片区独立于顶部工具区。
-- 分类筛选下支持多条日志置顶，最近置顶的卡片优先显示在分页结果最左侧；未选择分类时仍保持原有日期排序。
-- 日志归档页：顶部使用单独的搜索/筛选模块，卡片区脱离外层大面板，主操作改为更紧凑的图标按钮。
-- Markdown 编辑器：可选 CodeMirror 富编辑体验，同时保留原生 `textarea` 回退路径，支持语法高亮、查找、撤销、自动换行和自动保存。
-- 预览模式：支持编辑、预览、分屏，以及 Markdown/LaTeX 渲染。
-- 标题大纲：编辑页可展开当前 Markdown 的 `#` 至 `######` 标题树，并快速跳转。
-- 全屏编辑：进入后只保留标题和正文编辑区，隐藏元信息、工具栏、预览切换、大纲和日志内 AI；退出后恢复进入前的编辑/预览状态。
-- 图片：支持上传或直接粘贴 PNG、JPG、GIF、WebP、BMP 图片，并插入 Markdown 图片链接；卡片预览和编辑器详情预览均可双击图片放大。
-- 模板：支持中文日期、日期偏移、周区间等占位符。
+- 首页知识库以“知识库 → 文件夹 → 文档”树管理笔记、工作日志和导入文件。
+- 原一级分类对应知识库，子分类对应文件夹；工作日志仍以 `logs.json` 为源，编辑器只改标题、正文和日期。
+- 工时、置顶、日历按日浏览和 CSV 导出仍有 API，工作台界面不再提供这些操作。
+- 知识正文支持 Markdown 编辑/预览；导入文件可只读预览，图片可双击放大。
 
 ### 待办
 
-- 侧边栏下拉选择 `待办事项` 后，右侧主体会切换到完整待办工作区。
+- 知识库顶栏可在「浏览 / 待办」之间切换；待办不再占用独立顶栏模式。
 - 页面可在“待办 / 倒数日”之间切换；倒数日独立保存标题、目标日期、每年重复和备注，并按香港业务日期显示剩余或已过天数。
 - 主界面包含待办、今日、逾期、已完成统计。
 - 支持按待办分类和已完成状态筛选，以及按标题和备注搜索；新增分类通过筛选栏的加号图标打开弹窗完成。
@@ -94,8 +89,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 - 当前分类下的未完成任务按截止日期优先展示；无截止日期任务排在后面。
 - 任务可设置标题、截止日期、优先级、重复规则和备注；重复待办需要截止日期，完成后会保留当前记录为已完成，并自动生成下一期未完成待办。
 - 支持勾选完成、点击编辑、删除、清除已完成和拖拽排序。
-- 进入待办主页面时左侧侧栏切换为待办专用视图，只显示待办日历和邮件提醒设置。
-- 待办侧栏日历会标记有截止日期的待办；点击日期不会筛选或跳转待办列表。
+- 进入待办时左侧侧栏显示分类和邮件提醒设置。
 - 待办侧栏内置“邮件提醒”设置，可保存启用状态、收件邮箱和每日发送时间。
 - 每日提醒按香港业务日期运行；到达设定时间后，会汇总所有待办分类中“当天到期且未完成”的待办。
 - 若服务错过了当天设定时间，会在恢复运行后的首次检查补发一次；若当天没有符合条件的待办，则不会发邮件。
@@ -104,36 +98,14 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 ### 分类
 
-- 分类管理通过侧边栏标题下拉进入。
-- 支持一级分类、二级分类、拖拽排序、重命名和删除。
-- 分类管理页采用白底细灰边和紧凑列表布局，新增、重命名、删除等操作使用黑白灰 SVG 图标按钮。
-- 一级分类总数显示在分类侧栏标题右侧，侧栏列表不再显示日志数量和二级分类数量。
-- 点击一级分类会直接进入二级分类侧栏和日志列表；有二级分类时自动打开第一个，没有时显示新增二级分类入口。
-- 一级分类重命名和删除移动到左侧一级分类选中项内；受保护分类仍隐藏对应操作。
-- 二级分类支持在浏览侧栏中新增、重命名、删除和拖拽排序；日志筛选二级分类会沿用该顺序。
-- 从分类管理的二级分类日志列表打开日志时，侧栏会自动回到默认日志侧栏。
-- 可为一级分类设置“日历显示”，控制点击日历某天时该分类日志是否参与显示。
-- 月份筛选、分类筛选和工时统计不会因“日历显示”关闭而丢失日志。
+- 知识树可新建、重命名和归档知识库/文件夹，对应原来的一级/二级分类。
+- 分类的“日历显示”字段仍保存在 `categories.json`，并继续影响按日筛选的日志 API，工作台不再提供日历界面。
 
-### 默认侧栏与日历
+### 文件存储
 
-- 默认侧栏显示可收起日历和当前日志导航。
-- 日历收起后只显示日期和星期几，并会一起收起日记锁、备份导出和导入恢复入口。
-- 当前日志导航会随列表分页更新，折叠日历后占据更多侧栏空间。
-- 点击日历日期可查看当天日志。
-- 月份筛选可查看整月日志。
-- 筛选到锁定的日记分类时，日志列表中间会显示“解锁日记”入口；解锁后保留当前筛选并刷新。
-- 新建日志会继承当前选中日期和有效分类筛选。
-- 日志统计卡片和旧侧栏统计面板已移除；统计接口仍用于刷新日历上的有日志日期标记。
-
-### 照片墙
-
-- 通过侧边栏模式菜单进入“照片墙”，左侧会切换为照片墙专用工具栏。
-- 工具栏提供上传图片、放大、缩小、适应全部、重置视图、删除选中图片和图片数量。
-- 主区域是 DOM 驱动的全幅无界画布：拖动画布可平移，滚轮可缩放；图片节点可拖动和右下角等比缩放。
-- 当前缩放百分比显示在照片墙侧栏，右侧内容区不再显示额外标题。
-- 每张图片下方可编辑一段文字评论，布局、尺寸、评论和层级保存到本机 `photo-wall.json`。
-- 删除图片只移除照片墙节点，不删除 `/uploads/` 原文件，避免影响日志或 AI 中复用的图片。
+- **笔记/日志内嵌图片**：`POST /api/upload` 写入 `{dataDir}/uploads/`，Markdown 引用 `/uploads/{filename}`。知识库编辑区工具栏提供「插入图片」按钮，并支持粘贴图片。
+- **知识库导入附件**（docx/pdf/图片文件等）：二进制在 `{dataDir}/knowledge-files/`，元数据在 `knowledge-documents.json`，下载走 `/api/knowledge/files/:id/content`。
+- 照片墙（`photo-wall.json` / `/api/photo-wall*`）已移除，不再向知识库虚拟映射图片。
 
 ## AI
 
@@ -284,13 +256,14 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 | `todo-reminder-settings.json` | 待办提醒开关、收件邮箱和发送时间 |
 | `todo-reminder-state.json` | 当天提醒快照、发送状态和错误信息 |
 | `categories.json` | 父分类、子分类和日历显示设置 |
-| `photo-wall.json` | 照片墙图片节点、位置、尺寸、评论和层级 |
+| `knowledge-documents.json` | 知识库笔记与导入文件元数据 |
+| `knowledge-files/` | 知识库导入附件（docx/pdf/图片等） |
 | `ai-settings.json` | DeepSeek、Moonshot、OpenRouter、Tavily、Perplexity、Seedream、WeStock 设置和 AES-256-GCM 加密后的账户 API Key |
 | `ai-chats.json` | 独立 AI 和日志内 AI 历史 |
 | `ai-media.json` | AI 图片/视频附件元数据、会话引用和 Moonshot 文件映射 |
 | `ai-media/` | AI 对话上传的图片和视频本地副本 |
 | `private-uploads.json` | 日记保护图片标记 |
-| `uploads/` | 上传图片和生成图片 |
+| `uploads/` | 笔记/日志 Markdown 内嵌图片与 Agent 生成图片 |
 | `accounts/<UUID>/` | 新账户的独立工作区数据和上传目录 |
 
 隐私边界：
@@ -333,11 +306,11 @@ QQ_EMAIL_AUTH_CODE=your-smtp-auth-code
 
 ## Agent 工作台（当前默认入口）
 
-首页只有 Agent 和知识库两个模式，桌面端使用固定侧栏，窄屏自动切换为抽屉。Agent 模式的左侧按时间分组管理会话，右侧显示对话、运行轨迹、审批和记忆建议；知识库模式的左侧以“知识库 → 文件夹 → 文档”树统一管理所有知识，笔记、旧日志和导入文件混排，右侧编辑 Markdown 或只读查看文件正文。当前位置保存在 `#agent/:sessionId`、`#knowledge?base=...&folder=...` 或 `#knowledge/:documentId` Hash 路由中，知识引用可以直接打开并定位文档。
+首页有 Agent、知识库和 Memory 三个模式，桌面端使用固定侧栏，窄屏自动切换为抽屉。Agent 模式的左侧按时间分组管理会话，右侧显示对话、审批和记忆建议；知识库模式的左侧以“知识库 → 文件夹 → 文档”树统一管理所有知识，笔记、工作日志和导入文件混排，右侧编辑 Markdown 或只读查看文件正文。待办是知识库的子视图（`#knowledge?view=todos`）。当前位置保存在 `#agent/:sessionId`、`#knowledge?base=...&folder=...` 或 `#knowledge/:documentId` Hash 路由中，知识引用可以直接打开并定位文档。
 
 知识库根节点沿用原有一级分类，原有带路径的分类映射为对应知识库下的文件夹；没有明确位置的新笔记和导入文件默认进入“其他”。新列表不按来源或文件格式筛选，`sourceType` 只在后端适配和权限判断中保留。知识树可新建、重命名和归档知识库/文件夹，`GET /api/knowledge/tree` 返回当前账户可见的树和文档数量。旧日志仍以 `logs.json` 为权威数据源，在新编辑器中只编辑标题、正文和日期，工时与置顶字段保持不变。
 
-任务不再占用首页入口，仍可由 Agent 在确认后创建、更新或完成。旧日志、待办、照片墙、模型设置与备份界面完整保留在 `/legacy.html`，可从新首页的“设置 → 打开旧版功能”进入。Agent 的本地检索不会把锁定日记加入索引结果，修改知识、任务写入、代码运行和浏览器写操作会先显示确认卡。
+待办从知识库顶栏进入，也可由 Agent 在确认后创建、更新或完成。账户资料、改密和管理员用户管理在设置 → 账户。照片墙画布和 JSON 备份按钮已随旧版页面删除；对应 API 与 ZIP 工作区导出仍可用。Agent 的本地检索不会把锁定日记加入索引结果，修改知识、任务写入、代码运行和浏览器写操作会先显示确认卡。
 
 知识文档接口为 `/api/knowledge/documents`、`/api/knowledge/search` 和 `/api/knowledge/imports`；文件原件只从认证接口 `/api/knowledge/files/:id/content` 读取。Agent 会话和运行记录分别保存到当前账户的 `agent-sessions.json` 与 `agent-runs.json`，长期记忆先写入提案，确认后才进入 `agent-memories.json`。完整 ZIP 工作区还会包含知识原件、上传图片、AI 媒体、Agent 资产和会话记忆。
 
@@ -351,28 +324,12 @@ http://<电脑局域网 IP>:<PORT>
 
 例如 `http://192.168.1.4:3000`。首次访问前请确认 Windows 防火墙允许 Node.js 在专用网络通信。账户认证始终生效，不需要继续保留 `AUTH_TOKEN`。若在局域网外访问，请使用 HTTPS 反向代理、可信隧道或组网，不要直接暴露未加密的 HTTP 端口。
 
-## Template Variables
-
-模板标题和正文以当前日志日期为基准：
-
-| Syntax | Example | Description |
-| --- | --- | --- |
-| `{{今天}}` / `{{today}}` | `2026-05-27` | 当前日期 |
-| `{{昨天}}` / `{{明天}}` | `2026-05-26` / `2026-05-28` | 相邻日期 |
-| `{{日期:+7:MM月DD日}}` | `06月03日` | 日期偏移和自定义格式 |
-| `{{本周:MM月DD日}}` | `05月25日 - 05月31日` | 本周区间 |
-| `{{上一周:MM月DD日}}` | `05月18日 - 05月24日` | 上一周区间 |
-| `{{上一周.开始:YYYY-MM-DD}}` | `2026-05-18` | 周区间开始 |
-| `{{上一周.结束:YYYY-MM-DD}}` | `2026-05-24` | 周区间结束 |
-
-同样支持 `{{下一周:...}}`、`{{date:...}}` 等对应写法。
-
 ## Development Notes
 
 - 后端：Express + JSON 文件存储；数据库通过工厂按账户数据目录创建实例。
-- 前端：原生 JavaScript 单页应用。
-- 编辑器：CodeMirror 资源生成到未纳入版本控制的 `public/generated/editor/`。
-- Markdown 渲染：本地前端模块封装 `marked`、KaTeX 和清洗逻辑。
+- 前端：原生 JavaScript 工作台（`index.html` + `workbench.js` + `workbench.css`）。
+- 构建：`npm run build` 只把 marked、DOMPurify、KaTeX、pdf.js 拷到 `public/vendor/`。
+- Markdown 渲染：工作台用本地 vendor 的 `marked` 与 DOMPurify。
 - 认证：scrypt 密码哈希、持久化会话令牌哈希、HttpOnly Cookie；不再支持旧 Bearer `AUTH_TOKEN`。
 - 路由顺序：`/api/logs/reorder`、`/api/todos/reorder` 等固定路径必须定义在对应 `/:id` 路由之前。
 
@@ -411,12 +368,7 @@ http://<电脑局域网 IP>:<PORT>
 | `PUT` | `/api/todo-reminder-settings` | 保存待办邮件提醒设置 |
 | `GET` | `/api/categories` | 获取分类树 |
 | `PUT` | `/api/categories/:parent/subcategories/reorder` | 重排父分类下的子分类 |
-| `POST` | `/api/upload` | 上传日志图片 |
-| `GET` | `/api/photo-wall` | 获取照片墙图片节点 |
-| `POST` | `/api/photo-wall/items` | 创建照片墙图片节点 |
-| `PUT` | `/api/photo-wall/items/:id` | 更新照片墙图片位置、尺寸、评论或层级 |
-| `DELETE` | `/api/photo-wall/items/:id` | 从照片墙移除图片节点 |
-| `PUT` | `/api/photo-wall/items/reorder` | 重排照片墙图片层级 |
+| `POST` | `/api/upload` | 上传笔记/日志内嵌图片 |
 | `GET` | `/api/backup` | 导出 JSON 备份 |
 | `POST` | `/api/restore` | 恢复 JSON 备份 |
 | `GET` | `/api/ai/settings` | 读取 AI 设置 |

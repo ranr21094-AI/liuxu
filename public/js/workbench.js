@@ -8,6 +8,10 @@ import {
 } from './auth.js';
 import { debounce, escHtml, showToast } from './helpers.js';
 import { destroyFilePreview, renderFilePreview, shouldCollapseExtractText } from './knowledge/filePreview.js';
+import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
+import { renderToHtml, renderToHtmlUncached } from './markdown.js';
+import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
+import { fillAccountSettings, initAccounts } from './accounts.js';
 
 const $ = selector => document.querySelector(selector);
 const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'cancelled']);
@@ -18,10 +22,12 @@ const state = {
   user: null,
   diaryUnlocked: false,
   sessions: [],
+  archivedSessions: [],
   activeSession: null,
   runId: '',
   runStatus: '',
   eventSource: null,
+  memoryRefreshSource: null,
   runEventKeys: new Set(),
   documents: [],
   activeDocument: null,
@@ -31,6 +37,9 @@ const state = {
   knowledgeBases: [],
   selectedKnowledgeBase: '',
   selectedFolderPath: '',
+  agentStatus: null,
+  aiSettings: null,
+  settingsPanel: 'appearance',
   documentSaveTimer: null,
   annotationSaveTimer: null,
   documentDirty: false,
@@ -38,18 +47,99 @@ const state = {
   documentConflict: false,
   editorMode: 'edit',
   routeSerial: 0,
+  memoryLayer: '',
+  memories: { items: [], proposals: [] },
+  runImages: [],
+  computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
 };
 
-function renderMarkdown(value) {
-  const source = String(value || '');
-  if (!window.marked || !window.DOMPurify) return escHtml(source).replace(/\n/g, '<br>');
-  return window.DOMPurify.sanitize(window.marked.parse(source, { breaks: true, gfm: true }));
+function isSafeImageSrc(value) {
+  const src = String(value || '').trim();
+  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(src)) return true;
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(src)) return true;
+  try {
+    const url = new URL(src);
+    return url.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
+
+if (window.DOMPurify) {
+  window.DOMPurify.addHook('afterSanitizeAttributes', node => {
+    if (node.tagName === 'IMG' && !isSafeImageSrc(node.getAttribute('src'))) {
+      node.removeAttribute('src');
+    }
+  });
+}
+
+function renderMarkdown(value) {
+  return renderToHtml(String(value || ''));
+}
+
+let documentPreviewCleanup = null;
+
+function renderDocumentPreview() {
+  const host = $('#documentPreview');
+  if (!host) return;
+  if (documentPreviewCleanup) documentPreviewCleanup();
+  documentPreviewCleanup = null;
+  host.innerHTML = renderToHtmlUncached($('#documentContent').value || '*暂无正文*');
+  documentPreviewCleanup = enableMarkdownImagePreview(host, '.markdown-preview img');
+}
+
+const refreshDocumentPreview = debounce(() => {
+  if (state.editorMode !== 'preview') return;
+  renderDocumentPreview();
+}, 300);
 
 function formatTime(value) {
   const date = new Date(value || 0);
   if (!Number.isFinite(date.getTime())) return '';
   return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date);
+}
+
+function formatSessionDate(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const day = new Date(date);
+  day.setHours(0, 0, 0, 0);
+  const diff = Math.floor((today - day) / 86400000);
+  const time = new Intl.DateTimeFormat('zh-CN', { hour: 'numeric', minute: '2-digit' }).format(date);
+  if (diff <= 0) return `今天 ${time}`;
+  if (diff === 1) return `昨天 ${time}`;
+  if (date.getFullYear() === today.getFullYear()) {
+    const monthDay = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date);
+    return `${monthDay} ${time}`;
+  }
+  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' }).format(date);
+}
+
+function sessionMessageCount(session) {
+  if (!session) return 0;
+  const count = Number(session.messageCount);
+  if (Number.isFinite(count) && count >= 0) return count;
+  return Array.isArray(session.messages) ? session.messages.length : 0;
+}
+
+function formatSessionMeta(session) {
+  if (!session) return '暂无消息';
+  const count = sessionMessageCount(session);
+  const countLabel = count ? `${count} 条消息` : '暂无消息';
+  const dateLabel = formatSessionDate(session.updatedAt);
+  return dateLabel ? `${dateLabel} · ${countLabel}` : countLabel;
+}
+
+function applyAgentTopbar(session) {
+  if (!session) {
+    $('#topbarTitle').textContent = '新会话';
+    $('#topbarSubtitle').textContent = '';
+    return;
+  }
+  $('#topbarTitle').textContent = session.title || '新会话';
+  $('#topbarSubtitle').textContent = formatSessionMeta(session);
 }
 
 function formatBytes(value) {
@@ -65,12 +155,281 @@ function autoResizeComposer() {
   input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
 }
 
+function localIsoDate(offsetDays = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + offsetDays);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function mentionQueryFromInput() {
+  const input = $('#agentInput');
+  const cursor = input.selectionStart ?? input.value.length;
+  const before = input.value.slice(0, cursor);
+  const at = before.lastIndexOf('@');
+  if (at < 0) return null;
+  const query = before.slice(at + 1);
+  if (/[\s]/.test(query)) return null;
+  return { start: at, query };
+}
+
+function mentionChoices(query = '') {
+  const needle = String(query || '').toLowerCase();
+  const bases = (state.knowledgeBases || [])
+    .map(item => item.name)
+    .filter(Boolean)
+    .filter(name => !needle || name.toLowerCase().includes(needle) || `@${name}`.includes(query));
+  const dates = [
+    { id: 'today', label: `今天 ${localIsoDate(0)}`, value: localIsoDate(0) },
+    { id: 'yesterday', label: `昨天 ${localIsoDate(-1)}`, value: localIsoDate(-1) },
+  ].filter(item => !needle || item.label.includes(query) || item.value.includes(query) || '今天昨天日期'.includes(query));
+  return [
+    ...bases.map(name => ({ id: `base:${name}`, type: 'base', label: name, value: name })),
+    ...dates.map(item => ({ id: `date:${item.id}`, type: 'date', label: item.label, value: item.value })),
+  ];
+}
+
+function hideMentionMenu() {
+  const menu = $('#mentionMenu');
+  if (!menu) return;
+  menu.hidden = true;
+  menu.querySelectorAll('.mention-item').forEach(item => item.classList.remove('active'));
+}
+
+function renderMentionMenu() {
+  const menu = $('#mentionMenu');
+  const active = mentionQueryFromInput();
+  if (!menu || !active) {
+    hideMentionMenu();
+    return;
+  }
+  const choices = mentionChoices(active.query);
+  const list = $('#mentionBaseList');
+  if (choices.some(item => item.type === 'base')) {
+    list.innerHTML = choices.filter(item => item.type === 'base').map((item, index) => (
+      `<button class="mention-item${index === 0 ? ' active' : ''}" type="button" role="option" data-mention="${escHtml(item.value)}">${escHtml(item.label)}</button>`
+    )).join('');
+  } else {
+    list.innerHTML = '<p class="mention-empty">没有匹配的知识库</p>';
+  }
+  menu.querySelectorAll('[data-mention="today"], [data-mention="yesterday"]').forEach(button => {
+    const isToday = button.dataset.mention === 'today';
+    const item = mentionChoices(active.query).find(choice => choice.id === (isToday ? 'date:today' : 'date:yesterday'));
+    button.hidden = !item;
+    button.classList.remove('active');
+  });
+  const visible = [...menu.querySelectorAll('.mention-item:not([hidden])')];
+  if (!visible.some(item => item.classList.contains('active')) && visible[0]) visible[0].classList.add('active');
+  menu.hidden = false;
+}
+
+function insertMentionValue(value) {
+  const input = $('#agentInput');
+  const active = mentionQueryFromInput();
+  if (!active) return;
+  const token = `@${value} `;
+  input.value = `${input.value.slice(0, active.start)}${token}${input.value.slice(input.selectionStart)}`;
+  const cursor = active.start + token.length;
+  input.setSelectionRange(cursor, cursor);
+  hideMentionMenu();
+  autoResizeComposer();
+  input.focus();
+}
+
+function moveMentionSelection(delta) {
+  const menu = $('#mentionMenu');
+  if (!menu || menu.hidden) return;
+  const items = [...menu.querySelectorAll('.mention-item:not([hidden])')];
+  if (!items.length) return;
+  const current = items.findIndex(item => item.classList.contains('active'));
+  const next = (current + delta + items.length) % items.length;
+  items.forEach(item => item.classList.remove('active'));
+  items[next].classList.add('active');
+  items[next].scrollIntoView({ block: 'nearest' });
+}
+
+function selectedMentionItem() {
+  return $('#mentionMenu:not([hidden]) .mention-item.active');
+}
+
 function scrollMessagesToBottom() {
   const list = $('#agentMessageList');
   requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
 }
 
 const mobileSidebarQuery = window.matchMedia('(max-width: 840px)');
+const desktopSidebarQuery = window.matchMedia('(min-width: 841px)');
+const SIDEBAR_COLLAPSED_KEY = 'workbenchSidebarCollapsed';
+const KNOWLEDGE_SEARCH_OPTIONS_KEY = 'knowledgeSearchOptions';
+
+const KNOWLEDGE_SEARCH_PRESETS = {
+  smart: {
+    preset: 'smart',
+    prefix: true,
+    fuzzy: 0.2,
+    strict: false,
+    fields: ['title', 'heading', 'body', 'tags', 'path'],
+  },
+  exact: {
+    preset: 'exact',
+    prefix: false,
+    fuzzy: 0,
+    strict: true,
+    fields: ['title', 'heading', 'body'],
+  },
+};
+
+const KNOWLEDGE_SEARCH_FIELD_IDS = {
+  title: 'knowledgeSearchFieldTitle',
+  heading: 'knowledgeSearchFieldHeading',
+  body: 'knowledgeSearchFieldBody',
+  tags: 'knowledgeSearchFieldTags',
+  path: 'knowledgeSearchFieldPath',
+};
+
+function defaultKnowledgeSearchOptions() {
+  return {
+    ...KNOWLEDGE_SEARCH_PRESETS.smart,
+    fields: [...KNOWLEDGE_SEARCH_PRESETS.smart.fields],
+  };
+}
+
+function normalizeKnowledgeSearchOptions(raw) {
+  const fallback = defaultKnowledgeSearchOptions();
+  const preset = ['smart', 'exact', 'custom'].includes(raw?.preset) ? raw.preset : fallback.preset;
+  const base = preset === 'exact'
+    ? KNOWLEDGE_SEARCH_PRESETS.exact
+    : preset === 'smart'
+      ? KNOWLEDGE_SEARCH_PRESETS.smart
+      : fallback;
+  const fields = Array.isArray(raw?.fields)
+    ? raw.fields.filter(field => Object.keys(KNOWLEDGE_SEARCH_FIELD_IDS).includes(field))
+    : [...base.fields];
+  return {
+    preset,
+    prefix: raw?.prefix !== undefined ? Boolean(raw.prefix) : base.prefix,
+    fuzzy: Number.isFinite(Number(raw?.fuzzy)) ? Math.min(0.5, Math.max(0, Number(raw.fuzzy))) : base.fuzzy,
+    strict: raw?.strict !== undefined ? Boolean(raw.strict) : base.strict,
+    fields: fields.length ? fields : [...base.fields],
+  };
+}
+
+function loadKnowledgeSearchOptions() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(KNOWLEDGE_SEARCH_OPTIONS_KEY) || 'null');
+    return normalizeKnowledgeSearchOptions(saved);
+  } catch {
+    return defaultKnowledgeSearchOptions();
+  }
+}
+
+function saveKnowledgeSearchOptions(options) {
+  const normalized = normalizeKnowledgeSearchOptions(options);
+  localStorage.setItem(KNOWLEDGE_SEARCH_OPTIONS_KEY, JSON.stringify(normalized));
+  renderKnowledgeSearchModeHint(normalized);
+  return normalized;
+}
+
+function applyKnowledgeSearchPreset(preset) {
+  const next = preset === 'exact'
+    ? { ...KNOWLEDGE_SEARCH_PRESETS.exact, fields: [...KNOWLEDGE_SEARCH_PRESETS.exact.fields] }
+    : preset === 'custom'
+      ? loadKnowledgeSearchOptions()
+      : { ...KNOWLEDGE_SEARCH_PRESETS.smart, fields: [...KNOWLEDGE_SEARCH_PRESETS.smart.fields] };
+  next.preset = preset;
+  return saveKnowledgeSearchOptions(next);
+}
+
+function readKnowledgeSearchOptionsFromForm() {
+  const preset = $('#knowledgeSearchPreset')?.value || 'smart';
+  const fields = Object.entries(KNOWLEDGE_SEARCH_FIELD_IDS)
+    .filter(([, id]) => $(`#${id}`)?.checked)
+    .map(([field]) => field);
+  return normalizeKnowledgeSearchOptions({
+    preset,
+    prefix: Boolean($('#knowledgeSearchPrefix')?.checked),
+    fuzzy: $('#knowledgeSearchFuzzy')?.checked ? 0.2 : 0,
+    strict: Boolean($('#knowledgeSearchStrict')?.checked),
+    fields,
+  });
+}
+
+function fillKnowledgeSearchOptionsForm(options = loadKnowledgeSearchOptions()) {
+  const normalized = normalizeKnowledgeSearchOptions(options);
+  if ($('#knowledgeSearchPreset')) $('#knowledgeSearchPreset').value = normalized.preset;
+  if ($('#knowledgeSearchPrefix')) $('#knowledgeSearchPrefix').checked = normalized.prefix;
+  if ($('#knowledgeSearchFuzzy')) $('#knowledgeSearchFuzzy').checked = normalized.fuzzy > 0;
+  if ($('#knowledgeSearchStrict')) $('#knowledgeSearchStrict').checked = normalized.strict;
+  Object.entries(KNOWLEDGE_SEARCH_FIELD_IDS).forEach(([field, id]) => {
+    const input = $(`#${id}`);
+    if (input) input.checked = normalized.fields.includes(field);
+  });
+  syncKnowledgeSearchCustomVisibility();
+}
+
+function syncKnowledgeSearchCustomVisibility() {
+  const preset = $('#knowledgeSearchPreset')?.value || 'smart';
+  const custom = $('#knowledgeSearchCustomOptions');
+  if (custom) custom.hidden = preset !== 'custom';
+  const disabled = preset !== 'custom';
+  ['knowledgeSearchPrefix', 'knowledgeSearchFuzzy', 'knowledgeSearchStrict', ...Object.values(KNOWLEDGE_SEARCH_FIELD_IDS)].forEach(id => {
+    const input = $(`#${id}`);
+    if (input) input.disabled = disabled;
+  });
+}
+
+function knowledgeSearchModeLabel(options = loadKnowledgeSearchOptions()) {
+  const presetNames = { smart: '智能', exact: '精确', custom: '自定义' };
+  const fieldNames = { title: '标题', heading: '小节', body: '正文', tags: '标签', path: '路径' };
+  const fields = options.fields.length === 5
+    ? '全字段'
+    : options.fields.map(field => fieldNames[field] || field).join('+') || '无范围';
+  return `搜索：${presetNames[options.preset] || '自定义'} · ${fields}`;
+}
+
+function renderKnowledgeSearchModeHint(options = loadKnowledgeSearchOptions()) {
+  const hint = $('#knowledgeSearchModeHint');
+  if (!hint) return;
+  hint.textContent = knowledgeSearchModeLabel(options);
+  hint.title = '打开知识库搜索设置';
+  hint.hidden = false;
+}
+
+function knowledgeSearchOptionsQuery() {
+  const options = loadKnowledgeSearchOptions();
+  const params = new URLSearchParams();
+  params.set('preset', options.preset);
+  params.set('prefix', options.prefix ? '1' : '0');
+  params.set('fuzzy', String(options.fuzzy));
+  params.set('strict', options.strict ? '1' : '0');
+  params.set('fields', options.fields.join(','));
+  return params;
+}
+
+function commitKnowledgeSearchSettings({ reload = true } = {}) {
+  const preset = $('#knowledgeSearchPreset')?.value || 'smart';
+  const options = preset === 'custom'
+    ? saveKnowledgeSearchOptions(readKnowledgeSearchOptionsFromForm())
+    : applyKnowledgeSearchPreset(preset);
+  fillKnowledgeSearchOptionsForm(options);
+  if (reload && $('#knowledgeSearch')?.value.trim()) {
+    loadDocuments().catch(error => showToast(error.message, 'error'));
+  }
+  return options;
+}
+
+function bindKnowledgeSearchSettingsEvents() {
+  $('#knowledgeSearchModeHint')?.addEventListener('click', () => openSettings('knowledge'));
+  $('#knowledgeSearchPreset')?.addEventListener('change', () => commitKnowledgeSearchSettings());
+  ['knowledgeSearchPrefix', 'knowledgeSearchFuzzy', 'knowledgeSearchStrict', ...Object.values(KNOWLEDGE_SEARCH_FIELD_IDS)].forEach(id => {
+    $(`#${id}`)?.addEventListener('change', () => {
+      if ($('#knowledgeSearchPreset')?.value !== 'custom') $('#knowledgeSearchPreset').value = 'custom';
+      commitKnowledgeSearchSettings();
+    });
+  });
+}
 
 function syncMobileSidebarAccessibility() {
   const sidebar = $('#workspaceSidebar');
@@ -93,22 +452,49 @@ function closeMobileSidebar() {
   syncMobileSidebarAccessibility();
 }
 
+function syncDesktopSidebar() {
+  const collapsed = desktopSidebarQuery.matches && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  document.body.classList.toggle('sidebar-collapsed', collapsed);
+  const toggle = $('#sidebarToggle');
+  const expand = $('#sidebarExpand');
+  if (toggle) {
+    toggle.hidden = !desktopSidebarQuery.matches;
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+    toggle.setAttribute('aria-label', collapsed ? '展开侧栏' : '收起侧栏');
+    toggle.title = collapsed ? '展开侧栏' : '收起侧栏';
+  }
+  if (expand) expand.hidden = !desktopSidebarQuery.matches || !collapsed;
+}
+
+function toggleDesktopSidebar(forceCollapsed) {
+  if (!desktopSidebarQuery.matches) return;
+  const collapsed = typeof forceCollapsed === 'boolean'
+    ? forceCollapsed
+    : !document.body.classList.contains('sidebar-collapsed');
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+  syncDesktopSidebar();
+}
+
 function parseRoute() {
   const raw = (window.location.hash || '#agent').slice(1);
   const question = raw.indexOf('?');
   const path = question >= 0 ? raw.slice(0, question) : raw;
   const query = new URLSearchParams(question >= 0 ? raw.slice(question + 1) : '');
   const [modeValue, ...rest] = path.split('/');
-  const mode = modeValue === 'knowledge' ? 'knowledge' : 'agent';
   let id = '';
   try { id = decodeURIComponent(rest.join('/')); } catch { id = rest.join('/'); }
+  const legacyTodos = modeValue === 'knowledge' && query.get('view') === 'todos' && !id;
+  const mode = legacyTodos || modeValue === 'todos'
+    ? 'todos'
+    : (modeValue === 'knowledge' || modeValue === 'memory' ? modeValue : 'agent');
   return {
     mode,
-    id,
+    id: mode === 'todos' ? '' : id,
     block: query.get('block') || '',
     offset: Number(query.get('offset')) || 0,
     knowledgeBase: query.get('base') || '',
     folderPath: query.get('folder') || '',
+    legacyTodos,
   };
 }
 
@@ -131,7 +517,7 @@ async function navigate(mode, id = '', options = {}, { replace = false } = {}) {
 
 function setModeUI(mode) {
   state.mode = mode;
-  document.querySelectorAll('[data-mode]').forEach(button => {
+  document.querySelectorAll('.topbar-mode-switch [data-mode]').forEach(button => {
     button.classList.toggle('active', button.dataset.mode === mode);
     button.setAttribute('aria-current', button.dataset.mode === mode ? 'page' : 'false');
   });
@@ -139,20 +525,31 @@ function setModeUI(mode) {
   document.querySelectorAll('[data-main-mode]').forEach(panel => { panel.hidden = panel.dataset.mainMode !== mode; });
   syncKnowledgeBrandActions();
   const brandHome = document.querySelector('.brand-home');
-  if (brandHome) brandHome.setAttribute('href', mode === 'knowledge' ? '#knowledge' : '#agent');
-  $('#topbarTitle').textContent = mode === 'agent' ? 'Agent' : '知识库';
+  if (brandHome) {
+    brandHome.setAttribute('href', mode === 'knowledge' ? '#knowledge' : mode === 'memory' ? '#memory' : mode === 'todos' ? '#todos' : '#agent');
+  }
   if (mode === 'agent') {
-    $('#topbarSubtitle').textContent = state.activeSession?.title || '新会话';
-  } else if (isKnowledgeRoot()) {
-    $('#topbarSubtitle').textContent = `${state.knowledgeBases.length} 个知识库`;
+    applyAgentTopbar(state.activeSession);
   } else {
-    $('#topbarSubtitle').textContent = state.activeDocument?.title || `${state.knowledgeTotal} 条知识`;
+    $('#topbarTitle').textContent = mode === 'memory' ? 'Memory' : mode === 'todos' ? '待办' : '知识库';
+    if (mode === 'memory') {
+      const saved = (state.memories?.items || []).length;
+      const pending = (state.memories?.proposals || []).length;
+      $('#topbarSubtitle').textContent = pending ? `${saved} 条记忆 · ${pending} 条待确认` : `${saved} 条记忆`;
+    } else if (mode === 'todos') {
+      $('#topbarSubtitle').textContent = getTodoSubtitle();
+    } else if (isKnowledgeRoot()) {
+      $('#topbarSubtitle').textContent = `${state.knowledgeBases.length} 个知识库`;
+    } else {
+      $('#topbarSubtitle').textContent = state.activeDocument?.title || `${state.knowledgeTotal} 条知识`;
+    }
   }
   closeMobileSidebar();
 }
 
 async function applyRoute() {
   const route = parseRoute();
+  if (route.legacyTodos) history.replaceState(null, '', '#todos');
   const activeDocumentId = state.activeDocument?.id || '';
   const leavesActiveDocument = state.mode === 'knowledge'
     && activeDocumentId
@@ -170,6 +567,13 @@ async function applyRoute() {
   if (route.mode === 'agent') {
     if (route.id) await openSession(route.id, serial);
     else showEmptySession();
+  } else if (route.mode === 'memory') {
+    await loadMemoriesPanel();
+  } else if (route.mode === 'todos') {
+    showEmptyDocument();
+    await loadTodos();
+    showTodoView();
+    if (serial === state.routeSerial) $('#topbarSubtitle').textContent = getTodoSubtitle();
   } else if (route.id) {
     await openKnowledgeDocument(route.id, { block: route.block, offset: route.offset, serial });
     if (state.selectedKnowledgeBase) await loadDocuments();
@@ -220,7 +624,7 @@ function renderSessions() {
         <div class="session-row ${state.activeSession?.id === session.id ? 'active' : ''}" data-session-row="${escHtml(session.id)}">
           <button class="session-select" type="button" data-session-open="${escHtml(session.id)}">
             <strong>${escHtml(session.title || '新会话')}</strong>
-            <small>${escHtml(session.lastMessagePreview || formatTime(session.updatedAt) || '暂无消息')}</small>
+            <small>${escHtml(formatSessionMeta(session))}</small>
           </button>
           <span class="session-actions">
             <button class="session-action" type="button" data-session-rename="${escHtml(session.id)}" title="重命名" aria-label="重命名 ${escHtml(session.title || '会话')}">✎</button>
@@ -230,31 +634,535 @@ function renderSessions() {
     </section>`).join('');
 }
 
+async function loadAgentStatus() {
+  try {
+    const response = await apiFetch('/api/agent/status');
+    const data = await response.json().catch(() => ({}));
+    state.agentStatus = {
+      configured: Boolean(data.configured),
+      provider: data.provider || '',
+      model: data.model || '',
+    };
+  } catch {
+    state.agentStatus = { configured: false, provider: '', model: '' };
+  }
+  applyAgentStatus();
+}
+
+function idleAgentLabel() {
+  if (state.agentStatus?.configured && state.agentStatus.model) {
+    return `已就绪 · ${state.agentStatus.model}`;
+  }
+  if (state.agentStatus && state.agentStatus.configured === false) {
+    return '未配置模型';
+  }
+  return 'Agent 已就绪';
+}
+
+function agentSetupHintHtml() {
+  const hidden = state.agentStatus?.configured !== false ? ' hidden' : '';
+  return `<p class="agent-setup-hint"${hidden}>尚未配置模型。请先在设置中填写 API Key，然后回到这里发送消息。<button type="button" data-open-settings>打开设置</button></p>`;
+}
+
+function applyAgentStatus() {
+  document.querySelectorAll('.agent-setup-hint').forEach(hint => {
+    hint.hidden = state.agentStatus?.configured !== false;
+  });
+  const composer = $('#agentComposerSettings');
+  if (composer) composer.textContent = idleAgentLabel();
+  if (!ACTIVE_RUN_STATES.has(state.runStatus)) setRunStatus(state.runStatus || '');
+}
+
+const DIRECT_AGENT_MODELS = [
+  { id: 'deepseek-v4-flash', name: 'DeepSeek Flash' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek Pro' },
+  { id: 'kimi-k3', name: 'Kimi K3' },
+  { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code' },
+  { id: 'kimi-k2.6', name: 'Kimi K2.6' },
+];
+
+function keyPlaceholder(configured, fallback) {
+  return configured ? '已配置；留空保持不变' : fallback;
+}
+
+function populateAgentModelSelect(models, selected) {
+  const select = $('#agentModelSelect');
+  const list = DIRECT_AGENT_MODELS.map(item => ({ ...item }));
+  (models || []).forEach(model => {
+    if (!model?.id || list.some(item => item.id === model.id)) return;
+    list.push({ id: model.id, name: model.name || model.id });
+  });
+  if (selected && !list.some(item => item.id === selected)) {
+    list.unshift({ id: selected, name: selected });
+  }
+  select.innerHTML = list.map(item => `<option value="${escHtml(item.id)}">${escHtml(item.name)}</option>`).join('');
+  select.value = selected || 'deepseek-v4-flash';
+}
+
+async function loadAgentSettingsForm() {
+  $('#saveAgentSettings').disabled = true;
+  try {
+    const [settingsResponse, modelsResponse] = await Promise.all([
+      apiFetch('/api/ai/settings'),
+      apiFetch('/api/ai/models'),
+    ]);
+    const settings = await settingsResponse.json().catch(() => ({}));
+    const modelsData = await modelsResponse.json().catch(() => ({}));
+    if (!settingsResponse.ok) throw new Error(settings.error || '模型设置加载失败');
+    state.aiSettings = settings;
+    $('#agentDeepseekKey').value = '';
+    $('#agentMoonshotKey').value = '';
+    $('#agentOpenrouterKey').value = '';
+    $('#agentTavilyApiKey').value = '';
+    $('#agentPerplexityKey').value = '';
+    $('#agentDeepseekKey').placeholder = keyPlaceholder(settings.apiKeyConfigured, 'sk-...');
+    $('#agentMoonshotKey').placeholder = keyPlaceholder(settings.moonshotApiKeyConfigured, 'sk-...');
+    $('#agentOpenrouterKey').placeholder = keyPlaceholder(settings.openrouterApiKeyConfigured, 'sk-or-...');
+    $('#agentTavilyApiKey').placeholder = keyPlaceholder(settings.tavilyApiKeyConfigured, 'tvly-...');
+    $('#agentPerplexityKey').placeholder = keyPlaceholder(settings.perplexityApiKeyConfigured, 'pplx-...');
+    $('#agentSeedreamKey').value = '';
+    $('#agentSeedreamKey').placeholder = keyPlaceholder(settings.seedreamApiKeyConfigured, 'ARK API Key');
+    const seedreamModels = ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'];
+    $('#agentSeedreamModel').value = seedreamModels.includes(settings.seedreamModel)
+      ? settings.seedreamModel
+      : 'doubao-seedream-5-0-260128';
+    $('#agentSeedreamSize').value = settings.seedreamSize || '2K';
+    $('#agentSeedreamWatermark').checked = settings.seedreamWatermark !== false;
+    populateAgentModelSelect(modelsResponse.ok ? modelsData.models : [], settings.model);
+    const rounds = Number(settings.agentMaxRounds);
+    $('#agentMaxRounds').value = Number.isFinite(rounds) ? Math.min(48, Math.max(4, Math.round(rounds))) : 12;
+    $('#agentReasoningMode').value = ['default', 'disabled', 'effort'].includes(settings.reasoningMode) ? settings.reasoningMode : 'effort';
+    $('#agentThinkingMode').value = settings.thinkingMode === 'disabled' ? 'disabled' : 'enabled';
+    $('#agentReasoningEffort').value = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.reasoningEffort)
+      ? settings.reasoningEffort
+      : 'high';
+    $('#agentStreamToggle').checked = Boolean(settings.stream);
+    $('#agentOpenRouterZdr').checked = settings.openrouterZdrEnabled !== false;
+    $('#agentWebSearchToggle').checked = Boolean(settings.webSearchEnabled);
+    $('#agentWebSearchDepth').value = settings.webSearchDepth === 'advanced' ? 'advanced' : 'basic';
+    $('#agentKimiWebSearchToggle').checked = Boolean(settings.kimiWebSearchEnabled);
+    $('#agentWestockToggle').checked = settings.skills?.westock?.enabled !== false;
+    $('#agentPerplexityToggle').checked = settings.skills?.perplexity?.enabled !== false;
+    await loadComputerPolicyForm();
+    $('#saveAgentSettings').disabled = false;
+  } catch (error) {
+    populateAgentModelSelect([], state.aiSettings?.model || 'deepseek-v4-flash');
+    showToast(error.message || '模型设置加载失败', 'error');
+  }
+}
+
+function setSettingsPanel(panel) {
+  const allowed = ['appearance', 'sessions', 'model', 'network', 'image', 'skills', 'knowledge', 'computer', 'account'];
+  let next = allowed.includes(panel) ? panel : 'appearance';
+  if (next === 'computer' && state.user?.role !== 'admin') next = 'appearance';
+  state.settingsPanel = next;
+  document.querySelectorAll('[data-settings-nav]').forEach(button => {
+    const active = button.dataset.settingsNav === next;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+  document.querySelectorAll('[data-settings-panel]').forEach(section => {
+    section.hidden = section.dataset.settingsPanel !== next;
+  });
+  const saveButton = $('#saveAgentSettings');
+  if (saveButton) saveButton.hidden = next === 'account' || next === 'knowledge';
+  if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
+  if (next === 'account') fillAccountSettings().catch(error => showToast(error.message, 'error'));
+  if (next === 'knowledge') fillKnowledgeSearchOptionsForm();
+}
+
+async function openSettings(panel = 'appearance') {
+  $('#accountMenu').hidden = true;
+  $('#accountButton').setAttribute('aria-expanded', 'false');
+  setSettingsPanel(panel);
+  $('#settingsDialog').showModal();
+  await loadAgentSettingsForm();
+}
+
+function settingsSavePayload() {
+  const current = state.aiSettings || {};
+  const payload = { ...current };
+  ['apiKeyConfigured', 'moonshotApiKeyConfigured', 'openrouterApiKeyConfigured', 'tavilyApiKeyConfigured', 'perplexityApiKeyConfigured', 'seedreamApiKeyConfigured'].forEach(key => {
+    delete payload[key];
+  });
+  delete payload.userProfile;
+  payload.apiKey = $('#agentDeepseekKey').value.trim();
+  payload.moonshotApiKey = $('#agentMoonshotKey').value.trim();
+  payload.openrouterApiKey = $('#agentOpenrouterKey').value.trim();
+  payload.tavilyApiKey = $('#agentTavilyApiKey').value.trim();
+  payload.perplexityApiKey = $('#agentPerplexityKey').value.trim();
+  payload.seedreamApiKey = $('#agentSeedreamKey').value.trim();
+  payload.seedreamModel = $('#agentSeedreamModel').value || current.seedreamModel || 'doubao-seedream-5-0-260128';
+  payload.seedreamSize = $('#agentSeedreamSize').value.trim() || current.seedreamSize || '2K';
+  payload.seedreamWatermark = $('#agentSeedreamWatermark').checked;
+  payload.model = $('#agentModelSelect').value || current.model || 'deepseek-v4-flash';
+  payload.reasoningMode = $('#agentReasoningMode').value || current.reasoningMode || 'effort';
+  payload.thinkingMode = $('#agentThinkingMode').value || current.thinkingMode || 'enabled';
+  payload.reasoningEffort = $('#agentReasoningEffort').value || current.reasoningEffort || 'high';
+  payload.stream = $('#agentStreamToggle').checked;
+  payload.openrouterZdrEnabled = $('#agentOpenRouterZdr').checked;
+  payload.webSearchEnabled = $('#agentWebSearchToggle').checked;
+  payload.webSearchDepth = $('#agentWebSearchDepth').value === 'advanced' ? 'advanced' : 'basic';
+  payload.kimiWebSearchEnabled = $('#agentKimiWebSearchToggle').checked;
+  payload.skills = {
+    westock: { enabled: $('#agentWestockToggle').checked },
+    perplexity: { enabled: $('#agentPerplexityToggle').checked },
+  };
+  const rounds = Number($('#agentMaxRounds').value);
+  payload.agentMaxRounds = Number.isInteger(rounds) && rounds >= 4 && rounds <= 48
+    ? rounds
+    : (Number.isInteger(Number(current.agentMaxRounds)) ? Number(current.agentMaxRounds) : 12);
+  return payload;
+}
+
+async function saveAgentSettings() {
+  if (state.settingsPanel === 'account') return;
+  if (!state.aiSettings) {
+    showToast('模型设置尚未加载，请关闭后重试', 'error');
+    return;
+  }
+  const button = $('#saveAgentSettings');
+  button.disabled = true;
+  try {
+    const response = await apiFetch('/api/ai/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settingsSavePayload()),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '模型设置保存失败');
+    state.aiSettings = data;
+    await saveComputerPolicy();
+    await loadAgentStatus();
+    await loadAgentSettingsForm();
+    showToast('设置已保存', 'success');
+  } catch (error) {
+    showToast(error.message || '模型设置保存失败', 'error');
+    button.disabled = false;
+  }
+}
+
+function isAdminUser() {
+  return state.user?.role === 'admin';
+}
+
+function syncComputerSettingsVisibility() {
+  const nav = document.querySelector('[data-settings-nav="computer"]');
+  const show = isAdminUser();
+  if (nav) nav.hidden = !show;
+  if (!show && state.settingsPanel === 'computer') setSettingsPanel('appearance');
+}
+
+function renderComputerAllowlist() {
+  const root = $('#computerAllowlist');
+  if (!root) return;
+  const dirs = state.computerPolicy?.allowedDirectories || [];
+  if (!dirs.length) {
+    root.innerHTML = '<p class="empty-list">还没有目录。添加后，Agent 只能在这些路径里读写文件和运行脚本。</p>';
+    return;
+  }
+  root.innerHTML = dirs.map((dir, index) => `
+    <div class="computer-allowlist-row">
+      <code title="${escHtml(dir)}">${escHtml(dir)}</code>
+      <button type="button" class="danger-action compact" data-allowlist-remove="${index}">移除</button>
+    </div>
+  `).join('');
+}
+
+async function loadComputerPolicyForm() {
+  syncComputerSettingsVisibility();
+  if (!isAdminUser()) return;
+  const response = await apiFetch('/api/admin/agent-policy');
+  if (response.status === 403) {
+    const nav = document.querySelector('[data-settings-nav="computer"]');
+    if (nav) nav.hidden = true;
+    if (state.settingsPanel === 'computer') setSettingsPanel('appearance');
+    return;
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '电脑策略加载失败');
+  state.computerPolicy = {
+    computerToolsEnabled: data.computerToolsEnabled !== false,
+    allowedDirectories: Array.isArray(data.allowedDirectories) ? data.allowedDirectories.map(String) : [],
+  };
+  $('#computerToolsToggle').checked = state.computerPolicy.computerToolsEnabled;
+  renderComputerAllowlist();
+}
+
+function addComputerAllowlistEntry() {
+  const input = $('#computerAllowlistInput');
+  const value = String(input?.value || '').trim();
+  if (!value) return;
+  if (!state.computerPolicy) state.computerPolicy = { computerToolsEnabled: true, allowedDirectories: [] };
+  const list = state.computerPolicy.allowedDirectories;
+  if (!list.includes(value)) list.push(value);
+  input.value = '';
+  renderComputerAllowlist();
+}
+
+async function saveComputerPolicy() {
+  if (!isAdminUser()) return;
+  const response = await apiFetch('/api/admin/agent-policy', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      computerToolsEnabled: $('#computerToolsToggle')?.checked === true,
+      allowedDirectories: state.computerPolicy?.allowedDirectories || [],
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '电脑策略保存失败');
+  state.computerPolicy = {
+    computerToolsEnabled: data.computerToolsEnabled === true,
+    allowedDirectories: Array.isArray(data.allowedDirectories) ? data.allowedDirectories.map(String) : [],
+  };
+  $('#computerToolsToggle').checked = state.computerPolicy.computerToolsEnabled;
+  renderComputerAllowlist();
+}
+
+function memoryLayerLabel(layer) {
+  if (layer === 'L3') return '流程';
+  if (layer === 'L2') return '事实';
+  return layer || '记忆';
+}
+
+function memoryBodyHtml(content) {
+  const text = String(content || '').trim();
+  if (!text) return '<p class="memory-empty">没有正文</p>';
+  return `<div class="memory-body">${escHtml(text)}</div>`;
+}
+
+function renderMemoryItems(items) {
+  const root = $('#agentMemoryItems');
+  if (!root) return;
+  const visible = state.memoryLayer ? items.filter(item => item.layer === state.memoryLayer) : items;
+  if (!visible.length) {
+    root.innerHTML = `<p class="memory-empty">${items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>`;
+    return;
+  }
+  root.innerHTML = visible.map(item => `
+    <article class="memory-item" data-memory-item="${escHtml(item.id)}">
+      <header>
+        <span class="memory-layer">${escHtml(memoryLayerLabel(item.layer))}</span>
+        <h4>${escHtml(item.title || '未命名记忆')}</h4>
+      </header>
+      ${memoryBodyHtml(item.content)}
+      <div class="card-actions">
+        <button class="danger-action compact" type="button" data-memory-archive="${escHtml(item.id)}">删除</button>
+      </div>
+    </article>`).join('');
+}
+
+function renderMemorySidebar() {
+  const list = $('#memorySidebarList');
+  const count = $('#memorySidebarCount');
+  const items = state.memories?.items || [];
+  const proposals = state.memories?.proposals || [];
+  const visible = state.memoryLayer ? items.filter(item => item.layer === state.memoryLayer) : items;
+  if (count) {
+    count.textContent = proposals.length
+      ? `${items.length} 条已保存 · ${proposals.length} 条待确认`
+      : `${items.length} 条已保存`;
+  }
+  document.querySelectorAll('[data-memory-layer]').forEach(button => {
+    const active = (button.dataset.memoryLayer || '') === (state.memoryLayer || '');
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  if (!list) return;
+  if (!visible.length) {
+    list.innerHTML = `<p class="empty-list">${items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>`;
+    return;
+  }
+  list.innerHTML = visible.map(item => `
+    <button class="session-select" type="button">
+      <strong>${escHtml(item.title || '未命名记忆')}</strong>
+      <small>${escHtml(memoryLayerLabel(item.layer))} · ${escHtml((item.content || '').replace(/\s+/g, ' ').trim().slice(0, 48) || '没有正文')}</small>
+    </button>`).join('');
+}
+
+function updateMemorySubtitle() {
+  if (state.mode !== 'memory') return;
+  const saved = (state.memories?.items || []).length;
+  const pending = (state.memories?.proposals || []).length;
+  $('#topbarSubtitle').textContent = pending ? `${saved} 条记忆 · ${pending} 条待确认` : `${saved} 条记忆`;
+}
+
+function renderMemoryWorkspace() {
+  const items = state.memories?.items || [];
+  const proposals = state.memories?.proposals || [];
+  renderMemoryProposalList(proposals);
+  renderMemoryItems(items);
+  renderMemorySidebar();
+  updateMemorySubtitle();
+}
+
+function renderMemoryProposalList(proposals) {
+  const root = $('#agentMemoryProposals');
+  if (!root) return;
+  if (!proposals.length) {
+    root.innerHTML = '';
+    return;
+  }
+  root.innerHTML = proposals.map(item => `
+    <article class="memory-proposal" data-memory-proposal="${escHtml(item.id)}">
+      <header>
+        <span class="memory-layer">待确认</span>
+        <h4>${escHtml(item.title || '记忆草稿')}</h4>
+      </header>
+      ${memoryBodyHtml(item.content)}
+      <div class="card-actions">
+        <button class="secondary-action" type="button" data-memory-dismiss="${escHtml(item.id)}">忽略</button>
+        <button class="primary-action compact" type="button" data-memory-approve="${escHtml(item.id)}">保存</button>
+      </div>
+    </article>`).join('');
+}
+
+function setMemoryRefreshBusy(busy, message = '') {
+  const button = $('#refreshAgentMemory');
+  const status = $('#agentMemoryStatus');
+  if (button) button.disabled = busy;
+  if (!status) return;
+  status.hidden = !message;
+  status.textContent = message;
+}
+
+async function loadMemoriesPanel() {
+  try {
+    const response = await apiFetch('/api/agent/memories');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '记忆加载失败');
+    state.memories = { items: data.items || [], proposals: data.proposals || [] };
+    renderMemoryWorkspace();
+    return state.memories;
+  } catch (error) {
+    state.memories = { items: [], proposals: [] };
+    renderMemoryWorkspace();
+    const root = $('#agentMemoryItems');
+    if (root) root.innerHTML = `<p class="memory-empty">${escHtml(error.message || '记忆加载失败')}</p>`;
+    return state.memories;
+  }
+}
+
+function subscribeMemoryRefresh(runId) {
+  state.memoryRefreshSource?.close();
+  const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
+  state.memoryRefreshSource = source;
+  const finish = async (message, type = 'success') => {
+    if (state.memoryRefreshSource === source) {
+      source.close();
+      state.memoryRefreshSource = null;
+    }
+    const data = await loadMemoriesPanel();
+    setMemoryRefreshBusy(false, '');
+    const pending = (data.proposals || []).length;
+    showToast(message || (pending ? '已提出记忆草稿，请确认' : '暂无新记忆'), type);
+  };
+  source.addEventListener('memory.proposed', () => {
+    loadMemoriesPanel().catch(() => {});
+  });
+  source.addEventListener('run.completed', () => {
+    finish();
+  });
+  source.addEventListener('run.failed', raw => {
+    let error = '记忆更新失败';
+    try { error = JSON.parse(raw.data)?.payload?.error || error; } catch { /* keep default */ }
+    finish(error === 'cancelled' ? '记忆更新已停止' : `记忆更新失败：${error}`, 'error');
+  });
+  source.onerror = () => {
+    if (state.memoryRefreshSource === source) setMemoryRefreshBusy(true, '正在根据近期对话整理…');
+  };
+}
+
+async function refreshAgentMemory() {
+  if (state.agentStatus?.configured === false) {
+    showToast('请先配置模型', 'error');
+    return;
+  }
+  setMemoryRefreshBusy(true, '正在根据近期对话整理…');
+  try {
+    const response = await apiFetch('/api/agent/memory/refresh', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '记忆更新失败');
+    subscribeMemoryRefresh(data.runId);
+  } catch (error) {
+    setMemoryRefreshBusy(false, '');
+    showToast(error.message || '记忆更新失败', 'error');
+  }
+}
+
+async function handleMemoryProposalAction(id, action) {
+  if (!id) return;
+  const path = action === 'approve' ? 'approve' : 'dismiss';
+  const response = await apiFetch(`/api/agent/memory-proposals/${encodeURIComponent(id)}/${path}`, { method: 'POST' });
+  if (!response.ok) {
+    showToast(action === 'approve' ? '长期记忆保存失败' : '无法忽略这项记忆草稿', 'error');
+    return;
+  }
+  document.querySelector(`[data-memory-card="${CSS.escape(id)}"]`)?.remove();
+  if (state.mode === 'memory') await loadMemoriesPanel();
+  showToast(action === 'approve' ? '长期记忆已保存' : '已忽略这项记忆草稿', 'success');
+}
+
+async function archiveMemoryItem(id) {
+  if (!id) return;
+  const item = (state.memories?.items || []).find(entry => entry.id === id);
+  const confirmed = await confirmAction({
+    title: '删除长期记忆',
+    message: `“${item?.title || '未命名记忆'}”将从 Memory 列表隐藏，之后也不会再注入 Agent。`,
+    confirmText: '删除',
+  });
+  if (!confirmed) return;
+  const response = await apiFetch(`/api/agent/memories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showToast(data.error || '长期记忆删除失败', 'error');
+    return;
+  }
+  await loadMemoriesPanel();
+  showToast('长期记忆已删除', 'success');
+}
+
 async function loadSessions() {
   const response = await apiFetch('/api/agent/sessions');
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || '会话加载失败');
   state.sessions = data.sessions || [];
+  if (state.activeSession?.id) {
+    const summary = state.sessions.find(item => item.id === state.activeSession.id);
+    if (summary) {
+      state.activeSession.messageCount = summary.messageCount;
+      state.activeSession.updatedAt = summary.updatedAt;
+    }
+  }
   renderSessions();
+  if (state.mode === 'agent') applyAgentTopbar(state.activeSession);
+}
+
+function stopLiveTrace() {
+  state.eventSource?.close();
+  state.eventSource = null;
+  state.runId = '';
+  state.runEventKeys = new Set();
+  state.runImages = [];
 }
 
 function showEmptySession() {
   state.activeSession = null;
-  state.eventSource?.close();
-  state.eventSource = null;
+  stopLiveTrace();
   setRunStatus('');
-  $('#topbarSubtitle').textContent = '新会话';
+  applyAgentTopbar(null);
   $('#agentMessageList').innerHTML = `
     <div class="agent-empty-state">
       <span class="empty-mark" aria-hidden="true">✦</span>
       <h1>今天想一起完成什么？</h1>
-      <p>我会先查找你的知识，再请求执行需要确认的操作。</p>
+      <p>用 @知识库 或 @日期 带上材料，再描述你想完成的事。</p>
+      ${agentSetupHintHtml()}
       <div class="starter-prompts">
-        <button type="button" data-starter="帮我查找最近的项目记录并总结下一步">总结项目记录</button>
-        <button type="button" data-starter="根据我的知识库规划今天最重要的三件事">规划今天</button>
+        <button type="button" data-starter="@开发 总结最近的项目记录和下一步">总结项目记录</button>
+        <button type="button" data-starter="@开发 根据这些材料规划今天最重要的三件事">规划今天</button>
       </div>
     </div>`;
-  $('#executionTrace').hidden = true;
   renderSessions();
 }
 
@@ -287,8 +1195,29 @@ function renderSessionMessages(session) {
     const previous = visible[index - 1];
     return !previous || previous.role !== message.role || previous.content !== message.content;
   });
-  deduped.forEach(message => addMessage(message.role, message.content));
-  if (!deduped.length) showEmptySessionContent();
+  const runs = Array.isArray(session.runs) ? session.runs : [];
+  if (!deduped.length && !runs.length) {
+    showEmptySessionContent();
+    scrollMessagesToBottom();
+    return;
+  }
+  const liveId = session.latestRun && ACTIVE_RUN_STATES.has(session.latestRun.status)
+    ? session.latestRun.id
+    : '';
+  let runIndex = 0;
+  deduped.forEach(message => {
+    addMessage(message.role, message.content);
+    if (message.role === 'user' && runIndex < runs.length) {
+      const run = runs[runIndex];
+      upsertRunTrace(run.id === liveId ? { id: run.id, trace: [] } : run, { live: run.id === liveId });
+      runIndex += 1;
+    }
+  });
+  while (runIndex < runs.length) {
+    const run = runs[runIndex];
+    upsertRunTrace(run.id === liveId ? { id: run.id, trace: [] } : run, { live: run.id === liveId });
+    runIndex += 1;
+  }
   scrollMessagesToBottom();
 }
 
@@ -297,16 +1226,18 @@ function showEmptySessionContent() {
     <div class="agent-empty-state">
       <span class="empty-mark" aria-hidden="true">✦</span>
       <h1>从一个具体目标开始</h1>
-      <p>描述希望得到的结果，Agent 会自行查找知识并规划步骤。</p>
+      <p>用 @知识库 或 @日期 带上材料，再描述希望得到的结果。</p>
+      ${agentSetupHintHtml()}
     </div>`;
 }
 
 async function openSession(id, serial = state.routeSerial) {
   if (state.activeSession?.id === id && state.activeSession.messages) {
-    $('#topbarSubtitle').textContent = state.activeSession.title || '新会话';
+    applyAgentTopbar(state.activeSession);
     renderSessions();
     return;
   }
+  stopLiveTrace();
   const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
   const data = await response.json().catch(() => ({}));
   if (serial !== state.routeSerial) return;
@@ -316,7 +1247,7 @@ async function openSession(id, serial = state.routeSerial) {
     return;
   }
   state.activeSession = data;
-  $('#topbarSubtitle').textContent = data.title || '新会话';
+  applyAgentTopbar(data);
   renderSessionMessages(data);
   renderSessions();
   const latestRun = data.latestRun;
@@ -360,7 +1291,7 @@ function startSessionRename(id) {
       if (!response.ok) showToast('会话重命名失败', 'error');
       else if (state.activeSession?.id === id) {
         state.activeSession.title = title;
-        $('#topbarSubtitle').textContent = title;
+        applyAgentTopbar(state.activeSession);
       }
       await loadSessions();
     } else renderSessions();
@@ -400,19 +1331,117 @@ async function archiveSession(id) {
   if (!response.ok) return showToast('会话归档失败', 'error');
   if (state.activeSession?.id === id) await navigate('agent');
   await loadSessions();
+  if (state.settingsPanel === 'sessions' && $('#settingsDialog')?.open) {
+    await loadArchivedSessions().catch(() => {});
+  }
   showToast('会话已归档', 'success');
+}
+
+function renderArchivedSessions() {
+  const host = $('#archivedSessionList');
+  if (!host) return;
+  const sessions = state.archivedSessions || [];
+  if (!sessions.length) {
+    host.innerHTML = '<p class="empty-list">没有归档会话。</p>';
+    return;
+  }
+  host.innerHTML = sessions.map(session => `
+    <div class="archived-session-row">
+      <div>
+        <strong>${escHtml(session.title || '新会话')}</strong>
+        <small>${escHtml(formatSessionMeta(session))}</small>
+      </div>
+      <span class="archived-session-actions">
+        <button class="secondary-action compact" type="button" data-archived-restore="${escHtml(session.id)}">恢复</button>
+        <button class="danger-action compact" type="button" data-archived-delete="${escHtml(session.id)}">删除</button>
+      </span>
+    </div>`).join('');
+}
+
+async function loadArchivedSessions() {
+  const host = $('#archivedSessionList');
+  if (!host) return;
+  const response = await apiFetch('/api/agent/sessions?status=archived');
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '归档会话加载失败');
+  state.archivedSessions = data.sessions || [];
+  renderArchivedSessions();
+}
+
+async function restoreArchivedSession(id) {
+  const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'active' }),
+  });
+  if (!response.ok) return showToast('会话恢复失败', 'error');
+  await Promise.all([loadSessions(), loadArchivedSessions()]);
+  showToast('会话已恢复', 'success');
+}
+
+async function deleteArchivedSession(id) {
+  const session = (state.archivedSessions || []).find(item => item.id === id);
+  const confirmed = await confirmAction({
+    title: '删除归档会话',
+    message: `将永久删除“${session?.title || '会话'}”及其运行记录，无法恢复。`,
+    confirmText: '删除',
+  });
+  if (!confirmed) return;
+  const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showToast(data.error || '删除失败', 'error');
+  if (state.activeSession?.id === id) await navigate('agent');
+  await Promise.all([loadSessions(), loadArchivedSessions()]);
+  showToast('归档会话已删除', 'success');
+}
+
+function runTraceHost(runId) {
+  if (!runId) return null;
+  return document.querySelector(`[data-run-id="${CSS.escape(runId)}"]`);
+}
+
+function upsertRunTrace(run, { live = false } = {}) {
+  if (!run?.id) return null;
+  const list = $('#agentMessageList');
+  list.querySelector('.agent-empty-state')?.remove();
+  let details = runTraceHost(run.id);
+  if (!details) {
+    details = document.createElement('details');
+    details.className = 'execution-trace';
+    details.dataset.runId = run.id;
+    details.innerHTML = `
+      <summary><span class="trace-state-dot"></span><span class="trace-summary">查看执行过程</span></summary>
+      <div class="trace-events"></div>`;
+    list.append(details);
+  }
+  if (live) details.open = true;
+  const lines = Array.isArray(run.trace) ? run.trace.map(item => String(item || '').trim()).filter(Boolean) : [];
+  const eventsEl = details.querySelector('.trace-events');
+  const summaryEl = details.querySelector('.trace-summary');
+  eventsEl.innerHTML = lines.map(text => `<div class="trace-event">${escHtml(text)}</div>`).join('');
+  if (lines.length) summaryEl.textContent = lines.at(-1);
+  eventsEl.scrollTop = eventsEl.scrollHeight;
+  return details;
 }
 
 function trace(text) {
   if (!text) return;
-  const details = $('#executionTrace');
-  details.hidden = false;
+  const details = runTraceHost(state.runId) || upsertRunTrace({ id: state.runId, trace: [] }, { live: true });
+  if (!details) return;
+  details.open = true;
+  const eventsEl = details.querySelector('.trace-events');
+  const summaryEl = details.querySelector('.trace-summary');
+  const last = eventsEl.lastElementChild;
+  if (last && last.textContent === text) {
+    summaryEl.textContent = text;
+    return;
+  }
   const event = document.createElement('div');
   event.className = 'trace-event';
   event.textContent = text;
-  $('#traceEvents').append(event);
-  $('#traceEvents').scrollTop = $('#traceEvents').scrollHeight;
-  $('#traceSummary').textContent = text;
+  eventsEl.append(event);
+  eventsEl.scrollTop = eventsEl.scrollHeight;
+  summaryEl.textContent = text;
 }
 
 function setRunStatus(status, text = '') {
@@ -425,9 +1454,25 @@ function setRunStatus(status, text = '') {
   const labels = {
     queued: '正在排队', running: '正在运行', waiting_approval: '等待确认', waiting_client_tool: '等待浏览器',
   };
-  const label = text || labels[status] || 'Agent 已就绪';
+  const label = text || labels[status] || idleAgentLabel();
   $('#runStatusText').textContent = label;
   $('#agentSidebarStatus span:last-child').textContent = label;
+}
+
+function approvalBodyHtml(approval) {
+  const name = approval.call?.name || '';
+  const args = approval.call?.arguments && typeof approval.call.arguments === 'object' ? approval.call.arguments : {};
+  if (name === 'image.generate') {
+    const prompt = String(args.prompt || '').trim();
+    const extras = [];
+    if (args.size) extras.push(`尺寸 ${args.size}`);
+    if (args.model) extras.push(`模型 ${args.model}`);
+    if (typeof args.watermark === 'boolean') extras.push(args.watermark ? '含水印' : '无水印');
+    return `
+      <p>将用 Seedream 生成图片。确认提示词无误后再允许执行。</p>
+      <div class="approval-risk"><strong>提示词</strong><pre>${escHtml(prompt || '（空）')}</pre>${extras.length ? `<p>${escHtml(extras.join(' · '))}</p>` : ''}</div>`;
+  }
+  return `<div class="approval-risk"><strong>参数</strong><pre>${escHtml(JSON.stringify(args, null, 2))}</pre></div>`;
 }
 
 function renderApproval(payload) {
@@ -443,20 +1488,30 @@ function renderApproval(payload) {
   approvals.forEach(approval => {
     if (document.querySelector(`[data-approval-card="${CSS.escape(approval.id)}"]`)) return;
     const name = approval.call?.name || '未知操作';
-    const args = JSON.stringify(approval.call?.arguments || {}, null, 2);
     const card = document.createElement('section');
     card.className = 'approval-card';
     card.dataset.approvalCard = approval.id;
     card.innerHTML = `
       <h3>确认执行 ${escHtml(name)}</h3>
-      <p>Agent 请求执行一个会改变数据或访问外部服务的动作。</p>
-      <div class="approval-risk"><strong>参数</strong><pre>${escHtml(args)}</pre></div>
+      ${name === 'image.generate' ? '' : '<p>Agent 请求执行一个会改变数据或访问外部服务的动作。</p>'}
+      ${approvalBodyHtml(approval)}
       <div class="card-actions">
         <button class="secondary-action" type="button" data-approval-id="${escHtml(approval.id)}" data-approved="false">拒绝</button>
         <button class="primary-action compact" type="button" data-approval-id="${escHtml(approval.id)}" data-approved="true">允许执行</button>
       </div>`;
     $('#agentMessageList').append(card);
   });
+  scrollMessagesToBottom();
+}
+
+function renderGeneratedImage(url, alt = '生成图片') {
+  if (!isSafeImageSrc(url) || !url.startsWith('/uploads/')) return;
+  if (document.querySelector(`[data-generated-image="${CSS.escape(url)}"]`)) return;
+  const card = document.createElement('section');
+  card.className = 'agent-image-preview';
+  card.dataset.generatedImage = url;
+  card.innerHTML = `<img src="${escHtml(url)}" alt="${escHtml(alt)}" loading="lazy">`;
+  $('#agentMessageList').append(card);
   scrollMessagesToBottom();
 }
 
@@ -468,9 +1523,13 @@ function renderMemoryProposal(payload) {
   card.dataset.memoryCard = proposal.id;
   card.innerHTML = `
     <h3>保存为长期记忆？</h3>
-    <p><strong>${escHtml(proposal.title || '任务经验')}</strong><br>${escHtml(proposal.content || '')}</p>
+    <header class="memory-card-head">
+      <span class="memory-layer">${escHtml(memoryLayerLabel(proposal.layer))}</span>
+      <strong>${escHtml(proposal.title || '任务经验')}</strong>
+    </header>
+    ${memoryBodyHtml(proposal.content)}
     <div class="card-actions">
-      <button class="secondary-action" type="button" data-memory-dismiss>暂不保存</button>
+      <button class="secondary-action" type="button" data-memory-dismiss="${escHtml(proposal.id)}">暂不保存</button>
       <button class="primary-action compact" type="button" data-memory-approve="${escHtml(proposal.id)}">保存记忆</button>
     </div>`;
   $('#agentMessageList').append(card);
@@ -492,13 +1551,28 @@ function handleRunEvent(event) {
   if (event.type === 'assistant.delta' && payload.text) trace('正在组织回答');
   if (event.type === 'tool.proposed') trace(`准备使用 ${payload.calls?.map(call => call.name).join('、') || '工具'}`);
   if (event.type === 'tool.started') trace(`正在执行 ${payload.name || payload.call?.name || '工具'}`);
-  if (event.type === 'tool.completed') trace(payload.result?.summary || payload.call?.name || '工具执行完成');
+  if (event.type === 'tool.completed') {
+    trace(payload.result?.summary || payload.call?.name || '工具执行完成');
+    const url = payload.result?.data?.url;
+    if (typeof url === 'string' && url.startsWith('/uploads/')) {
+      if (!state.runImages.includes(url)) state.runImages.push(url);
+      renderGeneratedImage(url, payload.call?.arguments?.prompt || '生成图片');
+    }
+  }
   if (event.type === 'checkpoint.updated') trace('已更新工作进度');
   if (event.type === 'approval.required') { setRunStatus('waiting_approval'); trace('等待你的确认'); renderApproval(payload); }
   if (event.type === 'client_tool.requested') { setRunStatus('waiting_client_tool'); trace('等待浏览器返回结果'); }
   if (event.type === 'memory.proposed') renderMemoryProposal(payload);
   if (event.type === 'run.completed') {
-    addMessage('assistant', payload.text || '已完成。', payload.citations || []);
+    let text = payload.text || '已完成。';
+    for (const url of state.runImages) {
+      if (text.includes(url)) continue;
+      text += `\n\n![生成图片](${url})`;
+    }
+    addMessage('assistant', text, payload.citations || []);
+    for (const url of state.runImages) {
+      document.querySelector(`[data-generated-image="${CSS.escape(url)}"]`)?.remove();
+    }
     trace('运行完成');
     setRunStatus('');
     state.eventSource?.close();
@@ -523,8 +1597,8 @@ function subscribeRun(runId, initialStatus = 'queued') {
   state.eventSource?.close();
   state.runId = runId;
   state.runEventKeys = new Set();
-  $('#traceEvents').innerHTML = '';
-  $('#executionTrace').hidden = false;
+  state.runImages = [];
+  upsertRunTrace({ id: runId, trace: [] }, { live: true });
   setRunStatus(initialStatus);
   const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
   state.eventSource = source;
@@ -545,7 +1619,6 @@ async function sendAgentMessage(content) {
   if (!session) session = await createSession(content.slice(0, 30));
   addMessage('user', content);
   setRunStatus('queued');
-  trace('目标已提交');
   const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(session.id)}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -557,6 +1630,7 @@ async function sendAgentMessage(content) {
     throw new Error(data.error || 'Agent 启动失败');
   }
   subscribeRun(data.runId, data.status);
+  trace('目标已提交');
   loadSessions().catch(() => {});
 }
 
@@ -660,12 +1734,61 @@ function renderKnowledgeBaseList() {
   $('#knowledgeBaseOptions').innerHTML = state.knowledgeBases.map(base => `<option value="${escHtml(base.name)}"></option>`).join('');
 }
 
+function knowledgeFiltersActive() {
+  return Boolean(
+    $('#knowledgeSearch')?.value.trim()
+    || $('#knowledgeTagFilter')?.value.trim()
+    || $('#knowledgeDateFilter')?.value
+    || $('#knowledgeArchivedFilter')?.checked,
+  );
+}
+
+function folderDisplayName(base, folderPath) {
+  if (!folderPath) return '';
+  const folder = base?.folders?.find(item => item.path === folderPath);
+  return folder?.name || folderPath;
+}
+
+function renderKnowledgeBreadcrumb(base) {
+  const nav = $('#knowledgeBreadcrumb');
+  if (!nav || !base) return;
+  const folderPath = state.selectedFolderPath;
+  const folderName = folderDisplayName(base, folderPath);
+  nav.innerHTML = `
+    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="root">知识库</button>
+    <span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>
+    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="base">${escHtml(base.name)}</button>
+    ${folderPath ? `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span><span class="knowledge-breadcrumb-current">${escHtml(folderName)}</span>` : ''}`;
+}
+
+function documentListHeadingText() {
+  const total = state.knowledgeTotal;
+  if (state.selectedFolderPath) {
+    const base = findKnowledgeBase(state.selectedKnowledgeBase);
+    return `${folderDisplayName(base, state.selectedFolderPath)} · ${total}`;
+  }
+  return `文档 · ${total}`;
+}
+
+function documentRowSubtitle(document) {
+  if (document.searchSnippet) {
+    return String(document.searchSnippet).replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
+  const date = document.documentDate || formatTime(document.updatedAt);
+  const location = [document.knowledgeBase, document.folderPath].filter(Boolean).join(' / ') || '其他';
+  if (knowledgeFiltersActive()) {
+    return date ? `${location} · ${date}` : location;
+  }
+  if (state.selectedFolderPath) return date || '';
+  if (document.folderPath) return date ? `${document.folderPath} · ${date}` : document.folderPath;
+  return date || '';
+}
+
 function renderKnowledgeTree() {
   const tree = $('#knowledgeFolderTree');
   const base = findKnowledgeBase(state.selectedKnowledgeBase);
   if (!tree || !base) return;
-  const title = $('#knowledgeInsideTitle');
-  if (title) title.textContent = base.name;
+  renderKnowledgeBreadcrumb(base);
   const baseActive = !state.selectedFolderPath;
   const folders = Array.isArray(base.folders) ? base.folders : [];
   tree.innerHTML = `
@@ -677,8 +1800,8 @@ function renderKnowledgeTree() {
     </div>
     ${folders.map(folder => {
       const active = state.selectedFolderPath === folder.path;
-      return `<div class="knowledge-tree-folder-row">
-        <button class="knowledge-tree-folder ${active ? 'active' : ''}" type="button" data-knowledge-folder="${escHtml(folder.path)}" data-knowledge-base="${escHtml(base.name)}" aria-current="${active ? 'page' : 'false'}"><span aria-hidden="true">└</span>${escHtml(folder.name)} <small>${Number(folder.documentCount) || 0}</small></button>
+      return `<div class="knowledge-tree-folder-row knowledge-tree-folder-row-nested">
+        <button class="knowledge-tree-folder ${active ? 'active' : ''}" type="button" data-knowledge-folder="${escHtml(folder.path)}" data-knowledge-base="${escHtml(base.name)}" aria-current="${active ? 'page' : 'false'}"><span class="tree-folder-dot" aria-hidden="true"></span>${escHtml(folder.name)} <small>${Number(folder.documentCount) || 0}</small></button>
         <span class="tree-actions"><button class="tree-action" type="button" data-tree-rename-folder="${escHtml(base.name)}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button><button class="tree-action" type="button" data-tree-delete-folder="${escHtml(base.name)}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">⌫</button></span>
       </div>`;
     }).join('')}`;
@@ -757,15 +1880,18 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
   await navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath });
 }
 
-function knowledgeQuery(cursor = '') {
+function knowledgeQuery(cursor = '', { includeSearchText = false } = {}) {
   const params = new URLSearchParams();
   const values = {
-    q: $('#knowledgeSearch').value.trim(),
     knowledgeBase: state.selectedKnowledgeBase,
     folderPath: state.selectedFolderPath,
     tag: $('#knowledgeTagFilter').value.trim(),
     date: $('#knowledgeDateFilter').value,
   };
+  if (includeSearchText) {
+    const q = $('#knowledgeSearch').value.trim();
+    if (q) values.q = q;
+  }
   Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); });
   if ($('#knowledgeArchivedFilter').checked) params.set('status', 'archived');
   params.set('limit', '60');
@@ -773,21 +1899,34 @@ function knowledgeQuery(cursor = '') {
   return params;
 }
 
+function knowledgeSearchQuery() {
+  const params = knowledgeSearchOptionsQuery();
+  const q = $('#knowledgeSearch').value.trim();
+  if (q) params.set('q', q);
+  const tag = $('#knowledgeTagFilter').value.trim();
+  const date = $('#knowledgeDateFilter').value;
+  if (tag) params.set('tag', tag);
+  if (date) params.set('date', date);
+  if (state.selectedKnowledgeBase) params.set('knowledgeBase', state.selectedKnowledgeBase);
+  if (state.selectedFolderPath) params.set('folderPath', state.selectedFolderPath);
+  params.set('limit', '60');
+  return params;
+}
+
 function renderDocuments() {
   const list = $('#knowledgeDocumentList');
-  $('#knowledgeDocumentCount').textContent = `${state.knowledgeTotal} 条知识`;
+  const heading = $('#knowledgeDocumentListHeading');
+  if (heading) heading.textContent = documentListHeadingText();
   if (!state.documents.length) {
     list.innerHTML = '<p class="empty-list">没有符合条件的知识文档。</p>';
   } else {
     list.innerHTML = state.documents.map(document => {
-      const location = [document.knowledgeBase, document.folderPath].filter(Boolean).join(' / ') || '其他';
-      const date = document.documentDate || formatTime(document.updatedAt);
-      const subtitle = `${location}${date ? ` · ${date}` : ''}`;
+      const subtitle = documentRowSubtitle(document);
       return `
-        <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}">
+        <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
           <span class="document-row-body">
             <span class="document-row-title"><strong>${escHtml(document.title || '未命名')}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
-            <small>${escHtml(subtitle)}</small>
+            ${subtitle ? `<small>${escHtml(subtitle)}</small>` : ''}
           </span>
         </div>`;
     }).join('');
@@ -796,14 +1935,26 @@ function renderDocuments() {
 }
 
 async function loadDocuments({ append = false } = {}) {
-  const cursor = append ? state.knowledgeNextCursor : '';
-  if (append && !cursor) return;
-  const response = await apiFetch(`/api/knowledge/documents?${knowledgeQuery(cursor)}`);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || '知识库加载失败');
-  state.documents = append ? [...state.documents, ...(data.documents || [])] : (data.documents || []);
-  state.knowledgeTotal = Number(data.total) || 0;
-  state.knowledgeNextCursor = data.nextCursor || null;
+  const q = $('#knowledgeSearch').value.trim();
+  const archived = $('#knowledgeArchivedFilter').checked;
+  if (q && !archived) {
+    if (append) return;
+    const response = await apiFetch(`/api/knowledge/search?${knowledgeSearchQuery()}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '知识库搜索失败');
+    state.documents = data.documents || [];
+    state.knowledgeTotal = Number(data.total) || state.documents.length;
+    state.knowledgeNextCursor = null;
+  } else {
+    const cursor = append ? state.knowledgeNextCursor : '';
+    if (append && !cursor) return;
+    const response = await apiFetch(`/api/knowledge/documents?${knowledgeQuery(cursor, { includeSearchText: archived && Boolean(q) })}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '知识库加载失败');
+    state.documents = append ? [...state.documents, ...(data.documents || [])] : (data.documents || []);
+    state.knowledgeTotal = Number(data.total) || 0;
+    state.knowledgeNextCursor = data.nextCursor || null;
+  }
   renderKnowledgeTree();
   renderDocuments();
   if (state.mode === 'knowledge' && !state.activeDocument) {
@@ -828,6 +1979,7 @@ function showEmptyDocument() {
   }
   updateKnowledgeEmptyState();
   renderDocuments();
+  updateInsertImageButton();
 }
 
 function setDocumentSaveState(text, className = '') {
@@ -860,12 +2012,16 @@ async function renderActiveDocument(document) {
   $('#fileReader').hidden = !isFile;
   $('#editorModeSwitch').hidden = isFile;
   $('#archiveDocumentButton').hidden = document.sourceType === 'log' || document.status === 'archived';
+  $('#restoreDocumentButton').hidden = document.sourceType === 'log' || document.status !== 'archived';
+  updateInsertImageButton();
   $('#documentTitle').readOnly = document.status === 'archived';
   $('#documentKnowledgeBase').readOnly = document.status === 'archived';
   $('#documentFolderPath').readOnly = document.status === 'archived';
   $('#documentDate').readOnly = document.status === 'archived';
   $('#documentTags').readOnly = document.status === 'archived';
   $('#documentContent').readOnly = document.status === 'archived';
+  $('#annotationTitle').readOnly = document.status === 'archived';
+  $('#annotationContent').readOnly = document.status === 'archived';
   setEditorMode('edit');
   if (isFile) await renderFile(document);
   else destroyFilePreview();
@@ -943,7 +2099,11 @@ function setEditorMode(mode) {
   const preview = state.editorMode === 'preview';
   $('#documentContent').hidden = preview;
   $('#documentPreview').hidden = !preview;
-  if (preview) $('#documentPreview').innerHTML = renderMarkdown($('#documentContent').value || '*暂无正文*');
+  if (preview) renderDocumentPreview();
+  else if (documentPreviewCleanup) {
+    documentPreviewCleanup();
+    documentPreviewCleanup = null;
+  }
 }
 
 function currentDocumentPatch() {
@@ -1032,6 +2192,7 @@ async function saveDocument() {
 
 function scheduleAnnotationSave() {
   if (!state.activeDocument || state.activeDocument.sourceType !== 'file') return;
+  if (state.activeDocument.status === 'archived') return;
   if (!state.annotation && !$('#annotationTitle').value.trim() && !$('#annotationContent').value.trim()) return;
   state.annotationDirty = true;
   $('#annotationSaveState').textContent = '等待保存';
@@ -1042,6 +2203,7 @@ function scheduleAnnotationSave() {
 async function saveAnnotation() {
   clearTimeout(state.annotationSaveTimer);
   if (!state.activeDocument || state.activeDocument.sourceType !== 'file') return true;
+  if (state.activeDocument.status === 'archived') return true;
   if (!state.annotationDirty) return true;
   const id = state.activeDocument.id;
   const payload = {
@@ -1115,6 +2277,68 @@ async function importKnowledgeFile(file) {
   }
 }
 
+function insertTextAtCursor(textarea, text) {
+  const start = textarea.selectionStart ?? textarea.value.length;
+  const end = textarea.selectionEnd ?? start;
+  const before = textarea.value.slice(0, start);
+  const after = textarea.value.slice(end);
+  textarea.value = `${before}${text}${after}`;
+  const next = start + text.length;
+  textarea.setSelectionRange(next, next);
+  textarea.focus();
+  state.documentDirty = true;
+  scheduleDocumentSave();
+}
+
+function noteImageAltFromFile(file) {
+  const name = String(file?.name || '图片').replace(/\.[^.]+$/, '').trim();
+  return name || '图片';
+}
+
+async function uploadNoteImage(file) {
+  const body = new FormData();
+  body.append('image', file);
+  const response = await apiFetch('/api/upload', { method: 'POST', body });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '图片上传失败');
+  return data.url;
+}
+
+function updateInsertImageButton() {
+  const button = $('#insertImageButton');
+  if (!button) return;
+  const doc = state.activeDocument;
+  button.hidden = !(doc && doc.sourceType !== 'file' && doc.status !== 'archived' && !$('#noteEditor').hidden);
+}
+
+async function handleDocumentImageUpload(file) {
+  if (!file || !state.activeDocument || state.activeDocument.sourceType === 'file') return;
+  const button = $('#insertImageButton');
+  button.disabled = true;
+  try {
+    const url = await uploadNoteImage(file);
+    const alt = noteImageAltFromFile(file);
+    insertTextAtCursor($('#documentContent'), `\n![${alt}](${url})\n`);
+    if (state.editorMode === 'preview') setEditorMode('edit');
+    showToast('图片已插入', 'success');
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    $('#documentImageInput').value = '';
+  }
+}
+
+async function handleDocumentImagePaste(event) {
+  if (!state.activeDocument || state.activeDocument.sourceType === 'file' || state.activeDocument.status === 'archived') return;
+  const file = [...(event.clipboardData?.items || [])]
+    .find(item => item.kind === 'file' && item.type.startsWith('image/'))
+    ?.getAsFile();
+  if (!file) return;
+  event.preventDefault();
+  await handleDocumentImageUpload(file);
+}
+
 async function archiveActiveDocument() {
   const document = state.activeDocument;
   if (!document || document.sourceType === 'log') return;
@@ -1128,6 +2352,57 @@ async function archiveActiveDocument() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '归档失败', 'error');
   showToast('文档已归档', 'success');
+  await loadDocuments();
+  await navigate('knowledge');
+}
+
+async function restoreActiveDocument() {
+  const document = state.activeDocument;
+  if (!document || document.sourceType === 'log' || document.status !== 'archived') return;
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/restore`, { method: 'POST' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showToast(data.error || '恢复失败', 'error');
+  showToast('文档已恢复', 'success');
+  $('#knowledgeArchivedFilter').checked = false;
+  await loadKnowledgeTree();
+  await loadDocuments();
+  await renderActiveDocument(data);
+}
+
+function deleteConfirmCopy(document) {
+  const title = document.title || '未命名';
+  if (document.sourceType === 'log') {
+    return {
+      title: '删除工作日志',
+      message: `“${title}”将永久删除这条工作日志，不可恢复。`,
+    };
+  }
+  if (document.sourceType === 'file') {
+    return {
+      title: '删除知识文件',
+      message: `“${title}”将永久删除这篇文档及磁盘上的原文件，关联笔记也会删除。`,
+    };
+  }
+  return {
+    title: '删除笔记',
+    message: `“${title}”将永久删除这篇笔记，不可恢复。`,
+  };
+}
+
+async function deleteActiveDocument() {
+  const document = state.activeDocument;
+  if (!document) return;
+  const copy = deleteConfirmCopy(document);
+  const confirmed = await confirmAction({
+    title: copy.title,
+    message: copy.message,
+    confirmText: '删除',
+  });
+  if (!confirmed) return;
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}`, { method: 'DELETE' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showToast(data.error || '删除失败', 'error');
+  showToast('文档已删除', 'success');
   await loadDocuments();
   await navigate('knowledge');
 }
@@ -1170,6 +2445,7 @@ async function loadAccount() {
   $('#accountInitial').textContent = [...name][0] || '用';
   $('#accountName').textContent = name;
   $('#accountRole').textContent = state.user.role === 'admin' ? '管理员账户' : '普通账户';
+  syncComputerSettingsVisibility();
 }
 
 function applyTheme(value) {
@@ -1183,16 +2459,19 @@ function applyTheme(value) {
 }
 
 function bindEvents() {
-  document.querySelector('.mode-switch').addEventListener('click', async event => {
+  document.querySelector('.topbar-mode-switch').addEventListener('click', async event => {
     const button = event.target.closest('[data-mode]');
     if (!button) return;
     const targetMode = button.dataset.mode;
     let id = '';
     let options = {};
     if (targetMode === state.mode) {
-      id = targetMode === 'agent' ? (state.activeSession?.id || '') : (state.activeDocument?.id || '');
-      if (targetMode === 'knowledge' && !id && state.selectedKnowledgeBase) {
-        options = { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath };
+      if (targetMode === 'agent') id = state.activeSession?.id || '';
+      else if (targetMode === 'knowledge') {
+        id = state.activeDocument?.id || '';
+        if (!id && state.selectedKnowledgeBase) {
+          options = { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath };
+        }
       }
     }
     if (targetMode === 'knowledge') await loadKnowledgeTree();
@@ -1201,6 +2480,8 @@ function bindEvents() {
   $('#sidebarOpen').addEventListener('click', openMobileSidebar);
   $('#sidebarClose').addEventListener('click', closeMobileSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeMobileSidebar);
+  $('#sidebarToggle').addEventListener('click', () => toggleDesktopSidebar());
+  $('#sidebarExpand').addEventListener('click', () => toggleDesktopSidebar(false));
   $('#newSessionButton').addEventListener('click', () => createSession().catch(error => showToast(error.message, 'error')));
   $('#sessionSearch').addEventListener('input', renderSessions);
   $('#sessionList').addEventListener('click', event => {
@@ -1220,12 +2501,61 @@ function bindEvents() {
     autoResizeComposer();
     try { await sendAgentMessage(content); } catch (error) { showToast(error.message, 'error'); }
   });
-  $('#agentInput').addEventListener('input', autoResizeComposer);
+  $('#agentInput').addEventListener('input', () => {
+    autoResizeComposer();
+    renderMentionMenu();
+  });
   $('#agentInput').addEventListener('keydown', event => {
+    const menuOpen = !$('#mentionMenu')?.hidden;
+    if (menuOpen && event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveMentionSelection(1);
+      return;
+    }
+    if (menuOpen && event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveMentionSelection(-1);
+      return;
+    }
+    if (menuOpen && event.key === 'Escape') {
+      event.preventDefault();
+      hideMentionMenu();
+      return;
+    }
+    if (menuOpen && event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      const selected = selectedMentionItem();
+      if (selected) {
+        event.preventDefault();
+        insertMentionValue(selected.dataset.mention === 'today'
+          ? localIsoDate(0)
+          : selected.dataset.mention === 'yesterday'
+            ? localIsoDate(-1)
+            : selected.dataset.mention);
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       $('#agentComposer').requestSubmit();
     }
+  });
+  $('#mentionMenu').addEventListener('mousedown', event => {
+    const item = event.target.closest('[data-mention]');
+    if (!item) return;
+    event.preventDefault();
+    insertMentionValue(item.dataset.mention === 'today'
+      ? localIsoDate(0)
+      : item.dataset.mention === 'yesterday'
+        ? localIsoDate(-1)
+        : item.dataset.mention);
+  });
+  $('#mentionDateInput').addEventListener('change', event => {
+    if (!event.target.value) return;
+    insertMentionValue(event.target.value);
+    event.target.value = '';
+  });
+  document.addEventListener('click', event => {
+    if (!event.target.closest('#agentComposer')) hideMentionMenu();
   });
   $('#stopRunButton').addEventListener('click', stopCurrentRun);
   $('#agentMessageList').addEventListener('click', async event => {
@@ -1234,6 +2564,10 @@ function bindEvents() {
       $('#agentInput').value = starter.dataset.starter;
       autoResizeComposer();
       $('#agentComposer').requestSubmit();
+      return;
+    }
+    if (event.target.closest('[data-open-settings]')) {
+      openSettings('model').catch(error => showToast(error.message, 'error'));
       return;
     }
     const citation = event.target.closest('[data-citation-document]');
@@ -1262,25 +2596,41 @@ function bindEvents() {
     }
     const memoryApprove = event.target.closest('[data-memory-approve]');
     if (memoryApprove) {
-      const response = await apiFetch(`/api/agent/memory-proposals/${encodeURIComponent(memoryApprove.dataset.memoryApprove)}/approve`, { method: 'POST' });
-      if (!response.ok) return showToast('长期记忆保存失败', 'error');
-      memoryApprove.closest('.memory-card').remove();
-      showToast('长期记忆已保存', 'success');
+      await handleMemoryProposalAction(memoryApprove.dataset.memoryApprove, 'approve');
       return;
     }
-    event.target.closest('[data-memory-dismiss]')?.closest('.memory-card')?.remove();
+    const memoryDismiss = event.target.closest('[data-memory-dismiss]');
+    if (memoryDismiss) {
+      await handleMemoryProposalAction(memoryDismiss.dataset.memoryDismiss, 'dismiss');
+      return;
+    }
+    const previewImage = event.target.closest('.message-content img, .agent-image-preview img');
+    if (previewImage) {
+      event.preventDefault();
+      openMarkdownImagePreview(previewImage);
+    }
   });
 
   const reloadKnowledge = debounce(() => loadDocuments().catch(error => showToast(error.message, 'error')), 220);
   $('#knowledgeSearch').addEventListener('input', reloadKnowledge);
+  bindKnowledgeSearchSettingsEvents();
   ['knowledgeTagFilter', 'knowledgeDateFilter', 'knowledgeArchivedFilter'].forEach(id => {
     $(`#${id}`).addEventListener(id === 'knowledgeTagFilter' ? 'input' : 'change', reloadKnowledge);
   });
   $('#newKnowledgeBaseButton').addEventListener('click', () => manageKnowledgeTree('add-base'));
-  $('#knowledgeBackButton').addEventListener('click', () => {
-    state.selectedKnowledgeBase = '';
-    state.selectedFolderPath = '';
-    navigate('knowledge');
+  $('#knowledgeBreadcrumb').addEventListener('click', event => {
+    const link = event.target.closest('[data-breadcrumb]');
+    if (!link) return;
+    if (link.dataset.breadcrumb === 'root') {
+      state.selectedKnowledgeBase = '';
+      state.selectedFolderPath = '';
+      navigate('knowledge');
+      return;
+    }
+    if (link.dataset.breadcrumb === 'base' && state.selectedFolderPath) {
+      state.selectedFolderPath = '';
+      navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase });
+    }
   });
   $('#knowledgeBaseList').addEventListener('click', event => {
     const open = event.target.closest('[data-knowledge-base-open]');
@@ -1317,21 +2667,36 @@ function bindEvents() {
   $('#knowledgeLoadMore').addEventListener('click', () => loadDocuments({ append: true }).catch(error => showToast(error.message, 'error')));
   $('#knowledgeDocumentList').addEventListener('click', event => {
     const row = event.target.closest('[data-document-open]');
-    if (row) navigate('knowledge', row.dataset.documentOpen);
+    if (row) {
+      const offset = Number(row.dataset.searchOffset) || 0;
+      navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
+    }
   });
   $('#knowledgeDocumentList').addEventListener('keydown', event => {
     const row = event.target.closest('[data-document-open]');
     if (row && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();
-      navigate('knowledge', row.dataset.documentOpen);
+      const offset = Number(row.dataset.searchOffset) || 0;
+      navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
     }
   });
   ['documentTitle', 'documentKnowledgeBase', 'documentFolderPath', 'documentDate', 'documentTags', 'documentContent'].forEach(id => $(`#${id}`).addEventListener('input', scheduleDocumentSave));
+  $('#documentContent').addEventListener('input', refreshDocumentPreview);
   $('#editorModeSwitch').addEventListener('click', event => {
     const button = event.target.closest('[data-editor-mode]');
     if (button) setEditorMode(button.dataset.editorMode);
   });
+  $('#documentContent').addEventListener('paste', event => {
+    handleDocumentImagePaste(event).catch(error => showToast(error.message, 'error'));
+  });
+  $('#insertImageButton').addEventListener('click', () => $('#documentImageInput').click());
+  $('#documentImageInput').addEventListener('change', event => {
+    const file = event.target.files?.[0];
+    if (file) handleDocumentImageUpload(file).catch(error => showToast(error.message, 'error'));
+  });
   $('#archiveDocumentButton').addEventListener('click', archiveActiveDocument);
+  $('#restoreDocumentButton').addEventListener('click', () => restoreActiveDocument().catch(error => showToast(error.message, 'error')));
+  $('#deleteDocumentButton').addEventListener('click', deleteActiveDocument);
   ['annotationTitle', 'annotationContent'].forEach(id => $(`#${id}`).addEventListener('input', scheduleAnnotationSave));
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && state.mode === 'knowledge') {
@@ -1349,7 +2714,10 @@ function bindEvents() {
   mobileSidebarQuery.addEventListener('change', () => {
     document.body.classList.remove('sidebar-visible');
     syncMobileSidebarAccessibility();
+    syncDesktopSidebar();
   });
+  desktopSidebarQuery.addEventListener('change', syncDesktopSidebar);
+  syncDesktopSidebar();
 
   $('#diaryButton').addEventListener('click', toggleDiary);
   $('#closeDiaryDialog').addEventListener('click', () => $('#diaryDialog').close());
@@ -1362,8 +2730,61 @@ function bindEvents() {
      await Promise.all([syncDiaryStatus(), loadKnowledgeTree(), state.selectedKnowledgeBase ? loadDocuments() : Promise.resolve()]);
     showToast('私密知识已解锁', 'success');
   });
-  $('#settingsButton').addEventListener('click', () => $('#settingsDialog').showModal());
-  $('#accountSettings').addEventListener('click', () => { $('#accountMenu').hidden = true; $('#settingsDialog').showModal(); });
+  $('#settingsButton').addEventListener('click', () => openSettings().catch(error => showToast(error.message, 'error')));
+  $('#accountSettings').addEventListener('click', () => openSettings('account').catch(error => showToast(error.message, 'error')));
+  $('#agentComposerSettings').addEventListener('click', () => openSettings('model').catch(error => showToast(error.message, 'error')));
+  $('#agentSidebarStatus').addEventListener('click', () => openSettings('model').catch(error => showToast(error.message, 'error')));
+  $('#closeSettingsDialog').addEventListener('click', () => $('#settingsDialog').close());
+  $('#settingsForm').addEventListener('submit', event => {
+    event.preventDefault();
+    saveAgentSettings();
+  });
+  document.querySelector('.settings-nav').addEventListener('click', event => {
+    const button = event.target.closest('[data-settings-nav]');
+    if (button) setSettingsPanel(button.dataset.settingsNav);
+  });
+  $('#btnComputerAllowlistAdd').addEventListener('click', addComputerAllowlistEntry);
+  $('#computerAllowlistInput').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      addComputerAllowlistEntry();
+    }
+  });
+  $('#computerAllowlist').addEventListener('click', event => {
+    const button = event.target.closest('[data-allowlist-remove]');
+    if (!button) return;
+    const index = Number(button.dataset.allowlistRemove);
+    if (!Number.isInteger(index) || !state.computerPolicy?.allowedDirectories) return;
+    state.computerPolicy.allowedDirectories.splice(index, 1);
+    renderComputerAllowlist();
+  });
+  $('#archivedSessionList').addEventListener('click', event => {
+    const restore = event.target.closest('[data-archived-restore]');
+    const remove = event.target.closest('[data-archived-delete]');
+    if (restore) restoreArchivedSession(restore.dataset.archivedRestore).catch(error => showToast(error.message, 'error'));
+    if (remove) deleteArchivedSession(remove.dataset.archivedDelete).catch(error => showToast(error.message, 'error'));
+  });
+  $('#refreshAgentMemory').addEventListener('click', () => refreshAgentMemory().catch(error => showToast(error.message, 'error')));
+  $('#memoryView').addEventListener('click', async event => {
+    const approve = event.target.closest('[data-memory-approve]');
+    if (approve) {
+      await handleMemoryProposalAction(approve.dataset.memoryApprove, 'approve');
+      return;
+    }
+    const dismiss = event.target.closest('[data-memory-dismiss]');
+    if (dismiss) {
+      await handleMemoryProposalAction(dismiss.dataset.memoryDismiss, 'dismiss');
+      return;
+    }
+    const archive = event.target.closest('[data-memory-archive]');
+    if (archive) await archiveMemoryItem(archive.dataset.memoryArchive);
+  });
+  $('#memorySidebarPanel').addEventListener('click', event => {
+    const filter = event.target.closest('[data-memory-layer]');
+    if (!filter) return;
+    state.memoryLayer = filter.dataset.memoryLayer || '';
+    renderMemoryWorkspace();
+  });
   $('#themeSelect').addEventListener('change', event => applyTheme(event.target.value));
   $('#accountButton').addEventListener('click', event => {
     event.stopPropagation();
@@ -1378,16 +2799,25 @@ function bindEvents() {
     }
   });
   $('#logoutButton').addEventListener('click', logoutSite);
+  window.addEventListener('account-updated', event => {
+    if (!event.detail) return;
+    state.user = event.detail;
+    $('#diaryUsername').value = state.user.username || state.user.display_name || '';
+    syncComputerSettingsVisibility();
+  });
 }
 
 async function initialize() {
   if (!(await checkAuth())) return;
   bindEvents();
+  initAccounts();
+  initTodos();
   syncMobileSidebarAccessibility();
+  renderKnowledgeSearchModeHint();
   const savedTheme = localStorage.getItem('theme');
   $('#themeSelect').value = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'system';
-  await Promise.all([loadAccount(), syncDiaryStatus()]);
-   await loadKnowledgeTree();
+  await Promise.all([loadAccount(), syncDiaryStatus(), loadAgentStatus()]);
+  await loadKnowledgeTree();
   await loadSessions();
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();

@@ -5,11 +5,11 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## Commands
 
 - **Install**: `npm install` (first-time setup)
-- **Build editor assets**: `npm run build` (required before running `node server.js` directly)
-- **Start server**: `npm start` (builds Monaco assets, then starts Express)
-- **Tests**: `npm test` (builds Monaco assets, then runs Node tests)
+- **Build vendor assets**: `npm run build` (copies marked / DOMPurify / KaTeX / pdf.js into `public/vendor/`; required before running `node server.js` directly)
+- **Start server**: `npm start` (builds vendor assets, then starts Express)
+- **Tests**: `npm test` (builds vendor assets, then runs Node tests)
 - **Port**: Set `PORT` env var (default 3000). E.g. `PORT=3001 npm start`
-- Vanilla JS frontend served as static files; the only build step bundles Monaco into ignored `public/generated/monaco/`.
+- Vanilla JS frontend served as static files. No CodeMirror/Monaco bundle.
 
 ## Architecture
 
@@ -28,30 +28,26 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 | `logs.json` | `id, title, content, category, hours, log_date, sort_order, created_at, updated_at` |
 | `todos.json` | `id, title, done, sort_order, due_date, priority, created_at` |
 | `categories.json` | Array of strings, defaults: `['会议','开发','文档','测试','学习','其他']` |
-| `uploads/` | Uploaded images, served at `/uploads/` via `express.static` |
+| `uploads/` | Markdown inline images from notes/logs; served at `/uploads/` |
+| `knowledge-documents.json` | Native notes and imported file metadata |
+| `knowledge-files/` | Imported attachment binaries (docx/pdf/images); served via `/api/knowledge/files/:id/content` |
 
 Default categories are hardcoded in `database.js` and used when `categories.json` doesn't exist yet. When a category is deleted, logs using it are reassigned to `"其他"`.
 
 ### Frontend (`public/`)
-- **Single-page app**: `index.html` (structure) + `style.css` (styles) + `app.js` (logic)
-- **Two main views**: list view (`.list-view`) and full-screen editor view (`.editor-view`), toggled via `display`. Routes are client-side only (no router).
-- **State management**: Single global `state` object — no framework.
-- **Calendar**: Rendered in JS, year/month dropdown selects + prev/next month buttons. Highlights dates with logs, click to filter.
-- **Log list**: Cards showing title, category, markdown-rendered content, hours. Drag-and-drop reordering via HTML5 DnD API. Pagination at the bottom.
-- **Editor**: Desktop body editing uses dynamically loaded Monaco; narrow screens retain the textarea fallback. Write/preview tabs render markdown via `marked.parse()` with `breaks: true, gfm: true`. Auto-save uses a 1.5s debounce. Ctrl+S saves manually.
-- **Category management modal**: Modal overlay with list of categories. Each has inline rename (click ✎, edit, press Enter) and delete (with confirmation). Default categories (会议/开发/文档/测试/学习/其他) are marked and cannot be deleted. Custom categories typed in the editor's custom field are auto-added to the managed list on save.
-- **Todo panel**: Sidebar list with add/ toggle/ delete. Drag-and-drop reorder. "Clear completed" button.
-- **Stats panel**: Week/month hours, daily average, total logs, category breakdown chips with color dots.
-- **Image upload**: Button in editor tabs bar opens file picker. Uploads via `POST /api/upload` (multipart, field: `image`). Inserts `![](url)` markdown at cursor position. Supports PNG, JPG, GIF, WebP, BMP, SVG (max 10MB). Stored in `data/uploads/` with timestamp+random filename.
-- **Markdown rendering**: Uses `marked` loaded from CDN (`marked/marked.min.js`) — not an npm dependency. Both the log list cards and the editor preview call `marked.parse()` with `breaks: true, gfm: true`.
+- **Workbench SPA**: `index.html` + `css/workbench.css` + `js/workbench.js`. Modes: Agent / 知识库 / Memory. Knowledge has a browse/todos sub-view (`data-knowledge-view`).
+- **Login**: `login.html` + `js/login.js`. Account profile, password, and admin user management live in Settings → 账户 (`js/accounts.js`).
+- **Todos**: `js/todos.js`, shown inside knowledge as `#knowledge?view=todos`.
+- **State**: Workbench keeps a module-local `state` object — no framework, no global `app.js`.
+- **Knowledge editor**: Title/body/date fields in workbench; logs remain sourced from `logs.json`. Markdown preview uses vendor `marked` + DOMPurify. Notes/logs insert inline images via `#insertImageButton` → `POST /api/upload` → `![alt](/uploads/...)`.
+- **Imported files**: Knowledge import stores binaries in `knowledge-files/` with metadata in `knowledge-documents.json`; photo wall removed.
+- **Diary**: Unlock via `#diaryDialog` and the shared magic phrase; locked diary stays out of knowledge lists and Agent context.
 
 ### Key Patterns
-- `$` = `document.querySelector`, `$$` = `document.querySelectorAll` (defined at the end of `app.js`, used sparingly — mainly in drag-and-drop cleanup and tab switching)
+- `$` = `document.querySelector` (defined in each module that needs it, or imported from `helpers.js`)
 - `escHtml(str)` for HTML escaping, `debounce(fn, ms)` for search input
-- `stripMarkdown(md)` — used for plain-text extraction from markdown content
-- `refreshAll()` — calls `loadLogs()`, `loadStats()`, `loadTodos()`, `loadCategories()` in parallel on init
-- Categories flow: Editor's custom category field + dropdown → on save, custom values auto-POST to `/api/categories` if new
-- **Auto-save**: 1.5s debounce on any input change (title, content, date, hours, category, custom category). Also triggers on navigating back from editor. Ctrl+S saves immediately (bypasses debounce).
+- Knowledge auto-save is debounced in `workbench.js`; Ctrl+S flushes pending document/annotation saves
+- Route hash: `#agent`, `#knowledge`, `#memory`; todos use `#knowledge?view=todos`
 
 ### API Endpoints
 ```

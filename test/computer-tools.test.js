@@ -3,9 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { resolveAllowed, isSensitivePath, recentlyReauthed, markReauth } = require('../lib/computer/policy');
+const { resolveAllowed, isSensitivePath, recentlyReauthed, markReauth, defaultPolicy, savePolicy, computerToolsAllowed, PREFERRED_ALLOWLIST } = require('../lib/computer/policy');
 const { createCodeRunner } = require('../lib/computer/code');
 const { sign } = require('../lib/computer/chrome');
+const { createComputerFacade } = require('../lib/computer/routes');
 
 test('allowlist rejects path escape and sensitive directories', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allow-'));
@@ -40,4 +41,40 @@ test('chrome command signatures reject replay', () => {
   const first = sign(key, nonce, payload);
   assert.equal(sign(key, nonce, payload), first);
   assert.notEqual(sign(key, 'n2', payload), first);
+});
+
+test('computer tools default to enabled and prefer the desktop allowlist', () => {
+  const policy = defaultPolicy();
+  assert.equal(policy.computerToolsEnabled, true);
+  const preferred = PREFERRED_ALLOWLIST[0];
+  if (fs.existsSync(preferred) && fs.statSync(preferred).isDirectory()) {
+    assert.equal(policy.allowedDirectories[0], fs.realpathSync(preferred));
+  }
+});
+
+test('computer tools are allowed for admin without loopback or reauth', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allow-policy-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  savePolicy(dir, { computerToolsEnabled: true, allowedDirectories: [dir], chromePaired: false });
+  const allowed = computerToolsAllowed({ user: { id: 'admin-1', role: 'admin' }, ip: '10.0.0.8' }, dir);
+  assert.equal(allowed.ok, true);
+  const denied = computerToolsAllowed({ user: { id: 'user-1', role: 'user' }, ip: '127.0.0.1' }, dir);
+  assert.equal(denied.ok, false);
+  assert.match(denied.error, /Admin/);
+});
+
+test('computer facade lists and deletes files without reauth', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'comp-facade-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const note = path.join(dir, 'note.txt');
+  fs.writeFileSync(note, 'hello');
+  savePolicy(dir, { computerToolsEnabled: true, allowedDirectories: [dir], chromePaired: false });
+  const facade = createComputerFacade({ user: { id: 'admin-1', role: 'admin' }, ip: '10.0.0.8' }, dir);
+  assert.ok(facade);
+  const listed = await facade.execute('file.list', { path: dir });
+  assert.equal(listed.ok, true);
+  assert.equal(listed.data.some(item => item.name === 'note.txt'), true);
+  const deleted = await facade.execute('file.delete', { path: note });
+  assert.equal(deleted.ok, true);
+  assert.equal(fs.existsSync(note), false);
 });

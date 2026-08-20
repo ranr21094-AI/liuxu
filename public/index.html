@@ -6,6 +6,7 @@
   <title>Agent 工作台</title>
   <script src="/js/preloadTheme.js"></script>
   <link rel="stylesheet" href="/css/workbench.css">
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
 </head>
 <body>
   <div class="workspace-shell" id="workspaceShell">
@@ -34,9 +35,9 @@
         <div class="sidebar-scroll" id="sessionList" aria-live="polite">
           <p class="empty-list">正在加载会话…</p>
         </div>
-        <div class="sidebar-status" id="agentSidebarStatus">
+        <button class="sidebar-status" id="agentSidebarStatus" type="button" aria-label="打开模型设置">
           <span class="status-dot"></span><span>Agent 已就绪</span>
-        </div>
+        </button>
       </section>
 
       <section class="sidebar-panel" id="knowledgeSidebarPanel" data-sidebar-mode="knowledge" hidden>
@@ -51,13 +52,12 @@
         </div>
 
         <div id="knowledgeInsidePanel" hidden>
-          <button class="knowledge-back-button" id="knowledgeBackButton" type="button">← 全部知识库</button>
-          <div class="knowledge-inside-heading" id="knowledgeInsideTitle"></div>
-          <div class="knowledge-tree knowledge-folder-tree" id="knowledgeFolderTree" aria-label="文件夹" aria-live="polite"></div>
+          <nav class="knowledge-breadcrumb" id="knowledgeBreadcrumb" aria-label="知识库位置"></nav>
           <label class="search-field" for="knowledgeSearch">
             <span aria-hidden="true">⌕</span>
             <input id="knowledgeSearch" type="search" placeholder="搜索知识" autocomplete="off">
           </label>
+          <button class="knowledge-search-mode-hint" id="knowledgeSearchModeHint" type="button" title="打开知识库搜索设置">搜索：智能 · 全字段</button>
           <details class="more-filters">
             <summary>更多筛选</summary>
             <div class="more-filter-fields">
@@ -66,21 +66,78 @@
               <label class="archive-toggle"><input id="knowledgeArchivedFilter" type="checkbox"> 查看已归档</label>
             </div>
           </details>
-          <div class="document-count" id="knowledgeDocumentCount"></div>
-          <div class="sidebar-scroll document-list" id="knowledgeDocumentList" aria-live="polite">
-            <p class="empty-list">正在读取知识库…</p>
+          <div class="knowledge-tree knowledge-folder-tree" id="knowledgeFolderTree" aria-label="文件夹" aria-live="polite"></div>
+          <div class="document-list-section">
+            <div class="document-list-heading" id="knowledgeDocumentListHeading"></div>
+            <div class="sidebar-scroll document-list" id="knowledgeDocumentList" aria-live="polite">
+              <p class="empty-list">正在读取知识库…</p>
+            </div>
+            <button class="load-more" id="knowledgeLoadMore" type="button" hidden>加载更多</button>
           </div>
-          <button class="load-more" id="knowledgeLoadMore" type="button" hidden>加载更多</button>
         </div>
+      </section>
+
+      <section class="sidebar-panel" id="memorySidebarPanel" data-sidebar-mode="memory" hidden>
+        <div class="knowledge-panel-heading"><span>长期记忆</span></div>
+        <div class="memory-filter" role="tablist" aria-label="记忆类型">
+          <button type="button" class="active" data-memory-layer="" aria-selected="true">全部</button>
+          <button type="button" data-memory-layer="L2" aria-selected="false">事实</button>
+          <button type="button" data-memory-layer="L3" aria-selected="false">流程</button>
+        </div>
+        <p class="document-count" id="memorySidebarCount"></p>
+        <div class="sidebar-scroll" id="memorySidebarList" aria-live="polite">
+          <p class="empty-list">还没有长期记忆</p>
+        </div>
+      </section>
+
+      <section class="sidebar-panel" id="todoSidebarPanel" data-sidebar-mode="todos" hidden>
+        <div class="knowledge-panel-heading">
+          <span>待办</span>
+          <button class="icon-button tree-add todo-category-open todo-mode-only" id="btnTodoCategoryOpen" type="button" aria-haspopup="dialog" aria-controls="todoCategoryOverlay" title="新增待办分类" aria-label="新增待办分类">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14M5 12h14"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="todo-filter-tabs todo-mode-only" id="todoFilterTabs" role="tablist" aria-label="待办筛选"></div>
+        </div>
+        <section class="todo-reminder-card" aria-labelledby="todoReminderHeading" title="所有分类中当天到期的未完成待办会按固定时间汇总发邮件">
+          <div class="todo-reminder-header">
+            <h3 id="todoReminderHeading">邮件提醒</h3>
+            <span class="todo-reminder-chip" id="todoReminderMailState">未配置</span>
+          </div>
+          <p class="sr-only">所有分类中当天到期的未完成待办会按固定时间汇总发邮件</p>
+          <label class="todo-reminder-toggle" for="todoReminderEnabled">
+            <input type="checkbox" id="todoReminderEnabled">
+            <span>启用每日提醒</span>
+          </label>
+          <div class="todo-reminder-grid">
+            <div class="todo-reminder-field">
+              <label for="todoReminderRecipient">收件邮箱</label>
+              <input type="email" id="todoReminderRecipient" placeholder="name@example.com" maxlength="320">
+            </div>
+            <div class="todo-reminder-field">
+              <label for="todoReminderTime">提醒时间</label>
+              <input type="time" id="todoReminderTime" value="08:00" step="60">
+            </div>
+          </div>
+          <p class="todo-reminder-status" id="todoReminderStatusText" role="status" aria-live="polite">加载提醒状态中...</p>
+          <div class="todo-reminder-actions">
+            <button class="secondary-action compact" id="btnTodoReminderSave" type="button">保存提醒</button>
+          </div>
+        </section>
       </section>
     </aside>
 
     <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="关闭侧栏" tabindex="-1"></button>
+    <button class="sidebar-expand" id="sidebarExpand" type="button" aria-label="展开侧栏" title="展开侧栏" hidden>☰</button>
 
     <main class="workspace-main">
       <header class="workspace-topbar">
         <div class="topbar-leading">
           <button class="icon-button sidebar-open" id="sidebarOpen" type="button" aria-label="打开侧栏" aria-controls="workspaceSidebar" aria-expanded="false">☰</button>
+          <button class="icon-button sidebar-toggle" id="sidebarToggle" type="button" aria-label="收起侧栏" aria-controls="workspaceSidebar" aria-expanded="true" title="收起侧栏" hidden>◧</button>
           <div>
             <div class="topbar-title" id="topbarTitle">Agent</div>
             <div class="topbar-subtitle" id="topbarSubtitle">新会话</div>
@@ -90,6 +147,8 @@
           <nav class="mode-switch topbar-mode-switch" aria-label="工作模式">
             <button type="button" data-mode="agent" class="active">Agent</button>
             <button type="button" data-mode="knowledge">知识库</button>
+            <button type="button" data-mode="memory">Memory</button>
+            <button type="button" data-mode="todos">待办</button>
           </nav>
           <span class="run-status" id="runStatus" hidden><span class="status-dot"></span><span id="runStatusText">运行中</span></span>
           <button class="topbar-button" id="diaryButton" type="button" aria-haspopup="dialog">私密知识已锁定</button>
@@ -109,24 +168,31 @@
             <div class="agent-empty-state">
               <span class="empty-mark" aria-hidden="true">✦</span>
               <h1>今天想一起完成什么？</h1>
-              <p>我会先查找你的知识，再请求执行需要确认的操作。</p>
+              <p>用 @知识库 或 @日期 带上材料，再描述你想完成的事。</p>
+              <p class="agent-setup-hint" hidden>尚未配置模型。请先在设置中填写 API Key，然后回到这里发送消息。<button type="button" data-open-settings>打开设置</button></p>
               <div class="starter-prompts">
-                <button type="button" data-starter="帮我查找最近的项目记录并总结下一步">总结项目记录</button>
-                <button type="button" data-starter="根据我的知识库规划今天最重要的三件事">规划今天</button>
+                <button type="button" data-starter="@开发 总结最近的项目记录和下一步">总结项目记录</button>
+                <button type="button" data-starter="@开发 根据这些材料规划今天最重要的三件事">规划今天</button>
               </div>
             </div>
           </div>
 
-          <details class="execution-trace" id="executionTrace" hidden>
-            <summary><span class="trace-state-dot"></span><span id="traceSummary">查看执行过程</span></summary>
-            <div class="trace-events" id="traceEvents"></div>
-          </details>
-
           <form class="agent-composer" id="agentComposer">
+            <div class="mention-menu" id="mentionMenu" hidden role="listbox" aria-label="引用知识">
+              <div class="mention-group-title">知识库</div>
+              <div id="mentionBaseList"></div>
+              <div class="mention-group-title">日期</div>
+              <button class="mention-item" type="button" data-mention="today">今天</button>
+              <button class="mention-item" type="button" data-mention="yesterday">昨天</button>
+              <label class="mention-date-field">选择日期<input id="mentionDateInput" type="date"></label>
+            </div>
             <label class="sr-only" for="agentInput">告诉 Agent 你的目标</label>
-            <textarea id="agentInput" rows="1" maxlength="8000" placeholder="告诉 Agent 你想完成什么…"></textarea>
+            <textarea id="agentInput" rows="1" maxlength="8000" placeholder="用 @ 引用知识库或日期，然后描述你想完成什么…"></textarea>
             <div class="composer-footer">
-              <span>Enter 发送 · Shift+Enter 换行</span>
+              <div class="composer-meta">
+                <button class="composer-settings" id="agentComposerSettings" type="button" aria-label="打开模型设置">Agent 已就绪</button>
+                <span class="composer-hint">Enter 发送 · @ 引用知识</span>
+              </div>
               <div class="composer-actions">
                 <button class="stop-button" id="stopRunButton" type="button" hidden>停止</button>
                 <button class="send-button" id="sendAgentButton" type="submit" aria-label="发送消息">↑</button>
@@ -164,7 +230,11 @@
                   <button type="button" data-editor-mode="edit" class="active">编辑</button>
                   <button type="button" data-editor-mode="preview">预览</button>
                 </div>
+                <button class="icon-button" id="insertImageButton" type="button" title="插入图片" aria-label="插入图片" hidden>图</button>
+                <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
                 <button class="icon-button" id="archiveDocumentButton" type="button" title="归档文档" aria-label="归档文档">⌁</button>
+                <button class="secondary-action compact" id="restoreDocumentButton" type="button" hidden>恢复</button>
+                <button class="icon-button danger" id="deleteDocumentButton" type="button" title="删除文档" aria-label="删除文档">⌫</button>
               </div>
             </div>
           </header>
@@ -197,20 +267,338 @@
           </div>
         </article>
       </section>
+
+      <section class="workspace-view todo-view" id="todoView" data-main-mode="todos" hidden>
+        <div class="todo-toolbar">
+          <div class="mode-switch todo-mode-tabs" id="todoModeTabs" role="tablist" aria-label="待办页面模式">
+            <button class="active" id="todoModeTodos" type="button" role="tab" data-todo-page="todos" aria-selected="true" aria-controls="todoFullPanel">待办</button>
+            <button id="todoModeCountdowns" type="button" role="tab" data-todo-page="countdowns" aria-selected="false" aria-controls="countdownPanel">倒数日</button>
+          </div>
+          <p class="todo-page-stats" aria-label="待办统计">
+            <span class="todo-stat"><strong id="todoStatPending">0</strong> <span id="todoStatLabelPending">待办</span></span>
+            <span class="todo-stat"><strong id="todoStatToday">0</strong> <span id="todoStatLabelToday">今日</span></span>
+            <span class="todo-stat" id="todoStatAlert"><strong id="todoStatOverdue">0</strong> <span id="todoStatLabelOverdue">逾期</span></span>
+            <span class="todo-stat"><strong id="todoStatDone">0</strong> <span id="todoStatLabelDone">已完成</span></span>
+          </p>
+          <button class="primary-action compact" id="btnTodoNew" type="button">新建</button>
+        </div>
+        <div class="todo-page-layout">
+          <div class="todo-list-column">
+            <label class="search-field todo-search-box" for="todoSearchInput">
+              <span aria-hidden="true">⌕</span>
+              <input type="search" id="todoSearchInput" placeholder="搜索标题或备注..." autocomplete="off">
+            </label>
+            <section class="todo-full-panel" id="todoFullPanel" aria-label="待办列表">
+              <div class="todo-full-list" id="todoFullList" role="tabpanel"></div>
+            </section>
+            <section class="countdown-panel" id="countdownPanel" aria-label="倒数日列表" role="tabpanel" hidden>
+              <div class="countdown-grid" id="countdownGrid"></div>
+            </section>
+          </div>
+          <aside class="todo-full-form" id="todoFullForm" aria-label="编辑待办">
+            <div class="todo-detail-empty" id="todoFormEmpty">
+              <p>选择一项，或点新建</p>
+            </div>
+            <div class="todo-detail-body" id="todoFormBody" hidden>
+              <input type="hidden" id="todoEditId">
+              <label class="todo-field" for="todoFullTitle">
+                <span>标题</span>
+                <input type="text" id="todoFullTitle" placeholder="任务标题..." maxlength="200">
+              </label>
+              <div class="todo-form-grid">
+                <div class="todo-field">
+                  <span>分类</span>
+                  <div class="todo-select-control" data-todo-select-control data-select-id="todoFullCategory">
+                    <label class="sr-only" for="todoFullCategory">待办分类</label>
+                    <select class="todo-native-select" id="todoFullCategory" title="待办分类" tabindex="-1" aria-hidden="true"></select>
+                    <button class="todo-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="todoFullCategoryMenu">
+                      <span class="todo-select-value">待办</span>
+                      <span class="todo-select-caret" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="todo-select-menu" id="todoFullCategoryMenu" role="listbox" hidden></div>
+                  </div>
+                </div>
+                <label class="todo-field" for="todoFullDueDate">
+                  <span>截止日期</span>
+                  <input type="date" id="todoFullDueDate" title="截止日期">
+                </label>
+                <div class="todo-field">
+                  <span>优先级</span>
+                  <div class="todo-select-control" data-todo-select-control data-select-id="todoFullPriority">
+                    <label class="sr-only" for="todoFullPriority">优先级</label>
+                    <select class="todo-native-select" id="todoFullPriority" title="优先级" tabindex="-1" aria-hidden="true">
+                      <option value="none">无</option>
+                      <option value="normal">普通</option>
+                      <option value="important">重要</option>
+                      <option value="urgent">紧急</option>
+                    </select>
+                    <button class="todo-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="todoFullPriorityMenu">
+                      <span class="todo-select-value">无</span>
+                      <span class="todo-select-caret" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="todo-select-menu" id="todoFullPriorityMenu" role="listbox" hidden></div>
+                  </div>
+                </div>
+                <div class="todo-field">
+                  <span>重复</span>
+                  <div class="todo-select-control" data-todo-select-control data-select-id="todoFullRecurrence">
+                    <label class="sr-only" for="todoFullRecurrence">重复</label>
+                    <select class="todo-native-select" id="todoFullRecurrence" title="重复" tabindex="-1" aria-hidden="true">
+                      <option value="none">不重复</option>
+                      <option value="daily">每日</option>
+                      <option value="weekly">每周</option>
+                      <option value="monthly">每月</option>
+                      <option value="yearly">每年</option>
+                    </select>
+                    <button class="todo-select-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="todoFullRecurrenceMenu">
+                      <span class="todo-select-value">不重复</span>
+                      <span class="todo-select-caret" aria-hidden="true">⌄</span>
+                    </button>
+                    <div class="todo-select-menu" id="todoFullRecurrenceMenu" role="listbox" hidden></div>
+                  </div>
+                </div>
+              </div>
+              <label class="todo-field" for="todoFullNotes">
+                <span>备注</span>
+                <textarea id="todoFullNotes" placeholder="备注..." maxlength="1000"></textarea>
+              </label>
+              <div class="todo-form-actions">
+                <button class="secondary-action compact" id="btnTodoFormCancel" type="button">取消</button>
+                <button class="primary-action compact" id="btnTodoFullSave" type="button">保存任务</button>
+              </div>
+            </div>
+          </aside>
+          <aside class="countdown-form" id="countdownForm" aria-label="编辑倒数日" hidden>
+            <div class="todo-detail-empty" id="countdownFormEmpty">
+              <p>选择一项，或点新建</p>
+            </div>
+            <div class="todo-detail-body" id="countdownFormBody" hidden>
+              <input type="hidden" id="countdownEditId">
+              <div class="countdown-form-heading">
+                <span>倒数日</span>
+                <small id="countdownFormHint">记录值得期待的日子</small>
+              </div>
+              <label class="todo-field" for="countdownTitle">
+                <span>标题</span>
+                <input type="text" id="countdownTitle" placeholder="例如：旅行出发" maxlength="200">
+              </label>
+              <label class="todo-field countdown-field" for="countdownTargetDate">
+                <span>目标日期</span>
+                <input type="date" id="countdownTargetDate" required>
+              </label>
+              <label class="countdown-repeat-option" for="countdownRepeatYearly">
+                <input type="checkbox" id="countdownRepeatYearly">
+                <span>每年重复</span>
+              </label>
+              <label class="todo-field" for="countdownNotes">
+                <span>备注</span>
+                <textarea id="countdownNotes" placeholder="备注..." maxlength="1000"></textarea>
+              </label>
+              <div class="todo-form-actions">
+                <button class="secondary-action compact" id="btnCountdownCancel" type="button">取消</button>
+                <button class="primary-action compact" id="btnCountdownSave" type="button">保存倒数日</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="workspace-view memory-view" id="memoryView" data-main-mode="memory" hidden>
+        <div class="memory-page">
+          <header class="memory-page-head">
+            <div>
+              <h1>Memory</h1>
+              <p>只保存跨会话仍有用的短摘要。事实一两句，流程可以写清步骤。</p>
+            </div>
+            <button class="primary-action compact" id="refreshAgentMemory" type="button">根据近期对话更新</button>
+          </header>
+          <p class="settings-copy" id="agentMemoryStatus" hidden></p>
+          <div id="agentMemoryProposals" class="memory-list"></div>
+          <div id="agentMemoryItems" class="memory-list"></div>
+        </div>
+      </section>
     </main>
   </div>
 
-  <dialog class="workspace-dialog" id="settingsDialog">
-    <form method="dialog" class="dialog-card">
-      <header><div><span class="dialog-eyebrow">WORKSPACE</span><h2>设置</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></header>
-      <section class="settings-section">
-        <h3>外观</h3>
-        <label class="settings-row"><span><strong>主题</strong><small>跟随系统或固定显示</small></span><select id="themeSelect"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
-      </section>
-      <section class="settings-section">
-        <h3>兼容功能</h3>
-        <a class="settings-link" href="/legacy.html"><span><strong>打开旧版功能</strong><small>日志、任务、照片墙、模型设置与备份</small></span><span aria-hidden="true">→</span></a>
-      </section>
+  <dialog class="workspace-dialog settings-dialog" id="settingsDialog">
+    <form class="dialog-card settings-card" id="settingsForm">
+      <header><div><span class="dialog-eyebrow">WORKSPACE</span><h2>设置</h2></div><button class="icon-button" id="closeSettingsDialog" type="button" aria-label="关闭">×</button></header>
+      <div class="settings-shell">
+        <nav class="settings-nav" aria-label="设置分类">
+          <button type="button" data-settings-nav="appearance" class="active" aria-current="page">外观</button>
+          <button type="button" data-settings-nav="sessions">会话</button>
+          <button type="button" data-settings-nav="model">模型</button>
+          <button type="button" data-settings-nav="network">联网</button>
+          <button type="button" data-settings-nav="image">生图</button>
+          <button type="button" data-settings-nav="skills">技能</button>
+          <button type="button" data-settings-nav="knowledge">知识库搜索</button>
+          <button type="button" data-settings-nav="computer" hidden>电脑</button>
+          <button type="button" data-settings-nav="account">账户</button>
+        </nav>
+        <div class="settings-content">
+          <section class="settings-section" data-settings-panel="appearance">
+            <h3>外观</h3>
+            <label class="settings-row" for="themeSelect"><span><strong>主题</strong><small>跟随系统或固定显示</small></span><select id="themeSelect"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+          </section>
+          <section class="settings-section" data-settings-panel="sessions" hidden>
+            <h3>归档会话</h3>
+            <p class="settings-copy">归档后的会话会从侧栏隐藏。可以恢复到列表，或永久删除（含运行记录）。</p>
+            <div id="archivedSessionList" class="archived-session-list"></div>
+          </section>
+          <section class="settings-section" data-settings-panel="model" hidden>
+            <h3>模型</h3>
+            <p class="settings-copy">与 Agent 共用同一套密钥和默认模型。留空密钥可保持已保存的值。</p>
+            <label class="settings-field" for="agentDeepseekKey">DeepSeek API Key<input id="agentDeepseekKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
+            <label class="settings-field" for="agentMoonshotKey">Moonshot / Kimi API Key<input id="agentMoonshotKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
+            <label class="settings-field" for="agentOpenrouterKey">OpenRouter API Key<input id="agentOpenrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-..."></label>
+            <label class="settings-row" for="agentModelSelect"><span><strong>默认模型</strong><small>Agent 运行时使用这个模型</small></span><select id="agentModelSelect"></select></label>
+            <label class="settings-field" for="agentMaxRounds">最大循环轮数
+              <input id="agentMaxRounds" type="number" min="4" max="48" step="1" value="12">
+              <small>一轮 = 模型想一次，必要时再调工具。范围 4–48，默认 12。</small>
+            </label>
+            <label class="settings-row" for="agentReasoningMode"><span><strong>思考模式</strong><small>模型默认、关闭或指定强度</small></span>
+              <select id="agentReasoningMode">
+                <option value="default">模型默认</option>
+                <option value="disabled">关闭</option>
+                <option value="effort">指定强度</option>
+              </select>
+            </label>
+            <label class="settings-row" for="agentThinkingMode"><span><strong>K2.6 思考模式</strong><small>开启并保留或关闭</small></span>
+              <select id="agentThinkingMode">
+                <option value="enabled">开启并保留</option>
+                <option value="disabled">关闭</option>
+              </select>
+            </label>
+            <label class="settings-row" for="agentReasoningEffort"><span><strong>思考强度</strong></span>
+              <select id="agentReasoningEffort">
+                <option value="minimal">最低</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="xhigh">很高</option>
+                <option value="max">最高</option>
+              </select>
+            </label>
+            <label class="settings-row" for="agentStreamToggle"><span><strong>流式输出</strong><small>部分直连对话接口会逐字返回</small></span><input id="agentStreamToggle" type="checkbox"></label>
+            <label class="settings-row" for="agentOpenRouterZdr"><span><strong>OpenRouter 零数据保留</strong><small>默认仅路由到 ZDR 端点；可能减少可用供应商</small></span><input id="agentOpenRouterZdr" type="checkbox"></label>
+          </section>
+          <section class="settings-section" data-settings-panel="network" hidden>
+            <h3>联网</h3>
+            <p class="settings-copy">Agent 的网页搜索继续使用 Tavily。填写 Key 后即可在对话里调用 web.search。</p>
+            <label class="settings-field" for="agentTavilyApiKey">Tavily API Key<input id="agentTavilyApiKey" type="password" autocomplete="off" spellcheck="false" placeholder="tvly-..."></label>
+            <label class="settings-row" for="agentWebSearchToggle"><span><strong>允许联网搜索</strong><small>保存 Tavily Key 后，Agent 可通过 web.search 上网</small></span><input id="agentWebSearchToggle" type="checkbox"></label>
+            <label class="settings-row" for="agentWebSearchDepth"><span><strong>搜索强度</strong><small>Advanced 更全面，也更慢</small></span>
+              <select id="agentWebSearchDepth">
+                <option value="basic">Basic（更快）</option>
+                <option value="advanced">Advanced（更全面）</option>
+              </select>
+            </label>
+            <label class="settings-row" for="agentKimiWebSearchToggle"><span><strong>Kimi 官方联网（实验）</strong><small>仅 Kimi 模型使用 Formula；失败时不会降级</small></span><input id="agentKimiWebSearchToggle" type="checkbox"></label>
+          </section>
+          <section class="settings-section" data-settings-panel="image" hidden>
+            <h3>生图</h3>
+            <p class="settings-copy">Agent 通过确认工具 image.generate 调用 Seedream。填写 Key 后，出图前会先请你确认。</p>
+            <label class="settings-field" for="agentSeedreamKey">Seedream API Key<input id="agentSeedreamKey" type="password" autocomplete="off" spellcheck="false" placeholder="ARK API Key"></label>
+            <label class="settings-row" for="agentSeedreamModel"><span><strong>模型</strong><small>默认使用最新 Seedream</small></span>
+              <select id="agentSeedreamModel">
+                <option value="doubao-seedream-5-0-260128">Seedream 5.0</option>
+                <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
+                <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
+              </select>
+            </label>
+            <label class="settings-field" for="agentSeedreamSize">尺寸
+              <input id="agentSeedreamSize" list="agentSeedreamSizeOptions" spellcheck="false" placeholder="2K">
+              <small>可用 2K / 3K / 4K，或宽x高如 2848x1600</small>
+            </label>
+            <datalist id="agentSeedreamSizeOptions">
+              <option value="2K"></option>
+              <option value="3K"></option>
+              <option value="4K"></option>
+              <option value="2848x1600"></option>
+              <option value="1600x2848"></option>
+              <option value="2048x2048"></option>
+            </datalist>
+            <label class="settings-row" for="agentSeedreamWatermark"><span><strong>水印</strong><small>在生成图上添加 Seedream 水印</small></span><input id="agentSeedreamWatermark" type="checkbox"></label>
+          </section>
+          <section class="settings-section" data-settings-panel="skills" hidden>
+            <h3>技能</h3>
+            <label class="settings-row" for="agentWestockToggle"><span><strong>WeStock Data</strong><small>A股、港股、美股行情与财务数据查询</small></span><input id="agentWestockToggle" type="checkbox"></label>
+            <label class="settings-row" for="agentPerplexityToggle"><span><strong>Perplexity Search</strong><small>Agent 网页搜索可同时走 Perplexity</small></span><input id="agentPerplexityToggle" type="checkbox"></label>
+            <label class="settings-field" for="agentPerplexityKey">Perplexity API Key<input id="agentPerplexityKey" type="password" autocomplete="off" spellcheck="false" placeholder="pplx-..."></label>
+          </section>
+          <section class="settings-section" data-settings-panel="knowledge" hidden>
+            <h3>知识库搜索</h3>
+            <p class="settings-copy">调节 MiniSearch 全文检索行为。保存于本机浏览器，修改后立即作用于侧栏搜索。</p>
+            <label class="settings-row" for="knowledgeSearchPreset"><span><strong>搜索预设</strong><small>智能适合日常；精确减少误命中</small></span>
+              <select id="knowledgeSearchPreset">
+                <option value="smart">智能</option>
+                <option value="exact">精确</option>
+                <option value="custom">自定义</option>
+              </select>
+            </label>
+            <div id="knowledgeSearchCustomOptions">
+              <label class="settings-row" for="knowledgeSearchPrefix"><span><strong>前缀匹配</strong><small>「会」可匹配「会议」</small></span><input id="knowledgeSearchPrefix" type="checkbox"></label>
+              <label class="settings-row" for="knowledgeSearchFuzzy"><span><strong>模糊匹配</strong><small>允许轻微拼写差异</small></span><input id="knowledgeSearchFuzzy" type="checkbox"></label>
+              <label class="settings-row" for="knowledgeSearchStrict"><span><strong>严格子串</strong><small>命中段必须包含完整搜索词</small></span><input id="knowledgeSearchStrict" type="checkbox"></label>
+              <fieldset class="settings-fieldset">
+                <legend>搜索范围</legend>
+                <label class="settings-check"><input type="checkbox" id="knowledgeSearchFieldTitle" value="title" checked> 标题</label>
+                <label class="settings-check"><input type="checkbox" id="knowledgeSearchFieldHeading" value="heading" checked> 小节标题</label>
+                <label class="settings-check"><input type="checkbox" id="knowledgeSearchFieldBody" value="body" checked> 正文</label>
+                <label class="settings-check"><input type="checkbox" id="knowledgeSearchFieldTags" value="tags" checked> 标签</label>
+                <label class="settings-check"><input type="checkbox" id="knowledgeSearchFieldPath" value="path" checked> 路径 / 知识库</label>
+              </fieldset>
+            </div>
+          </section>
+          <section class="settings-section" data-settings-panel="computer" hidden>
+            <h3>电脑</h3>
+            <p class="settings-copy">开启后，管理员可让 Agent 在白名单目录里读写文件、删除文件并运行 PowerShell / Python。脚本在第一个白名单目录下执行。</p>
+            <label class="settings-row" for="computerToolsToggle"><span><strong>允许电脑工具</strong><small>file.* 与 code.run，需管理员账户</small></span><input id="computerToolsToggle" type="checkbox"></label>
+            <div class="settings-field">
+              <span>目录白名单</span>
+              <div id="computerAllowlist" class="computer-allowlist"></div>
+              <div class="computer-allowlist-add">
+                <input id="computerAllowlistInput" type="text" spellcheck="false" placeholder="例如 D:\新桌面">
+                <button type="button" class="secondary-action compact" id="btnComputerAllowlistAdd">添加</button>
+              </div>
+              <small>只允许已存在的目录。敏感路径（如 .ssh）无法加入。</small>
+            </div>
+          </section>
+          <section class="settings-section" data-settings-panel="account" hidden>
+            <h3>个人资料</h3>
+            <p class="settings-copy" id="accountMeta"></p>
+            <label class="settings-field" for="accountDisplayNameInput">显示名称
+              <input id="accountDisplayNameInput" type="text" maxlength="50" autocomplete="name">
+            </label>
+            <div class="settings-actions">
+              <button type="button" class="secondary-action compact" id="btnSaveAccountProfile">保存资料</button>
+            </div>
+            <h3>修改登录密码</h3>
+            <label class="settings-field" for="accountCurrentPassword">当前密码
+              <input id="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password">
+            </label>
+            <label class="settings-field" for="accountNewPassword">新密码
+              <input id="accountNewPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password">
+            </label>
+            <label class="settings-field" for="accountConfirmPassword">确认新密码
+              <input id="accountConfirmPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password">
+            </label>
+            <div class="settings-actions">
+              <button type="button" class="secondary-action compact" id="btnChangeAccountPassword">修改密码</button>
+            </div>
+            <div id="adminUsersSection" hidden>
+              <h3>账户管理</h3>
+              <p class="settings-copy">管理员只能管理账户资料，不能查看成员工作区。</p>
+              <div class="settings-actions">
+                <button type="button" class="secondary-action compact" id="btnAdminUsers">管理账户</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="primary-action compact" id="saveAgentSettings" type="submit">保存设置</button>
+      </div>
     </form>
   </dialog>
 
@@ -224,11 +612,69 @@
     </form>
   </dialog>
 
+  <dialog class="workspace-dialog user-manager-dialog" id="userManagerDialog" aria-labelledby="userManagerTitle">
+    <div class="dialog-card">
+      <header>
+        <div>
+          <span class="dialog-eyebrow">ADMIN</span>
+          <h2 id="userManagerTitle">账户管理</h2>
+        </div>
+        <button class="icon-button" id="userManagerClose" type="button" aria-label="关闭">×</button>
+      </header>
+      <p class="settings-copy">管理员只能管理账户资料，不能查看成员工作区。</p>
+      <form class="user-create-form" id="userCreateForm" autocomplete="off">
+        <h3>创建账户</h3>
+        <label class="dialog-field" for="newUserUsername">用户名
+          <input id="newUserUsername" type="text" maxlength="32" pattern="[A-Za-z0-9._-]{3,32}" autocomplete="off" required>
+        </label>
+        <label class="dialog-field" for="newUserDisplayName">显示名称
+          <input id="newUserDisplayName" type="text" maxlength="50" autocomplete="off" required>
+        </label>
+        <label class="dialog-field" for="newUserPassword">临时密码
+          <input id="newUserPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" required>
+        </label>
+        <label class="dialog-field" for="newUserRole">角色
+          <select id="newUserRole">
+            <option value="member">普通成员</option>
+            <option value="admin">管理员</option>
+          </select>
+        </label>
+        <div class="settings-actions">
+          <button class="primary-action compact" type="submit">创建并要求首次改密</button>
+        </div>
+      </form>
+      <section class="user-list-section" aria-labelledby="userListTitle">
+        <div class="user-list-heading">
+          <h3 id="userListTitle">已有账户</h3>
+          <span id="userListCount">0 个</span>
+        </div>
+        <div class="user-manager-list" id="userManagerList"><p class="empty-list">加载账户中…</p></div>
+      </section>
+    </div>
+  </dialog>
+
   <dialog class="workspace-dialog" id="confirmDialog">
     <form method="dialog" class="dialog-card compact-dialog">
       <header><h2 id="confirmTitle">确认操作</h2></header>
       <p id="confirmMessage"></p>
-      <div class="dialog-actions"><button class="secondary-action" value="cancel">取消</button><button class="danger-action" id="confirmAccept" value="confirm">确认</button></div>
+      <div class="dialog-actions"><button class="secondary-action" id="confirmCancel" value="cancel">取消</button><button class="danger-action" id="confirmAccept" value="confirm">确认</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="workspace-dialog" id="todoCategoryOverlay" aria-labelledby="todoCategoryModalTitle">
+    <form class="dialog-card compact-dialog" id="todoCategoryAddForm" autocomplete="off">
+      <header>
+        <div>
+          <span class="dialog-eyebrow">待办</span>
+          <h2 id="todoCategoryModalTitle">新增分类</h2>
+        </div>
+        <button class="icon-button" id="btnTodoCategoryClose" type="button" aria-label="关闭">×</button>
+      </header>
+      <label class="dialog-field" for="todoCategoryInput">分类名称<input type="text" id="todoCategoryInput" placeholder="例如：学习" maxlength="24"></label>
+      <div class="dialog-actions">
+        <button type="button" class="secondary-action" id="btnTodoCategoryCancel">取消</button>
+        <button type="submit" class="primary-action compact" id="btnTodoCategoryAdd">添加</button>
+      </div>
     </form>
   </dialog>
 
@@ -236,6 +682,7 @@
   <div class="sr-only" id="a11yStatus" aria-live="polite"></div>
   <script src="/vendor/marked/marked.umd.js"></script>
   <script src="/vendor/dompurify/purify.min.js"></script>
+  <script src="/vendor/katex/katex.min.js"></script>
   <script type="module" src="/js/workbench.js"></script>
 </body>
 </html>

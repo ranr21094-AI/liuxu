@@ -1,9 +1,7 @@
 import { apiFetch } from './auth.js';
-import { showToast, escHtml, setupDragAndDrop, confirmDialog, openModal, closeModal, $ } from './helpers.js';
+import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { businessDateString, parseBusinessDate } from './businessDate.js';
 import { countdownTiming } from './countdownDate.js';
-import { state } from './state.js';
-import { renderCalendar } from './calendar.js';
 
 const DEFAULT_TODO_CATEGORY = '待办';
 const TODO_SELECT_IDS = ['todoFullCategory', 'todoFullPriority', 'todoFullRecurrence'];
@@ -21,6 +19,8 @@ let activeFilter = localStorage.getItem('todoFilter') || DEFAULT_TODO_CATEGORY;
 if (activeFilter === 'all' || activeFilter === 'undated' || activeFilter === 'pending') activeFilter = DEFAULT_TODO_CATEGORY;
 let selectedTodoId = null;
 let selectedCountdownId = null;
+let todoFormOpen = false;
+let countdownFormOpen = false;
 let todoSearchQuery = '';
 let todoReminderSettings = {
   enabled: false,
@@ -85,11 +85,15 @@ function formatReminderDateTime(value) {
 }
 
 function renderTodoReminderSettings() {
-  $('#todoReminderEnabled').checked = todoReminderSettings.enabled;
-  $('#todoReminderRecipient').value = todoReminderSettings.recipientEmail || '';
-  $('#todoReminderTime').value = todoReminderSettings.sendTime || '08:00';
-
+  const enabled = $('#todoReminderEnabled');
+  const recipient = $('#todoReminderRecipient');
+  const time = $('#todoReminderTime');
   const chip = $('#todoReminderMailState');
+  const status = $('#todoReminderStatusText');
+  if (!enabled || !recipient || !time || !chip || !status) return;
+  enabled.checked = todoReminderSettings.enabled;
+  recipient.value = todoReminderSettings.recipientEmail || '';
+  time.value = todoReminderSettings.sendTime || '08:00';
   chip.textContent = todoReminderSettings.mailReady ? '可发送' : '未配置';
   chip.classList.toggle('ready', todoReminderSettings.mailReady);
   chip.classList.toggle('missing', !todoReminderSettings.mailReady);
@@ -132,7 +136,6 @@ export async function loadTodos() {
     if (activeFilter !== 'done' && !todoCategories.includes(activeFilter)) activeFilter = DEFAULT_TODO_CATEGORY;
     if (selectedTodoId && !allTodos.some(t => t.id === selectedTodoId)) resetTodoForm();
     if (selectedCountdownId && !allCountdowns.some(item => item.id === selectedCountdownId)) resetCountdownForm();
-    refreshTodoCalendarDates();
     renderTodos();
   } catch (err) {
     console.error('Todo load failed:', err);
@@ -168,11 +171,6 @@ function countdownStats() {
     soon: timing.filter(item => item.state === 'future' && item.days <= 30).length,
     elapsed: timing.filter(item => item.state === 'elapsed').length,
   };
-}
-
-function refreshTodoCalendarDates() {
-  state.datesWithTodos = [...new Set(allTodos.map(todo => todo.due_date).filter(Boolean))];
-  renderCalendar();
 }
 
 function manualTodoOrder(a, b) {
@@ -353,11 +351,15 @@ function todoItemHtml(todo, { full = false } = {}) {
   const category = todo.category && todo.category !== DEFAULT_TODO_CATEGORY
     ? `<span class="todo-category-badge">${escHtml(todo.category)}</span>`
     : '';
+  const meta = [priorityBadge(todo), recurrenceBadge(todo), category, dueHtml(todo)].filter(Boolean).join('');
   return `
     <div class="todo-item${selected}" data-id="${todo.id}" draggable="true">
       <div class="todo-drag" data-action="drag" title="拖动排序">⠿</div>
       <button type="button" class="todo-checkbox ${todo.done ? 'done' : ''}" data-action="toggle" role="checkbox" aria-checked="${todo.done}" aria-label="${todo.done ? '标记为未完成' : '标记为已完成'}：${title}"></button>
-      <span class="todo-text ${todo.done ? 'done' : ''}">${priorityBadge(todo)}${recurrenceBadge(todo)}${category}${title}${dueHtml(todo)}</span>
+      <div class="todo-item-body">
+        <strong class="todo-text ${todo.done ? 'done' : ''}">${title}</strong>
+        ${meta ? `<small class="todo-item-meta">${meta}</small>` : ''}
+      </div>
       <button type="button" class="todo-delete" data-action="delete" aria-label="删除任务：${title}" title="删除">×</button>
     </div>
   `;
@@ -379,6 +381,7 @@ function filteredTodos() {
 
 function renderTodoCategorySelect(selected = DEFAULT_TODO_CATEGORY) {
   const select = $('#todoFullCategory');
+  if (!select) return;
   select.innerHTML = todoCategories
     .map(category => `<option value="${escHtml(category)}">${escHtml(category)}</option>`)
     .join('');
@@ -388,6 +391,7 @@ function renderTodoCategorySelect(selected = DEFAULT_TODO_CATEGORY) {
 
 function renderTodoFilterTabs() {
   const tabs = $('#todoFilterTabs');
+  if (!tabs) return;
   const categoryButtons = todoCategories.map(category => {
     const selected = activeFilter === category;
     const removable = category !== DEFAULT_TODO_CATEGORY;
@@ -421,37 +425,21 @@ function renderTodoFilterTabs() {
     <button class="todo-filter-pill${doneSelected ? ' active' : ''}" data-filter="done" role="tab" aria-selected="${doneSelected}"><span class="todo-filter-label">已完成</span></button>`;
 }
 
-function sectionHtml(title, todos, { action = '' } = {}) {
-  if (todos.length === 0) return '';
-  return `
-    <div class="todo-section-title">
-      <span>${escHtml(title)}</span>
-      ${action}
-    </div>
-    ${todos.map(t => todoItemHtml(t, { full: true })).join('')}
-  `;
-}
-
 function renderFullTodos() {
+  const list = $('#todoFullList');
+  if (!list) return;
   const { done } = todoStats();
   renderTodoFilterTabs();
-  renderTodoCategorySelect($('#todoFullCategory').value || DEFAULT_TODO_CATEGORY);
-
-  const list = $('#todoFullList');
+  renderTodoCategorySelect($('#todoFullCategory')?.value || DEFAULT_TODO_CATEGORY);
   const todos = filteredTodos();
   if (todos.length === 0) {
     list.innerHTML = `<div class="todo-empty">${activeFilter === 'done' ? '当前没有已完成待办' : `「${escHtml(activeFilter)}」下没有待办`}</div>`;
     return;
   }
-
-  if (activeFilter === 'done') {
-    const clearAction = done.length > 0
-      ? '<button class="btn-todo-clear todo-section-clear" type="button" data-action="clear-completed">清除已完成</button>'
-      : '';
-    list.innerHTML = sectionHtml('已完成', todos, { action: clearAction });
-  } else {
-    list.innerHTML = sectionHtml(activeFilter === DEFAULT_TODO_CATEGORY ? '待办' : activeFilter, todos);
-  }
+  const clearAction = activeFilter === 'done' && done.length > 0
+    ? '<button class="btn-todo-clear todo-section-clear" type="button" data-action="clear-completed">清除已完成</button>'
+    : '';
+  list.innerHTML = `${clearAction}${todos.map(todo => todoItemHtml(todo, { full: true })).join('')}`;
 }
 
 function countdownLabel(timing) {
@@ -485,22 +473,23 @@ function countdownCardHtml(item, timing) {
   const selected = selectedCountdownId === item.id ? ' selected' : '';
   const stateClass = timing.state === 'today' ? ' is-today' : (timing.state === 'elapsed' ? ' is-elapsed' : '');
   return `
-    <article class="countdown-card${selected}${stateClass}" data-countdown-id="${item.id}" tabindex="0" aria-label="编辑倒数日：${escHtml(item.title)}">
-      <div class="countdown-card-topline">
-        ${item.repeat_yearly ? '<span class="countdown-repeat-badge">每年</span>' : '<span class="countdown-once-badge">一次</span>'}
-        <button class="countdown-delete" type="button" data-action="delete-countdown" aria-label="删除倒数日：${escHtml(item.title)}" title="删除">×</button>
+    <article class="countdown-item${selected}${stateClass}" data-countdown-id="${item.id}" tabindex="0" aria-label="编辑倒数日：${escHtml(item.title)}">
+      <div class="countdown-item-body">
+        <strong>${escHtml(item.title)}</strong>
+        <small>
+          <span class="countdown-status">${countdownLabel(timing)}</span>
+          <time datetime="${escHtml(timing.effectiveDate)}">${escHtml(formatCountdownDate(timing.effectiveDate))}</time>
+          ${item.repeat_yearly ? '<span class="countdown-repeat-badge">每年</span>' : ''}
+        </small>
       </div>
-      <div class="countdown-number">${timing.state === 'today' ? 'TODAY' : Math.abs(timing.days)}</div>
-      <div class="countdown-status">${countdownLabel(timing)}</div>
-      <h3>${escHtml(item.title)}</h3>
-      <time datetime="${escHtml(timing.effectiveDate)}">${escHtml(formatCountdownDate(timing.effectiveDate))}</time>
-      ${item.notes ? `<p>${escHtml(item.notes)}</p>` : ''}
+      <button class="countdown-delete" type="button" data-action="delete-countdown" aria-label="删除倒数日：${escHtml(item.title)}" title="删除">×</button>
     </article>
   `;
 }
 
 function renderCountdowns() {
   const grid = $('#countdownGrid');
+  if (!grid) return;
   const countdowns = sortedFilteredCountdowns();
   if (!countdowns.length) {
     grid.innerHTML = `<div class="todo-empty countdown-empty">${todoSearchQuery.trim() ? '没有匹配的倒数日' : '还没有倒数日，添加一个值得期待的日子吧'}</div>`;
@@ -509,79 +498,121 @@ function renderCountdowns() {
   grid.innerHTML = countdowns.map(({ item, timing }) => countdownCardHtml(item, timing)).join('');
 }
 
+function syncTodoDetailState() {
+  const todoEmpty = $('#todoFormEmpty');
+  const todoBody = $('#todoFormBody');
+  const countdownEmpty = $('#countdownFormEmpty');
+  const countdownBody = $('#countdownFormBody');
+  if (todoEmpty) todoEmpty.hidden = todoFormOpen;
+  if (todoBody) todoBody.hidden = !todoFormOpen;
+  if (countdownEmpty) countdownEmpty.hidden = countdownFormOpen;
+  if (countdownBody) countdownBody.hidden = !countdownFormOpen;
+}
+
 function renderModeStats() {
   const labels = [$('#todoStatLabelPending'), $('#todoStatLabelToday'), $('#todoStatLabelOverdue'), $('#todoStatLabelDone')];
   const values = [$('#todoStatPending'), $('#todoStatToday'), $('#todoStatOverdue'), $('#todoStatDone')];
-  const cards = values.map(value => value.closest('.todo-stat-card'));
-  cards.forEach(card => card.classList.remove('danger'));
+  if (values.some(value => !value)) return;
+  const alertStat = $('#todoStatAlert');
   if (todoPageMode === 'countdowns') {
     const stats = countdownStats();
     ['总数', '今天', '30天内', '已过期'].forEach((label, index) => { labels[index].textContent = label; });
     [stats.total, stats.today, stats.soon, stats.elapsed].forEach((value, index) => { values[index].textContent = value; });
-    cards[3].classList.add('danger');
+    alertStat?.classList.toggle('is-alert', stats.elapsed > 0);
   } else {
     const { pending, done, overdue, dueToday } = todoStats();
     ['待办', '今日', '逾期', '已完成'].forEach((label, index) => { labels[index].textContent = label; });
     [pending.length, dueToday.length, overdue.length, done.length].forEach((value, index) => { values[index].textContent = value; });
-    cards[2].classList.add('danger');
+    alertStat?.classList.toggle('is-alert', overdue.length > 0);
   }
-  $('.todo-page-stats').setAttribute('aria-label', todoPageMode === 'countdowns' ? '倒数日统计' : '待办统计');
+  $('.todo-page-stats')?.setAttribute('aria-label', todoPageMode === 'countdowns' ? '倒数日统计' : '待办统计');
 }
 
 function applyTodoPageMode() {
+  const view = $('#todoView');
+  if (!view) return;
   const countdownMode = todoPageMode === 'countdowns';
-  $('#todoView').classList.toggle('countdown-mode', countdownMode);
-  $('#todoFullPanel').hidden = countdownMode;
-  $('#todoFullForm').hidden = countdownMode;
-  $('#countdownPanel').hidden = !countdownMode;
-  $('#countdownForm').hidden = !countdownMode;
+  view.classList.toggle('countdown-mode', countdownMode);
+  const fullPanel = $('#todoFullPanel');
+  const fullForm = $('#todoFullForm');
+  const countdownPanel = $('#countdownPanel');
+  const countdownForm = $('#countdownForm');
+  if (fullPanel) fullPanel.hidden = countdownMode;
+  if (fullForm) fullForm.hidden = countdownMode;
+  if (countdownPanel) countdownPanel.hidden = !countdownMode;
+  if (countdownForm) countdownForm.hidden = !countdownMode;
   document.querySelectorAll('.todo-mode-only').forEach(element => { element.hidden = countdownMode; });
-  $('#todoSearchInput').placeholder = countdownMode ? '搜索倒数日标题或备注...' : '搜索标题或备注...';
-  document.querySelector('label[for="todoSearchInput"]').textContent = countdownMode ? '搜索倒数日' : '搜索待办';
-  document.querySelectorAll('#todoModeTabs [data-mode]').forEach(button => {
-    const selected = button.dataset.mode === todoPageMode;
+  const search = $('#todoSearchInput');
+  if (search) search.placeholder = countdownMode ? '搜索倒数日标题或备注...' : '搜索标题或备注...';
+  const searchLabel = document.querySelector('label[for="todoSearchInput"]');
+  if (searchLabel) {
+    const text = countdownMode ? '搜索倒数日' : '搜索待办';
+    searchLabel.setAttribute('aria-label', text);
+  }
+  const newButton = $('#btnTodoNew');
+  if (newButton) newButton.setAttribute('aria-label', countdownMode ? '新建倒数日' : '新建任务');
+  document.querySelectorAll('#todoModeTabs [data-todo-page]').forEach(button => {
+    const selected = button.dataset.todoPage === todoPageMode;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-selected', String(selected));
     button.tabIndex = selected ? 0 : -1;
   });
   renderModeStats();
+  syncTodoDetailState();
 }
 
 function renderTodos() {
+  if (!$('#todoView')) return;
   renderFullTodos();
   renderCountdowns();
   renderTodoReminderSettings();
   applyTodoPageMode();
 }
 
+export function getTodoSubtitle() {
+  if (todoPageMode === 'countdowns') return `${allCountdowns.length} 个倒数日`;
+  const pending = allTodos.filter(todo => !todo.done).length;
+  return `${pending} 条待办`;
+}
+
 export function showTodoView() {
-  $('#listView').style.display = 'none';
-  $('#editorView').style.display = 'none';
-  $('#categoryView').style.display = 'none';
-  $('#aiChatView').style.display = 'none';
-  $('#aiSettingsView').style.display = 'none';
-  $('#photoWallView').style.display = 'none';
-  $('#todoView').style.display = 'flex';
-  refreshTodoCalendarDates();
+  const view = $('#todoView');
+  if (!view) return;
   renderTodos();
   requestAnimationFrame(() => $('#todoSearchInput')?.focus());
 }
 
-function resetTodoForm() {
+function resetTodoForm({ open = false } = {}) {
   selectedTodoId = null;
-  $('#todoEditId').value = '';
-  $('#todoFullTitle').value = '';
+  todoFormOpen = open;
+  const editId = $('#todoEditId');
+  const title = $('#todoFullTitle');
+  if (editId) editId.value = '';
+  if (title) title.value = '';
   renderTodoCategorySelect(DEFAULT_TODO_CATEGORY);
-  $('#todoFullDueDate').value = '';
-  $('#todoFullPriority').value = 'none';
-  $('#todoFullRecurrence').value = 'none';
-  $('#todoFullNotes').value = '';
-  $('#btnTodoFullSave').textContent = '保存任务';
+  const due = $('#todoFullDueDate');
+  const priority = $('#todoFullPriority');
+  const recurrence = $('#todoFullRecurrence');
+  const notes = $('#todoFullNotes');
+  const save = $('#btnTodoFullSave');
+  if (due) due.value = '';
+  if (priority) priority.value = 'none';
+  if (recurrence) recurrence.value = 'none';
+  if (notes) notes.value = '';
+  if (save) save.textContent = '保存任务';
   syncTodoSelectControls();
+  syncTodoDetailState();
+  if ($('#todoFullList')) renderFullTodos();
+}
+
+function startNewTodo() {
+  resetTodoForm({ open: true });
+  $('#todoFullTitle')?.focus();
 }
 
 function fillTodoForm(todo) {
   selectedTodoId = todo.id;
+  todoFormOpen = true;
   $('#todoEditId').value = todo.id;
   $('#todoFullTitle').value = todo.title || '';
   renderTodoCategorySelect(todo.category || DEFAULT_TODO_CATEGORY);
@@ -590,25 +621,41 @@ function fillTodoForm(todo) {
   $('#todoFullRecurrence').value = todo.recurrence || 'none';
   $('#todoFullNotes').value = todo.notes || '';
   $('#btnTodoFullSave').textContent = '更新任务';
+  syncTodoDetailState();
   renderFullTodos();
   $('#todoFullTitle').focus();
   $('#todoFullTitle').select();
 }
 
-function resetCountdownForm() {
+function resetCountdownForm({ open = false } = {}) {
   selectedCountdownId = null;
-  $('#countdownEditId').value = '';
-  $('#countdownTitle').value = '';
-  $('#countdownTargetDate').value = '';
-  $('#countdownRepeatYearly').checked = false;
-  $('#countdownNotes').value = '';
-  $('#btnCountdownSave').textContent = '保存倒数日';
-  $('#countdownFormHint').textContent = '记录值得期待的日子';
+  countdownFormOpen = open;
+  const editId = $('#countdownEditId');
+  const title = $('#countdownTitle');
+  const date = $('#countdownTargetDate');
+  const yearly = $('#countdownRepeatYearly');
+  const notes = $('#countdownNotes');
+  const save = $('#btnCountdownSave');
+  const hint = $('#countdownFormHint');
+  if (editId) editId.value = '';
+  if (title) title.value = '';
+  if (date) date.value = '';
+  if (yearly) yearly.checked = false;
+  if (notes) notes.value = '';
+  if (save) save.textContent = '保存倒数日';
+  if (hint) hint.textContent = '记录值得期待的日子';
+  syncTodoDetailState();
   renderCountdowns();
+}
+
+function startNewCountdown() {
+  resetCountdownForm({ open: true });
+  $('#countdownTitle')?.focus();
 }
 
 function fillCountdownForm(countdown) {
   selectedCountdownId = countdown.id;
+  countdownFormOpen = true;
   $('#countdownEditId').value = countdown.id;
   $('#countdownTitle').value = countdown.title;
   $('#countdownTargetDate').value = countdown.target_date;
@@ -616,6 +663,7 @@ function fillCountdownForm(countdown) {
   $('#countdownNotes').value = countdown.notes;
   $('#btnCountdownSave').textContent = '更新倒数日';
   $('#countdownFormHint').textContent = '正在编辑倒数日';
+  syncTodoDetailState();
   renderCountdowns();
   $('#countdownTitle').focus();
   $('#countdownTitle').select();
@@ -720,13 +768,19 @@ async function saveTodoFromFullForm() {
 }
 
 function openTodoCategoryModal() {
-  $('#todoCategoryInput').value = '';
-  openModal($('#todoCategoryOverlay'), '#todoCategoryInput');
+  const dialog = $('#todoCategoryOverlay');
+  const input = $('#todoCategoryInput');
+  if (!dialog || !input) return;
+  input.value = '';
+  if (!dialog.open) dialog.showModal();
+  requestAnimationFrame(() => input.focus());
 }
 
 function closeTodoCategoryModal() {
-  $('#todoCategoryInput').value = '';
-  closeModal($('#todoCategoryOverlay'));
+  const dialog = $('#todoCategoryOverlay');
+  const input = $('#todoCategoryInput');
+  if (input) input.value = '';
+  if (dialog?.open) dialog.close();
 }
 
 async function addTodoCategoryFromForm(event) {
@@ -865,32 +919,8 @@ async function handleTodoListClick(e, { full = false } = {}) {
   }
 }
 
-$('#todoFullList').addEventListener('click', (e) => handleTodoListClick(e, { full: true }));
-
-$('#countdownGrid').addEventListener('click', (event) => {
-  const card = event.target.closest('[data-countdown-id]');
-  if (!card) return;
-  const id = parseInt(card.dataset.countdownId, 10);
-  if (event.target.closest('[data-action="delete-countdown"]')) {
-    event.stopPropagation();
-    deleteCountdown(id);
-    return;
-  }
-  const countdown = allCountdowns.find(item => item.id === id);
-  if (countdown) fillCountdownForm(countdown);
-});
-
-$('#countdownGrid').addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  if (event.target.closest('[data-action="delete-countdown"]')) return;
-  const card = event.target.closest('[data-countdown-id]');
-  if (!card) return;
-  event.preventDefault();
-  const countdown = allCountdowns.find(item => item.id === parseInt(card.dataset.countdownId, 10));
-  if (countdown) fillCountdownForm(countdown);
-});
-
 function setupTodoDrag(container) {
+  if (!container) return;
   setupDragAndDrop({
     container,
     itemSelector: '.todo-item',
@@ -906,89 +936,114 @@ function setupTodoDrag(container) {
   });
 }
 
-setupTodoDrag($('#todoFullList'));
-
-$('#btnTodoFullSave').addEventListener('click', saveTodoFromFullForm);
-$('#btnTodoFormCancel').addEventListener('click', resetTodoForm);
-$('#btnCountdownSave').addEventListener('click', saveCountdownFromForm);
-$('#btnCountdownCancel').addEventListener('click', resetCountdownForm);
-$('#btnTodoReminderSave').addEventListener('click', saveTodoReminderSettings);
-$('#todoReminderEnabled').addEventListener('change', (e) => {
-  if (!todoReminderSettings.mailReady && e.target.checked) {
-    e.target.checked = false;
-    todoReminderUiMessage = '请先配置 QQ 发信账号并重启当前服务，再启用每日提醒。';
-    renderTodoReminderSettings();
-    showToast('请先重启服务以加载 QQ 邮件配置', 'error');
-  } else {
-    todoReminderSettings.enabled = e.target.checked;
-    todoReminderUiMessage = '';
-    renderTodoReminderSettings();
-  }
-});
-$('#todoFullTitle').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); saveTodoFromFullForm(); }
-});
-$('#todoFilterTabs').addEventListener('click', (e) => {
-  const deleteAction = e.target.closest('[data-action="delete-category"]');
-  if (deleteAction) {
+export function initTodos() {
+  if (!$('#todoView')) return;
+  $('#todoFullList').addEventListener('click', (e) => handleTodoListClick(e, { full: true }));
+  $('#countdownGrid').addEventListener('click', (event) => {
+    const card = event.target.closest('[data-countdown-id]');
+    if (!card) return;
+    const id = parseInt(card.dataset.countdownId, 10);
+    if (event.target.closest('[data-action="delete-countdown"]')) {
+      event.stopPropagation();
+      deleteCountdown(id);
+      return;
+    }
+    const countdown = allCountdowns.find(item => item.id === id);
+    if (countdown) fillCountdownForm(countdown);
+  });
+  $('#countdownGrid').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target.closest('[data-action="delete-countdown"]')) return;
+    const card = event.target.closest('[data-countdown-id]');
+    if (!card) return;
+    event.preventDefault();
+    const countdown = allCountdowns.find(item => item.id === parseInt(card.dataset.countdownId, 10));
+    if (countdown) fillCountdownForm(countdown);
+  });
+  setupTodoDrag($('#todoFullList'));
+  $('#btnTodoNew').addEventListener('click', () => {
+    if (todoPageMode === 'countdowns') startNewCountdown();
+    else startNewTodo();
+  });
+  $('#btnTodoFullSave').addEventListener('click', saveTodoFromFullForm);
+  $('#btnTodoFormCancel').addEventListener('click', resetTodoForm);
+  $('#btnCountdownSave').addEventListener('click', saveCountdownFromForm);
+  $('#btnCountdownCancel').addEventListener('click', resetCountdownForm);
+  $('#btnTodoReminderSave').addEventListener('click', saveTodoReminderSettings);
+  $('#todoReminderEnabled').addEventListener('change', (e) => {
+    if (!todoReminderSettings.mailReady && e.target.checked) {
+      e.target.checked = false;
+      todoReminderUiMessage = '请先配置 QQ 发信账号并重启当前服务，再启用每日提醒。';
+      renderTodoReminderSettings();
+      showToast('请先重启服务以加载 QQ 邮件配置', 'error');
+    } else {
+      todoReminderSettings.enabled = e.target.checked;
+      todoReminderUiMessage = '';
+      renderTodoReminderSettings();
+    }
+  });
+  $('#todoFullTitle').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveTodoFromFullForm(); }
+  });
+  $('#todoFilterTabs').addEventListener('click', (e) => {
+    const deleteAction = e.target.closest('[data-action="delete-category"]');
+    if (deleteAction) {
+      e.stopPropagation();
+      deleteTodoCategory(deleteAction.dataset.category);
+      return;
+    }
+    const btn = e.target.closest('button[data-filter]');
+    if (!btn) return;
+    activeFilter = btn.dataset.filter;
+    localStorage.setItem('todoFilter', activeFilter);
+    renderFullTodos();
+  });
+  $('#todoFilterTabs').addEventListener('keydown', (e) => {
+    const deleteAction = e.target.closest('[data-action="delete-category"]');
+    if (!deleteAction || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
     e.stopPropagation();
     deleteTodoCategory(deleteAction.dataset.category);
-    return;
-  }
-  const btn = e.target.closest('button[data-filter]');
-  if (!btn) return;
-  activeFilter = btn.dataset.filter;
-  localStorage.setItem('todoFilter', activeFilter);
-  renderFullTodos();
-});
-
-$('#todoFilterTabs').addEventListener('keydown', (e) => {
-  const deleteAction = e.target.closest('[data-action="delete-category"]');
-  if (!deleteAction || (e.key !== 'Enter' && e.key !== ' ')) return;
-  e.preventDefault();
-  e.stopPropagation();
-  deleteTodoCategory(deleteAction.dataset.category);
-});
-
-$('#todoSearchInput').addEventListener('input', (e) => {
-  todoSearchQuery = e.target.value || '';
-  if (todoPageMode === 'countdowns') renderCountdowns();
-  else renderFullTodos();
-});
-
-$('#todoModeTabs').addEventListener('click', (event) => {
-  const button = event.target.closest('[data-mode]');
-  if (!button || !['todos', 'countdowns'].includes(button.dataset.mode)) return;
-  todoPageMode = button.dataset.mode;
-  localStorage.setItem('todoPageMode', todoPageMode);
-  todoSearchQuery = '';
-  $('#todoSearchInput').value = '';
-  renderTodos();
-  $('#todoSearchInput').focus();
-});
-
-$('#todoModeTabs').addEventListener('keydown', (event) => {
-  if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
-  event.preventDefault();
-  const nextMode = todoPageMode === 'todos' ? 'countdowns' : 'todos';
-  document.querySelector(`#todoModeTabs [data-mode="${nextMode}"]`)?.click();
-});
-
-$('#countdownTitle').addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
+  });
+  $('#todoSearchInput').addEventListener('input', (e) => {
+    todoSearchQuery = e.target.value || '';
+    if (todoPageMode === 'countdowns') renderCountdowns();
+    else renderFullTodos();
+  });
+  $('#todoModeTabs').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-todo-page]');
+    if (!button || !['todos', 'countdowns'].includes(button.dataset.todoPage)) return;
+    todoPageMode = button.dataset.todoPage;
+    localStorage.setItem('todoPageMode', todoPageMode);
+    todoSearchQuery = '';
+    $('#todoSearchInput').value = '';
+    if (todoPageMode === 'countdowns') resetTodoForm();
+    else resetCountdownForm();
+    renderTodos();
+    $('#todoSearchInput').focus();
+  });
+  $('#todoModeTabs').addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
-    saveCountdownFromForm();
-  }
-});
-
-$('#btnTodoCategoryOpen').addEventListener('click', openTodoCategoryModal);
-$('#btnTodoCategoryClose').addEventListener('click', closeTodoCategoryModal);
-$('#btnTodoCategoryCancel').addEventListener('click', closeTodoCategoryModal);
-$('#todoCategoryOverlay').addEventListener('click', (e) => {
-  if (e.target === $('#todoCategoryOverlay')) closeTodoCategoryModal();
-});
-$('#todoCategoryOverlay').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeTodoCategoryModal();
-});
-$('#todoCategoryAddForm').addEventListener('submit', addTodoCategoryFromForm);
-initTodoSelectControls();
+    const nextMode = todoPageMode === 'todos' ? 'countdowns' : 'todos';
+    document.querySelector(`#todoModeTabs [data-todo-page="${nextMode}"]`)?.click();
+  });
+  $('#countdownTitle').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveCountdownFromForm();
+    }
+  });
+  $('#btnTodoCategoryOpen').addEventListener('click', openTodoCategoryModal);
+  $('#btnTodoCategoryClose').addEventListener('click', closeTodoCategoryModal);
+  $('#btnTodoCategoryCancel').addEventListener('click', closeTodoCategoryModal);
+  $('#todoCategoryOverlay').addEventListener('click', (e) => {
+    if (e.target === $('#todoCategoryOverlay')) closeTodoCategoryModal();
+  });
+  $('#todoCategoryOverlay').addEventListener('cancel', () => {
+    const input = $('#todoCategoryInput');
+    if (input) input.value = '';
+  });
+  $('#todoCategoryAddForm').addEventListener('submit', addTodoCategoryFromForm);
+  initTodoSelectControls();
+}

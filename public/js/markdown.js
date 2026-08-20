@@ -1,7 +1,59 @@
-// Markdown rendering module — one-time marked setup, LRU cache, plain-text extraction
 import { escHtml } from './helpers.js';
 
 let initialized = false;
+
+const PURIFY_OPTIONS = {
+  ADD_TAGS: [
+    'img',
+    'input',
+    'table',
+    'thead',
+    'tbody',
+    'tr',
+    'th',
+    'td',
+    'semantics',
+    'annotation',
+    'math',
+    'mrow',
+    'mi',
+    'mo',
+    'mn',
+    'msup',
+    'msub',
+    'mfrac',
+    'mtable',
+    'mtr',
+    'mtd',
+    'mspace',
+    'mtext',
+    'menclose',
+    'mpadded',
+    'mphantom',
+    'mstyle',
+    'munder',
+    'mover',
+    'munderover',
+    'mmultiscripts',
+    'msqrt',
+    'mroot',
+    'mfenced',
+  ],
+  ADD_ATTR: [
+    'src',
+    'alt',
+    'title',
+    'loading',
+    'type',
+    'checked',
+    'disabled',
+    'encoding',
+    'class',
+    'style',
+    'aria-hidden',
+    'xmlns',
+  ],
+};
 
 function initMarked() {
   if (initialized || typeof marked === 'undefined') return;
@@ -87,7 +139,6 @@ function initMarked() {
   marked.use({ breaks: true, gfm: true, extensions: [blockMath, blockMathParen, inlineMathParen, inlineMath] });
 }
 
-// LRU cache
 const CACHE_MAX = 500;
 const cache = new Map();
 
@@ -107,16 +158,10 @@ function parse(md) {
 }
 
 function sanitize(html) {
-  if (typeof DOMPurify !== 'undefined') return DOMPurify.sanitize(html, {
-    ADD_TAGS: ['semantics', 'annotation'],
-    ADD_ATTR: ['encoding']
-  });
-  // DOMPurify unavailable (vendor failed to load): never return unsanitized HTML.
-  // Fall back to escaped text so no script markup can execute.
+  if (typeof DOMPurify !== 'undefined') return DOMPurify.sanitize(html, PURIFY_OPTIONS);
   return escHtml(html);
 }
 
-/** Render markdown to sanitized HTML, with LRU cache */
 export function renderToHtml(md) {
   if (!md) return '';
 
@@ -132,7 +177,6 @@ export function renderToHtml(md) {
   return result;
 }
 
-/** Render markdown to HTML without touching the cache (editor live preview) */
 export function renderToHtmlUncached(md) {
   if (!md) return '';
 
@@ -142,7 +186,6 @@ export function renderToHtmlUncached(md) {
   return sanitize(raw);
 }
 
-/** Extract plain text from markdown by rendering to HTML then stripping tags */
 export function renderToText(md) {
   if (!md) return '';
   const html = renderToHtml(md);
@@ -152,7 +195,6 @@ export function renderToText(md) {
   return div.textContent || '';
 }
 
-/** Clear the render cache */
 export function clearMdCache() {
   cache.clear();
 }

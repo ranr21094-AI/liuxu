@@ -92,10 +92,14 @@ function renderDocxPreview(host, doc) {
     return () => {};
   }
   const sanitized = window.DOMPurify
-    ? window.DOMPurify.sanitize(html, { USE_PROFILES: { html: true } })
+    ? window.DOMPurify.sanitize(html, {
+      ADD_TAGS: ['img'],
+      ADD_ATTR: ['src', 'alt', 'title'],
+      ADD_DATA_URI_TAGS: ['img'],
+    })
     : html;
   host.innerHTML = `<div class="file-preview-docx prose">${sanitized}</div>`;
-  return () => {};
+  return enableMarkdownImagePreview(host, '.file-preview-docx img');
 }
 
 function renderTextPreview(host, doc) {

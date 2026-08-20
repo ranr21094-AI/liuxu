@@ -140,6 +140,17 @@ export function confirmDialog({
   cancelText = '取消',
   danger = true,
 } = {}) {
+  const workspaceDialog = document.getElementById('confirmDialog');
+  if (workspaceDialog && typeof workspaceDialog.showModal === 'function') {
+    return confirmWorkspaceDialog(workspaceDialog, {
+      title,
+      message,
+      confirmText,
+      cancelText,
+      danger,
+    });
+  }
+
   let overlay = document.getElementById('genericConfirmOverlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -194,6 +205,36 @@ export function confirmDialog({
     document.addEventListener('keydown', onKeydown);
     cancelBtn.addEventListener('click', onCancel);
     okBtn.addEventListener('click', onOk);
+  });
+}
+
+function confirmWorkspaceDialog(dialog, { title, message, confirmText, cancelText, danger }) {
+  const titleEl = document.getElementById('confirmTitle');
+  const messageEl = document.getElementById('confirmMessage');
+  const okBtn = document.getElementById('confirmAccept');
+  const cancelBtn = document.getElementById('confirmCancel') || dialog.querySelector('[value="cancel"]');
+  if (titleEl) titleEl.textContent = title;
+  if (messageEl) messageEl.textContent = message;
+  if (okBtn) {
+    okBtn.textContent = confirmText;
+    okBtn.className = danger ? 'danger-action' : 'primary-action compact';
+  }
+  if (cancelBtn) cancelBtn.textContent = cancelText;
+  if (dialog.open) dialog.close();
+  dialog.returnValue = '';
+  dialog.showModal();
+
+  return new Promise(resolve => {
+    const onBackdropClick = (event) => {
+      if (event.target !== dialog) return;
+      dialog.returnValue = 'cancel';
+      dialog.close();
+    };
+    dialog.addEventListener('click', onBackdropClick);
+    dialog.addEventListener('close', () => {
+      dialog.removeEventListener('click', onBackdropClick);
+      resolve(dialog.returnValue === 'confirm');
+    }, { once: true });
   });
 }
 
