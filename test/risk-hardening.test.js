@@ -9,6 +9,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { JSDOM } = require('jsdom');
 const businessDate = require('../business-date');
+const { DEFAULT_MEMORY_SETTINGS } = require('../lib/agent/memory-settings');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
@@ -1013,6 +1014,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     },
     agentMaxRounds: 12,
     agentFileReadMaxMb: 4,
+    ...DEFAULT_MEMORY_SETTINGS,
   });
 
   const saved = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -1041,6 +1043,10 @@ test('AI settings persist to local data storage and validate options', async (t)
       },
       agentMaxRounds: 100,
       agentFileReadMaxMb: 64,
+      memoryRefreshMaxRounds: 8,
+      memoryRefreshMaxProposals: 12,
+      memoryRefreshSessionLimit: 10,
+      memoryContextMaxL2: 30,
     }),
   });
   assert.equal(saved.status, 200);
@@ -1074,6 +1080,11 @@ test('AI settings persist to local data storage and validate options', async (t)
     },
     agentMaxRounds: 100,
     agentFileReadMaxMb: 64,
+    ...DEFAULT_MEMORY_SETTINGS,
+    memoryRefreshMaxRounds: 8,
+    memoryRefreshMaxProposals: 12,
+    memoryRefreshSessionLimit: 10,
+    memoryContextMaxL2: 30,
   });
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
   const encryptedSettings = fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8');
@@ -1093,6 +1104,8 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.equal(preservedBody.openrouterApiKeyConfigured, true);
   assert.equal(preservedBody.agentMaxRounds, 100);
   assert.equal(preservedBody.agentFileReadMaxMb, 64);
+  assert.equal(preservedBody.memoryRefreshMaxProposals, 12);
+  assert.equal(preservedBody.memoryContextMaxL2, 30);
   assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings/);
 
   const cleared = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -1125,6 +1138,8 @@ test('AI settings persist to local data storage and validate options', async (t)
     { agentMaxRounds: 12.5 },
     { agentFileReadMaxMb: 0 },
     { agentFileReadMaxMb: 4.5 },
+    { memoryRefreshMaxProposals: 0 },
+    { memoryRefreshSessionLimit: 2.5 },
   ]) {
     const invalid = await fetch(`${baseUrl}/api/ai/settings`, {
       method: 'PUT',
@@ -2716,6 +2731,9 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#saveAgentSettings') !== null, true);
   assert.equal(document.querySelector('#agentMaxRounds') !== null, true);
   assert.equal(document.querySelector('#agentFileReadMaxMb') !== null, true);
+  assert.equal(document.querySelector('[data-settings-nav="memory"]') !== null, true);
+  assert.equal(document.querySelector('#memoryRefreshMaxRounds') !== null, true);
+  assert.equal(document.querySelector('#memoryRefreshMaxProposals') !== null, true);
   assert.equal(document.querySelector('#refreshAgentMemory') !== null, true);
   assert.equal(document.querySelector('#agentMemoryItems') !== null, true);
   assert.equal(document.querySelector('#executionTrace'), null);

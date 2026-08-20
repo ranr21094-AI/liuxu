@@ -62,6 +62,7 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 - **State**: Module-local `state` in `workbench.js` — no framework.
 - **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images via `#insertImageButton` → `POST /api/upload`.
 - **Settings → 数据**: JSON/ZIP backup and restore (`workbench-backup.js`).
+- **Settings → Memory**: 11 tunables in `ai-settings.json` via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps, context injection counts). Defaults match former hardcoded values; min ≥ 1, no upper cap. L0 rules stay fixed in `memory.js`.
 - **Diary**: Unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 
 ### Key Patterns
@@ -85,7 +86,7 @@ See `README.md` § Relevant API for the full table. Notable groups:
 ### Notable Files
 
 - `lib/knowledge/` — documents, search, migrate-logs, routes
-- `lib/agent/` — runtime, routes, tools
+- `lib/agent/` — runtime, routes, tools, `memory-settings.js` (Memory tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`)
 - `lib/workspace/` — ZIP export/restore
 - `lib/http/backup-routes.js` — JSON backup/restore HTTP handlers
 - `gen_images.py` — standalone script, unrelated to the web app

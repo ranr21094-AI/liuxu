@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createAgentStore } = require('../lib/agent/store');
 const { createMemoryService, normalizeMemoryProposalArgs, buildMemoryRefreshUserMessage, MEMORY_CONTENT_MAX } = require('../lib/agent/memory');
+const { DEFAULT_MEMORY_SETTINGS, resolveMemorySettings } = require('../lib/agent/memory-settings');
 const { createRuntime, parseActionEnvelope, clampMaxRounds } = require('../lib/agent/runtime');
 const { toProviderTools, fromProviderName, definitions } = require('../lib/agent/tools');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
@@ -343,7 +344,16 @@ test('memory proposals truncate by layer and refresh prompt avoids conversation 
     evidence: [{ type: 'run', id: 'r2' }],
   });
   assert.equal(l3.proposal.content.length, MEMORY_CONTENT_MAX.L3);
-  assert.match(buildMemoryRefreshUserMessage({ listSessions: () => [] }, { list: () => [] }), /do not recap a conversation/i);
+  const customSettings = resolveMemorySettings({ memoryRefreshMaxProposals: 10, memoryRefreshSessionLimit: 2 });
+  assert.match(buildMemoryRefreshUserMessage({ listSessions: () => [] }, { list: () => [] }, customSettings), /Propose at most 10 drafts/);
+  assert.match(buildMemoryRefreshUserMessage({ listSessions: () => [] }, { list: () => [] }, customSettings), /do not recap a conversation/i);
+  const longContent = '流程步骤'.repeat(80);
+  const prompt = buildMemoryRefreshUserMessage(
+    { listSessions: () => [] },
+    { list: () => [{ id: 'm1', layer: 'L3', title: '流程', content: longContent }] },
+    customSettings,
+  );
+  assert.match(prompt, new RegExp(longContent.slice(0, 120)));
 });
 
 test('@ mentions parse multiple knowledge bases and dates', () => {
@@ -659,6 +669,70 @@ test('memory refresh proposes drafts without exposing write tools or creating a 
   assert.equal(afterArchive.items.some(item => item.builtinId === 'seedream-generate'), true);
   const missing = await fetch(`${base}/api/agent/memories/missing-id`, { method: 'DELETE' });
   assert.equal(missing.status, 404);
+});
+
+test('memory refresh honors memoryRefreshMaxProposals setting', async (t) => {
+  const db = tempDb(t);
+  db.saveAiSettings({ ...db.getAiSettings(), memoryRefreshMaxProposals: 2 });
+  const store = createAgentStore(db);
+  store.createSession('近期会话');
+  store.saveSession({
+    ...store.listSessions()[0],
+    messages: [{ role: 'user', content: '偏好简洁中文' }],
+  });
+  const app = express();
+  registerAgentRoutes(app, {
+    db,
+    hasDiaryAccess: () => false,
+    agentStatusFor: async () => ({ configured: true, provider: 'test', model: 'stub' }),
+    modelClientFor: async () => ({
+      async complete() {
+        return {
+          text: '',
+          toolCalls: [
+            { name: 'memory.propose', arguments: { title: 'A', content: 'a', layer: 'L2' } },
+            { name: 'memory.propose', arguments: { title: 'B', content: 'b', layer: 'L2' } },
+            { name: 'memory.propose', arguments: { title: 'C', content: 'c', layer: 'L2' } },
+          ],
+        };
+      },
+    }),
+  });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const started = await fetch(`${base}/api/agent/memory/refresh`, { method: 'POST' });
+  assert.equal(started.status, 202);
+  const body = await started.json();
+  const pack = runtimeFor(db, { hasDiaryAccessFlag: false });
+  const done = await waitForRun(pack.store, body.runId, 800);
+  assert.equal(done.status, 'completed');
+  const memories = await (await fetch(`${base}/api/agent/memories`)).json();
+  assert.equal(memories.proposals.length, 2);
+  assert.deepEqual(memories.proposals.map(item => item.title).sort(), ['A', 'B']);
+});
+
+test('contextBlocks honors memoryContextMax settings', (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store, {
+    settingsFor: () => resolveMemorySettings({ memoryContextMaxL2: 2, memoryContextMaxL3: 1 }),
+  });
+  for (let i = 0; i < 4; i += 1) {
+    const draft = memory.propose({ runId: `r${i}`, layer: 'L2', title: `L2-${i}`, content: `fact ${i}`, evidence: [{ type: 'run', id: `r${i}` }] });
+    memory.approve(draft.proposal.id);
+  }
+  for (let i = 0; i < 3; i += 1) {
+    const draft = memory.propose({ runId: `w${i}`, layer: 'L3', title: `L3-${i}`, content: `flow ${i}`, evidence: [{ type: 'run', id: `w${i}` }] });
+    memory.approve(draft.proposal.id);
+  }
+  const builtin = memory.list().find(item => item.builtinId);
+  if (builtin) memory.archive(builtin.id);
+  const blocks = memory.contextBlocks();
+  assert.equal(blocks.l2.length, 2);
+  assert.equal(blocks.l3.length, 1);
 });
 
 test('knowledge.import from content waits for approval then stores a document', async (t) => {

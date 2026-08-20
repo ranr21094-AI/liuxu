@@ -64,7 +64,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 旧链接 `#knowledge?view=todos` 会自动重定向到 `#todos`。
 
-顶栏还提供「私密知识」锁定状态、运行状态、设置（模型/联网/生图/电脑工具/归档会话/账户）和账户菜单。
+顶栏还提供「私密知识」锁定状态、运行状态、设置（模型/Memory/联网/生图/电脑工具/归档会话/账户）和账户菜单。
 
 ## Main Areas
 
@@ -98,6 +98,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 - 浏览已确认的 L2（事实）与 L3（流程）记忆；可归档不再需要的条目。
 - 「刷新记忆」会基于近期会话生成提案，需在对话或 Memory 模式中确认后才会写入。
+- **设置 → Memory** 可调整刷新扫描范围、提案/轮次上限，以及写入与 Agent 上下文注入的长度与条数（均存于 `ai-settings.json`，最小值 1，无上限；默认与原先硬编码行为一致）。L0 规则仍为内置常量。
 
 ### 待办
 
@@ -121,7 +122,8 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 AI 设置保存在当前账户的 `ai-settings.json`（Key 经 AES-256-GCM 加密），供 **Agent** 使用；不再提供独立 AI 对话页或日志内 AI 面板。
 
-- **设置 → 模型**：DeepSeek、Moonshot/Kimi、OpenRouter Key、默认模型、最大循环轮数、思考模式等。
+- **设置 → 模型**：DeepSeek、Moonshot/Kimi、OpenRouter Key、默认模型、Agent 最大循环轮数（`agentMaxRounds`，默认 12）、`file.read` 单次读取上限 MB（`agentFileReadMaxMb`，默认 4）、思考模式等。
+- **设置 → Memory**：记忆刷新轮次/提案数、近期会话扫描条数与字符预算、L2/L3 标题与内容上限、注入 Agent 上下文的 L2/L3 条数（见上节）。
 - **设置 → 联网**：Tavily、Perplexity；Agent 通过 `web.search` 等工具在确认后调用。
 - **设置 → 生图**：Seedream Key 与默认参数；Agent 通过 `image.generate` 在确认后生图。
 - **设置 → 技能**：WeStock 等工具策略（具体以 Agent 工具注册为准）。

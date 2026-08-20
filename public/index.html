@@ -429,6 +429,7 @@
           <button type="button" data-settings-nav="appearance" class="active" aria-current="page">外观</button>
           <button type="button" data-settings-nav="sessions">会话</button>
           <button type="button" data-settings-nav="model">模型</button>
+          <button type="button" data-settings-nav="memory">Memory</button>
           <button type="button" data-settings-nav="network">联网</button>
           <button type="button" data-settings-nav="image">生图</button>
           <button type="button" data-settings-nav="skills">技能</button>
@@ -486,6 +487,52 @@
               </select>
             </label>
             <label class="settings-row" for="agentOpenRouterZdr"><span><strong>OpenRouter 零数据保留</strong><small>默认仅路由到 ZDR 端点；可能减少可用供应商</small></span><input id="agentOpenRouterZdr" type="checkbox"></label>
+          </section>
+          <section class="settings-section" data-settings-panel="memory" hidden>
+            <h3>Memory</h3>
+            <p class="settings-copy">控制「根据近期对话更新」与长期记忆的扫描、写入和 Agent 注入上限。至少 1，无上限。</p>
+            <h4 class="settings-subhead">刷新运行</h4>
+            <label class="settings-field" for="memoryRefreshMaxRounds">最大循环轮数
+              <input id="memoryRefreshMaxRounds" type="number" min="1" step="1" value="4">
+              <small>记忆刷新专用，与主 Agent 轮数无关。默认 4。</small>
+            </label>
+            <label class="settings-field" for="memoryRefreshMaxProposals">最多提案条数
+              <input id="memoryRefreshMaxProposals" type="number" min="1" step="1" value="5">
+              <small>单次刷新最多 memory.propose 条数。默认 5。</small>
+            </label>
+            <h4 class="settings-subhead">对话扫描</h4>
+            <label class="settings-field" for="memoryRefreshSessionLimit">扫描会话数
+              <input id="memoryRefreshSessionLimit" type="number" min="1" step="1" value="8">
+            </label>
+            <label class="settings-field" for="memoryRefreshMessageLimit">每会话消息数
+              <input id="memoryRefreshMessageLimit" type="number" min="1" step="1" value="12">
+            </label>
+            <label class="settings-field" for="memoryRefreshMessageChars">单条消息字符
+              <input id="memoryRefreshMessageChars" type="number" min="1" step="1" value="8000">
+            </label>
+            <label class="settings-field" for="memoryRefreshSessionBlockChars">单会话块字符
+              <input id="memoryRefreshSessionBlockChars" type="number" min="1" step="1" value="8000">
+            </label>
+            <label class="settings-field" for="memoryRefreshTotalChars">总字符预算
+              <input id="memoryRefreshTotalChars" type="number" min="1" step="1" value="40000">
+            </label>
+            <h4 class="settings-subhead">记忆条目</h4>
+            <label class="settings-field" for="memoryTitleMaxChars">标题字符上限
+              <input id="memoryTitleMaxChars" type="number" min="1" step="1" value="40">
+            </label>
+            <label class="settings-field" for="memoryContentMaxCharsL2">L2 正文字符上限
+              <input id="memoryContentMaxCharsL2" type="number" min="1" step="1" value="240">
+            </label>
+            <label class="settings-field" for="memoryContentMaxCharsL3">L3 正文字符上限
+              <input id="memoryContentMaxCharsL3" type="number" min="1" step="1" value="1200">
+            </label>
+            <h4 class="settings-subhead">Agent 上下文</h4>
+            <label class="settings-field" for="memoryContextMaxL2">注入 L2 条数
+              <input id="memoryContextMaxL2" type="number" min="1" step="1" value="20">
+            </label>
+            <label class="settings-field" for="memoryContextMaxL3">注入 L3 条数
+              <input id="memoryContextMaxL3" type="number" min="1" step="1" value="20">
+            </label>
           </section>
           <section class="settings-section" data-settings-panel="network" hidden>
             <h3>联网</h3>

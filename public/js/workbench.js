@@ -681,6 +681,43 @@ const DIRECT_AGENT_MODELS = [
   { id: 'kimi-k2.6', name: 'Kimi K2.6' },
 ];
 
+const MEMORY_SETTING_FIELDS = Object.freeze([
+  { key: 'memoryRefreshMaxRounds', min: 1, fallback: 4 },
+  { key: 'memoryRefreshMaxProposals', min: 1, fallback: 5 },
+  { key: 'memoryRefreshSessionLimit', min: 1, fallback: 8 },
+  { key: 'memoryRefreshMessageLimit', min: 1, fallback: 12 },
+  { key: 'memoryRefreshMessageChars', min: 1, fallback: 8000 },
+  { key: 'memoryRefreshSessionBlockChars', min: 1, fallback: 8000 },
+  { key: 'memoryRefreshTotalChars', min: 1, fallback: 40000 },
+  { key: 'memoryTitleMaxChars', min: 1, fallback: 40 },
+  { key: 'memoryContentMaxCharsL2', min: 1, fallback: 240 },
+  { key: 'memoryContentMaxCharsL3', min: 1, fallback: 1200 },
+  { key: 'memoryContextMaxL2', min: 1, fallback: 20 },
+  { key: 'memoryContextMaxL3', min: 1, fallback: 20 },
+]);
+
+function fillMemorySettingsForm(settings = {}) {
+  for (const field of MEMORY_SETTING_FIELDS) {
+    const input = $(`#${field.key}`);
+    if (!input) continue;
+    const value = Number(settings[field.key]);
+    input.value = Number.isFinite(value) ? Math.max(field.min, Math.round(value)) : field.fallback;
+  }
+}
+
+function readMemorySettingsFromForm(current = {}) {
+  const values = {};
+  for (const field of MEMORY_SETTING_FIELDS) {
+    const input = $(`#${field.key}`);
+    const parsed = Number(input?.value);
+    const currentValue = Number(current[field.key]);
+    values[field.key] = Number.isInteger(parsed) && parsed >= field.min
+      ? parsed
+      : (Number.isInteger(currentValue) ? currentValue : field.fallback);
+  }
+  return values;
+}
+
 function keyPlaceholder(configured, fallback) {
   return configured ? '已配置；留空保持不变' : fallback;
 }
@@ -733,6 +770,7 @@ async function loadAgentSettingsForm() {
     $('#agentMaxRounds').value = Number.isFinite(rounds) ? Math.max(4, Math.round(rounds)) : 12;
     const fileReadMb = Number(settings.agentFileReadMaxMb);
     $('#agentFileReadMaxMb').value = Number.isFinite(fileReadMb) ? Math.max(1, Math.round(fileReadMb)) : 4;
+    fillMemorySettingsForm(settings);
     $('#agentReasoningMode').value = ['default', 'disabled', 'effort'].includes(settings.reasoningMode) ? settings.reasoningMode : 'effort';
     $('#agentThinkingMode').value = settings.thinkingMode === 'disabled' ? 'disabled' : 'enabled';
     $('#agentReasoningEffort').value = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.reasoningEffort)
@@ -753,7 +791,7 @@ async function loadAgentSettingsForm() {
 }
 
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'account'];
+  const allowed = ['appearance', 'sessions', 'model', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'account'];
   let next = allowed.includes(panel) ? panel : 'appearance';
   if (next === 'computer' && state.user?.role !== 'admin') next = 'appearance';
   state.settingsPanel = next;
@@ -815,6 +853,7 @@ function settingsSavePayload() {
   payload.agentFileReadMaxMb = Number.isInteger(fileReadMb) && fileReadMb >= 1
     ? fileReadMb
     : (Number.isInteger(Number(current.agentFileReadMaxMb)) ? Number(current.agentFileReadMaxMb) : 4);
+  Object.assign(payload, readMemorySettingsFromForm(current));
   return payload;
 }
 

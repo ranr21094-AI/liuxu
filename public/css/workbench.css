@@ -505,6 +505,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .settings-actions { display: flex; gap: 8px; margin-top: 12px; }
 .settings-section h3 { margin-top: 22px; }
 .settings-section h3:first-child { margin-top: 0; }
+.settings-subhead { margin: 16px 0 8px; color: var(--faint); font-size: 11px; letter-spacing: .04em; font-weight: 600; }
+.settings-subhead:first-of-type { margin-top: 8px; }
 .settings-card .dialog-actions { margin: 0; padding: 12px 20px 20px; border-top: 1px solid var(--line); }
 .user-manager-dialog { width: min(760px, calc(100vw - 28px)); }
 .user-create-form { margin-top: 8px; }

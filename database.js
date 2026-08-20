@@ -15,6 +15,7 @@ const LEGACY_AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
 const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json');
 const COUNTDOWNS_FILE = path.join(DATA_DIR, 'countdowns.json');
+const { DEFAULT_MEMORY_SETTINGS, resolveMemorySettings } = require('./lib/agent/memory-settings');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   moonshotApiKey: '',
@@ -39,6 +40,7 @@ const DEFAULT_AI_SETTINGS = {
   },
   agentMaxRounds: 12,
   agentFileReadMaxMb: 4,
+  ...DEFAULT_MEMORY_SETTINGS,
 };
 
 // In-memory cache
@@ -436,6 +438,7 @@ function normalizeAiSettings(data) {
     },
     agentMaxRounds: normalizeAgentMaxRounds(source.agentMaxRounds),
     agentFileReadMaxMb: normalizeAgentFileReadMaxMb(source.agentFileReadMaxMb),
+    ...resolveMemorySettings(source),
   };
 }
 
