@@ -163,6 +163,9 @@ test('agent approval queue exposes one pending item at a time', async (t) => {
   assert.equal(second.queuedApprovals.length, 1);
   assert.equal(second.pendingApprovals[0].call.arguments.title, '任务二');
   assert.equal(db.getAllTodos().length, 1);
+  const secondEvent = second.events.filter(item => item.type === 'approval.required').at(-1);
+  assert.equal(secondEvent.payload.queueTotal, 3);
+  assert.equal(secondEvent.payload.queueIndex, 2);
 
   await runtime.resolveApproval(run.id, second.pendingApprovals[0].id, { approved: true });
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -178,6 +181,126 @@ test('agent approval queue exposes one pending item at a time', async (t) => {
   assert.equal(done.status, 'completed');
   assert.equal(db.getAllTodos().length, 3);
   assert.deepEqual(db.getAllTodos().map(item => item.title).sort(), ['任务一', '任务三', '任务二'].sort());
+});
+
+test('agent attach replays only the current approval.required event', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [
+              { name: 'task.create', arguments: { title: '任务一' } },
+              { name: 'task.create', arguments: { title: '任务二' } },
+            ],
+          };
+        }
+        return { text: '完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('attach-approval');
+  const run = await runtime.start({ session, goal: '批量创建', userMessage: '批量创建' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  assert.equal(waiting.events.filter(item => item.type === 'approval.required').length, 1);
+
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const second = store.getRun(run.id);
+  assert.equal(second.events.filter(item => item.type === 'approval.required').length, 2);
+
+  const replayed = [];
+  const detach = runtime.attach(run.id, event => replayed.push(event));
+  detach();
+  assert.equal(replayed.filter(item => item.type === 'approval.required').length, 1);
+  assert.equal(replayed.at(-1).payload.approvals[0].call.arguments.title, '任务二');
+  assert.equal(replayed.at(-1).payload.queueIndex, 2);
+});
+
+test('agent task.create adapter stores recurrence', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'task.create',
+              arguments: {
+                title: '每周复盘',
+                due_date: '2026-08-25',
+                recurrence: 'weekly',
+              },
+            }],
+          };
+        }
+        return { text: '已创建', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('task-recurrence');
+  const run = await runtime.start({ session, goal: '创建重复任务', userMessage: '创建重复任务' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const todo = db.getAllTodos()[0];
+  assert.equal(todo.title, '每周复盘');
+  assert.equal(todo.recurrence, 'weekly');
+});
+
+test('agent approved tools increment run.toolCalls', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [{ name: 'task.create', arguments: { title: '需确认' } }],
+          };
+        }
+        return { text: '完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('approval-tool-count');
+  const run = await runtime.start({ session, goal: '计数测试', userMessage: '计数测试' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  assert.equal(waiting.toolCalls || 0, 0);
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const live = store.getRun(run.id);
+  assert.equal(live.toolCalls, 1);
 });
 
 test('agent web.search uses the injected Tavily adapter after confirmation', async (t) => {

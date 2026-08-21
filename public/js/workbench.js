@@ -1273,6 +1273,7 @@ function stopLiveTrace() {
   state.activeChildRunId = '';
   state.runEventKeys = new Set();
   state.runImages = [];
+  clearApprovalDock();
 }
 
 function delegateTraceHost(childRunId) {
@@ -1774,7 +1775,9 @@ function trace(text) {
 }
 
 function setRunStatus(status, text = '') {
+  const wasWaitingApproval = state.runStatus === 'waiting_approval';
   state.runStatus = status;
+  if (wasWaitingApproval && status !== 'waiting_approval') clearApprovalDock();
   const active = ACTIVE_RUN_STATES.has(status);
   const blocking = BLOCKING_RUN_STATES.has(status);
   $('#runStatus').hidden = !active;
@@ -3147,7 +3150,7 @@ function bindEvents() {
     if (!event.target.closest('#agentComposer')) hideMentionMenu();
   });
   $('#stopRunButton').addEventListener('click', stopCurrentRun);
-  $('#agentMessageList').addEventListener('click', async event => {
+  $('#conversation').addEventListener('click', async event => {
     const starter = event.target.closest('[data-starter]');
     if (starter) {
       $('#agentInput').value = starter.dataset.starter;
