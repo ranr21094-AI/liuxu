@@ -288,6 +288,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   font-size: 12px;
   line-height: 1.6;
 }
+.agent-approval-dock {
+  flex: 0 0 auto;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 0 0 10px;
+}
+.agent-approval-dock .approval-card {
+  margin: 0;
+  max-width: none;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, .08);
+}
+.agent-approval-dock[hidden] { display: none !important; }
 .card-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 11px; }
 .message-list .execution-trace { max-width: 720px; margin: 0 auto 20px; }
 .execution-trace { flex: 0 0 auto; margin: 0 0 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }

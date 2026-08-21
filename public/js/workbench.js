@@ -1375,6 +1375,9 @@ function handleDelegateRunEvent(childRunId, event) {
     const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
     delegateTrace(message, childRunId);
   }
+  if (event.type === 'memory.proposed') {
+    delegateTrace('已提出 Memory 保存建议', childRunId);
+  }
 }
 
 function subscribeDelegateRun(childRunId, delegateTitle = '', parentRunId = '') {
@@ -1387,7 +1390,7 @@ function subscribeDelegateRun(childRunId, delegateTitle = '', parentRunId = '') 
   state.childEventSources.set(childRunId, source);
   [
     'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
-    'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required',
+    'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required', 'memory.proposed',
     'run.completed', 'run.failed',
   ].forEach(type => source.addEventListener(type, raw => {
     try { handleDelegateRunEvent(childRunId, JSON.parse(raw.data)); } catch { /* ignore */ }
@@ -1833,34 +1836,54 @@ function renderAgentQuestion(question, delegateTitle = '') {
   scrollMessagesToBottom();
 }
 
+function clearApprovalDock() {
+  const dock = $('#agentApprovalDock');
+  if (!dock) return;
+  dock.hidden = true;
+  dock.innerHTML = '';
+}
+
+function approvalProgressLabel(payload = {}, approval = null) {
+  const total = Number(payload.queueTotal);
+  const index = Number(payload.queueIndex);
+  if (Number.isFinite(total) && total > 1 && Number.isFinite(index) && index > 0) {
+    return `（${index} / ${total}）`;
+  }
+  return '';
+}
+
 function renderApproval(payload) {
+  const dock = $('#agentApprovalDock');
+  if (!dock) return;
   const approvals = Array.isArray(payload.approvals) ? payload.approvals : [];
   if (!approvals.length) {
-    const card = document.createElement('section');
-    card.className = 'approval-card';
-    card.innerHTML = '<h3>需要你的判断</h3><p>工具连续失败，Agent 已暂停。可以停止当前运行并调整目标后重试。</p>';
-    $('#agentMessageList').append(card);
-    scrollMessagesToBottom();
+    if (payload.reason || payload.askUser) {
+      dock.hidden = false;
+      dock.innerHTML = `
+        <section class="approval-card">
+          <h3>需要你的判断</h3>
+          <p>工具连续失败，Agent 已暂停。可以停止当前运行并调整目标后重试。</p>
+        </section>`;
+    } else {
+      clearApprovalDock();
+    }
     return;
   }
-  approvals.forEach(approval => {
-    if (document.querySelector(`[data-approval-card="${CSS.escape(approval.id)}"]`)) return;
-    const name = approval.call?.name || '未知操作';
-    const card = document.createElement('section');
-    card.className = 'approval-card';
-    card.dataset.approvalCard = approval.id;
-    card.innerHTML = `
-      <h3>确认执行 ${escHtml(name)}</h3>
+  const approval = approvals[0];
+  const name = approval.call?.name || '未知操作';
+  const progress = approvalProgressLabel(payload, approval);
+  dock.hidden = false;
+  dock.innerHTML = `
+    <section class="approval-card" data-approval-card="${escHtml(approval.id)}">
+      <h3>确认执行 ${escHtml(name)}${escHtml(progress)}</h3>
       ${approval.delegateTitle ? `<p class="approval-delegate-hint muted">子任务：${escHtml(approval.delegateTitle)}</p>` : ''}
       ${name === 'image.generate' ? '' : '<p>Agent 请求执行一个会改变数据或访问外部服务的动作。</p>'}
       ${approvalBodyHtml(approval)}
       <div class="card-actions">
         <button class="secondary-action" type="button" data-approval-id="${escHtml(approval.id)}" data-approved="false">拒绝</button>
         <button class="primary-action compact" type="button" data-approval-id="${escHtml(approval.id)}" data-approved="true">允许执行</button>
-      </div>`;
-    $('#agentMessageList').append(card);
-  });
-  scrollMessagesToBottom();
+      </div>
+    </section>`;
 }
 
 function renderGeneratedImage(url, alt = '生成图片') {
@@ -1877,11 +1900,16 @@ function renderGeneratedImage(url, alt = '生成图片') {
 function renderMemoryProposal(payload) {
   const proposal = payload.proposal || payload;
   if (!proposal?.id || document.querySelector(`[data-memory-card="${CSS.escape(proposal.id)}"]`)) return;
+  const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+  const delegateHint = delegateTitle
+    ? `<p class="approval-delegate-hint muted">子任务：${escHtml(delegateTitle)}</p>`
+    : '';
   const card = document.createElement('section');
   card.className = 'memory-card';
   card.dataset.memoryCard = proposal.id;
   card.innerHTML = `
     <h3>保存为长期记忆？</h3>
+    ${delegateHint}
     <header class="memory-card-head">
       <span class="memory-layer">${escHtml(memoryLayerLabel(proposal.layer))}</span>
       <strong>${escHtml(proposal.title || '任务经验')}</strong>
@@ -1932,6 +1960,12 @@ function handleRunEvent(event) {
     const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
     trace(delegateTitle ? `子任务「${delegateTitle}」已完成` : '子任务已完成');
   }
+  if (event.type === 'delegate.progress') {
+    setRunStatus('running');
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (delegateTitle) state.delegateTitle = delegateTitle;
+    trace(delegateTitle ? `子任务「${delegateTitle}」继续执行` : '子任务继续执行');
+  }
   if (event.type === 'user_input.required') {
     setRunStatus('waiting_user');
     state.delegateTitle = payload.delegateTitle || payload.delegate_title || '';
@@ -1949,11 +1983,13 @@ function handleRunEvent(event) {
     state.delegateTitle = payload.delegateTitle || payload.delegate_title || state.delegateTitle;
     renderApproval(payload);
     const childRunId = payload.approvals?.[0]?.delegatedRunId || state.activeChildRunId;
+    const progress = approvalProgressLabel(payload);
+    const traceLabel = progress ? `等待你的确认${progress}` : '等待你的确认';
     if (payload.delegated && childRunId) {
       subscribeDelegateRun(childRunId, state.delegateTitle, state.runId);
-      delegateTrace('等待你的确认', childRunId);
+      delegateTrace(traceLabel, childRunId);
     } else {
-      trace('等待你的确认');
+      trace(traceLabel);
     }
   }
   if (event.type === 'client_tool.requested') {
@@ -1983,6 +2019,7 @@ function handleRunEvent(event) {
       document.querySelector(`[data-generated-image="${CSS.escape(url)}"]`)?.remove();
     }
     trace('运行完成');
+    clearApprovalDock();
     setRunStatus('');
     state.delegateTitle = '';
     for (const childRunId of [...state.childEventSources.keys()]) unsubscribeDelegateRun(childRunId);
@@ -1993,13 +2030,14 @@ function handleRunEvent(event) {
   if (event.type === 'run.failed') {
     const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
     if (payload.error === 'cancelled') {
-      document.querySelectorAll('[data-approval-card]').forEach(card => card.remove());
+      clearApprovalDock();
     }
     const card = document.createElement('div');
     card.className = 'run-error';
     card.textContent = message;
     $('#agentMessageList').append(card);
     trace(message);
+    clearApprovalDock();
     setRunStatus('');
     state.delegateTitle = '';
     for (const childRunId of [...state.childEventSources.keys()]) unsubscribeDelegateRun(childRunId);
@@ -2023,7 +2061,7 @@ function subscribeRun(runId, initialStatus = 'queued') {
   [
     'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
     'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required', 'memory.proposed',
-    'delegate.started', 'delegate.completed', 'run.completed', 'run.failed',
+    'delegate.started', 'delegate.completed', 'delegate.progress', 'run.completed', 'run.failed',
   ].forEach(type => source.addEventListener(type, raw => {
     try { handleRunEvent(JSON.parse(raw.data)); } catch { trace('收到无法识别的运行事件'); }
   }));
@@ -3131,18 +3169,17 @@ function bindEvents() {
     }
     const approval = event.target.closest('[data-approval-id]');
     if (approval) {
-      approval.closest('.approval-card').querySelectorAll('button').forEach(button => { button.disabled = true; });
+      const card = approval.closest('.approval-card');
+      card?.querySelectorAll('button').forEach(button => { button.disabled = true; });
       const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(state.runId)}/approvals/${encodeURIComponent(approval.dataset.approvalId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved: approval.dataset.approved === 'true' }),
       });
       if (!response.ok) {
-        approval.closest('.approval-card').querySelectorAll('button').forEach(button => { button.disabled = false; });
+        card?.querySelectorAll('button').forEach(button => { button.disabled = false; });
         return showToast('无法处理这项确认', 'error');
       }
-      approval.closest('.approval-card').remove();
-      setRunStatus('running');
       return;
     }
     const memoryApprove = event.target.closest('[data-memory-approve]');

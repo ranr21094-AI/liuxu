@@ -116,6 +116,70 @@ test('agent runtime completes without tools and can pause for approval', async (
   assert.equal(memory.list({ layer: 'L3' }).filter(item => !item.builtinId).length, 0);
 });
 
+test('agent approval queue exposes one pending item at a time', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [
+              { name: 'task.create', arguments: { title: '任务一' } },
+              { name: 'task.create', arguments: { title: '任务二' } },
+              { name: 'task.create', arguments: { title: '任务三' } },
+            ],
+          };
+        }
+        return { text: '全部创建完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('approval-queue');
+  const run = await runtime.start({ session, goal: '批量创建任务', userMessage: '批量创建任务' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  assert.equal(waiting.status, 'waiting_approval');
+  assert.equal(waiting.pendingApprovals.length, 1);
+  assert.equal(waiting.queuedApprovals.length, 2);
+  assert.equal(waiting.pendingApprovals[0].call.arguments.title, '任务一');
+  const approvalEvent = waiting.events.filter(item => item.type === 'approval.required').at(-1);
+  assert.equal(approvalEvent.payload.queueTotal, 3);
+  assert.equal(approvalEvent.payload.queueIndex, 1);
+
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const second = store.getRun(run.id);
+  assert.equal(second.status, 'waiting_approval');
+  assert.equal(second.pendingApprovals.length, 1);
+  assert.equal(second.queuedApprovals.length, 1);
+  assert.equal(second.pendingApprovals[0].call.arguments.title, '任务二');
+  assert.equal(db.getAllTodos().length, 1);
+
+  await runtime.resolveApproval(run.id, second.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const third = store.getRun(run.id);
+  assert.equal(third.status, 'waiting_approval');
+  assert.equal(third.pendingApprovals.length, 1);
+  assert.equal(third.queuedApprovals.length, 0);
+  assert.equal(third.pendingApprovals[0].call.arguments.title, '任务三');
+
+  await runtime.resolveApproval(run.id, third.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const done = store.getRun(run.id);
+  assert.equal(done.status, 'completed');
+  assert.equal(db.getAllTodos().length, 3);
+  assert.deepEqual(db.getAllTodos().map(item => item.title).sort(), ['任务一', '任务三', '任务二'].sort());
+});
+
 test('agent web.search uses the injected Tavily adapter after confirmation', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
@@ -155,6 +219,106 @@ test('agent web.search uses the injected Tavily adapter after confirmation', asy
   const done = store.getRun(run.id);
   assert.equal(done.status, 'completed');
   assert.equal(searched, 'latest release notes');
+});
+
+test('agent web.search duplicate in same run returns cache', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  let searchCount = 0;
+  const query = 'latest release notes';
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    webSearch: async (args) => {
+      searchCount += 1;
+      return {
+        ok: true,
+        summary: 'Found 1 web source',
+        data: { sources: [{ provider: 'tavily', title: 'Trusted result', url: 'https://example.com/trusted', content: 'Fresh public snippet' }] },
+        evidence: [{ type: 'web', url: 'https://example.com/trusted', title: 'Trusted result' }],
+      };
+    },
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1 || round === 2) {
+          return { text: '', toolCalls: [{ name: 'web.search', arguments: { query } }] };
+        }
+        return { text: '已检索公开来源', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('search-dedup');
+  const run = await runtime.start({ session, goal: '搜索资料', userMessage: '搜索 latest release notes' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  assert.equal(waiting.status, 'waiting_approval');
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const done = store.getRun(run.id);
+  assert.equal(done.status, 'completed');
+  assert.equal(searchCount, 1);
+  const cachedTool = done.messages.filter(item => item.role === 'tool' && item.name === 'web.search').at(-1);
+  assert.ok(cachedTool);
+  const cachedResult = JSON.parse(cachedTool.content);
+  assert.equal(cachedResult.data.cached, true);
+});
+
+test('agent web.search session cache survives new run', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  let searchCount = 0;
+  const query = 'session cached query';
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    webSearch: async () => {
+      searchCount += 1;
+      return {
+        ok: true,
+        summary: 'Found 1 web source',
+        data: { sources: [{ provider: 'tavily', title: 'Cached result', url: 'https://example.com/cached', content: 'Cached snippet' }] },
+        evidence: [{ type: 'web', url: 'https://example.com/cached', title: 'Cached result' }],
+      };
+    },
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1 || round === 2) {
+          return { text: '', toolCalls: [{ name: 'web.search', arguments: { query } }] };
+        }
+        return { text: 'done', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('search-session-cache');
+  const run1 = await runtime.start({ session, goal: 'first search', userMessage: 'search once' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run1.id);
+  assert.equal(waiting.status, 'waiting_approval');
+  await runtime.resolveApproval(run1.id, waiting.pendingApprovals[0].id, { approved: true });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(store.getRun(run1.id).status, 'completed');
+  assert.equal(searchCount, 1);
+
+  const sessionAfter = store.getSession(session.id);
+  assert.ok(sessionAfter.webSearchCache);
+  const run2 = await runtime.start({ session: sessionAfter, goal: 'second search', userMessage: 'search again' });
+  await new Promise(resolve => setTimeout(resolve, 80));
+  const done2 = store.getRun(run2.id);
+  assert.equal(done2.status, 'completed');
+  assert.equal(searchCount, 1);
+  const cachedTool = done2.messages.filter(item => item.role === 'tool' && item.name === 'web.search').at(-1);
+  assert.ok(cachedTool);
+  assert.equal(JSON.parse(cachedTool.content).data.cached, true);
 });
 
 test('agent image.generate waits for approval then returns a local upload url', async (t) => {
@@ -1609,4 +1773,104 @@ test('agentDelegateMaxRounds setting caps child delegate run rounds', async (t) 
   assert.ok(child);
   assert.equal(child.maxRoundsOverride, 2);
   assert.equal(childRounds, 2);
+});
+
+test('rejecting delegated approval restores parent run to running while child continues', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentDelegated = false;
+  let releaseChild = null;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('拒绝后续'));
+        if (inChild) {
+          const rejected = (messages || []).some(item => item.role === 'tool' && String(item.content).includes('User rejected'));
+          if (!rejected) {
+            return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '先被拒绝' } }] };
+          }
+          if (!releaseChild) {
+            await new Promise(resolve => { releaseChild = resolve; });
+          }
+          return { text: '子任务在拒绝后继续', toolCalls: [] };
+        }
+        if (parentDelegated) return { text: '父任务完成', toolCalls: [] };
+        parentDelegated = true;
+        return {
+          text: '',
+          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '拒绝后续', title: '写待办' } }],
+        };
+      },
+    },
+  });
+  const session = store.createSession('delegate-reject-resume');
+  const run = await runtime.start({ session, goal: '拒绝恢复', userMessage: '拒绝恢复' });
+  let live = await waitForRun(store, run.id, 1200);
+  while (live?.status === 'waiting_approval' && live.pendingApprovals?.[0]?.call?.name === 'agent.delegate') {
+    await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+    live = await waitForRun(store, run.id, 1200);
+  }
+  assert.equal(live.status, 'waiting_approval');
+  const approvalPromise = runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: false });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  live = store.getRun(run.id);
+  assert.equal(live.status, 'running');
+  assert.equal((live.pendingApprovals || []).length, 0);
+  assert.ok(live.events.some(item => item.type === 'delegate.progress'));
+  releaseChild?.();
+  await approvalPromise;
+  live = await waitForRun(store, run.id, 2000);
+  assert.equal(live.status, 'completed');
+});
+
+test('delegated memory.propose bubbles proposal event to parent run', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentDelegated = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('记忆提案'));
+        if (inChild) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'memory.propose',
+              arguments: {
+                title: '写作偏好',
+                content: '周报用简洁中文',
+                layer: 'L2',
+                evidence: [{ type: 'run', id: 'delegate-memory' }],
+              },
+            }],
+          };
+        }
+        if (parentDelegated) return { text: '完成', toolCalls: [] };
+        parentDelegated = true;
+        return {
+          text: '',
+          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '记忆提案', title: '整理记忆' } }],
+        };
+      },
+    },
+  });
+  const session = store.createSession('delegate-memory');
+  const run = await runtime.start({ session, goal: 'memory', userMessage: 'memory' });
+  let live = await waitForRun(store, run.id, 1200);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 2000);
+  const bubbled = live.events.find(item => item.type === 'memory.proposed' && item.payload?.delegated);
+  assert.ok(bubbled);
+  assert.equal(bubbled.payload.delegateTitle, '整理记忆');
+  assert.ok(bubbled.payload.id || bubbled.payload.proposal?.id);
 });

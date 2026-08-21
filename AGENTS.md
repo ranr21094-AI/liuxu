@@ -63,6 +63,7 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 - **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images via `#insertImageButton` → `POST /api/upload`.
 - **Settings → 数据**: JSON/ZIP backup and restore (`workbench-backup.js`).
 - **Settings → Memory**: 11 tunables in `ai-settings.json` via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps, context injection counts). Defaults match former hardcoded values; min ≥ 1, no upper cap. L0 rules stay fixed in `memory.js`.
+- **Settings → 模型 → 高级 Agent 限制**: `lib/agent/agent-settings.js` — `agentDelegateMaxRounds`（子 run 独立轮数/tool 预算，与父 run 脱钩），护栏（连续失败、只读并发、重复写检测），`web.fetch` 上限，以及 `knowledge.search` / `knowledge.list` / `memory.search` 条数限制。`web.search` 同 session 24h 内相同 query 会缓存（最多 32 条），同 run 内重复请求直接返回缓存并跳过审批。Merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`.
 - **Diary**: Unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 
 ### Key Patterns
@@ -86,7 +87,7 @@ See `README.md` § Relevant API for the full table. Notable groups:
 ### Notable Files
 
 - `lib/knowledge/` — documents, search, migrate-logs, routes
-- `lib/agent/` — runtime, routes, tools, `memory-settings.js` (Memory tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.search`, `agent.delegate` (one-level sub-run with approval bubbling), `web.fetch`, `code.run` (PowerShell/Python shell runner), `ask_user`, `update_working_checkpoint`
+- `lib/agent/` — runtime, routes, tools, `memory-settings.js` and `agent-settings.js` (tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.search`, `agent.delegate` (one-level sub-run; approval / ask_user / browser / memory.propose bubble to parent), `web.fetch`, `code.run` (PowerShell/Python shell runner), `ask_user`, `update_working_checkpoint`. 需用户确认的工具在一轮内进入 `queuedApprovals` 队列，仅逐条暴露给前端固定审批栏（`#agentApprovalDock`），并显示进度。
 - `lib/workspace/` — ZIP export/restore
 - `lib/http/backup-routes.js` — JSON backup/restore HTTP handlers
 - `gen_images.py` — standalone script, unrelated to the web app
