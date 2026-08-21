@@ -17,6 +17,23 @@ const TODO_REMINDER_STATE_FILE = path.join(DATA_DIR, 'todo-reminder-state.json')
 const COUNTDOWNS_FILE = path.join(DATA_DIR, 'countdowns.json');
 const { DEFAULT_MEMORY_SETTINGS, resolveMemorySettings } = require('./lib/agent/memory-settings');
 const { DEFAULT_AGENT_SETTINGS, resolveAgentSettings } = require('./lib/agent/agent-settings');
+const {
+  SEEDREAM_DEFAULT_MODEL,
+  SEEDREAM_ALLOWED_MODELS,
+  SEEDREAM_DEFAULT_SETTINGS,
+  normalizeSeedreamSettings,
+  isAllowedSeedreamModel,
+  normalizeSeedreamModel,
+} = require('./lib/agent/seedream');
+const {
+  GETOKEN_DEFAULT_SETTINGS,
+  normalizeGetokenSettings,
+} = require('./lib/agent/getoken');
+const {
+  sanitizeCustomProvidersSync,
+  isCustomModelId,
+  isStoredCustomModel,
+} = require('./lib/agent/custom-providers');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   moonshotApiKey: '',
@@ -32,15 +49,28 @@ const DEFAULT_AI_SETTINGS = {
   openrouterZdrEnabled: true,
   webSearchDepth: 'basic',
   seedreamApiKey: '',
-  seedreamModel: 'doubao-seedream-5-0-260128',
-  seedreamSize: '2K',
-  seedreamWatermark: true,
+  seedreamModel: SEEDREAM_DEFAULT_MODEL,
+  seedreamSize: SEEDREAM_DEFAULT_SETTINGS.seedreamSize,
+  seedreamWatermark: SEEDREAM_DEFAULT_SETTINGS.seedreamWatermark,
+  seedreamOutputFormat: SEEDREAM_DEFAULT_SETTINGS.seedreamOutputFormat,
+  seedreamOptimizePromptMode: SEEDREAM_DEFAULT_SETTINGS.seedreamOptimizePromptMode,
+  seedreamSequential: SEEDREAM_DEFAULT_SETTINGS.seedreamSequential,
+  seedreamMaxImages: SEEDREAM_DEFAULT_SETTINGS.seedreamMaxImages,
+  seedreamWebSearch: SEEDREAM_DEFAULT_SETTINGS.seedreamWebSearch,
+  seedreamLayerDecomposition: SEEDREAM_DEFAULT_SETTINGS.seedreamLayerDecomposition,
+  seedreamBackground: SEEDREAM_DEFAULT_SETTINGS.seedreamBackground,
+  seedreamStream: SEEDREAM_DEFAULT_SETTINGS.seedreamStream,
+  getokenApiKey: '',
+  getokenGrokImagineApiKey: '',
+  getokenNanoBananaApiKey: '',
+  ...GETOKEN_DEFAULT_SETTINGS,
   skills: {
     westock: { enabled: true },
     perplexity: { enabled: true },
   },
   agentMaxRounds: 12,
   agentFileReadMaxMb: 4,
+  customProviders: [],
   ...DEFAULT_MEMORY_SETTINGS,
   ...DEFAULT_AGENT_SETTINGS,
 };
@@ -61,7 +91,7 @@ const cache = {
   maxCountdownId: 0,
 };
 const AI_SECRET_FIELDS = Object.freeze([
-  'apiKey', 'moonshotApiKey', 'openrouterApiKey', 'tavilyApiKey', 'perplexityApiKey', 'seedreamApiKey',
+  'apiKey', 'moonshotApiKey', 'openrouterApiKey', 'tavilyApiKey', 'perplexityApiKey', 'seedreamApiKey', 'getokenApiKey', 'getokenGrokImagineApiKey', 'getokenNanoBananaApiKey',
 ]);
 
 function resetCache() {
@@ -361,11 +391,17 @@ function writePrivateUploads(filenames) {
   cache.privateUploads = next;
 }
 
-function isStoredAiModel(value) {
-  return typeof value === 'string' && (
-    ['deepseek-v4-flash', 'deepseek-v4-pro', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'].includes(value) ||
-    /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._:+-]{0,119}$/i.test(value)
-  );
+function isStoredAiModel(value, settings = null) {
+  if (typeof value !== 'string' || !value) return false;
+  if (['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'].includes(value)) return true;
+  if (isCustomModelId(value)) {
+    return settings ? isStoredCustomModel(value, settings) : true;
+  }
+  return /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._:+-]{0,119}$/i.test(value);
+}
+
+function customProviderSecretAad(providerId) {
+  return `work-log-ai-settings:v1:${SECRET_SCOPE}:customProvider:${providerId}`;
 }
 
 function aiSecretAad(field) {
@@ -381,6 +417,19 @@ function decodeAiSettingsSecrets(data) {
     if (isEncryptedSecret(value)) source[field] = decryptSecret(value, aiSecretAad(field));
     else needsMigration = true;
   }
+  if (Array.isArray(source.customProviders)) {
+    source.customProviders = source.customProviders.map(provider => {
+      if (!provider || typeof provider !== 'object') return provider;
+      const next = { ...provider };
+      if (typeof next.apiKey !== 'string' || !next.apiKey) return next;
+      if (isEncryptedSecret(next.apiKey)) {
+        next.apiKey = decryptSecret(next.apiKey, customProviderSecretAad(next.id || 'unknown'));
+      } else {
+        needsMigration = true;
+      }
+      return next;
+    });
+  }
   return { source, needsMigration };
 }
 
@@ -390,12 +439,24 @@ function serializeAiSettings(data) {
     const value = output[field];
     output[field] = typeof value === 'string' && value ? encryptSecret(value, aiSecretAad(field)) : '';
   }
+  if (Array.isArray(output.customProviders)) {
+    output.customProviders = output.customProviders.map(provider => {
+      if (!provider || typeof provider !== 'object') return provider;
+      const next = { ...provider };
+      next.apiKey = typeof next.apiKey === 'string' && next.apiKey
+        ? encryptSecret(next.apiKey, customProviderSecretAad(next.id || 'unknown'))
+        : '';
+      return next;
+    });
+  }
   return output;
 }
 
 function normalizeAiSettings(data) {
   const source = isPlainObject(data) ? data : {};
-  const model = isStoredAiModel(source.model)
+  const customProviders = sanitizeCustomProvidersSync(source.customProviders, source.customProviders);
+  const settingsForModel = { ...source, customProviders };
+  const model = isStoredAiModel(source.model, settingsForModel)
     ? source.model
     : DEFAULT_AI_SETTINGS.model;
   const reasoningEffort = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(source.reasoningEffort)
@@ -423,13 +484,24 @@ function normalizeAiSettings(data) {
       : DEFAULT_AI_SETTINGS.openrouterZdrEnabled,
     webSearchDepth: ['basic', 'advanced'].includes(source.webSearchDepth) ? source.webSearchDepth : DEFAULT_AI_SETTINGS.webSearchDepth,
     seedreamApiKey: typeof source.seedreamApiKey === 'string' ? source.seedreamApiKey.trim().slice(0, 500) : '',
-    seedreamModel: ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'].includes(source.seedreamModel)
-      ? source.seedreamModel
-      : DEFAULT_AI_SETTINGS.seedreamModel,
-    seedreamSize: typeof source.seedreamSize === 'string' && source.seedreamSize.trim()
-      ? source.seedreamSize.trim().slice(0, 40)
-      : DEFAULT_AI_SETTINGS.seedreamSize,
-    seedreamWatermark: typeof source.seedreamWatermark === 'boolean' ? source.seedreamWatermark : DEFAULT_AI_SETTINGS.seedreamWatermark,
+    ...normalizeSeedreamSettings({
+      ...DEFAULT_AI_SETTINGS,
+      ...source,
+      seedreamModel: isAllowedSeedreamModel(source.seedreamModel)
+        ? normalizeSeedreamModel(source.seedreamModel)
+        : DEFAULT_AI_SETTINGS.seedreamModel,
+    }),
+    getokenApiKey: typeof source.getokenApiKey === 'string' ? source.getokenApiKey.trim().slice(0, 500) : '',
+    getokenGrokImagineApiKey: typeof source.getokenGrokImagineApiKey === 'string'
+      ? source.getokenGrokImagineApiKey.trim().slice(0, 500)
+      : '',
+    getokenNanoBananaApiKey: typeof source.getokenNanoBananaApiKey === 'string'
+      ? source.getokenNanoBananaApiKey.trim().slice(0, 500)
+      : '',
+    ...normalizeGetokenSettings({
+      ...DEFAULT_AI_SETTINGS,
+      ...source,
+    }),
     skills: {
       westock: {
         enabled: typeof westockSource.enabled === 'boolean' ? westockSource.enabled : true,
@@ -440,6 +512,7 @@ function normalizeAiSettings(data) {
     },
     agentMaxRounds: normalizeAgentMaxRounds(source.agentMaxRounds),
     agentFileReadMaxMb: normalizeAgentFileReadMaxMb(source.agentFileReadMaxMb),
+    customProviders,
     ...resolveMemorySettings(source),
     ...resolveAgentSettings(source),
   };

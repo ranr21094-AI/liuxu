@@ -151,8 +151,16 @@
             <button type="button" data-mode="todos">待办</button>
           </nav>
           <span class="run-status" id="runStatus" hidden><span class="status-dot"></span><span id="runStatusText">运行中</span></span>
-          <button class="topbar-button" id="diaryButton" type="button" aria-haspopup="dialog">私密知识已锁定</button>
-          <button class="icon-button" id="settingsButton" type="button" aria-label="设置" title="设置">⚙</button>
+          <button class="icon-button diary-toggle" id="diaryButton" type="button" aria-haspopup="dialog" aria-label="私密知识已锁定" title="私密知识已锁定">
+            <svg class="diary-icon diary-icon-locked" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+              <path d="M8 11V8a4 4 0 0 1 8 0v3"></path>
+            </svg>
+            <svg class="diary-icon diary-icon-unlocked" viewBox="0 0 24 24" aria-hidden="true" hidden>
+              <path d="M8 11V8a4 4 0 0 1 7.5-1"></path>
+              <rect x="5" y="11" width="14" height="10" rx="2"></rect>
+            </svg>
+          </button>
           <button class="account-button" id="accountButton" type="button" aria-haspopup="menu" aria-expanded="false"><span id="accountInitial">用</span></button>
           <div class="account-menu" id="accountMenu" role="menu" hidden>
             <div class="account-summary"><strong id="accountName">当前账户</strong><small id="accountRole"></small></div>
@@ -177,8 +185,6 @@
             </div>
           </div>
 
-          <div id="agentApprovalDock" class="agent-approval-dock" hidden></div>
-
           <form class="agent-composer" id="agentComposer">
             <div class="mention-menu" id="mentionMenu" hidden role="listbox" aria-label="引用知识">
               <div class="mention-group-title">知识库</div>
@@ -188,14 +194,21 @@
               <button class="mention-item" type="button" data-mention="yesterday">昨天</button>
               <label class="mention-date-field">选择日期<input id="mentionDateInput" type="date"></label>
             </div>
+            <div id="agentAttachmentPreview" class="agent-attachment-preview" hidden></div>
+            <div id="agentApprovalDock" class="agent-approval-dock" hidden></div>
             <label class="sr-only" for="agentInput">告诉 Agent 你的目标</label>
             <textarea id="agentInput" rows="1" maxlength="8000" placeholder="用 @ 引用知识库或日期，然后描述你想完成什么…"></textarea>
             <div class="composer-footer">
               <div class="composer-meta">
-                <button class="composer-settings" id="agentComposerSettings" type="button" aria-label="打开模型设置">Agent 已就绪</button>
+                <label class="composer-model-field">
+                  <span class="sr-only">Agent 模型</span>
+                  <select id="agentComposerModelSelect" class="composer-model-select" aria-label="切换 Agent 模型"></select>
+                </label>
                 <span class="composer-hint">Enter 发送 · @ 引用知识</span>
               </div>
               <div class="composer-actions">
+                <button class="icon-button" id="agentAttachButton" type="button" aria-label="添加图片">＋</button>
+                <input id="agentAttachmentInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff,image/heic,image/heif" multiple hidden>
                 <button class="stop-button" id="stopRunButton" type="button" hidden>停止</button>
                 <button class="send-button" id="sendAgentButton" type="submit" aria-label="发送消息">↑</button>
               </div>
@@ -467,6 +480,7 @@
           <button type="button" data-settings-nav="appearance" class="active" aria-current="page">外观</button>
           <button type="button" data-settings-nav="sessions">会话</button>
           <button type="button" data-settings-nav="model">模型</button>
+          <button type="button" data-settings-nav="agent">Agent</button>
           <button type="button" data-settings-nav="memory">Memory</button>
           <button type="button" data-settings-nav="network">联网</button>
           <button type="button" data-settings-nav="image">生图</button>
@@ -488,11 +502,59 @@
           </section>
           <section class="settings-section" data-settings-panel="model" hidden>
             <h3>模型</h3>
-            <p class="settings-copy">与 Agent 共用同一套密钥和默认模型。留空密钥可保持已保存的值。</p>
-            <label class="settings-field" for="agentDeepseekKey">DeepSeek API Key<input id="agentDeepseekKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
-            <label class="settings-field" for="agentMoonshotKey">Moonshot / Kimi API Key<input id="agentMoonshotKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
-            <label class="settings-field" for="agentOpenrouterKey">OpenRouter API Key<input id="agentOpenrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-..."></label>
-            <label class="settings-row" for="agentModelSelect"><span><strong>默认模型</strong><small>Agent 运行时使用这个模型</small></span><select id="agentModelSelect"></select></label>
+            <p class="settings-copy">内置供应商与自定义端点共用同一默认模型。留空密钥可保持已保存的值。</p>
+            <div class="settings-subsection">
+              <h4>内置供应商</h4>
+              <label class="settings-field" for="agentDeepseekKey">DeepSeek API Key<input id="agentDeepseekKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
+              <label class="settings-field" for="agentMoonshotKey">Moonshot / Kimi API Key<input id="agentMoonshotKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
+              <label class="settings-field" for="agentOpenrouterKey">OpenRouter API Key<input id="agentOpenrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-..."></label>
+            </div>
+            <div class="settings-subsection">
+              <h4>默认模型</h4>
+              <div class="settings-row settings-row-actions">
+                <label class="settings-row" for="agentModelSelect"><span><strong>模型</strong><small>Agent 运行时使用</small></span><select id="agentModelSelect"></select></label>
+                <button type="button" class="secondary-action compact" id="refreshOpenRouterModels">刷新 OpenRouter</button>
+              </div>
+            </div>
+            <div class="settings-subsection">
+              <div class="settings-subhead-row">
+                <h4>自定义端点</h4>
+                <button type="button" class="secondary-action compact" id="addCustomProvider">添加端点</button>
+              </div>
+              <p class="settings-copy">OpenAI / Anthropic 兼容 API；最多 8 个端点，每端点 16 个模型。</p>
+              <div id="customProvidersList" class="custom-providers-list"></div>
+            </div>
+            <div class="settings-subsection">
+              <h4>推理</h4>
+              <label class="settings-row" for="agentReasoningMode"><span><strong>思考模式</strong><small>模型默认、关闭或指定强度</small></span>
+                <select id="agentReasoningMode">
+                  <option value="default">模型默认</option>
+                  <option value="disabled">关闭</option>
+                  <option value="effort">指定强度</option>
+                </select>
+              </label>
+              <label class="settings-row" for="agentThinkingMode"><span><strong>K2.6 思考模式</strong><small>开启并保留或关闭</small></span>
+                <select id="agentThinkingMode">
+                  <option value="enabled">开启并保留</option>
+                  <option value="disabled">关闭</option>
+                </select>
+              </label>
+              <label class="settings-row" for="agentReasoningEffort"><span><strong>思考强度</strong></span>
+                <select id="agentReasoningEffort">
+                  <option value="minimal">最低</option>
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                  <option value="xhigh">很高</option>
+                  <option value="max">最高</option>
+                </select>
+              </label>
+              <label class="settings-row" for="agentOpenRouterZdr"><span><strong>OpenRouter 零数据保留</strong><small>默认仅路由到 ZDR 端点；可能减少可用供应商</small></span><input id="agentOpenRouterZdr" type="checkbox"></label>
+            </div>
+          </section>
+          <section class="settings-section" data-settings-panel="agent" hidden>
+            <h3>Agent</h3>
+            <p class="settings-copy">控制 Agent 循环轮数、文件读取与子代理限制。</p>
             <label class="settings-field" for="agentMaxRounds">最大循环轮数
               <input id="agentMaxRounds" type="number" min="4" step="1" value="12">
               <small>一轮 = 模型想一次，必要时再调工具。至少 4，默认 12，无上限。</small>
@@ -546,35 +608,17 @@
               <label class="settings-field" for="agentMemorySearchMaxLimit">memory.search 最大条数
                 <input id="agentMemorySearchMaxLimit" type="number" min="1" step="1" value="40">
               </label>
+              <label class="settings-field" for="agentMemoryListLimit">memory.list 默认条数
+                <input id="agentMemoryListLimit" type="number" min="1" step="1" value="40">
+              </label>
+              <label class="settings-field" for="agentMemoryListMaxLimit">memory.list 最大条数
+                <input id="agentMemoryListMaxLimit" type="number" min="1" step="1" value="100">
+              </label>
             </div>
-            <label class="settings-row" for="agentReasoningMode"><span><strong>思考模式</strong><small>模型默认、关闭或指定强度</small></span>
-              <select id="agentReasoningMode">
-                <option value="default">模型默认</option>
-                <option value="disabled">关闭</option>
-                <option value="effort">指定强度</option>
-              </select>
-            </label>
-            <label class="settings-row" for="agentThinkingMode"><span><strong>K2.6 思考模式</strong><small>开启并保留或关闭</small></span>
-              <select id="agentThinkingMode">
-                <option value="enabled">开启并保留</option>
-                <option value="disabled">关闭</option>
-              </select>
-            </label>
-            <label class="settings-row" for="agentReasoningEffort"><span><strong>思考强度</strong></span>
-              <select id="agentReasoningEffort">
-                <option value="minimal">最低</option>
-                <option value="low">低</option>
-                <option value="medium">中</option>
-                <option value="high">高</option>
-                <option value="xhigh">很高</option>
-                <option value="max">最高</option>
-              </select>
-            </label>
-            <label class="settings-row" for="agentOpenRouterZdr"><span><strong>OpenRouter 零数据保留</strong><small>默认仅路由到 ZDR 端点；可能减少可用供应商</small></span><input id="agentOpenRouterZdr" type="checkbox"></label>
           </section>
           <section class="settings-section" data-settings-panel="memory" hidden>
             <h3>Memory</h3>
-            <p class="settings-copy">控制「根据近期对话更新」与长期记忆的扫描、写入和 Agent 注入上限。至少 1，无上限。</p>
+            <p class="settings-copy">控制「根据近期对话更新」与长期记忆的扫描、写入上限。L2/L3 不再自动注入 Agent，需通过 memory.list / memory.search / memory.read 按需读取。</p>
             <h4 class="settings-subhead">刷新运行</h4>
             <label class="settings-field" for="memoryRefreshMaxRounds">最大循环轮数
               <input id="memoryRefreshMaxRounds" type="number" min="1" step="1" value="4">
@@ -611,12 +655,9 @@
               <input id="memoryContentMaxCharsL3" type="number" min="1" step="1" value="1200">
             </label>
             <h4 class="settings-subhead">Agent 上下文</h4>
-            <label class="settings-field" for="memoryContextMaxL2">注入 L2 条数
-              <input id="memoryContextMaxL2" type="number" min="1" step="1" value="20">
-            </label>
-            <label class="settings-field" for="memoryContextMaxL3">注入 L3 条数
-              <input id="memoryContextMaxL3" type="number" min="1" step="1" value="20">
-            </label>
+            <p class="settings-copy">仅 L0 安全规则会自动注入 Agent。L2/L3 请用 memory.list 浏览标题、memory.read 读取正文；memory.list 条数在「模型 → 高级 Agent 限制」中配置。</p>
+            <input id="memoryContextMaxL2" type="hidden" value="20">
+            <input id="memoryContextMaxL3" type="hidden" value="20">
           </section>
           <section class="settings-section" data-settings-panel="network" hidden>
             <h3>联网</h3>
@@ -633,28 +674,93 @@
           </section>
           <section class="settings-section" data-settings-panel="image" hidden>
             <h3>生图</h3>
-            <p class="settings-copy">Agent 通过确认工具 image.generate 调用 Seedream。填写 Key 后，出图前会先请你确认。</p>
+            <p class="settings-copy">Agent 通过确认工具 image.generate 生图。选择后端并配置默认参数；单次出图仍可在确认时覆盖。</p>
+            <label class="settings-row" for="agentImageProvider"><span><strong>生图后端</strong><small>Seedream 或 Getoken</small></span>
+              <select id="agentImageProvider">
+                <option value="seedream">Seedream</option>
+                <option value="getoken">Getoken</option>
+              </select>
+            </label>
+            <div data-image-provider="getoken">
+              <label class="settings-row" for="agentGetokenModel"><span><strong>Getoken 模型</strong><small>默认生图模型</small></span>
+                <select id="agentGetokenModel">
+                  <option value="gpt-image-2">GPT Image 2</option>
+                  <option value="grok-imagine-image">Grok Imagine</option>
+                  <option value="nano-banana-2">Nano Banana 2</option>
+                </select>
+              </label>
+              <label class="settings-field" for="agentGetokenKey">GPT Image 2 Key<input id="agentGetokenKey" type="password" autocomplete="off" spellcheck="false" placeholder="GETOKEN API Key"></label>
+              <label class="settings-field" for="agentGetokenGrokImagineKey">Grok Imagine Key<input id="agentGetokenGrokImagineKey" type="password" autocomplete="off" spellcheck="false" placeholder="GETOKEN API Key"></label>
+              <label class="settings-field" for="agentGetokenNanoBananaKey">Nano Banana 2 Key<input id="agentGetokenNanoBananaKey" type="password" autocomplete="off" spellcheck="false" placeholder="GETOKEN API Key"></label>
+              <label class="settings-row" for="agentGetokenSize"><span><strong>尺寸</strong><small>默认 auto</small></span>
+                <select id="agentGetokenSize">
+                  <option value="auto">auto</option>
+                  <option value="1024x1024">1024x1024</option>
+                  <option value="1536x1024">1536x1024</option>
+                  <option value="1024x1536">1024x1536</option>
+                  <option value="1792x1024">1792x1024</option>
+                  <option value="1024x1792">1024x1792</option>
+                </select>
+              </label>
+              <label class="settings-row" for="agentGetokenQuality"><span><strong>质量</strong></span>
+                <select id="agentGetokenQuality">
+                  <option value="high">high</option>
+                  <option value="standard">standard</option>
+                </select>
+              </label>
+              <label class="settings-field" for="agentGetokenN">单次数量 n
+                <input id="agentGetokenN" type="number" min="1" max="4" step="1" value="1">
+                <small>1–4 张；有参考图时走 edits 接口</small>
+              </label>
+            </div>
+            <div data-image-provider="seedream">
             <label class="settings-field" for="agentSeedreamKey">Seedream API Key<input id="agentSeedreamKey" type="password" autocomplete="off" spellcheck="false" placeholder="ARK API Key"></label>
-            <label class="settings-row" for="agentSeedreamModel"><span><strong>模型</strong><small>默认使用最新 Seedream</small></span>
+            <label class="settings-row" for="agentSeedreamModel"><span><strong>模型</strong><small>Pro / Lite / 4.5 / 4.0</small></span>
               <select id="agentSeedreamModel">
-                <option value="doubao-seedream-5-0-260128">Seedream 5.0</option>
+                <option value="doubao-seedream-5-0-pro-260628">Seedream 5.0 Pro</option>
+                <option value="doubao-seedream-5-0-260128">Seedream 5.0 Lite</option>
                 <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
                 <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
               </select>
             </label>
             <label class="settings-field" for="agentSeedreamSize">尺寸
               <input id="agentSeedreamSize" list="agentSeedreamSizeOptions" spellcheck="false" placeholder="2K">
-              <small>可用 2K / 3K / 4K，或宽x高如 2848x1600</small>
+              <small id="agentSeedreamSizeHint">Lite: 2K / 3K / 4K，或宽x高像素</small>
             </label>
-            <datalist id="agentSeedreamSizeOptions">
-              <option value="2K"></option>
-              <option value="3K"></option>
-              <option value="4K"></option>
-              <option value="2848x1600"></option>
-              <option value="1600x2848"></option>
-              <option value="2048x2048"></option>
-            </datalist>
-            <label class="settings-row" for="agentSeedreamWatermark"><span><strong>水印</strong><small>在生成图上添加 Seedream 水印</small></span><input id="agentSeedreamWatermark" type="checkbox"></label>
+            <datalist id="agentSeedreamSizeOptions"></datalist>
+            <label class="settings-row" for="agentSeedreamWatermark"><span><strong>水印</strong><small>在生成图上添加 AI 生成标识</small></span><input id="agentSeedreamWatermark" type="checkbox"></label>
+            <label class="settings-row seedream-advanced" data-seedream-field="outputFormat" for="agentSeedreamOutputFormat"><span><strong>输出格式</strong><small>Pro / Lite</small></span>
+              <select id="agentSeedreamOutputFormat">
+                <option value="jpeg">JPEG</option>
+                <option value="png">PNG</option>
+              </select>
+            </label>
+            <label class="settings-row seedream-advanced" data-seedream-field="optimizePrompt" for="agentSeedreamOptimizePrompt"><span><strong>提示词优化</strong><small>standard 质量更高；fast 更快</small></span>
+              <select id="agentSeedreamOptimizePrompt">
+                <option value="standard">Standard</option>
+                <option value="fast">Fast</option>
+              </select>
+            </label>
+            <label class="settings-row seedream-advanced" data-seedream-field="sequential" for="agentSeedreamSequential"><span><strong>组图模式</strong><small>auto 可生成一组关联图片</small></span>
+              <select id="agentSeedreamSequential">
+                <option value="disabled">单图 (disabled)</option>
+                <option value="auto">组图 (auto)</option>
+              </select>
+            </label>
+            <label class="settings-field seedream-advanced" data-seedream-field="maxImages" for="agentSeedreamMaxImages">组图上限
+              <input id="agentSeedreamMaxImages" type="number" min="1" max="15" step="1" value="15">
+              <small>参考图数量 + 生成数量 ≤ 15</small>
+            </label>
+            <label class="settings-row seedream-advanced" data-seedream-field="webSearch" for="agentSeedreamWebSearch"><span><strong>联网搜索</strong><small>仅 Lite：按提示词搜索后再生图</small></span><input id="agentSeedreamWebSearch" type="checkbox"></label>
+            <label class="settings-row seedream-advanced" data-seedream-field="layerDecomposition" for="agentSeedreamLayerDecomposition"><span><strong>默认图层拆分</strong><small>仅 Pro：拆成底图 + 图层</small></span><input id="agentSeedreamLayerDecomposition" type="checkbox"></label>
+            <label class="settings-row seedream-advanced" data-seedream-field="background" for="agentSeedreamBackground"><span><strong>透明背景</strong><small>仅 Pro 图生图</small></span>
+              <select id="agentSeedreamBackground">
+                <option value="opaque">不透明</option>
+                <option value="transparent">透明</option>
+              </select>
+            </label>
+            <label class="settings-row seedream-advanced" data-seedream-field="stream" for="agentSeedreamStream"><span><strong>流式输出</strong><small>组图时逐张返回</small></span><input id="agentSeedreamStream" type="checkbox"></label>
+            </div>
           </section>
           <section class="settings-section" data-settings-panel="skills" hidden>
             <h3>技能</h3>

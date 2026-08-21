@@ -11,6 +11,8 @@ const { JSDOM } = require('jsdom');
 const businessDate = require('../business-date');
 const { DEFAULT_MEMORY_SETTINGS } = require('../lib/agent/memory-settings');
 const { DEFAULT_AGENT_SETTINGS } = require('../lib/agent/agent-settings');
+const { SEEDREAM_DEFAULT_SETTINGS } = require('../lib/agent/seedream');
+const { GETOKEN_DEFAULT_SETTINGS } = require('../lib/agent/getoken');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
@@ -1006,6 +1008,14 @@ test('AI settings persist to local data storage and validate options', async (t)
     webSearchDepth: 'basic',
     seedreamApiKey: '',
     seedreamApiKeyConfigured: false,
+    getokenApiKey: '',
+    getokenGrokImagineApiKey: '',
+    getokenNanoBananaApiKey: '',
+    getokenApiKeyConfigured: false,
+    getokenGrokImagineApiKeyConfigured: false,
+    getokenNanoBananaApiKeyConfigured: false,
+    ...SEEDREAM_DEFAULT_SETTINGS,
+    ...GETOKEN_DEFAULT_SETTINGS,
     seedreamModel: 'doubao-seedream-5-0-260128',
     seedreamSize: '2K',
     seedreamWatermark: true,
@@ -1017,6 +1027,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     agentFileReadMaxMb: 4,
     ...DEFAULT_MEMORY_SETTINGS,
     ...DEFAULT_AGENT_SETTINGS,
+    customProviders: [],
   });
 
   const saved = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -1076,6 +1087,25 @@ test('AI settings persist to local data storage and validate options', async (t)
     seedreamModel: 'doubao-seedream-4-5-251128',
     seedreamSize: '2848x1600',
     seedreamWatermark: false,
+    seedreamOutputFormat: 'jpeg',
+    seedreamOptimizePromptMode: 'standard',
+    seedreamSequential: 'disabled',
+    seedreamMaxImages: 15,
+    seedreamWebSearch: false,
+    seedreamLayerDecomposition: false,
+    seedreamBackground: 'opaque',
+    seedreamStream: true,
+    getokenApiKey: '',
+    getokenGrokImagineApiKey: '',
+    getokenNanoBananaApiKey: '',
+    getokenApiKeyConfigured: false,
+    getokenGrokImagineApiKeyConfigured: false,
+    getokenNanoBananaApiKeyConfigured: false,
+    imageProvider: 'seedream',
+    getokenModel: 'gpt-image-2',
+    getokenSize: 'auto',
+    getokenQuality: 'high',
+    getokenN: 1,
     skills: {
       westock: { enabled: false },
       perplexity: { enabled: false },
@@ -1088,6 +1118,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     memoryRefreshMaxProposals: 12,
     memoryRefreshSessionLimit: 10,
     memoryContextMaxL2: 30,
+    customProviders: [],
   });
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
   const encryptedSettings = fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8');
@@ -2636,6 +2667,95 @@ test('markdown image preview opens on double-click and closes with Escape or bac
   }
 });
 
+test('markdown image preview accepts a string URL for attachment thumbnails', async () => {
+  const previousDocument = globalThis.document;
+  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true, url: 'http://localhost/' });
+
+  globalThis.document = dom.window.document;
+  globalThis.requestAnimationFrame = callback => callback();
+  try {
+    const moduleUrl = pathToFileURL(path.join(ROOT, 'public', 'js', 'imagePreview.js')).href + `?preview-url=${Date.now()}`;
+    const imagePreview = await import(moduleUrl);
+    assert.equal(imagePreview.openMarkdownImagePreview('/uploads/example.png'), true);
+    const overlay = document.getElementById('markdownImagePreviewOverlay');
+    assert.equal(overlay.style.display, 'flex');
+    assert.equal(overlay.querySelector('.markdown-image-lightbox-img').getAttribute('src'), '/uploads/example.png');
+    assert.equal(overlay.querySelector('.markdown-image-lightbox-img').alt, '附件图片');
+    imagePreview.closeMarkdownImagePreview();
+    assert.equal(overlay.style.display, 'none');
+  } finally {
+    dom.window.close();
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousRequestAnimationFrame === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRequestAnimationFrame;
+  }
+});
+
+test('upload image src normalization keeps safe agent markdown images', async () => {
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousDOMPurify = globalThis.DOMPurify;
+  const dom = new JSDOM('<!doctype html><body></body>', { url: 'http://localhost:3000/' });
+  globalThis.document = dom.window.document;
+  globalThis.window = dom.window;
+  const purifySource = fs.readFileSync(path.join(ROOT, 'public', 'vendor', 'dompurify', 'purify.min.js'), 'utf8');
+  dom.window.eval(purifySource);
+  const DOMPurify = globalThis.DOMPurify;
+  try {
+    const helpers = await import(`${pathToFileURL(path.join(ROOT, 'public', 'js', 'helpers.js')).href}?upload-src=${Date.now()}`);
+    assert.equal(helpers.normalizeUploadSrc('/uploads/1735-abc.png'), '/uploads/1735-abc.png');
+    assert.equal(
+      helpers.normalizeUploadSrc('http://localhost:3000/uploads/1735-abc.png'),
+      '/uploads/1735-abc.png',
+    );
+    assert.equal(helpers.normalizeUploadSrc('/uploads/1735-abc.png?v=1'), '/uploads/1735-abc.png');
+    assert.equal(helpers.isSafeImageSrc('/uploads/1735-abc.png'), true);
+    assert.equal(helpers.isSafeImageSrc('http://localhost:3000/uploads/1735-abc.png'), true);
+    assert.equal(helpers.normalizeUploadSrc('uploads/1735-abc.png'), '/uploads/1735-abc.png');
+    assert.equal(helpers.isSafeImageSrc('uploads/1735-abc.png'), true);
+    assert.equal(helpers.isSafeImageSrc('javascript:alert(1)'), false);
+
+    DOMPurify.addHook('afterSanitizeAttributes', node => {
+      if (node.tagName !== 'IMG') return;
+      const normalized = helpers.normalizeUploadSrc(node.getAttribute('src'));
+      if (normalized && helpers.isSafeImageSrc(normalized)) {
+        node.setAttribute('src', normalized);
+      } else {
+        node.removeAttribute('src');
+      }
+    });
+
+    const host = document.createElement('div');
+    host.innerHTML = DOMPurify.sanitize(
+      '<img src="http://localhost:3000/uploads/1735-abc.png" alt="x">',
+      { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] },
+    );
+    assert.equal(host.querySelector('img')?.getAttribute('src'), '/uploads/1735-abc.png');
+
+    host.innerHTML = DOMPurify.sanitize(
+      '![x](/uploads/1735-abc.png)',
+      { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] },
+    );
+    assert.equal(host.querySelector('img'), null);
+
+    host.innerHTML = DOMPurify.sanitize(
+      '<img src="javascript:alert(1)" alt="bad">',
+      { ADD_TAGS: ['img'], ADD_ATTR: ['src', 'alt'] },
+    );
+    assert.equal(host.querySelector('img')?.hasAttribute('src'), false);
+  } finally {
+    dom.window.close();
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+    if (previousDOMPurify === undefined) delete globalThis.DOMPurify;
+    else globalThis.DOMPurify = previousDOMPurify;
+  }
+});
+
 test('new workspace exposes Agent, knowledge, and memory modes in a shared two-column shell', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const source = fs.readFileSync(path.join(ROOT, 'public', 'js', 'workbench.js'), 'utf8');
@@ -2715,10 +2835,30 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#agentDeepseekKey') !== null, true);
   assert.equal(document.querySelector('#agentMoonshotKey') !== null, true);
   assert.equal(document.querySelector('#agentOpenrouterKey') !== null, true);
+  assert.equal(document.querySelector('#addCustomProvider') !== null, true);
+  assert.equal(document.querySelector('#customProvidersList') !== null, true);
+  assert.match(source, /function customProviderFormatLabel/);
+  assert.match(source, /<details class="custom-provider-card"/);
+  assert.match(source, /custom-provider-summary/);
+  assert.match(styles, /\.custom-provider-conn-grid/);
+  assert.match(source, /customProviderExpandIndex/);
   assert.equal(document.querySelector('#agentSeedreamKey') !== null, true);
+  assert.equal(document.querySelector('#agentImageProvider') !== null, true);
+  assert.equal(document.querySelector('#agentGetokenKey') !== null, true);
+  assert.equal(document.querySelector('#agentGetokenGrokImagineKey') !== null, true);
+  assert.equal(document.querySelector('#agentGetokenNanoBananaKey') !== null, true);
+  assert.equal(document.querySelector('#agentGetokenModel') !== null, true);
+  assert.match(source, /syncImageProviderSettingsUi/);
   assert.equal(document.querySelector('#agentSeedreamModel') !== null, true);
   assert.equal(document.querySelector('#agentSeedreamSize') !== null, true);
   assert.equal(document.querySelector('#agentSeedreamWatermark') !== null, true);
+  assert.equal(document.querySelector('#agentSeedreamOutputFormat') !== null, true);
+  assert.equal(document.querySelector('#agentSeedreamSequential') !== null, true);
+  assert.equal(document.querySelector('#agentAttachButton') !== null, true);
+  assert.match(source, /syncSeedreamSettingsUi/);
+  assert.match(source, /\/api\/agent\/uploads/);
+  assert.match(source, /function handleAgentImagePaste/);
+  assert.match(source, /collectClipboardImageFiles/);
   assert.equal(document.querySelector('[data-settings-nav="image"]') !== null, true);
   assert.equal(document.querySelector('[data-settings-nav="sessions"]') !== null, true);
   assert.equal(document.querySelector('[data-settings-nav="computer"]') !== null, true);
@@ -2746,17 +2886,37 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#executionTrace'), null);
   assert.match(source, /function stopLiveTrace/);
   assert.match(source, /function showEmptySession\(\)[\s\S]{0,400}stopLiveTrace\(\)/);
-  assert.match(source, /async function openSession\([\s\S]{0,900}stopLiveTrace\(\)/);
+  assert.doesNotMatch(source, /async function openSession\([\s\S]{0,900}stopLiveTrace\(\)/);
+  assert.match(source, /async function openSession\([\s\S]{0,1200}syncActiveSessionRunUi/);
+  assert.match(source, /sessionRuns:\s*new Map\(\)/);
   assert.match(source, /dataset\.runId/);
   assert.match(source, /function upsertRunTrace/);
   assert.doesNotMatch(source, /\$\('#traceEvents'\)\.innerHTML = ''/);
   assert.match(styles, /\.message-list \.execution-trace/);
   assert.match(styles, /\.approval-card pre[^{]*\{[^}]*white-space:\s*pre-wrap/);
+  assert.match(html, /id="agentComposer"[\s\S]*id="agentApprovalDock"[\s\S]*id="agentInput"/);
+  assert.match(source, /function summarizeApprovalArgs/);
+  assert.match(source, /approval-card-body/);
+  assert.match(source, /agent-composer--question/);
+  assert.match(styles, /\.agent-approval-dock \.approval-card-body/);
+  assert.match(source, /function setComposerQuestionActive/);
+  assert.match(source, /function renderAgentQuestion[\s\S]{0,500}#agentApprovalDock/);
+  assert.doesNotMatch(source, /function renderAgentQuestion[\s\S]{0,500}#agentMessageList/);
   assert.match(source, /function formatSessionMeta/);
   assert.match(source, /function applyAgentTopbar/);
   assert.match(source, /formatSessionMeta\(session\)/);
   assert.doesNotMatch(source, /lastMessagePreview \|\| formatTime\(session\.updatedAt\)/);
   assert.match(source, /from '\.\/markdown\.js'/);
+  assert.match(source, /normalizeUploadSrc/);
+  assert.match(source, /function findGeneratedImageCard/);
+  assert.match(source, /function trackGeneratedImageUrl/);
+  assert.match(source, /function trackGeneratedImageUrlsFromToolResult/);
+  assert.match(source, /function removeRunImagePreviews/);
+  assert.match(source, /collectKnownUploadUrls/);
+  assert.match(source, /dedupeImageMarkdown/);
+  assert.match(source, /dataset\.runId/);
+  assert.match(source, /handleDelegateRunEvent[\s\S]{0,1200}trackGeneratedImageUrlsFromToolResult/);
+  assert.doesNotMatch(source, /data-generated-image="\$\{CSS\.escape\(url\)\}"/);
   assert.match(source, /data-memory-archive/);
   assert.match(styles, /\.message-content img/);
   assert.match(source, /\/api\/agent\/memory\/refresh/);
@@ -2765,16 +2925,19 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(html, /@知识库/);
   assert.match(source, /data-mention/);
   assert.match(source, /renderMentionMenu/);
-  assert.equal(document.querySelector('#agentComposerSettings').getAttribute('aria-label'), '打开模型设置');
+  assert.equal(document.querySelector('#agentComposerModelSelect') !== null, true);
+  assert.equal(document.querySelector('#agentComposerModelSelect').getAttribute('aria-label'), '切换 Agent 模型');
   assert.equal(document.querySelector('#agentSidebarStatus')?.tagName, 'BUTTON');
   assert.equal(document.querySelector('.agent-empty-state [data-open-settings]') !== null, true);
   assert.match(source, /\/api\/agent\/status/);
   assert.match(source, /\/api\/ai\/settings/);
   assert.match(source, /未配置模型/);
   assert.match(source, /data-open-settings/);
-  assert.match(source, /\$\('#agentComposerSettings'\)\.addEventListener\('click'/);
+  assert.match(source, /function quickSaveAgentModel/);
+  assert.match(source, /\$\('#agentComposerModelSelect'\)[\s\S]{0,120}addEventListener\('change'/);
   assert.match(source, /\$\('#agentSidebarStatus'\)\.addEventListener\('click'/);
-  assert.match(source, /openSettings\(\)/);
+  assert.doesNotMatch(html, /id="settingsButton"/);
+  assert.match(source, /openSettings\('model'\)/);
   assert.match(source, /baseVersion:\s*state\.activeDocument\?\.version/);
   assert.match(source, /data-citation-document/);
   assert.match(source, /knowledgeBase/);

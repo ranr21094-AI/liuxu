@@ -584,13 +584,14 @@ test('memory service seeds builtin Seedream L3 workflow and does not restore aft
   const store = createAgentStore(db);
   const memory = createMemoryService(store);
   const l3 = memory.list({ layer: 'L3' });
-  assert.equal(l3.length, 1);
-  assert.equal(l3[0].title, 'Seedream 生图');
-  assert.equal(l3[0].builtinId, 'seedream-generate');
-  assert.ok(l3[0].content.length <= MEMORY_CONTENT_MAX.L3);
-  assert.match(l3[0].content, /image\.generate/);
-  memory.archive(l3[0].id);
-  assert.equal(memory.list({ layer: 'L3' }).length, 0);
+  assert.equal(l3.length, 2);
+  const seedream = l3.find(item => item.builtinId === 'seedream-generate');
+  assert.ok(seedream);
+  assert.equal(seedream.title, 'Seedream 生图');
+  assert.ok(seedream.content.length <= MEMORY_CONTENT_MAX.L3);
+  assert.match(seedream.content, /image\.generate/);
+  memory.archive(seedream.id);
+  assert.equal(memory.list({ layer: 'L3' }).length, 1);
 });
 
 test('memory proposals require evidence and filter secrets', (t) => {
@@ -1006,7 +1007,7 @@ test('memory refresh honors memoryRefreshMaxProposals setting', async (t) => {
   assert.deepEqual(memories.proposals.map(item => item.title).sort(), ['A', 'B']);
 });
 
-test('contextBlocks honors memoryContextMax settings', (t) => {
+test('contextBlocks injects only L0 rules', (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
   const memory = createMemoryService(store, {
@@ -1020,11 +1021,10 @@ test('contextBlocks honors memoryContextMax settings', (t) => {
     const draft = memory.propose({ runId: `w${i}`, layer: 'L3', title: `L3-${i}`, content: `flow ${i}`, evidence: [{ type: 'run', id: `w${i}` }] });
     memory.approve(draft.proposal.id);
   }
-  const builtin = memory.list().find(item => item.builtinId);
-  if (builtin) memory.archive(builtin.id);
   const blocks = memory.contextBlocks();
-  assert.equal(blocks.l2.length, 2);
-  assert.equal(blocks.l3.length, 1);
+  assert.ok(blocks.l0?.rules?.length);
+  assert.equal(blocks.l2.length, 0);
+  assert.equal(blocks.l3.length, 0);
 });
 
 test('knowledge.import from content waits for approval then stores a document', async (t) => {
@@ -1491,7 +1491,7 @@ test('knowledge.list paginates documents in a folder', async (t) => {
   assert.equal(result.data.documents.length, 2);
 });
 
-test('memory.search finds matching L2 items', async (t) => {
+test('memory.search finds matching L2 items with snippets only', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
   const memory = createMemoryService(store);
@@ -1506,7 +1506,60 @@ test('memory.search finds matching L2 items', async (t) => {
   const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
   const result = await adapters.execute('memory.search', { query: '简洁中文', layer: 'L2' });
   assert.equal(result.ok, true);
-  assert.ok(result.data.items.some(item => item.title === '写作偏好'));
+  const match = result.data.items.find(item => item.title === '写作偏好');
+  assert.ok(match);
+  assert.ok(match.snippet);
+  assert.equal(match.content, undefined);
+  assert.ok(match.snippet.length <= 120);
+  assert.match(result.summary, /memory\.read/);
+});
+
+test('memory.list returns titles without content', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const approved = memory.approve(memory.propose({
+    runId: 'test',
+    layer: 'L2',
+    title: '列表测试',
+    content: '完整正文不应出现在 list 结果里',
+    evidence: [{ type: 'test' }],
+  }).proposal.id);
+  const { createToolAdapters } = require('../lib/agent/adapters');
+  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const result = await adapters.execute('memory.list', { layer: 'L2' });
+  assert.equal(result.ok, true);
+  const item = result.data.items.find(entry => entry.id === approved.memory.id);
+  assert.ok(item);
+  assert.equal(item.title, '列表测试');
+  assert.equal(item.content, undefined);
+});
+
+test('memory.read returns full content after search', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const body = `${'前缀'.repeat(40)}命中关键词${'后缀'.repeat(40)}`;
+  const approved = memory.approve(memory.propose({
+    runId: 'test',
+    layer: 'L3',
+    title: '流程记忆',
+    content: body,
+    evidence: [{ type: 'test' }],
+  }).proposal.id);
+  const { createToolAdapters, buildMemorySearchSnippet, MEMORY_SEARCH_SNIPPET_MAX } = require('../lib/agent/adapters');
+  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const search = await adapters.execute('memory.search', { query: '命中关键词' });
+  assert.equal(search.ok, true);
+  const hit = search.data.items.find(item => item.id === approved.memory.id);
+  assert.ok(hit?.snippet);
+  assert.ok(hit.snippet.includes('命中关键词'));
+  assert.ok(hit.snippet.length <= MEMORY_SEARCH_SNIPPET_MAX);
+  const snippet = buildMemorySearchSnippet({ title: '流程记忆', content: body }, '命中关键词');
+  assert.ok(snippet.includes('命中关键词'));
+  const read = await adapters.execute('memory.read', { id: approved.memory.id });
+  assert.equal(read.ok, true);
+  assert.equal(read.data.content, body);
 });
 
 test('agent.delegate completes a read-only sub-task', async (t) => {
@@ -1849,12 +1902,15 @@ test('resolveAgentSettings clamps defaults and enforces max limits', () => {
     agentKnowledgeListMaxLimit: 100,
     agentMemorySearchLimit: 50,
     agentMemorySearchMaxLimit: 40,
+    agentMemoryListLimit: 120,
+    agentMemoryListMaxLimit: 100,
   });
   assert.equal(resolved.agentDelegateMaxRounds, 12);
   assert.equal(resolved.agentKnowledgeSearchLimit, 60);
   assert.equal(resolved.agentKnowledgeSearchMaxLimit, 60);
   assert.equal(resolved.agentKnowledgeListLimit, 100);
   assert.equal(resolved.agentMemorySearchLimit, 40);
+  assert.equal(resolved.agentMemoryListLimit, 100);
 });
 
 test('agentDelegateMaxRounds setting caps child delegate run rounds', async (t) => {
@@ -1996,4 +2052,116 @@ test('delegated memory.propose bubbles proposal event to parent run', async (t) 
   assert.ok(bubbled);
   assert.equal(bubbled.payload.delegateTitle, '整理记忆');
   assert.ok(bubbled.payload.id || bubbled.payload.proposal?.id);
+});
+
+test('listSessionSummaries includes activeRun for in-progress runs', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const session = store.createSession('active');
+  store.saveRun({
+    id: 'run-active',
+    sessionId: session.id,
+    status: 'waiting_approval',
+    createdAt: Date.now(),
+  });
+  const summary = store.listSessionSummaries().find(item => item.id === session.id);
+  assert.deepEqual(summary.activeRun, { id: 'run-active', status: 'waiting_approval' });
+});
+
+test('runtime.start rejects a second active run for the same session', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: 'hang' } }] };
+      },
+    },
+  });
+  const session = store.createSession('parallel-guard');
+  const first = await runtime.start({ session, goal: 'first', userMessage: 'first' });
+  assert.ok(first.id);
+  await waitForRun(store, first.id, 800);
+  assert.equal(store.getRun(first.id).status, 'waiting_approval');
+  const second = await runtime.start({
+    session: store.getSession(session.id),
+    goal: 'second',
+    userMessage: 'second',
+  });
+  assert.equal(second.error, 'Session already has an active run');
+  assert.equal(second.status, 409);
+});
+
+test('agent messages API allows parallel runs across sessions but not within one session', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const sessionA = store.createSession('session-a');
+  const sessionB = store.createSession('session-b');
+  const app = express();
+  app.use(express.json());
+  registerAgentRoutes(app, {
+    db,
+    hasDiaryAccess: () => false,
+    agentStatusFor: async () => ({ configured: true, provider: 'test', model: 'stub' }),
+    modelClientFor: async () => ({
+      async complete() {
+        return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: 'hang' } }] };
+      },
+    }),
+  });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const postMessage = (sessionId, content) => fetch(`${base}/api/agent/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+
+  const firstA = await postMessage(sessionA.id, 'run a');
+  assert.equal(firstA.status, 202);
+  const bodyA = await firstA.json();
+  await waitForRun(store, bodyA.runId, 800);
+  assert.equal(store.getRun(bodyA.runId).status, 'waiting_approval');
+
+  const duplicateA = await postMessage(sessionA.id, 'run a again');
+  assert.equal(duplicateA.status, 409);
+  assert.match((await duplicateA.json()).error, /active run/i);
+
+  const firstB = await postMessage(sessionB.id, 'run b');
+  assert.equal(firstB.status, 202);
+  const bodyB = await firstB.json();
+  await waitForRun(store, bodyB.runId, 800);
+  assert.equal(store.getRun(bodyB.runId).status, 'waiting_approval');
+
+  const listed = await fetch(`${base}/api/agent/sessions`);
+  assert.equal(listed.status, 200);
+  const summaries = (await listed.json()).sessions;
+  const summaryA = summaries.find(item => item.id === sessionA.id);
+  const summaryB = summaries.find(item => item.id === sessionB.id);
+  assert.deepEqual(summaryA.activeRun, { id: bodyA.runId, status: 'waiting_approval' });
+  assert.deepEqual(summaryB.activeRun, { id: bodyB.runId, status: 'waiting_approval' });
+});
+
+test('workbench tracks per-session runs for parallel agent sessions', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'workbench.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'workbench.css'), 'utf8');
+  assert.match(source, /sessionRuns:\s*new Map\(\)/);
+  assert.match(source, /function subscribeRun\(sessionId,\s*runId/);
+  assert.match(source, /function handleRunEvent\(sessionId,\s*event\)/);
+  assert.match(source, /function activeRunState\(\)/);
+  assert.match(source, /function updateSessionRunBadge/);
+  assert.match(source, /MAX_PARALLEL_SESSION_SSE/);
+  assert.match(source, /sessionMessagesFingerprint/);
+  assert.match(source, /session-run-badge/);
+  assert.match(styles, /\.session-run-badge/);
+  assert.match(source, /BLOCKING_RUN_STATES\.has\(activeRunState\(\)\?\.status/);
+  assert.doesNotMatch(source, /function setSessionRunStatus[\s\S]{0,500}renderSessions\(\)/);
 });

@@ -54,15 +54,26 @@ export function closeMarkdownImagePreview() {
   }
 }
 
-export function openMarkdownImagePreview(sourceImage) {
-  if (!sourceImage) return false;
-  const src = sourceImage.currentSrc || sourceImage.getAttribute('src') || sourceImage.src;
-  if (!src) return false;
+function resolvePreviewSource(source) {
+  if (typeof source === 'string') {
+    const src = source.trim();
+    return src ? { src, alt: '附件图片' } : null;
+  }
+  if (!source || typeof source !== 'object') return null;
+  const src = source.currentSrc || source.getAttribute?.('src') || source.src || '';
+  if (!src) return null;
+  return { src, alt: source.getAttribute?.('alt') || '日志图片' };
+}
+
+export function openMarkdownImagePreview(sourceImage, altText = '') {
+  const resolved = resolvePreviewSource(sourceImage);
+  if (!resolved) return false;
+  const alt = typeof altText === 'string' && altText.trim() ? altText.trim() : resolved.alt;
 
   const overlay = ensureOverlay();
   const previewImage = overlay.querySelector('.markdown-image-lightbox-img');
-  previewImage.src = src;
-  previewImage.alt = sourceImage.getAttribute('alt') || '日志图片';
+  previewImage.src = resolved.src;
+  previewImage.alt = alt;
 
   if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
   escapeHandler = (event) => {

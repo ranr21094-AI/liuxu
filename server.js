@@ -13,8 +13,56 @@ const { createAuthStore } = require('./auth-store');
 const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
 const { isPrivateIpLiteral, validateGeneratedImageUrl } = require('./lib/net/ssrf');
 const { toolResult, toProviderTools, fromProviderName } = require('./lib/agent/tools');
+const { buildAiProviderMessages } = require('./lib/agent/provider-messages');
+const {
+  normalizeCustomProviders,
+  mergeCustomProviderSecrets,
+  validateProviderBaseUrl,
+  resolveCustomModel,
+  buildCustomModelRecords,
+  publicCustomProviders,
+  isStoredCustomModel,
+  isCustomModelId,
+} = require('./lib/agent/custom-providers');
+const {
+  buildCustomProviderRequest,
+  parseCustomProviderReply,
+  buildCustomProviderTestBody,
+  normalizeOpenAiBaseUrl,
+  normalizeAnthropicBaseUrl,
+} = require('./lib/agent/custom-api');
 const { parseMemorySettingsInput } = require('./lib/agent/memory-settings');
 const { parseAgentSettingsInput } = require('./lib/agent/agent-settings');
+const {
+  SEEDREAM_ALLOWED_MODELS,
+  parseSeedreamSettingsInput,
+  mergeSeedreamCallArgs,
+  validateSeedreamArgs,
+  buildSeedreamRequestBody,
+  parseSeedreamResponse,
+  parseSeedreamStreamChunk,
+  resolveReferenceImages,
+  buildSeedreamMarkdown,
+  SEEDREAM_DEFAULT_MODEL: SEEDREAM_DEFAULT_MODEL_ID,
+} = require('./lib/agent/seedream');
+const {
+  parseGetokenSettingsInput,
+  mergeGetokenCallArgs,
+  validateGetokenArgs,
+  requestGetokenGeneration,
+  requestGetokenEdit,
+  buildGetokenMarkdown,
+  normalizeImageProvider,
+  resolveGetokenApiKey,
+  isGetokenModelKeyConfigured,
+  getGetokenModelDefinition,
+} = require('./lib/agent/getoken');
+const {
+  createImageUploader,
+  uploadedImageMatchesExtension: matchesUploadedImage,
+  serializeUploadedFile,
+  AGENT_UPLOAD_EXTENSIONS,
+} = require('./lib/http/upload-image');
 const { serviceFor: knowledgeServiceFor } = require('./lib/knowledge/routes');
 
 const app = express();
@@ -40,13 +88,18 @@ const PERPLEXITY_API_KEY = process.env.PERPLEXITY_API_KEY || '';
 const PERPLEXITY_BASE_URL = (process.env.PERPLEXITY_BASE_URL || 'https://api.perplexity.ai').replace(/\/+$/, '');
 const SEEDREAM_API_KEY = process.env.SEEDREAM_API_KEY || '';
 const SEEDREAM_BASE_URL = (process.env.SEEDREAM_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
-const SEEDREAM_DEFAULT_MODEL = process.env.SEEDREAM_DEFAULT_MODEL || 'doubao-seedream-5-0-260128';
+const SEEDREAM_DEFAULT_MODEL = process.env.SEEDREAM_DEFAULT_MODEL || SEEDREAM_DEFAULT_MODEL_ID;
+const GETOKEN_API_KEY = process.env.GETOKEN_API_KEY || '';
+const GETOKEN_GROK_IMAGINE_API_KEY = process.env.GETOKEN_GROK_IMAGINE_API_KEY || '';
+const GETOKEN_NANO_BANANA_API_KEY = process.env.GETOKEN_NANO_BANANA_API_KEY || '';
+const GETOKEN_BASE_URL = (process.env.GETOKEN_BASE_URL || 'https://api.getoken.tech').replace(/\/+$/, '');
 const WESTOCK_NPX_COMMAND = process.env.WESTOCK_NPX_COMMAND || 'npx -y westock-data-clawhub@1.0.4';
 const QQ_EMAIL_ACCOUNT = process.env.QQ_EMAIL_ACCOUNT || '';
 const QQ_EMAIL_AUTH_CODE = process.env.QQ_EMAIL_AUTH_CODE || '';
 const AI_MODEL_PROFILES = Object.freeze({
   'deepseek-v4-flash': { provider: 'deepseek', name: 'DeepSeek Flash', inputModalities: ['text'], outputModalities: ['text'], contextLength: null, supportsMedia: false, preserveReasoning: false },
   'deepseek-v4-pro': { provider: 'deepseek', name: 'DeepSeek Pro', inputModalities: ['text'], outputModalities: ['text'], contextLength: null, supportsMedia: false, preserveReasoning: false },
+  'deepseek-v4-flash-vision-exp': { provider: 'deepseek', name: 'DeepSeek Flash Vision', inputModalities: ['text', 'image'], outputModalities: ['text'], contextLength: null, supportsMedia: true, preserveReasoning: false },
   'kimi-k3': { provider: 'moonshot', name: 'Kimi K3', inputModalities: ['text', 'image', 'video'], outputModalities: ['text'], contextLength: null, supportsMedia: true, preserveReasoning: true, thinking: 'k3' },
   'kimi-k2.7-code': { provider: 'moonshot', name: 'Kimi K2.7 Code', inputModalities: ['text', 'image', 'video'], outputModalities: ['text'], contextLength: null, supportsMedia: true, preserveReasoning: true, thinking: 'fixed' },
   'kimi-k2.6': { provider: 'moonshot', name: 'Kimi K2.6', inputModalities: ['text', 'image', 'video'], outputModalities: ['text'], contextLength: null, supportsMedia: true, preserveReasoning: true, thinking: 'optional' },
@@ -57,8 +110,6 @@ const AI_ALLOWED_REASONING = new Set(['minimal', 'low', 'medium', 'high', 'xhigh
 const AI_ALLOWED_REASONING_MODES = new Set(['default', 'disabled', 'effort']);
 const OPENROUTER_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,79}\/[a-z0-9][a-z0-9._:+-]{0,119}$/i;
 const AI_ALLOWED_SEARCH_DEPTH = new Set(['basic', 'advanced']);
-const SEEDREAM_ALLOWED_MODELS = new Set(['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828']);
-const SEEDREAM_ALLOWED_SIZE_KEYWORDS = new Set(['2K', '3K', '4K']);
 const OPENROUTER_MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
 const OPENROUTER_MODELS_STALE_TTL_MS = 24 * 60 * 60 * 1000;
 const OPENROUTER_MODELS_MAX_BYTES = 8 * 1024 * 1024;
@@ -864,63 +915,32 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 app.use('/api/ai', rateLimiter(60, 60 * 1000));
 app.use('/api/ai', concurrencyLimiter(4, req => req.user?.id || 'anon'));
 app.use('/api/upload', rateLimiter(20, 60 * 1000));
+app.use('/api/agent/uploads', rateLimiter(20, 60 * 1000));
 
 // Image upload setup
 function currentUploadsDirectory() {
   return path.join(currentDatabase().dataDir, 'uploads');
 }
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    const directory = currentUploadsDirectory();
-    fs.mkdirSync(directory, { recursive: true });
-    cb(null, directory);
-  },
-  filename: (_req, _file, cb) => {
-    const ext = path.extname(_file.originalname).toLowerCase();
-    const name = Date.now() + '-' + crypto.randomBytes(6).toString('hex') + ext;
-    cb(null, name);
-  },
+const upload = createImageUploader({
+  getUploadsDirectory: currentUploadsDirectory,
+  maxFileSize: 10 * 1024 * 1024,
+  maxFiles: 1,
 });
 
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: 10 * 1024 * 1024,
-    files: 1,
-    fields: 2,
-    parts: 3,
-    fieldNameSize: 64,
-    fieldSize: 64,
-  },
-  fileFilter: (_req, _file, cb) => {
-    const allowed = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'];
-    const ext = path.extname(_file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PNG, JPG, GIF, WebP, and BMP images are supported'));
-    }
-  },
+const agentUpload = createImageUploader({
+  getUploadsDirectory: currentUploadsDirectory,
+  maxFileSize: 30 * 1024 * 1024,
+  maxFiles: 14,
+  allowedExtensions: AGENT_UPLOAD_EXTENSIONS,
 });
 
 function uploadedImageMatchesExtension(file) {
-  const ext = path.extname(file.filename).toLowerCase();
-  const header = Buffer.alloc(16);
-  const fd = fs.openSync(file.path, 'r');
-  let bytesRead = 0;
-  try {
-    bytesRead = fs.readSync(fd, header, 0, header.length, 0);
-  } finally {
-    fs.closeSync(fd);
-  }
-  if (bytesRead < 2) return false;
-  if (ext === '.png') return header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  if (ext === '.jpg' || ext === '.jpeg') return header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
-  if (ext === '.gif') return header.subarray(0, 6).toString('ascii') === 'GIF87a' || header.subarray(0, 6).toString('ascii') === 'GIF89a';
-  if (ext === '.webp') return header.subarray(0, 4).toString('ascii') === 'RIFF' && header.subarray(8, 12).toString('ascii') === 'WEBP';
-  if (ext === '.bmp') return header.subarray(0, 2).toString('ascii') === 'BM';
-  return false;
+  return matchesUploadedImage(file, { allowExtended: false });
+}
+
+function agentUploadedImageMatchesExtension(file) {
+  return matchesUploadedImage(file, { allowExtended: true });
 }
 
 app.post('/api/auth/logout', (req, res) => {
@@ -1103,13 +1123,20 @@ function nextStoredSecret(body, field, current) {
 function aiProviderLabel(provider) {
   if (provider === 'moonshot') return 'Kimi';
   if (provider === 'openrouter') return 'OpenRouter';
+  if (provider === 'custom') return 'Custom';
   return 'DeepSeek';
 }
 
 function safeAiProviderError(provider, status, data) {
   if (provider === 'deepseek') return safeDeepSeekError(status, data);
   if (provider === 'openrouter') return safeOpenRouterError(status, data);
-  const detail = sanitizeProviderText(data?.error?.message || data?.error || data?.message || '', 240);
+  const detail = sanitizeProviderText(
+    data?.error?.message || data?.error?.message || data?.error || data?.message || '',
+    240,
+  );
+  if (provider === 'custom') {
+    return detail ? `Custom model request failed (${status}): ${detail}` : `Custom model request failed (${status})`;
+  }
   return detail
     ? `Kimi request failed (${status}): ${detail}`
     : `Kimi request failed (${status})`;
@@ -1276,8 +1303,28 @@ async function getOpenRouterModelCatalog(apiKey, options = {}) {
   return (await getOpenRouterModelCatalogResult(apiKey, options)).models;
 }
 
-async function resolveAiModelProfile(model, apiKey, signal) {
+async function resolveAiModelProfile(model, apiKey, signal, settings = null) {
   if (AI_MODEL_PROFILES[model]) return AI_MODEL_PROFILES[model];
+  const aiSettings = settings || db.getAiSettings();
+  const custom = resolveCustomModel(aiSettings, model);
+  if (custom) {
+    return {
+      provider: 'custom',
+      name: custom.catalogModel.name || custom.modelId,
+      baseUrl: custom.provider.baseUrl,
+      apiFormat: custom.provider.apiFormat || 'openai',
+      customProviderId: custom.provider.id,
+      supportsMedia: false,
+      preserveReasoning: false,
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      contextLength: null,
+      supportedParameters: custom.provider.apiFormat === 'anthropic' ? [] : ['tools'],
+      reasoning: { supported: false, supportedEfforts: [], defaultEffort: null, defaultEnabled: null, mandatory: false },
+      catalogModel: custom.catalogModel,
+      customProvider: custom.provider,
+    };
+  }
   if (!OPENROUTER_MODEL_ID_PATTERN.test(model || '')) {
     const error = new Error('Unsupported AI model');
     error.status = 400;
@@ -1324,7 +1371,7 @@ function validateReasoningSelection(profile, mode, effort) {
   }
 }
 
-function parseAiSettingsInput(body, current = {}) {
+async function parseAiSettingsInput(body, current = {}) {
   const model = body?.model ?? current.model ?? 'deepseek-v4-flash';
   const reasoningEffort = body?.reasoningEffort ?? current.reasoningEffort ?? 'high';
   const reasoningMode = body?.reasoningMode ?? current.reasoningMode ?? 'effort';
@@ -1335,10 +1382,14 @@ function parseAiSettingsInput(body, current = {}) {
     ? current.openrouterZdrEnabled !== false
     : body.openrouterZdrEnabled;
   const webSearchDepth = body?.webSearchDepth ?? current.webSearchDepth ?? 'basic';
-  const seedreamModel = body?.seedreamModel ?? current.seedreamModel ?? SEEDREAM_DEFAULT_MODEL;
-  const seedreamSize = body?.seedreamSize ?? current.seedreamSize ?? '2K';
-  const seedreamWatermark = body?.seedreamWatermark === undefined ? current.seedreamWatermark !== false : body.seedreamWatermark;
-  if (!AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model)) {
+  const seedreamSettings = parseSeedreamSettingsInput(body, current);
+  const getokenSettings = parseGetokenSettingsInput(body, current);
+  const customProviders = await normalizeCustomProviders(
+    mergeCustomProviderSecrets(body?.customProviders, current.customProviders || []),
+    current.customProviders || [],
+  );
+  const candidateSettings = { ...current, ...body, customProviders };
+  if (!AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model) && !isStoredCustomModel(model, candidateSettings)) {
     throw new Error('Unsupported AI model');
   }
   if (!AI_ALLOWED_REASONING.has(reasoningEffort)) {
@@ -1361,15 +1412,6 @@ function parseAiSettingsInput(body, current = {}) {
   }
   if (!AI_ALLOWED_SEARCH_DEPTH.has(webSearchDepth)) {
     throw new Error('Unsupported web search depth');
-  }
-  if (!SEEDREAM_ALLOWED_MODELS.has(seedreamModel)) {
-    throw new Error('Unsupported Seedream model');
-  }
-  if (!isValidSeedreamSize(seedreamSize)) {
-    throw new Error('Unsupported Seedream size');
-  }
-  if (typeof seedreamWatermark !== 'boolean') {
-    throw new Error('Unsupported Seedream watermark option');
   }
   const skillSource = body?.skills && typeof body.skills === 'object' && !Array.isArray(body.skills)
     ? body.skills
@@ -1405,15 +1447,18 @@ function parseAiSettingsInput(body, current = {}) {
     openrouterZdrEnabled,
     webSearchDepth,
     seedreamApiKey: nextStoredSecret(body, 'seedreamApiKey', current.seedreamApiKey),
-    seedreamModel,
-    seedreamSize,
-    seedreamWatermark,
+    getokenApiKey: nextStoredSecret(body, 'getokenApiKey', current.getokenApiKey),
+    getokenGrokImagineApiKey: nextStoredSecret(body, 'getokenGrokImagineApiKey', current.getokenGrokImagineApiKey),
+    getokenNanoBananaApiKey: nextStoredSecret(body, 'getokenNanoBananaApiKey', current.getokenNanoBananaApiKey),
+    ...seedreamSettings,
+    ...getokenSettings,
     skills: {
       westock: { enabled: westockSource.enabled !== false },
       perplexity: { enabled: perplexitySource.enabled !== false },
     },
     agentMaxRounds,
     agentFileReadMaxMb,
+    customProviders,
     ...memorySettings,
     ...agentSettings,
   };
@@ -1447,6 +1492,19 @@ function serverAiSecretForUser(user, secret) {
   return user?.storage_key === 'legacy' ? secret : '';
 }
 
+function getokenEnvSecret(envVar) {
+  switch (envVar) {
+    case 'GETOKEN_API_KEY': return GETOKEN_API_KEY;
+    case 'GETOKEN_GROK_IMAGINE_API_KEY': return GETOKEN_GROK_IMAGINE_API_KEY;
+    case 'GETOKEN_NANO_BANANA_API_KEY': return GETOKEN_NANO_BANANA_API_KEY;
+    default: return '';
+  }
+}
+
+function serverGetokenEnvLookup(user) {
+  return envVar => serverAiSecretForUser(user, getokenEnvSecret(envVar));
+}
+
 function publicAiSettings(settings, user) {
   const {
     stream: _stream,
@@ -1454,22 +1512,30 @@ function publicAiSettings(settings, user) {
     logContextEnabled: _logContextEnabled,
     diaryContextEnabled: _diaryContextEnabled,
     logAccessPolicy: _logAccessPolicy,
+    customProviders: rawCustomProviders,
     ...rest
   } = settings;
   return {
     ...rest,
+    customProviders: publicCustomProviders(rawCustomProviders || []),
     apiKey: '',
     moonshotApiKey: '',
     openrouterApiKey: '',
     tavilyApiKey: '',
     perplexityApiKey: '',
     seedreamApiKey: '',
+    getokenApiKey: '',
+    getokenGrokImagineApiKey: '',
+    getokenNanoBananaApiKey: '',
     apiKeyConfigured: Boolean(settings.apiKey || serverAiSecretForUser(user, DEEPSEEK_API_KEY)),
     moonshotApiKeyConfigured: Boolean(settings.moonshotApiKey || serverAiSecretForUser(user, MOONSHOT_API_KEY)),
     openrouterApiKeyConfigured: Boolean(settings.openrouterApiKey || serverAiSecretForUser(user, OPENROUTER_API_KEY)),
     tavilyApiKeyConfigured: Boolean(settings.tavilyApiKey || serverAiSecretForUser(user, TAVILY_API_KEY)),
     perplexityApiKeyConfigured: Boolean(settings.perplexityApiKey || serverAiSecretForUser(user, PERPLEXITY_API_KEY)),
     seedreamApiKeyConfigured: Boolean(settings.seedreamApiKey || serverAiSecretForUser(user, SEEDREAM_API_KEY)),
+    getokenApiKeyConfigured: isGetokenModelKeyConfigured('gpt-image-2', settings, serverGetokenEnvLookup(user)),
+    getokenGrokImagineApiKeyConfigured: isGetokenModelKeyConfigured('grok-imagine-image', settings, serverGetokenEnvLookup(user)),
+    getokenNanoBananaApiKeyConfigured: isGetokenModelKeyConfigured('nano-banana-2', settings, serverGetokenEnvLookup(user)),
   };
 }
 
@@ -1479,18 +1545,6 @@ function publicAiSettings(settings, user) {
 
 
 
-function isValidSeedreamSize(size) {
-  if (typeof size !== 'string') return false;
-  const value = size.trim();
-  if (SEEDREAM_ALLOWED_SIZE_KEYWORDS.has(value)) return true;
-  const match = /^(\d{3,5})x(\d{3,5})$/i.exec(value);
-  if (!match) return false;
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  const pixels = width * height;
-  return width >= 512 && height >= 512 && pixels >= 921600 && pixels <= 16777216;
-}
-
 function safeSeedreamError(status, data) {
   const detail = sanitizeProviderText(data?.error?.message || data?.error || data?.message || '', 240);
   return detail
@@ -1498,25 +1552,16 @@ function safeSeedreamError(status, data) {
     : `Seedream request failed (${status})`;
 }
 
-function resolveSeedreamOptions(body, user) {
+function resolveSeedreamOptions(body, user, req) {
   const saved = db.getAiSettings();
-  const model = body?.model || saved.seedreamModel || SEEDREAM_DEFAULT_MODEL;
-  const size = body?.size || saved.seedreamSize || '2K';
-  const watermark = body?.watermark === undefined ? saved.seedreamWatermark !== false : body.watermark;
-  if (!SEEDREAM_ALLOWED_MODELS.has(model)) {
-    throw new Error('Unsupported Seedream model');
-  }
-  if (!isValidSeedreamSize(size)) {
-    throw new Error('Unsupported Seedream size');
-  }
-  if (typeof watermark !== 'boolean') {
-    throw new Error('Unsupported Seedream watermark option');
-  }
+  const merged = mergeSeedreamCallArgs(body || {}, saved);
+  const validationError = validateSeedreamArgs(merged);
+  if (validationError) throw new Error(validationError);
   return {
     apiKey: saved.seedreamApiKey || serverAiSecretForUser(user, SEEDREAM_API_KEY),
-    model,
-    size,
-    watermark,
+    req,
+    dataDir: currentDatabase().dataDir,
+    ...merged,
   };
 }
 
@@ -1549,8 +1594,20 @@ async function fetchGeneratedImageWithRedirectGuard(url, timeoutMs) {
   throw new Error('Generated image redirect limit exceeded');
 }
 
-async function downloadGeneratedImage(url) {
-  const imageResponse = await fetchGeneratedImageWithRedirectGuard(url, 30000);
+async function saveGeneratedImageBuffer(buffer, contentType = '', fallbackUrl = '') {
+  if (!buffer?.length) throw new Error('Generated image size is invalid');
+  const maxBytes = 20 * 1024 * 1024;
+  if (buffer.length > maxBytes) throw new Error('Generated image size is invalid');
+  const uploadsDirectory = currentUploadsDirectory();
+  fs.mkdirSync(uploadsDirectory, { recursive: true });
+  const ext = extensionFromContentType(contentType, fallbackUrl);
+  const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  fs.writeFileSync(path.join(uploadsDirectory, filename), buffer);
+  return { filename, url: `/uploads/${filename}` };
+}
+
+async function downloadGeneratedImage(url, timeoutMs = 120000) {
+  const imageResponse = await fetchGeneratedImageWithRedirectGuard(url, timeoutMs);
   if (!imageResponse.ok) {
     throw new Error(`Generated image download failed (${imageResponse.status})`);
   }
@@ -1578,37 +1635,98 @@ async function downloadGeneratedImage(url) {
     chunks.push(Buffer.from(value));
   }
   const buffer = Buffer.concat(chunks, total);
-  if (!buffer.length) throw new Error('Generated image size is invalid');
-  const uploadsDirectory = currentUploadsDirectory();
-  fs.mkdirSync(uploadsDirectory, { recursive: true });
-  const ext = extensionFromContentType(contentType, url);
-  const filename = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-  fs.writeFileSync(path.join(uploadsDirectory, filename), buffer);
-  return { filename, url: `/uploads/${filename}` };
+  return saveGeneratedImageBuffer(buffer, contentType, url);
 }
 
-async function requestSeedreamImage({ prompt, model, size, watermark, apiKey }) {
+function resolveGetokenOptions(body, user, req) {
+  const saved = db.getAiSettings();
+  const merged = mergeGetokenCallArgs(body || {}, saved);
+  const validationError = validateGetokenArgs(merged);
+  if (validationError) throw new Error(validationError);
+  return {
+    apiKey: resolveGetokenApiKey(merged.model, saved, serverGetokenEnvLookup(user)),
+    req,
+    dataDir: currentDatabase().dataDir,
+    isSafeUploadFilename: currentDatabase().isSafeUploadFilename.bind(currentDatabase()),
+    ...merged,
+  };
+}
+
+async function persistGeneratedItem(item, { contentType = 'image/png' } = {}) {
+  const errors = [];
+  if (item.b64) {
+    try {
+      const raw = String(item.b64).replace(/^data:image\/[^;]+;base64,/, '');
+      const buffer = Buffer.from(raw, 'base64');
+      if (!buffer.length) throw new Error('Generated image base64 was empty');
+      const type = item.outputFormat === 'jpeg' ? 'image/jpeg' : contentType;
+      return saveGeneratedImageBuffer(buffer, type);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  if (item.url) {
+    try {
+      return downloadGeneratedImage(item.url);
+    } catch (error) {
+      errors.push(error.message);
+    }
+  }
+  throw new Error(errors[0] || 'Generated item had no image data');
+}
+
+async function persistSeedreamItem(item) {
+  return persistGeneratedItem(item, {
+    contentType: item.outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png',
+  });
+}
+
+async function requestSeedreamGeneration(options) {
+  const preferPublicUrl = process.env.SEEDREAM_PREFER_PUBLIC_URL === '1';
+  const publicOrigin = options.req ? `${options.req.protocol}://${options.req.get('host')}` : '';
+  const resolvedImages = await resolveReferenceImages(options.images, {
+    dataDir: options.dataDir,
+    isSafeUploadFilename: db.isSafeUploadFilename,
+    preferPublicUrl,
+    publicOrigin,
+  });
+  const payload = buildSeedreamRequestBody(options, resolvedImages);
   const response = await fetchWithTimeout(`${SEEDREAM_BASE_URL}/images/generations`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
+      Accept: options.stream ? 'text/event-stream' : 'application/json',
     },
-    body: JSON.stringify({
-      model,
-      prompt,
-      size,
-      response_format: 'url',
-      watermark,
-    }),
+    body: JSON.stringify(payload),
   }, 120000);
+
+  if (options.stream) {
+    const text = await readResponseTextWithLimit(response, 8 * 1024 * 1024, 'Seedream stream response is too large');
+    if (!response.ok) {
+      let data = {};
+      try { data = JSON.parse(text); } catch { data = {}; }
+      throw new Error(safeSeedreamError(response.status, data));
+    }
+    return { items: parseSeedreamStreamChunk(text), usage: null, error: null };
+  }
+
   const text = await readResponseTextWithLimit(response, 200000, 'Seedream response is too large');
   let data = {};
   try { data = JSON.parse(text); } catch { data = {}; }
   if (!response.ok) throw new Error(safeSeedreamError(response.status, data));
-  const url = data?.data?.[0]?.url;
-  if (typeof url !== 'string' || !url.trim()) throw new Error('Seedream did not return an image URL');
-  return url.trim();
+  const parsed = parseSeedreamResponse(data);
+  if (parsed.error && !parsed.items.some(item => item.url || item.b64)) {
+    throw new Error(parsed.error.message || 'Seedream did not return any images');
+  }
+  return parsed;
+}
+
+async function requestSeedreamImage(options) {
+  const result = await requestSeedreamGeneration({ ...options, stream: false });
+  const first = result.items.find(item => item.url);
+  if (!first?.url) throw new Error('Seedream did not return an image URL');
+  return first.url.trim();
 }
 
 async function resolveAiChatOptions(body, user, signal) {
@@ -1628,7 +1746,7 @@ async function resolveAiChatOptions(body, user, signal) {
   const openrouterZdrEnabled = Boolean(saved.openrouterZdrEnabled) || requestedOpenrouterZdr === true;
   const webSearchDepth = body?.webSearchDepth || saved.webSearchDepth || 'basic';
 
-  if (!AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model)) {
+  if (!AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model) && !isCustomModelId(model)) {
     throw new Error('Unsupported AI model');
   }
   if (!AI_ALLOWED_THINKING.has(thinkingMode)) {
@@ -1655,21 +1773,28 @@ async function resolveAiChatOptions(body, user, signal) {
   const requestTavilyApiKey = typeof body?.tavilyApiKey === 'string' ? body.tavilyApiKey.trim() : '';
   const requestPerplexityApiKey = typeof body?.perplexityApiKey === 'string' ? body.perplexityApiKey.trim() : '';
   const openrouterApiKey = openrouterApiKeyForUser(saved, user);
-  const profile = await resolveAiModelProfile(model, openrouterApiKey, signal);
+  const customResolved = resolveCustomModel(saved, model);
+  const profile = await resolveAiModelProfile(model, openrouterApiKey, signal, saved);
   validateReasoningSelection(profile, reasoningMode, reasoningEffort);
-  const providerApiKey = profile.provider === 'moonshot'
-    ? (requestMoonshotApiKey || saved.moonshotApiKey || serverAiSecretForUser(user, MOONSHOT_API_KEY))
-    : profile.provider === 'openrouter'
-      ? openrouterApiKey
-      : (requestApiKey || saved.apiKey || serverAiSecretForUser(user, DEEPSEEK_API_KEY));
+  const providerApiKey = profile.provider === 'custom'
+    ? (profile.customProvider?.apiKey || '')
+    : profile.provider === 'moonshot'
+      ? (requestMoonshotApiKey || saved.moonshotApiKey || serverAiSecretForUser(user, MOONSHOT_API_KEY))
+      : profile.provider === 'openrouter'
+        ? openrouterApiKey
+        : (requestApiKey || saved.apiKey || serverAiSecretForUser(user, DEEPSEEK_API_KEY));
   return {
     apiKey: providerApiKey,
     provider: profile.provider,
     profile,
-    baseUrl: profile.provider === 'moonshot'
-      ? MOONSHOT_BASE_URL
-      : profile.provider === 'openrouter' ? OPENROUTER_BASE_URL : DEEPSEEK_BASE_URL,
-    model,
+    baseUrl: profile.provider === 'custom'
+      ? profile.baseUrl
+      : profile.provider === 'moonshot'
+        ? MOONSHOT_BASE_URL
+        : profile.provider === 'openrouter' ? OPENROUTER_BASE_URL : DEEPSEEK_BASE_URL,
+    apiFormat: profile.apiFormat || 'openai',
+    model: customResolved ? customResolved.modelId : model,
+    settingsModel: model,
     thinkingMode,
     reasoningEffort,
     reasoningMode,
@@ -2129,6 +2254,7 @@ app.get('/api/ai/models', async (req, res) => {
       });
       models = models.concat(openrouterCatalog.models);
     }
+    models = models.concat(buildCustomModelRecords(settings.customProviders || []));
     const query = typeof req.query?.q === 'string' ? req.query.q.trim().toLowerCase().slice(0, 100) : '';
     if (query) models = models.filter(model => `${model.name} ${model.id} ${model.provider}`.toLowerCase().includes(query));
     res.json({
@@ -2156,10 +2282,10 @@ app.get('/api/ai/settings', (req, res) => {
 app.put('/api/ai/settings', async (req, res) => {
   try {
     const current = db.getAiSettings();
-    const candidate = parseAiSettingsInput(req.body, current);
+    const candidate = await parseAiSettingsInput(req.body, current);
     if (!AI_MODEL_PROFILES[candidate.model]) {
       const apiKey = openrouterApiKeyForUser(candidate, req.user);
-      const profile = await resolveAiModelProfile(candidate.model, apiKey);
+      const profile = await resolveAiModelProfile(candidate.model, apiKey, undefined, candidate);
       validateReasoningSelection(profile, candidate.reasoningMode, candidate.reasoningEffort);
     }
     const saved = db.saveAiSettings(candidate);
@@ -2167,6 +2293,52 @@ app.put('/api/ai/settings', async (req, res) => {
   } catch (err) {
     const status = err.status && [400, 503].includes(err.status) ? err.status : 400;
     res.status(status).json({ error: err.message || 'Failed to save AI settings' });
+  }
+});
+
+app.post('/api/ai/custom-providers/test', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const apiFormat = body.apiFormat === 'anthropic'
+      ? 'anthropic'
+      : body.apiFormat === 'responses'
+        ? 'responses'
+        : 'openai';
+    const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim().slice(0, 120) : '';
+    const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const urlCheck = await validateProviderBaseUrl(body.baseUrl);
+    if (urlCheck.error) return res.status(400).json({ error: urlCheck.error });
+    if (!model) return res.status(400).json({ error: 'Model id is required' });
+    if (apiFormat === 'anthropic' && !apiKey) return res.status(400).json({ error: 'Anthropic custom endpoints require an API key' });
+    const options = {
+      provider: 'custom',
+      apiFormat,
+      baseUrl: urlCheck.value,
+      apiKey,
+      model,
+      profile: { apiFormat },
+    };
+    const test = buildCustomProviderTestBody(apiFormat, model);
+    const request = buildCustomProviderRequest({
+      options,
+      messages: apiFormat === 'responses' ? [{ role: 'user', content: 'ping' }] : test.body.messages,
+      tools: [],
+      stream: false,
+      extras: apiFormat === 'responses' ? { max_output_tokens: test.body.max_output_tokens || 16 } : {},
+    });
+    if (apiFormat === 'openai') request.body.max_tokens = test.body.max_tokens;
+    const upstream = await fetchWithTimeout(request.url, {
+      method: 'POST',
+      headers: request.headers,
+      body: JSON.stringify(request.body),
+    }, 15000);
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok || data?.error) {
+      return res.status(502).json({ error: safeAiProviderError('custom', upstream.status, data) });
+    }
+    res.json({ ok: true, status: upstream.status });
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'Connection test failed' });
   }
 });
 
@@ -2725,6 +2897,21 @@ function assertAiContextCapacity(options, payload) {
 async function fetchAiProviderUpstream(options, payload, signal) {
   assertAiContextCapacity(options, payload);
   try {
+    if (options.provider === 'custom') {
+      const request = buildCustomProviderRequest({
+        options,
+        messages: payload.messages,
+        tools: payload.tools,
+        toolChoice: payload.tool_choice,
+        stream: payload.stream,
+      });
+      return await fetchWithTimeout(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+        signal,
+      }, 120000);
+    }
     const headers = {
       'Authorization': `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
@@ -2735,7 +2922,7 @@ async function fetchAiProviderUpstream(options, payload, signal) {
       headers,
       body: JSON.stringify(payload),
       signal,
-    });
+    }, 120000);
   } catch (error) {
     if (signal?.aborted) throw error;
     const wrapped = new Error(`${aiProviderLabel(options.provider)} request failed: network error or timeout`);
@@ -2787,6 +2974,16 @@ async function fetchAiProviderReply({ options, payload, signal }) {
     const err = new Error(safeAiProviderError(options.provider, upstream.status, data));
     err.status = 502;
     throw err;
+  }
+  if (options.provider === 'custom') {
+    const apiFormat = options.profile?.apiFormat || options.apiFormat || 'openai';
+    const parsed = parseCustomProviderReply(apiFormat, data);
+    if (!parsed.content && !parsed.toolCalls.length) {
+      const err = new Error(`${aiProviderLabel(options.provider)} response was empty`);
+      err.status = 502;
+      throw err;
+    }
+    return parsed;
   }
   const message = data?.choices?.[0]?.message;
   const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
@@ -2859,27 +3056,6 @@ function shouldPreserveMoonshotReasoning(options) {
 
 
 
-
-async function buildAiProviderMessages(messages, options) {
-  const output = [];
-  const preserveReasoning = shouldPreserveMoonshotReasoning(options);
-  for (const message of messages) {
-    if (message.role === 'assistant' && options.provider === 'moonshot' &&
-        (!message.provider || (message.provider === 'moonshot' && (!message.modelId || message.modelId === options.model)))) {
-      for (const traceEntry of message.providerTrace || []) output.push(traceEntry);
-    }
-    const providerMessage = { role: message.role, content: message.content };
-    if (message.role === 'assistant' && options.provider === 'moonshot' && preserveReasoning && message.reasoningContent) {
-      providerMessage.reasoning_content = message.reasoningContent;
-    }
-    if (message.role === 'assistant' && options.provider === 'openrouter' &&
-        message.provider === 'openrouter' && message.modelId === options.model && message.openrouterReasoningDetails?.length) {
-      providerMessage.reasoning_details = message.openrouterReasoningDetails;
-    }
-    output.push(providerMessage);
-  }
-  return output;
-}
 
 async function getMoonshotFormulaTools(options, signal) {
   const fingerprint = apiKeyFingerprint(options.apiKey);
@@ -3048,7 +3224,11 @@ function createAgentModelClient(req) {
   return {
     async complete({ goal, messages, tools, memories, checkpoint }) {
       const options = await resolveAiChatOptions({}, req.user);
-      if (!options?.apiKey) throw new Error('Agent model is not configured');
+      if (!options?.apiKey) {
+        if (!(options.provider === 'custom' && options.profile?.apiFormat === 'openai' && options.baseUrl)) {
+          throw new Error('Agent model is not configured');
+        }
+      }
       const toolList = (tools || []).map(item => `${item.name}: ${item.description}`).join('\n');
       const checkpointBlock = checkpoint && typeof checkpoint === 'object'
         ? `Working checkpoint:\n${JSON.stringify(checkpoint)}`
@@ -3064,21 +3244,29 @@ function createAgentModelClient(req) {
         'Use countdown.create for birthdays and anniversaries; do not use task.create for countdown entries.',
         'For todo reminders only, use task.create once with recurrence yearly and due_date. For countdown cards, use countdown.create once.',
         'Use knowledge.search and knowledge.tree to discover local notes before reading them with knowledge.read.',
-        'Use knowledge.list to browse documents in a knowledge base or folder; use memory.search to find saved L2/L3 memories.',
+        'Use knowledge.list to browse documents in a knowledge base or folder.',
+        'L2/L3 long-term memories are not auto-injected. Use memory.list to browse titles, memory.search for keyword discovery, then memory.read for full content.',
         'Use code.run for short PowerShell or Python scripts (there is no separate shell.run tool).',
         'For complex sub-tasks use agent.delegate once; it requires confirmation and child write actions still need approval.',
         'Never invent local evidence. If the user did not @ a knowledge base or date and no evidence exists, say so. Writes and external actions are proposed for confirmation.',
+        options.profile?.supportsMedia
+          ? 'If the user attached images, you can see them directly in the message; do not use file.read to open /uploads paths.'
+          : '',
         checkpointBlock,
         `Available tools:\n${toolList}`,
-        `Memory context:\n${JSON.stringify(memories || {})}`,
+        `Memory context (L0 rules only; L2/L3 via memory.list / memory.search / memory.read):\n${JSON.stringify({ l0: memories?.l0 ?? memories })}`,
       ].filter(Boolean).join('\n');
       const providerConversation = (messages || []).slice(-24).map(message => message.role === 'tool'
         ? { role: 'user', content: `Tool result (${message.name || 'tool'}):\n${message.content || ''}` }
         : message);
+      const userDb = currentDatabase();
       const providerMessages = await buildAiProviderMessages([
         { role: 'system', content: system },
         ...providerConversation,
-      ], options);
+      ], options, {
+        dataDir: userDb.dataDir,
+        isSafeUploadFilename: userDb.isSafeUploadFilename.bind(userDb),
+      });
       const providerTools = toProviderTools(tools || []);
       const reply = await fetchAiProviderReply({
         options,
@@ -3102,12 +3290,17 @@ function createAgentModelClient(req) {
 
 async function createAgentStatus(req) {
   try {
+    const saved = db.getAiSettings();
     const options = await resolveAiChatOptions({}, req.user);
-    const configured = Boolean(options?.apiKey);
+    const configured = options.provider === 'custom'
+      ? (options.profile?.apiFormat === 'anthropic'
+        ? Boolean(options.apiKey)
+        : Boolean(options.baseUrl && options.model))
+      : Boolean(options?.apiKey);
     return {
       configured,
       provider: configured ? (options.provider || '') : '',
-      model: configured ? (options.model || '') : '',
+      model: configured ? (saved.model || options.model || '') : '',
     };
   } catch {
     return { configured: false, provider: '', model: '' };
@@ -3212,16 +3405,81 @@ function createAgentWestock(req) {
 
 function createAgentImageGenerate(req) {
   return async function agentImageGenerate(args = {}) {
-    const prompt = String(args.prompt || '').trim();
-    if (!prompt) return toolResult({ ok: false, summary: 'Image prompt is required', errorCode: 'invalid' });
-    if (prompt.length > 4000) return toolResult({ ok: false, summary: 'Image prompt is too long', errorCode: 'invalid' });
-    const body = {};
-    if (typeof args.model === 'string' && args.model.trim()) body.model = args.model.trim();
-    if (typeof args.size === 'string' && args.size.trim()) body.size = args.size.trim();
-    if (typeof args.watermark === 'boolean') body.watermark = args.watermark;
+    const saved = db.getAiSettings();
+    const provider = normalizeImageProvider(saved.imageProvider);
+    if (provider === 'getoken') {
+      let options;
+      try {
+        options = resolveGetokenOptions(args, req.user, req);
+      } catch (error) {
+        return toolResult({ ok: false, summary: error.message, errorCode: 'invalid' });
+      }
+      if (!options.apiKey) {
+        const modelLabel = getGetokenModelDefinition(options.model).id;
+        return toolResult({
+          ok: false,
+          summary: `Getoken API key for ${modelLabel} is not configured. Add it in Agent settings.`,
+          errorCode: 'unconfigured',
+        });
+      }
+      try {
+        const generation = options.images.length
+          ? await requestGetokenEdit(options, {
+            baseUrl: GETOKEN_BASE_URL,
+            dataDir: options.dataDir,
+            isSafeUploadFilename: options.isSafeUploadFilename,
+          })
+          : await requestGetokenGeneration(options, { baseUrl: GETOKEN_BASE_URL });
+        const savedImages = [];
+        let failed = 0;
+        let lastPersistError = '';
+        for (const item of generation.items) {
+          if (!item.url && !item.b64) {
+            failed += 1;
+            continue;
+          }
+          try {
+            const savedItem = await persistGeneratedItem(item, { contentType: 'image/png' });
+            savedImages.push(savedItem);
+          } catch (error) {
+            failed += 1;
+            lastPersistError = error.message || lastPersistError;
+          }
+        }
+        if (!savedImages.length) {
+          throw new Error(lastPersistError || 'Getoken did not return any downloadable images');
+        }
+        const markdown = buildGetokenMarkdown(savedImages);
+        const alt = options.prompt.slice(0, 80).replace(/[[\]]/g, '');
+        const summary = failed
+          ? `Generated ${savedImages.length} image(s); ${failed} failed`
+          : `Generated ${savedImages.length} image(s)`;
+        return toolResult({
+          ok: true,
+          summary,
+          data: {
+            url: savedImages[0].url,
+            filename: savedImages[0].filename,
+            images: savedImages,
+            markdown: markdown || `![${alt}](${savedImages[0].url})`,
+            prompt: options.prompt,
+            model: options.model,
+            size: options.size,
+            quality: options.quality,
+            n: options.n,
+            failed,
+            provider: 'getoken',
+          },
+          evidence: savedImages.map(item => ({ type: 'image', url: item.url })),
+        });
+      } catch (error) {
+        return toolResult({ ok: false, summary: error.message, errorCode: 'generate_failed', retryable: true });
+      }
+    }
+
     let options;
     try {
-      options = resolveSeedreamOptions(body, req.user);
+      options = resolveSeedreamOptions(args, req.user, req);
     } catch (error) {
       return toolResult({ ok: false, summary: error.message, errorCode: 'invalid' });
     }
@@ -3233,22 +3491,56 @@ function createAgentImageGenerate(req) {
       });
     }
     try {
-      const remoteUrl = await requestSeedreamImage({ prompt, ...options });
-      const saved = await downloadGeneratedImage(remoteUrl);
-      const alt = prompt.slice(0, 80).replace(/[[\]]/g, '');
-      const markdown = `![${alt}](${saved.url})`;
+      const generation = await requestSeedreamGeneration(options);
+      const savedImages = [];
+      let failed = 0;
+      for (const item of generation.items) {
+        if (item.error) {
+          failed += 1;
+          continue;
+        }
+        if (!item.url && !item.b64) {
+          failed += 1;
+          continue;
+        }
+        try {
+          const savedItem = await persistSeedreamItem(item);
+          savedImages.push({
+            ...savedItem,
+            zIndex: item.zIndex,
+            name: item.name,
+            description: item.description,
+            boundingBox: item.boundingBox,
+          });
+        } catch {
+          failed += 1;
+        }
+      }
+      if (!savedImages.length) {
+        throw new Error('Seedream did not return any downloadable images');
+      }
+      const markdown = buildSeedreamMarkdown(savedImages, {
+        layerDecomposition: options.layerDecomposition,
+      });
+      const alt = options.prompt.slice(0, 80).replace(/[[\]]/g, '');
+      const summary = failed
+        ? `Generated ${savedImages.length} image(s); ${failed} failed`
+        : `Generated ${savedImages.length} image(s)`;
       return toolResult({
         ok: true,
-        summary: `Generated image saved to ${saved.url}`,
+        summary,
         data: {
-          url: saved.url,
-          filename: saved.filename,
-          markdown,
-          prompt,
+          url: savedImages[0].url,
+          filename: savedImages[0].filename,
+          images: savedImages,
+          markdown: markdown || `![${alt}](${savedImages[0].url})`,
+          prompt: options.prompt,
           model: options.model,
           size: options.size,
+          failed,
+          provider: 'seedream',
         },
-        evidence: [{ type: 'image', url: saved.url }],
+        evidence: savedImages.map(item => ({ type: 'image', url: item.url })),
       });
     } catch (error) {
       return toolResult({ ok: false, summary: error.message, errorCode: 'generate_failed', retryable: true });
@@ -3257,7 +3549,22 @@ function createAgentImageGenerate(req) {
 }
 
 const { mountNewApis } = require('./lib/http/mount');
-mountNewApis(app, { db, authStore, hasDiaryAccess, rejectLockedDiary, requireAdmin, modelClientFor: createAgentModelClient, agentStatusFor: createAgentStatus, webSearchFor: createAgentWebSearch, webFetchFor: createAgentWebFetch, westockRunFor: createAgentWestock, imageGenerateFor: createAgentImageGenerate });
+mountNewApis(app, {
+  db,
+  authStore,
+  hasDiaryAccess,
+  rejectLockedDiary,
+  requireAdmin,
+  modelClientFor: createAgentModelClient,
+  agentStatusFor: createAgentStatus,
+  webSearchFor: createAgentWebSearch,
+  webFetchFor: createAgentWebFetch,
+  westockRunFor: createAgentWestock,
+  imageGenerateFor: createAgentImageGenerate,
+  agentImageUpload: agentUpload,
+  agentImageUploadValidate: agentUploadedImageMatchesExtension,
+  agentImageUploadSerialize: serializeUploadedFile,
+});
 
 function startServer(port = PORT, host = HOST) {
   if (!isLoopbackHost(host) && authStore.disabled) {

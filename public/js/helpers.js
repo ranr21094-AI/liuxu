@@ -64,6 +64,89 @@ export function safeExternalHref(value) {
   return (typeof value === 'string' && /^https?:\/\//i.test(value)) ? value : '#';
 }
 
+export function isSafeUploadFilename(filename) {
+  return typeof filename === 'string' &&
+    filename.length > 0 &&
+    !filename.includes('..') &&
+    !filename.includes('/') &&
+    !filename.includes('\\');
+}
+
+export function normalizeUploadSrc(value) {
+  const src = String(value || '').trim();
+  if (!src) return '';
+  const relative = src.match(/^\/uploads\/([^/?#]+)(?:[?#].*)?$/);
+  if (relative && isSafeUploadFilename(relative[1])) {
+    return `/uploads/${relative[1]}`;
+  }
+  try {
+    const pageOrigin = typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : (typeof document !== 'undefined' && document.defaultView?.location?.origin
+        ? document.defaultView.location.origin
+        : '');
+    const url = new URL(src, pageOrigin || 'http://localhost');
+    if (!url.pathname.startsWith('/uploads/')) return src;
+    const filename = url.pathname.slice('/uploads/'.length);
+    if (!isSafeUploadFilename(filename)) return src;
+    if (pageOrigin && url.origin === pageOrigin) return `/uploads/${filename}`;
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      const host = url.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') return `/uploads/${filename}`;
+    }
+  } catch {
+    // ignore invalid URLs
+  }
+  return src;
+}
+
+export function isSafeImageSrc(value) {
+  const src = String(value || '').trim();
+  if (!src) return false;
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(src)) return true;
+  const normalized = normalizeUploadSrc(src);
+  if (normalized.startsWith('/uploads/')) {
+    return isSafeUploadFilename(normalized.slice('/uploads/'.length));
+  }
+  try {
+    const url = new URL(src);
+    return url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+export function collectKnownUploadUrls(root, { excludeRunId = '' } = {}) {
+  const known = new Set();
+  if (!root) return known;
+  root.querySelectorAll('.message-content img[src]').forEach(img => {
+    const url = normalizeUploadSrc(img.getAttribute('src'));
+    if (url.startsWith('/uploads/')) known.add(url);
+  });
+  root.querySelectorAll('.agent-image-preview[data-generated-image]').forEach(card => {
+    if (excludeRunId && card.dataset.runId === excludeRunId) return;
+    const url = normalizeUploadSrc(card.dataset.generatedImage);
+    if (url.startsWith('/uploads/')) known.add(url);
+  });
+  return known;
+}
+
+export function dedupeImageMarkdown(text, knownUrls) {
+  const source = String(text || '').trim();
+  if (!source) return '已完成。';
+  const kept = [];
+  for (const line of source.split('\n')) {
+    const match = /!\[[^\]]*]\(([^)]+)\)/.exec(line);
+    if (match) {
+      const url = normalizeUploadSrc(match[1]);
+      if (url.startsWith('/uploads/') && knownUrls.has(url)) continue;
+    }
+    kept.push(line);
+  }
+  const merged = kept.join('\n').trim();
+  return merged || source;
+}
+
 export function debounce(fn, ms) {
   let timer;
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };

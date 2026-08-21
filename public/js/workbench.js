@@ -6,7 +6,16 @@ import {
   lockDiary,
   logoutSite,
 } from './auth.js';
-import { debounce, escHtml, highlightSearch, showToast } from './helpers.js';
+import {
+  debounce,
+  dedupeImageMarkdown,
+  escHtml,
+  collectKnownUploadUrls,
+  highlightSearch,
+  isSafeImageSrc,
+  normalizeUploadSrc,
+  showToast,
+} from './helpers.js';
 import { destroyFilePreview, renderFilePreview, shouldCollapseExtractText } from './knowledge/filePreview.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { renderToHtml, renderToHtmlUncached } from './markdown.js';
@@ -21,6 +30,59 @@ const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool', 'waiting_user']);
 const BLOCKING_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool']);
 
+const SEEDREAM_UI_PROFILES = {
+  'doubao-seedream-5-0-pro-260628': {
+    sizes: ['1K', '1.5K', '2K', '2048x2048', '2048x1024', '2816x1584'],
+    hint: 'Pro: 1K / 1.5K / 2K，或 1280x720–2048x2048',
+    outputFormat: true,
+    optimizeFast: true,
+    sequential: false,
+    maxImages: false,
+    webSearch: false,
+    layerDecomposition: true,
+    background: true,
+    stream: false,
+  },
+  'doubao-seedream-5-0-260128': {
+    sizes: ['2K', '3K', '4K', '2848x1600', '1600x2848', '2048x2048'],
+    hint: 'Lite: 2K / 3K / 4K，或对应宽x高像素',
+    outputFormat: true,
+    optimizeFast: false,
+    sequential: true,
+    maxImages: true,
+    webSearch: true,
+    layerDecomposition: false,
+    background: false,
+    stream: true,
+  },
+  'doubao-seedream-4-5-251128': {
+    sizes: ['2K', '4K', '2848x1600', '1600x2848', '2048x2048'],
+    hint: '4.5: 2K / 4K，或宽x高像素',
+    outputFormat: false,
+    optimizeFast: false,
+    sequential: true,
+    maxImages: true,
+    webSearch: false,
+    layerDecomposition: false,
+    background: false,
+    stream: true,
+  },
+  'doubao-seedream-4-0-250828': {
+    sizes: ['1K', '2K', '4K', '1280x720', '2048x2048', '2848x1600'],
+    hint: '4.0: 1K / 2K / 4K，或宽x高像素',
+    outputFormat: false,
+    optimizeFast: true,
+    sequential: true,
+    maxImages: true,
+    webSearch: false,
+    layerDecomposition: false,
+    background: false,
+    stream: true,
+  },
+};
+
+const SEEDREAM_MODEL_IDS = Object.keys(SEEDREAM_UI_PROFILES);
+
 const state = {
   mode: 'agent',
   user: null,
@@ -28,14 +90,8 @@ const state = {
   sessions: [],
   archivedSessions: [],
   activeSession: null,
-  runId: '',
-  runStatus: '',
-  eventSource: null,
+  sessionRuns: new Map(),
   memoryRefreshSource: null,
-  runEventKeys: new Set(),
-  childEventSources: new Map(),
-  childRunEventKeys: new Map(),
-  activeChildRunId: '',
   documents: [],
   activeDocument: null,
   annotation: null,
@@ -46,6 +102,8 @@ const state = {
   selectedFolderPath: '',
   agentStatus: null,
   aiSettings: null,
+  agentModelCatalog: [],
+  customProviderExpandIndex: null,
   settingsPanel: 'appearance',
   documentSaveTimer: null,
   annotationSaveTimer: null,
@@ -56,26 +114,215 @@ const state = {
   routeSerial: 0,
   memoryLayer: '',
   memories: { items: [], proposals: [] },
-  runImages: [],
-  delegateTitle: '',
+  pendingAttachments: [],
   computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
 };
 
-function isSafeImageSrc(value) {
-  const src = String(value || '').trim();
-  if (/^\/uploads\/[A-Za-z0-9._-]+$/.test(src)) return true;
-  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(src)) return true;
-  try {
-    const url = new URL(src);
-    return url.protocol === 'https:';
-  } catch {
-    return false;
+function createEmptySessionRunState() {
+  return {
+    runId: '',
+    status: '',
+    eventSource: null,
+    childEventSources: new Map(),
+    childRunEventKeys: new Map(),
+    activeChildRunId: '',
+    runEventKeys: new Set(),
+    runImages: [],
+    delegateTitle: '',
+    needsReload: false,
+  };
+}
+
+function getSessionRunState(sessionId) {
+  if (!sessionId) return null;
+  return state.sessionRuns.get(sessionId) || null;
+}
+
+function ensureSessionRunState(sessionId) {
+  if (!sessionId) return createEmptySessionRunState();
+  let entry = state.sessionRuns.get(sessionId);
+  if (!entry) {
+    entry = createEmptySessionRunState();
+    state.sessionRuns.set(sessionId, entry);
+  }
+  return entry;
+}
+
+function activeRunState() {
+  return getSessionRunState(state.activeSession?.id);
+}
+
+function isViewingSession(sessionId) {
+  return Boolean(sessionId && state.activeSession?.id === sessionId);
+}
+
+function sessionHasActiveRunStatus(status) {
+  return ACTIVE_RUN_STATES.has(status);
+}
+
+function updateSessionActiveRunInList(sessionId, activeRun) {
+  const summary = state.sessions.find(item => item.id === sessionId);
+  if (summary) summary.activeRun = activeRun;
+  if (state.activeSession?.id === sessionId) {
+    state.activeSession.latestRun = activeRun ? { id: activeRun.id, status: activeRun.status } : null;
   }
 }
 
+function sessionRunBadgeLabel(status) {
+  if (status === 'waiting_approval') return '待确认';
+  if (status === 'waiting_user') return '待回答';
+  if (status === 'waiting_client_tool') return '等待浏览器';
+  if (status === 'queued' || status === 'running') return '运行中';
+  return '';
+}
+
+const RUN_EVENT_TYPES = [
+  'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
+  'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required', 'memory.proposed',
+  'delegate.started', 'delegate.completed', 'delegate.progress', 'run.completed', 'run.failed',
+];
+const MAX_PARALLEL_SESSION_SSE = 5;
+
+function sessionRowElement(sessionId) {
+  if (!sessionId) return null;
+  return document.querySelector(`[data-session-row="${CSS.escape(sessionId)}"]`);
+}
+
+function updateSessionActiveHighlight(activeId = state.activeSession?.id || '') {
+  document.querySelectorAll('.session-row.active').forEach(row => row.classList.remove('active'));
+  if (!activeId) return;
+  sessionRowElement(activeId)?.classList.add('active');
+}
+
+function updateSessionRowMeta(sessionId) {
+  const session = state.sessions.find(item => item.id === sessionId);
+  const row = sessionRowElement(sessionId);
+  if (!session || !row) return;
+  const small = row.querySelector('.session-select small');
+  if (small) small.textContent = formatSessionMeta(session);
+}
+
+function updateSessionRunBadge(sessionId, status) {
+  if (!sessionId) return false;
+  const badge = sessionRunBadgeLabel(status);
+  const row = sessionRowElement(sessionId);
+  if (!row) return false;
+  const prevBadge = row.dataset.runBadge || '';
+  if (prevBadge === badge) return true;
+  row.dataset.runBadge = badge;
+  row.classList.toggle('busy', Boolean(badge));
+  const strong = row.querySelector('.session-select strong');
+  if (!strong) return true;
+  let badgeEl = strong.querySelector('.session-run-badge');
+  if (!badge) {
+    badgeEl?.remove();
+    return true;
+  }
+  if (!badgeEl) {
+    badgeEl = document.createElement('span');
+    badgeEl.className = 'session-run-badge';
+    strong.append(badgeEl);
+  }
+  badgeEl.textContent = badge;
+  return true;
+}
+
+function patchSessionSummaryAfterUserMessage(sessionId, content) {
+  const summary = state.sessions.find(item => item.id === sessionId);
+  if (!summary) return;
+  summary.messageCount = sessionMessageCount(summary) + 1;
+  summary.lastMessagePreview = String(content || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  summary.updatedAt = Date.now();
+  if (state.activeSession?.id === sessionId) {
+    state.activeSession.messageCount = summary.messageCount;
+    state.activeSession.updatedAt = summary.updatedAt;
+    applyAgentTopbar(state.activeSession);
+  }
+  updateSessionRowMeta(sessionId);
+}
+
+function pauseSessionSse(sessionId) {
+  const entry = getSessionRunState(sessionId);
+  if (!entry?.eventSource) return;
+  for (const source of entry.childEventSources.values()) source.close();
+  entry.childEventSources.clear();
+  entry.childRunEventKeys.clear();
+  entry.eventSource.close();
+  entry.eventSource = null;
+}
+
+function countActiveSessionSse(exceptSessionId = '') {
+  let count = 0;
+  for (const [sessionId, entry] of state.sessionRuns) {
+    if (sessionId === exceptSessionId || !entry.eventSource) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function findBackgroundSseSession(exceptSessionId = '') {
+  for (const [sessionId, entry] of state.sessionRuns) {
+    if (sessionId === exceptSessionId || sessionId === state.activeSession?.id || !entry.eventSource) continue;
+    return sessionId;
+  }
+  return '';
+}
+
+function syncSessionRunBadgesFromSummaries() {
+  let missing = false;
+  for (const session of state.sessions) {
+    const local = getSessionRunState(session.id);
+    const status = local?.status || session.activeRun?.status || '';
+    if (!updateSessionRunBadge(session.id, status)) missing = true;
+  }
+  if (missing) renderSessions();
+}
+
+function ensureSessionRunSubscriptions() {
+  const viewingId = state.activeSession?.id || '';
+  const candidates = [];
+  for (const session of state.sessions) {
+    const local = getSessionRunState(session.id);
+    const active = local?.runId && sessionHasActiveRunStatus(local.status)
+      ? { id: local.runId, status: local.status }
+      : session.activeRun;
+    if (!active?.id || !sessionHasActiveRunStatus(active.status)) continue;
+    candidates.push({ sessionId: session.id, runId: active.id, status: active.status });
+  }
+  candidates.sort((a, b) => {
+    if (a.sessionId === viewingId) return -1;
+    if (b.sessionId === viewingId) return 1;
+    return 0;
+  });
+  const keep = new Set(candidates.slice(0, MAX_PARALLEL_SESSION_SSE).map(item => item.sessionId));
+  for (const sessionId of [...state.sessionRuns.keys()]) {
+    if (keep.has(sessionId)) continue;
+    pauseSessionSse(sessionId);
+  }
+  for (const item of candidates) {
+    if (!keep.has(item.sessionId)) continue;
+    const local = getSessionRunState(item.sessionId);
+    if (local?.eventSource) continue;
+    subscribeRun(item.sessionId, item.runId, item.status);
+  }
+}
+
+const refreshBackgroundSessionRuns = debounce(async () => {
+  if (state.mode !== 'agent') return;
+  try {
+    await loadSessions();
+  } catch {
+    /* ignore focus refresh errors */
+  }
+}, 300);
+
 if (window.DOMPurify) {
   window.DOMPurify.addHook('afterSanitizeAttributes', node => {
-    if (node.tagName === 'IMG' && !isSafeImageSrc(node.getAttribute('src'))) {
+    if (node.tagName !== 'IMG') return;
+    const normalized = normalizeUploadSrc(node.getAttribute('src'));
+    if (normalized && isSafeImageSrc(normalized)) {
+      node.setAttribute('src', normalized);
+    } else {
       node.removeAttribute('src');
     }
   });
@@ -627,17 +874,23 @@ function renderSessions() {
   list.innerHTML = [...groups.entries()].map(([name, items]) => `
     <section class="session-group">
       <h2 class="session-group-title">${escHtml(name)}</h2>
-      ${items.map(session => `
-        <div class="session-row ${state.activeSession?.id === session.id ? 'active' : ''}" data-session-row="${escHtml(session.id)}">
+      ${items.map(session => {
+        const local = getSessionRunState(session.id);
+        const activeStatus = local?.status || session.activeRun?.status || '';
+        const badge = sessionRunBadgeLabel(activeStatus);
+        const busy = Boolean(badge);
+        return `
+        <div class="session-row ${state.activeSession?.id === session.id ? 'active' : ''}${busy ? ' busy' : ''}" data-session-row="${escHtml(session.id)}" data-run-badge="${escHtml(badge)}">
           <button class="session-select" type="button" data-session-open="${escHtml(session.id)}">
-            <strong>${escHtml(session.title || '新会话')}</strong>
+            <strong>${escHtml(session.title || '新会话')}${badge ? `<span class="session-run-badge">${escHtml(badge)}</span>` : ''}</strong>
             <small>${escHtml(formatSessionMeta(session))}</small>
           </button>
           <span class="session-actions">
             <button class="session-action" type="button" data-session-rename="${escHtml(session.id)}" title="重命名" aria-label="重命名 ${escHtml(session.title || '会话')}">✎</button>
             <button class="session-action" type="button" data-session-archive="${escHtml(session.id)}" title="归档" aria-label="归档 ${escHtml(session.title || '会话')}">⌁</button>
           </span>
-        </div>`).join('')}
+        </div>`;
+      }).join('')}
     </section>`).join('');
 }
 
@@ -675,14 +928,21 @@ function applyAgentStatus() {
   document.querySelectorAll('.agent-setup-hint').forEach(hint => {
     hint.hidden = state.agentStatus?.configured !== false;
   });
-  const composer = $('#agentComposerSettings');
-  if (composer) composer.textContent = idleAgentLabel();
-  if (!ACTIVE_RUN_STATES.has(state.runStatus)) setRunStatus(state.runStatus || '');
+  syncComposerModelSelectState();
+  const entry = activeRunState();
+  if (!entry || !sessionHasActiveRunStatus(entry.status)) setSessionRunStatus(state.activeSession?.id || '', '');
+}
+
+function syncComposerModelSelectState() {
+  const select = $('#agentComposerModelSelect');
+  if (!select) return;
+  select.disabled = state.agentStatus?.configured === false;
 }
 
 const DIRECT_AGENT_MODELS = [
   { id: 'deepseek-v4-flash', name: 'DeepSeek Flash' },
   { id: 'deepseek-v4-pro', name: 'DeepSeek Pro' },
+  { id: 'deepseek-v4-flash-vision-exp', name: 'DeepSeek Flash Vision' },
   { id: 'kimi-k3', name: 'Kimi K3' },
   { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code' },
   { id: 'kimi-k2.6', name: 'Kimi K2.6' },
@@ -716,6 +976,8 @@ const AGENT_SETTING_FIELDS = Object.freeze([
   { key: 'agentKnowledgeListMaxLimit', min: 1, fallback: 100 },
   { key: 'agentMemorySearchLimit', min: 1, fallback: 20 },
   { key: 'agentMemorySearchMaxLimit', min: 1, fallback: 40 },
+  { key: 'agentMemoryListLimit', min: 1, fallback: 40 },
+  { key: 'agentMemoryListMaxLimit', min: 1, fallback: 100 },
 ]);
 
 function fillMemorySettingsForm(settings = {}) {
@@ -766,18 +1028,303 @@ function keyPlaceholder(configured, fallback) {
   return configured ? '已配置；留空保持不变' : fallback;
 }
 
-function populateAgentModelSelect(models, selected) {
-  const select = $('#agentModelSelect');
-  const list = DIRECT_AGENT_MODELS.map(item => ({ ...item }));
-  (models || []).forEach(model => {
-    if (!model?.id || list.some(item => item.id === model.id)) return;
-    list.push({ id: model.id, name: model.name || model.id });
-  });
-  if (selected && !list.some(item => item.id === selected)) {
-    list.unshift({ id: selected, name: selected });
+function populateAgentModelSelectElement(select, models, selected) {
+  if (!select) return;
+  const builtinIds = new Set(DIRECT_AGENT_MODELS.map(item => item.id));
+  const extras = (models || []).filter(model => model?.id && !builtinIds.has(model.id));
+  const openrouter = extras.filter(model => model.provider === 'openrouter' || (!String(model.id).startsWith('custom/') && model.provider !== 'custom'));
+  const custom = extras.filter(model => model.provider === 'custom' || String(model.id).startsWith('custom/'));
+  const groups = [
+    { label: '内置', items: DIRECT_AGENT_MODELS.map(item => ({ ...item })) },
+    { label: 'OpenRouter', items: openrouter.map(model => ({ id: model.id, name: model.name || model.id })) },
+    { label: '自定义', items: custom.map(model => ({ id: model.id, name: model.name || model.id })) },
+  ];
+  if (selected && !groups.some(group => group.items.some(item => item.id === selected))) {
+    groups[0].items.unshift({ id: selected, name: selected });
   }
-  select.innerHTML = list.map(item => `<option value="${escHtml(item.id)}">${escHtml(item.name)}</option>`).join('');
+  select.innerHTML = groups
+    .filter(group => group.items.length)
+    .map(group => `<optgroup label="${escHtml(group.label)}">${group.items.map(item => `<option value="${escHtml(item.id)}">${escHtml(item.name)}</option>`).join('')}</optgroup>`)
+    .join('');
   select.value = selected || 'deepseek-v4-flash';
+}
+
+function populateAgentModelSelects(models, selected) {
+  if (Array.isArray(models)) state.agentModelCatalog = models;
+  populateAgentModelSelectElement($('#agentModelSelect'), models, selected);
+  populateAgentModelSelectElement($('#agentComposerModelSelect'), models, selected);
+}
+
+function populateAgentModelSelect(models, selected) {
+  populateAgentModelSelects(models, selected);
+}
+
+async function loadComposerModelOptions() {
+  try {
+    const [settingsResponse, modelsResponse] = await Promise.all([
+      apiFetch('/api/ai/settings'),
+      apiFetch('/api/ai/models'),
+    ]);
+    const settings = await settingsResponse.json().catch(() => ({}));
+    const modelsData = await modelsResponse.json().catch(() => ({}));
+    if (settingsResponse.ok) state.aiSettings = settings;
+    const models = modelsResponse.ok && Array.isArray(modelsData.models) ? modelsData.models : [];
+    populateAgentModelSelects(models, state.aiSettings?.model || settings.model);
+  } catch {
+    populateAgentModelSelects([], state.aiSettings?.model || 'deepseek-v4-flash');
+  }
+  syncComposerModelSelectState();
+}
+
+async function quickSaveAgentModel(modelId) {
+  const select = $('#agentComposerModelSelect');
+  if (!select || !state.aiSettings) return;
+  const previous = state.aiSettings.model || select.value;
+  if (modelId === previous) return;
+  select.disabled = true;
+  try {
+    const response = await apiFetch('/api/ai/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '模型切换失败');
+    state.aiSettings = data;
+    populateAgentModelSelects(state.agentModelCatalog || [], data.model);
+    await loadAgentStatus();
+    showToast('模型已切换', 'success');
+  } catch (error) {
+    populateAgentModelSelects(state.agentModelCatalog || [], previous);
+    showToast(error.message || '模型切换失败', 'error');
+  } finally {
+    syncComposerModelSelectState();
+  }
+}
+
+const MAX_CUSTOM_PROVIDERS = 8;
+const MAX_MODELS_PER_PROVIDER = 16;
+
+function randomProviderId() {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  return `p_${Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function normalizeCustomProviderApiFormat(value) {
+  if (value === 'anthropic') return 'anthropic';
+  if (value === 'responses') return 'responses';
+  return 'openai';
+}
+
+function createEmptyCustomProvider() {
+  return {
+    id: randomProviderId(),
+    name: '',
+    baseUrl: '',
+    apiFormat: 'openai',
+    apiKey: '',
+    apiKeyConfigured: false,
+    models: [{ id: '', name: '' }],
+  };
+}
+
+function customProviderFormatLabel(format) {
+  if (format === 'anthropic') return 'Anthropic';
+  if (format === 'responses') return 'Responses';
+  return 'OpenAI';
+}
+
+function renderCustomProvidersList() {
+  const root = $('#customProvidersList');
+  if (!root) return;
+  const list = state.customProvidersDraft || [];
+  if (!list.length) {
+    root.innerHTML = '<p class="empty-list">还没有自定义端点。添加后可接入 OpenAI / Anthropic 兼容 API。</p>';
+    return;
+  }
+  const expandIndex = Number.isInteger(state.customProviderExpandIndex)
+    ? state.customProviderExpandIndex
+    : null;
+  root.innerHTML = list.map((provider, index) => {
+    const modelCount = (provider.models || []).filter(model => model.id).length;
+    const summaryName = provider.name?.trim() || '未命名端点';
+    const shouldOpen = expandIndex === index || list.length === 1;
+    return `
+    <details class="custom-provider-card" data-provider-index="${index}"${shouldOpen ? ' open' : ''}>
+      <summary class="custom-provider-summary">
+        <span class="custom-provider-summary-main">
+          <span class="custom-provider-summary-name">${escHtml(summaryName)}</span>
+          <span class="custom-provider-summary-meta">${escHtml(customProviderFormatLabel(provider.apiFormat))} · ${modelCount} 个模型</span>
+        </span>
+        <button type="button" class="danger-action compact custom-provider-delete" data-remove-provider="${index}" aria-label="删除端点">删除</button>
+      </summary>
+      <div class="custom-provider-body">
+        <label class="custom-provider-inline-field">端点名称
+          <input type="text" class="custom-provider-name" value="${escHtml(provider.name)}" placeholder="端点名称" maxlength="80">
+        </label>
+        <div class="custom-provider-conn-grid">
+          <label class="custom-provider-inline-field">Base URL
+            <input type="url" class="custom-provider-base-url" value="${escHtml(provider.baseUrl)}" placeholder="https://api.example.com/v1" maxlength="500">
+          </label>
+          <label class="custom-provider-inline-field">API 格式
+            <select class="custom-provider-format">
+              <option value="openai" ${provider.apiFormat === 'openai' ? 'selected' : ''}>OpenAI Chat</option>
+              <option value="responses" ${provider.apiFormat === 'responses' ? 'selected' : ''}>OpenAI Responses</option>
+              <option value="anthropic" ${provider.apiFormat === 'anthropic' ? 'selected' : ''}>Anthropic</option>
+            </select>
+          </label>
+        </div>
+        <label class="custom-provider-inline-field">API Key
+          <input type="password" class="custom-provider-key" autocomplete="off" spellcheck="false" placeholder="${escHtml(provider.apiKeyConfigured ? '已配置；留空保持不变' : '可选（OpenAI 格式）')}" value="">
+        </label>
+        <div class="custom-provider-models">
+          <div class="custom-provider-models-head">
+            <strong>模型</strong>
+            <button type="button" class="secondary-action compact" data-add-model="${index}">添加模型</button>
+          </div>
+          ${(provider.models || []).map((model, modelIndex) => `
+            <div class="custom-provider-model-row">
+              <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="120" aria-label="模型 ID">
+              <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
+              <span class="custom-provider-model-actions">
+                <button type="button" class="secondary-action compact" data-test-model="${index}" data-test-model-id="${modelIndex}">测试</button>
+                <button type="button" class="danger-action compact custom-provider-model-remove" data-remove-model="${index}" data-remove-model-id="${modelIndex}" aria-label="删除模型">×</button>
+              </span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </details>`;
+  }).join('');
+  state.customProviderExpandIndex = null;
+}
+
+function syncCustomProvidersDraftFromDom() {
+  const list = [];
+  document.querySelectorAll('.custom-provider-card').forEach(card => {
+    const index = Number(card.dataset.providerIndex);
+    const prev = state.customProvidersDraft?.[index] || {};
+    const models = [];
+    card.querySelectorAll('.custom-provider-model-row').forEach(row => {
+      const id = row.querySelector('.custom-model-id')?.value.trim() || '';
+      const name = row.querySelector('.custom-model-name')?.value.trim() || '';
+      if (id) models.push({ id, name: name || id });
+    });
+    const apiKeyInput = card.querySelector('.custom-provider-key')?.value.trim() || '';
+    list.push({
+      id: prev.id || randomProviderId(),
+      name: card.querySelector('.custom-provider-name')?.value.trim() || '',
+      baseUrl: card.querySelector('.custom-provider-base-url')?.value.trim() || '',
+      apiFormat: normalizeCustomProviderApiFormat(card.querySelector('.custom-provider-format')?.value),
+      apiKey: apiKeyInput,
+      apiKeyConfigured: Boolean(prev.apiKeyConfigured && !apiKeyInput),
+      models: models.length ? models : [{ id: '', name: '' }],
+    });
+  });
+  state.customProvidersDraft = list;
+}
+
+function readCustomProvidersForSave() {
+  syncCustomProvidersDraftFromDom();
+  return (state.customProvidersDraft || []).map(provider => ({
+    id: provider.id,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    apiFormat: provider.apiFormat || 'openai',
+    apiKey: provider.apiKey || '',
+    models: (provider.models || []).filter(model => model.id).map(model => ({
+      id: model.id,
+      name: model.name || model.id,
+    })),
+  })).filter(provider => provider.name && provider.baseUrl && provider.models.length);
+}
+
+async function refreshOpenRouterModels() {
+  const button = $('#refreshOpenRouterModels');
+  if (button) button.disabled = true;
+  try {
+    const response = await apiFetch('/api/ai/models?refresh=1');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'OpenRouter 模型刷新失败');
+    populateAgentModelSelects(data.models, $('#agentModelSelect')?.value || state.aiSettings?.model);
+    showToast('OpenRouter 模型已刷新', 'success');
+  } catch (error) {
+    showToast(error.message || 'OpenRouter 模型刷新失败', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function testCustomProviderModel(providerIndex, modelIndex) {
+  syncCustomProvidersDraftFromDom();
+  const provider = state.customProvidersDraft?.[providerIndex];
+  const model = provider?.models?.[modelIndex];
+  if (!provider?.baseUrl || !model?.id) {
+    showToast('请先填写 Base URL 和模型 ID', 'error');
+    return;
+  }
+  const card = document.querySelector(`.custom-provider-card[data-provider-index="${providerIndex}"]`);
+  const apiKey = card?.querySelector('.custom-provider-key')?.value.trim() || '';
+  try {
+    const response = await apiFetch('/api/ai/custom-providers/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        baseUrl: provider.baseUrl,
+        apiFormat: provider.apiFormat,
+        apiKey,
+        model: model.id,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '连接测试失败');
+    showToast('连接测试成功', 'success');
+  } catch (error) {
+    showToast(error.message || '连接测试失败', 'error');
+  }
+}
+
+function syncImageProviderSettingsUi(provider = 'seedream') {
+  const active = provider === 'getoken' ? 'getoken' : 'seedream';
+  document.querySelectorAll('[data-image-provider]').forEach(section => {
+    section.hidden = section.dataset.imageProvider !== active;
+  });
+}
+
+function seedreamUiProfile(model) {
+  return SEEDREAM_UI_PROFILES[model] || SEEDREAM_UI_PROFILES['doubao-seedream-5-0-260128'];
+}
+
+function syncSeedreamSettingsUi(model) {
+  const profile = seedreamUiProfile(model);
+  const datalist = $('#agentSeedreamSizeOptions');
+  if (datalist) {
+    datalist.innerHTML = profile.sizes.map(size => `<option value="${escHtml(size)}"></option>`).join('');
+  }
+  const hint = $('#agentSeedreamSizeHint');
+  if (hint) hint.textContent = profile.hint;
+  document.querySelectorAll('[data-seedream-field]').forEach(row => {
+    const field = row.dataset.seedreamField;
+    let visible = true;
+    if (field === 'outputFormat') visible = profile.outputFormat;
+    if (field === 'optimizePrompt') visible = profile.optimizeFast || true;
+    if (field === 'sequential') visible = profile.sequential;
+    if (field === 'maxImages') visible = profile.maxImages;
+    if (field === 'webSearch') visible = profile.webSearch;
+    if (field === 'layerDecomposition') visible = profile.layerDecomposition;
+    if (field === 'background') visible = profile.background;
+    if (field === 'stream') visible = profile.stream;
+    row.hidden = !visible;
+    row.querySelectorAll('input, select').forEach(control => {
+      control.disabled = !visible;
+    });
+  });
+  const optimize = $('#agentSeedreamOptimizePrompt');
+  if (optimize) {
+    optimize.querySelector('option[value="fast"]').hidden = !profile.optimizeFast;
+    if (!profile.optimizeFast && optimize.value === 'fast') optimize.value = 'standard';
+  }
 }
 
 async function loadAgentSettingsForm() {
@@ -803,13 +1350,66 @@ async function loadAgentSettingsForm() {
     $('#agentPerplexityKey').placeholder = keyPlaceholder(settings.perplexityApiKeyConfigured, 'pplx-...');
     $('#agentSeedreamKey').value = '';
     $('#agentSeedreamKey').placeholder = keyPlaceholder(settings.seedreamApiKeyConfigured, 'ARK API Key');
-    const seedreamModels = ['doubao-seedream-5-0-260128', 'doubao-seedream-4-5-251128', 'doubao-seedream-4-0-250828'];
-    $('#agentSeedreamModel').value = seedreamModels.includes(settings.seedreamModel)
+    $('#agentGetokenKey').value = '';
+    const grokKeyInput = $('#agentGetokenGrokImagineKey');
+    const nanoKeyInput = $('#agentGetokenNanoBananaKey');
+    if (grokKeyInput) grokKeyInput.value = '';
+    if (nanoKeyInput) nanoKeyInput.value = '';
+    $('#agentGetokenKey').placeholder = keyPlaceholder(settings.getokenApiKeyConfigured, 'GETOKEN API Key');
+    if (grokKeyInput) {
+      grokKeyInput.placeholder = keyPlaceholder(
+        settings.getokenGrokImagineApiKeyConfigured,
+        'GETOKEN API Key',
+      );
+    }
+    if (nanoKeyInput) {
+      nanoKeyInput.placeholder = keyPlaceholder(
+        settings.getokenNanoBananaApiKeyConfigured,
+        'GETOKEN API Key',
+      );
+    }
+    const imageProvider = settings.imageProvider === 'getoken' ? 'getoken' : 'seedream';
+    $('#agentImageProvider').value = imageProvider;
+    syncImageProviderSettingsUi(imageProvider);
+    const getokenModel = ['gpt-image-2', 'grok-imagine-image', 'nano-banana-2'].includes(settings.getokenModel)
+      ? settings.getokenModel
+      : 'gpt-image-2';
+    $('#agentGetokenModel').value = getokenModel;
+    $('#agentGetokenSize').value = settings.getokenSize || 'auto';
+    $('#agentGetokenQuality').value = settings.getokenQuality === 'standard' ? 'standard' : 'high';
+    $('#agentGetokenN').value = Number.isFinite(Number(settings.getokenN))
+      ? Math.min(4, Math.max(1, Math.round(Number(settings.getokenN))))
+      : 1;
+    const seedreamModel = SEEDREAM_MODEL_IDS.includes(settings.seedreamModel)
       ? settings.seedreamModel
       : 'doubao-seedream-5-0-260128';
+    $('#agentSeedreamModel').value = seedreamModel;
+    syncSeedreamSettingsUi(seedreamModel);
     $('#agentSeedreamSize').value = settings.seedreamSize || '2K';
     $('#agentSeedreamWatermark').checked = settings.seedreamWatermark !== false;
-    populateAgentModelSelect(modelsResponse.ok ? modelsData.models : [], settings.model);
+    $('#agentSeedreamOutputFormat').value = settings.seedreamOutputFormat === 'png' ? 'png' : 'jpeg';
+    $('#agentSeedreamOptimizePrompt').value = settings.seedreamOptimizePromptMode === 'fast' ? 'fast' : 'standard';
+    $('#agentSeedreamSequential').value = settings.seedreamSequential === 'auto' ? 'auto' : 'disabled';
+    $('#agentSeedreamMaxImages').value = Number.isFinite(Number(settings.seedreamMaxImages))
+      ? Math.min(15, Math.max(1, Math.round(Number(settings.seedreamMaxImages))))
+      : 15;
+    $('#agentSeedreamWebSearch').checked = Boolean(settings.seedreamWebSearch);
+    $('#agentSeedreamLayerDecomposition').checked = Boolean(settings.seedreamLayerDecomposition);
+    $('#agentSeedreamBackground').value = settings.seedreamBackground === 'transparent' ? 'transparent' : 'opaque';
+    $('#agentSeedreamStream').checked = settings.seedreamStream !== false;
+    populateAgentModelSelects(modelsResponse.ok ? modelsData.models : [], settings.model);
+    state.customProvidersDraft = (settings.customProviders || []).map(provider => ({
+      id: provider.id,
+      name: provider.name || '',
+      baseUrl: provider.baseUrl || '',
+      apiFormat: normalizeCustomProviderApiFormat(provider.apiFormat),
+      apiKey: '',
+      apiKeyConfigured: Boolean(provider.apiKeyConfigured),
+      models: (provider.models || []).length
+        ? provider.models.map(model => ({ id: model.id, name: model.name || model.id }))
+        : [{ id: '', name: '' }],
+    }));
+    renderCustomProvidersList();
     const rounds = Number(settings.agentMaxRounds);
     $('#agentMaxRounds').value = Number.isFinite(rounds) ? Math.max(4, Math.round(rounds)) : 12;
     const fileReadMb = Number(settings.agentFileReadMaxMb);
@@ -829,14 +1429,17 @@ async function loadAgentSettingsForm() {
     $('#agentPerplexityToggle').checked = settings.skills?.perplexity?.enabled !== false;
     await loadComputerPolicyForm();
     $('#saveAgentSettings').disabled = false;
+    syncComposerModelSelectState();
   } catch (error) {
-    populateAgentModelSelect([], state.aiSettings?.model || 'deepseek-v4-flash');
+    populateAgentModelSelects([], state.aiSettings?.model || 'deepseek-v4-flash');
     showToast(error.message || '模型设置加载失败', 'error');
+    $('#saveAgentSettings').disabled = false;
+    syncComposerModelSelectState();
   }
 }
 
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'account'];
+  const allowed = ['appearance', 'sessions', 'model', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'account'];
   let next = allowed.includes(panel) ? panel : 'appearance';
   if (next === 'computer' && state.user?.role !== 'admin') next = 'appearance';
   state.settingsPanel = next;
@@ -866,7 +1469,7 @@ async function openSettings(panel = 'appearance') {
 function settingsSavePayload() {
   const current = state.aiSettings || {};
   const payload = { ...current };
-  ['apiKeyConfigured', 'moonshotApiKeyConfigured', 'openrouterApiKeyConfigured', 'tavilyApiKeyConfigured', 'perplexityApiKeyConfigured', 'seedreamApiKeyConfigured'].forEach(key => {
+  ['apiKeyConfigured', 'moonshotApiKeyConfigured', 'openrouterApiKeyConfigured', 'tavilyApiKeyConfigured', 'perplexityApiKeyConfigured', 'seedreamApiKeyConfigured', 'getokenApiKeyConfigured', 'getokenGrokImagineApiKeyConfigured', 'getokenNanoBananaApiKeyConfigured'].forEach(key => {
     delete payload[key];
   });
   payload.apiKey = $('#agentDeepseekKey').value.trim();
@@ -875,9 +1478,25 @@ function settingsSavePayload() {
   payload.tavilyApiKey = $('#agentTavilyApiKey').value.trim();
   payload.perplexityApiKey = $('#agentPerplexityKey').value.trim();
   payload.seedreamApiKey = $('#agentSeedreamKey').value.trim();
+  payload.getokenApiKey = $('#agentGetokenKey').value.trim();
+  payload.getokenGrokImagineApiKey = ($('#agentGetokenGrokImagineKey')?.value || '').trim();
+  payload.getokenNanoBananaApiKey = ($('#agentGetokenNanoBananaKey')?.value || '').trim();
+  payload.imageProvider = $('#agentImageProvider').value === 'getoken' ? 'getoken' : 'seedream';
+  payload.getokenModel = $('#agentGetokenModel').value || current.getokenModel || 'gpt-image-2';
+  payload.getokenSize = $('#agentGetokenSize').value || current.getokenSize || 'auto';
+  payload.getokenQuality = $('#agentGetokenQuality').value === 'standard' ? 'standard' : 'high';
+  payload.getokenN = Math.min(4, Math.max(1, Math.round(Number($('#agentGetokenN').value) || 1)));
   payload.seedreamModel = $('#agentSeedreamModel').value || current.seedreamModel || 'doubao-seedream-5-0-260128';
   payload.seedreamSize = $('#agentSeedreamSize').value.trim() || current.seedreamSize || '2K';
   payload.seedreamWatermark = $('#agentSeedreamWatermark').checked;
+  payload.seedreamOutputFormat = $('#agentSeedreamOutputFormat').value === 'png' ? 'png' : 'jpeg';
+  payload.seedreamOptimizePromptMode = $('#agentSeedreamOptimizePrompt').value === 'fast' ? 'fast' : 'standard';
+  payload.seedreamSequential = $('#agentSeedreamSequential').value === 'auto' ? 'auto' : 'disabled';
+  payload.seedreamMaxImages = Math.min(15, Math.max(1, Math.round(Number($('#agentSeedreamMaxImages').value) || 15)));
+  payload.seedreamWebSearch = $('#agentSeedreamWebSearch').checked;
+  payload.seedreamLayerDecomposition = $('#agentSeedreamLayerDecomposition').checked;
+  payload.seedreamBackground = $('#agentSeedreamBackground').value === 'transparent' ? 'transparent' : 'opaque';
+  payload.seedreamStream = $('#agentSeedreamStream').checked;
   payload.model = $('#agentModelSelect').value || current.model || 'deepseek-v4-flash';
   payload.reasoningMode = $('#agentReasoningMode').value || current.reasoningMode || 'effort';
   payload.thinkingMode = $('#agentThinkingMode').value || current.thinkingMode || 'enabled';
@@ -900,6 +1519,7 @@ function settingsSavePayload() {
     : (Number.isInteger(Number(current.agentFileReadMaxMb)) ? Number(current.agentFileReadMaxMb) : 4);
   Object.assign(payload, readMemorySettingsFromForm(current));
   Object.assign(payload, readAgentSettingsFromForm(current));
+  payload.customProviders = readCustomProvidersForSave();
   return payload;
 }
 
@@ -920,9 +1540,15 @@ async function saveAgentSettings() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '模型设置保存失败');
     state.aiSettings = data;
-    await saveComputerPolicy();
-    await loadAgentStatus();
-    await loadAgentSettingsForm();
+    try {
+      await saveComputerPolicy();
+      await loadAgentStatus();
+      await loadAgentSettingsForm();
+    } catch (reloadError) {
+      showToast(`设置已保存，但界面刷新失败：${reloadError.message || reloadError}`, 'error');
+      button.disabled = false;
+      return;
+    }
     showToast('设置已保存', 'success');
   } catch (error) {
     showToast(error.message || '模型设置保存失败', 'error');
@@ -1261,19 +1887,39 @@ async function loadSessions() {
   }
   renderSessions();
   if (state.mode === 'agent') applyAgentTopbar(state.activeSession);
+  ensureSessionRunSubscriptions();
+}
+
+function detachSessionRunUi(sessionId) {
+  if (!isViewingSession(sessionId)) return;
+  clearComposerDock();
+  $('#runStatus').hidden = true;
+  $('#stopRunButton').hidden = true;
+  $('#sendAgentButton').disabled = false;
+  $('#agentSidebarStatus').classList.remove('busy');
+  $('#runStatusText').textContent = idleAgentLabel();
+  $('#agentSidebarStatus span:last-child').textContent = idleAgentLabel();
+  const input = $('#agentInput');
+  if (input) input.placeholder = '用 @ 引用知识库或日期，然后描述你想完成什么…';
+}
+
+function unsubscribeRun(sessionId) {
+  const entry = getSessionRunState(sessionId);
+  if (!entry) return;
+  entry.eventSource?.close();
+  entry.eventSource = null;
+  for (const source of entry.childEventSources.values()) source.close();
+  entry.childEventSources.clear();
+  entry.childRunEventKeys.clear();
+  if (isViewingSession(sessionId)) detachSessionRunUi(sessionId);
+  updateSessionRunBadge(sessionId, '');
+  state.sessionRuns.delete(sessionId);
 }
 
 function stopLiveTrace() {
-  state.eventSource?.close();
-  state.eventSource = null;
-  for (const source of state.childEventSources.values()) source.close();
-  state.childEventSources.clear();
-  state.childRunEventKeys.clear();
-  state.runId = '';
-  state.activeChildRunId = '';
-  state.runEventKeys = new Set();
-  state.runImages = [];
-  clearApprovalDock();
+  const sessionId = state.activeSession?.id;
+  if (!sessionId) return;
+  detachSessionRunUi(sessionId);
 }
 
 function delegateTraceHost(childRunId) {
@@ -1313,14 +1959,15 @@ function upsertDelegateTrace(child, parentRunId, { live = false } = {}) {
   return details;
 }
 
-function delegateTrace(text, childRunId) {
-  if (!text || !childRunId) return;
+function delegateTrace(text, childRunId, sessionId = state.activeSession?.id) {
+  if (!text || !childRunId || !isViewingSession(sessionId)) return;
+  const entry = getSessionRunState(sessionId);
   const details = delegateTraceHost(childRunId)
-    || upsertDelegateTrace({ id: childRunId, delegateTitle: state.delegateTitle || '委派任务', trace: [] }, state.runId, { live: true });
+    || upsertDelegateTrace({ id: childRunId, delegateTitle: entry?.delegateTitle || '委派任务', trace: [] }, entry?.runId || '', { live: true });
   if (!details) return;
   const eventsEl = details.querySelector('.trace-events');
   const summaryEl = details.querySelector('.trace-summary');
-  const title = state.delegateTitle || details.dataset.delegateTitle || '委派任务';
+  const title = entry?.delegateTitle || details.dataset.delegateTitle || '委派任务';
   const last = eventsEl.lastElementChild;
   if (last && last.textContent === text) {
     summaryEl.textContent = `子任务「${title}」 · ${text}`;
@@ -1334,71 +1981,84 @@ function delegateTrace(text, childRunId) {
   summaryEl.textContent = `子任务「${title}」 · ${text}`;
 }
 
-function unsubscribeDelegateRun(childRunId) {
-  const source = state.childEventSources.get(childRunId);
+function unsubscribeDelegateRun(sessionId, childRunId) {
+  const entry = getSessionRunState(sessionId);
+  if (!entry) return;
+  const source = entry.childEventSources.get(childRunId);
   if (source) {
     source.close();
-    state.childEventSources.delete(childRunId);
+    entry.childEventSources.delete(childRunId);
   }
-  state.childRunEventKeys.delete(childRunId);
-  if (state.activeChildRunId === childRunId) state.activeChildRunId = '';
+  entry.childRunEventKeys.delete(childRunId);
+  if (entry.activeChildRunId === childRunId) entry.activeChildRunId = '';
 }
 
-function handleDelegateRunEvent(childRunId, event) {
-  let keys = state.childRunEventKeys.get(childRunId);
+function handleDelegateRunEvent(sessionId, childRunId, event) {
+  const entry = ensureSessionRunState(sessionId);
+  let keys = entry.childRunEventKeys.get(childRunId);
   if (!keys) {
     keys = new Set();
-    state.childRunEventKeys.set(childRunId, keys);
+    entry.childRunEventKeys.set(childRunId, keys);
   }
   const key = runEventKey(event);
   if (keys.has(key)) return;
   keys.add(key);
   const payload = event.payload || {};
-  if (event.type === 'run.started') delegateTrace('正在分析目标', childRunId);
-  if (event.type === 'assistant.delta' && payload.text) delegateTrace('正在组织回答', childRunId);
+  if (event.type === 'run.started') delegateTrace('正在分析目标', childRunId, sessionId);
+  if (event.type === 'assistant.delta' && payload.text) delegateTrace('正在组织回答', childRunId, sessionId);
   if (event.type === 'tool.proposed') {
-    delegateTrace(`准备使用 ${payload.calls?.map(call => call.name).join('、') || '工具'}`, childRunId);
+    delegateTrace(`准备使用 ${payload.calls?.map(call => call.name).join('、') || '工具'}`, childRunId, sessionId);
   }
   if (event.type === 'tool.started') {
-    delegateTrace(`正在执行 ${payload.name || payload.call?.name || '工具'}`, childRunId);
+    delegateTrace(`正在执行 ${payload.name || payload.call?.name || '工具'}`, childRunId, sessionId);
   }
   if (event.type === 'tool.completed') {
-    delegateTrace(payload.result?.summary || payload.call?.name || '工具执行完成', childRunId);
+    delegateTrace(payload.result?.summary || payload.call?.name || '工具执行完成', childRunId, sessionId);
+    if (isViewingSession(sessionId)) {
+      trackGeneratedImageUrlsFromToolResult(
+        payload.result,
+        payload.call?.arguments?.prompt || '生成图片',
+        entry.runId,
+      );
+    }
   }
-  if (event.type === 'checkpoint.updated') delegateTrace('已更新工作进度', childRunId);
+  if (event.type === 'checkpoint.updated') delegateTrace('已更新工作进度', childRunId, sessionId);
   if (event.type === 'user_input.required') {
-    delegateTrace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', childRunId);
+    delegateTrace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', childRunId, sessionId);
   }
-  if (event.type === 'approval.required') delegateTrace('等待你的确认', childRunId);
-  if (event.type === 'client_tool.requested') delegateTrace('等待浏览器返回结果', childRunId);
-  if (event.type === 'run.completed') delegateTrace('运行完成', childRunId);
+  if (event.type === 'approval.required') delegateTrace('等待你的确认', childRunId, sessionId);
+  if (event.type === 'client_tool.requested') delegateTrace('等待浏览器返回结果', childRunId, sessionId);
+  if (event.type === 'run.completed') delegateTrace('运行完成', childRunId, sessionId);
   if (event.type === 'run.failed') {
     const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
-    delegateTrace(message, childRunId);
+    delegateTrace(message, childRunId, sessionId);
   }
   if (event.type === 'memory.proposed') {
-    delegateTrace('已提出 Memory 保存建议', childRunId);
+    delegateTrace('已提出 Memory 保存建议', childRunId, sessionId);
   }
 }
 
-function subscribeDelegateRun(childRunId, delegateTitle = '', parentRunId = '') {
-  if (!childRunId || state.childEventSources.has(childRunId)) return;
-  const parentId = parentRunId || state.runId;
-  state.activeChildRunId = childRunId;
-  if (delegateTitle) state.delegateTitle = delegateTitle;
-  upsertDelegateTrace({ id: childRunId, delegateTitle: delegateTitle || '委派任务', trace: [] }, parentId, { live: true });
+function subscribeDelegateRun(sessionId, childRunId, delegateTitle = '', parentRunId = '') {
+  const entry = ensureSessionRunState(sessionId);
+  if (!childRunId || entry.childEventSources.has(childRunId)) return;
+  const parentId = parentRunId || entry.runId;
+  entry.activeChildRunId = childRunId;
+  if (delegateTitle) entry.delegateTitle = delegateTitle;
+  if (isViewingSession(sessionId)) {
+    upsertDelegateTrace({ id: childRunId, delegateTitle: delegateTitle || '委派任务', trace: [] }, parentId, { live: true });
+  }
   const source = new EventSource(`/api/agent/runs/${encodeURIComponent(childRunId)}/events`);
-  state.childEventSources.set(childRunId, source);
+  entry.childEventSources.set(childRunId, source);
   [
     'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
     'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required', 'memory.proposed',
     'run.completed', 'run.failed',
   ].forEach(type => source.addEventListener(type, raw => {
-    try { handleDelegateRunEvent(childRunId, JSON.parse(raw.data)); } catch { /* ignore */ }
+    try { handleDelegateRunEvent(sessionId, childRunId, JSON.parse(raw.data)); } catch { /* ignore */ }
   }));
   source.onerror = () => {
-    if (state.childEventSources.get(childRunId) === source && ACTIVE_RUN_STATES.has(state.runStatus)) {
-      delegateTrace('连接暂时中断，正在自动重连', childRunId);
+    if (entry.childEventSources.get(childRunId) === source && sessionHasActiveRunStatus(entry.status) && isViewingSession(sessionId)) {
+      delegateTrace('连接暂时中断，正在自动重连', childRunId, sessionId);
     }
   };
 }
@@ -1422,7 +2082,103 @@ function showEmptySession() {
   renderSessions();
 }
 
-function addMessage(role, content, citations = []) {
+function renderAttachmentPreview() {
+  const host = $('#agentAttachmentPreview');
+  if (!host) return;
+  if (!state.pendingAttachments.length) {
+    host.hidden = true;
+    host.innerHTML = '';
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML = state.pendingAttachments.map((item, index) => {
+    const url = normalizeUploadSrc(item.url || '');
+    if (!url || !isSafeImageSrc(url)) return '';
+    return `
+    <figure class="agent-attachment-chip">
+      <button type="button" class="agent-attachment-thumb" data-preview-src="${escHtml(url)}" aria-label="预览附件">
+        <img src="${escHtml(url)}" alt="${escHtml(item.filename || 'attachment')}">
+      </button>
+      <button type="button" data-remove-attachment="${index}" aria-label="移除附件">×</button>
+    </figure>`;
+  }).join('');
+}
+
+function collectClipboardImageFiles(event) {
+  return [...(event.clipboardData?.items || [])]
+    .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+    .map(item => item.getAsFile())
+    .filter(Boolean);
+}
+
+async function uploadAgentAttachments(files) {
+  const list = [...files].slice(0, 14 - state.pendingAttachments.length);
+  if (!list.length) {
+    showToast('最多附加 14 张图片', 'error');
+    return;
+  }
+  for (const file of list) {
+    const body = new FormData();
+    body.append('image', file);
+    const response = await apiFetch('/api/agent/uploads', { method: 'POST', body });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '图片上传失败');
+    const item = Array.isArray(data.items) ? data.items[0] : null;
+    if (item?.url) state.pendingAttachments.push(item);
+  }
+  renderAttachmentPreview();
+}
+
+async function handleAgentImagePaste(event) {
+  const files = collectClipboardImageFiles(event);
+  if (!files.length) return;
+  event.preventDefault();
+  await uploadAgentAttachments(files);
+}
+
+const MESSAGE_COPY_ACTION = '<div class="message-actions"><button type="button" class="message-copy" data-copy-message title="复制" aria-label="复制">复制</button></div>';
+
+function buildMessageCopyText(content, attachments = []) {
+  const text = String(content || '');
+  if (!attachments.length) return text;
+  const refs = attachments.map(item => normalizeUploadSrc(item.url || '')).filter(Boolean).join(', ');
+  if (!refs) return text;
+  return `${text}\n（附件：${refs}）`.trim();
+}
+
+async function copyMessageText(text) {
+  const value = String(text || '');
+  if (!value) {
+    showToast('没有可复制的内容', 'error');
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      showToast('已复制');
+      return;
+    }
+  } catch {
+    // fallback below
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    textarea.remove();
+    if (ok) showToast('已复制');
+    else showToast('复制失败', 'error');
+  } catch {
+    showToast('复制失败', 'error');
+  }
+}
+
+function addMessage(role, content, citations = [], attachments = []) {
   const list = $('#agentMessageList');
   list.querySelector('.agent-empty-state')?.remove();
   const article = document.createElement('article');
@@ -1435,16 +2191,42 @@ function addMessage(role, content, citations = []) {
         return `<button class="citation-button" type="button" data-citation-document="${escHtml(documentId)}" data-citation-block="${escHtml(citation.id || '')}" data-citation-offset="${Number(citation.offset) || 0}">${escHtml(label)}</button>`;
       }).join('')}
     </div>` : '';
+  const attachmentHtml = role === 'user' && attachments.length
+    ? `<div class="message-attachments">${attachments.map(item => {
+      const url = normalizeUploadSrc(item.url || '');
+      if (!url || !isSafeImageSrc(url)) return '';
+      return `<button type="button" class="message-attachment-thumb" data-preview-src="${escHtml(url)}"><img src="${escHtml(url)}" alt="${escHtml(item.filename || 'attachment')}"></button>`;
+    }).join('')}</div>`
+    : '';
   article.innerHTML = role === 'user'
-    ? `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div></div>`
-    : `<div class="message-avatar" aria-hidden="true">A</div><div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>`;
+    ? `<div class="message-body">${MESSAGE_COPY_ACTION}<div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div>`
+    : `<div class="message-avatar" aria-hidden="true">A</div><div class="message-body">${MESSAGE_COPY_ACTION}<div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>`;
+  article.dataset.copyText = buildMessageCopyText(content, role === 'user' ? attachments : []);
   list.append(article);
   scrollMessagesToBottom();
   return article;
 }
 
-function renderSessionMessages(session) {
+function sessionMessagesFingerprint(session) {
+  const messages = (session?.messages || []).filter(message => message.role === 'user' || message.role === 'assistant');
+  const runs = Array.isArray(session?.runs) ? session.runs : [];
+  const last = messages.at(-1);
+  const lastContent = typeof last?.content === 'string' ? last.content.length : 0;
+  return `${session?.id || ''}|${messages.length}|${lastContent}|${runs.length}|${session?.latestRun?.id || ''}|${session?.latestRun?.status || ''}`;
+}
+
+function renderSessionMessages(session, { force = false } = {}) {
   const list = $('#agentMessageList');
+  const fingerprint = sessionMessagesFingerprint(session);
+  const local = getSessionRunState(session.id);
+  const runActive = (session?.latestRun && ACTIVE_RUN_STATES.has(session.latestRun.status))
+    || (local && sessionHasActiveRunStatus(local.status));
+  if (!force && !runActive && list.dataset.sessionId === session.id && list.dataset.messageFp === fingerprint) {
+    scrollMessagesToBottom();
+    return;
+  }
+  list.dataset.sessionId = session.id;
+  list.dataset.messageFp = fingerprint;
   list.innerHTML = '';
   const visible = (session.messages || []).filter(message => message.role === 'user' || message.role === 'assistant');
   const deduped = visible.filter((message, index) => {
@@ -1462,7 +2244,7 @@ function renderSessionMessages(session) {
     : '';
   let runIndex = 0;
   deduped.forEach(message => {
-    addMessage(message.role, message.content);
+    addMessage(message.role, message.content, [], message.attachments || []);
     if (message.role === 'user' && runIndex < runs.length) {
       const run = runs[runIndex];
       upsertRunTrace(run.id === liveId ? { id: run.id, trace: [] } : run, { live: run.id === liveId });
@@ -1488,12 +2270,15 @@ function showEmptySessionContent() {
 }
 
 async function openSession(id, serial = state.routeSerial) {
-  if (state.activeSession?.id === id && state.activeSession.messages) {
+  const prevId = state.activeSession?.id;
+  const local = getSessionRunState(id);
+  if (prevId === id && state.activeSession?.messages && !local?.needsReload) {
+    syncActiveSessionRunUi(state.activeSession);
     applyAgentTopbar(state.activeSession);
-    renderSessions();
+    updateSessionActiveHighlight(id);
     return;
   }
-  stopLiveTrace();
+  if (prevId && prevId !== id) detachSessionRunUi(prevId);
   const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
   const data = await response.json().catch(() => ({}));
   if (serial !== state.routeSerial) return;
@@ -1504,11 +2289,13 @@ async function openSession(id, serial = state.routeSerial) {
   }
   state.activeSession = data;
   applyAgentTopbar(data);
-  renderSessionMessages(data);
-  renderSessions();
-  const latestRun = data.latestRun;
-  if (latestRun && ACTIVE_RUN_STATES.has(latestRun.status)) subscribeRun(latestRun.id, latestRun.status);
-  else setRunStatus('');
+  renderSessionMessages(data, { force: Boolean(local?.needsReload) });
+  updateSessionActiveHighlight(id);
+  syncSessionRunBadgesFromSummaries();
+  const entry = getSessionRunState(id);
+  if (entry?.needsReload) entry.needsReload = false;
+  syncActiveSessionRunUi(data);
+  ensureSessionRunSubscriptions();
 }
 
 async function createSession(title = '新会话') {
@@ -1750,14 +2537,14 @@ function upsertRunTrace(run, { live = false } = {}) {
   if (lines.length) summaryEl.textContent = lines.at(-1);
   eventsEl.scrollTop = eventsEl.scrollHeight;
   for (const child of Array.isArray(run.delegateRuns) ? run.delegateRuns : []) {
-    upsertDelegateTrace(child, run.id, { live: live && state.activeChildRunId === child.id });
+    upsertDelegateTrace(child, run.id, { live: live && activeRunState()?.activeChildRunId === child.id });
   }
   return details;
 }
 
-function trace(text) {
-  if (!text) return;
-  const details = runTraceHost(state.runId) || upsertRunTrace({ id: state.runId, trace: [] }, { live: true });
+function trace(text, runId = activeRunState()?.runId) {
+  if (!text || !runId || !isViewingSession(state.activeSession?.id)) return;
+  const details = runTraceHost(runId) || upsertRunTrace({ id: runId, trace: [] }, { live: true });
   if (!details) return;
   const eventsEl = details.querySelector('.trace-events');
   const summaryEl = details.querySelector('.trace-summary');
@@ -1774,10 +2561,23 @@ function trace(text) {
   summaryEl.textContent = text;
 }
 
-function setRunStatus(status, text = '') {
-  const wasWaitingApproval = state.runStatus === 'waiting_approval';
-  state.runStatus = status;
-  if (wasWaitingApproval && status !== 'waiting_approval') clearApprovalDock();
+function setSessionRunStatus(sessionId, status, text = '') {
+  if (!sessionId) return;
+  const entry = ensureSessionRunState(sessionId);
+  const wasWaitingApproval = entry.status === 'waiting_approval';
+  const wasWaitingUser = entry.status === 'waiting_user';
+  entry.status = status;
+  if (entry.runId && sessionHasActiveRunStatus(status)) {
+    updateSessionActiveRunInList(sessionId, { id: entry.runId, status });
+  } else if (!status || TERMINAL_RUN_STATES.has(status)) {
+    updateSessionActiveRunInList(sessionId, null);
+  }
+  if (!updateSessionRunBadge(sessionId, status)) renderSessions();
+  if (!isViewingSession(sessionId)) return;
+  if ((wasWaitingApproval && status !== 'waiting_approval')
+    || (wasWaitingUser && status !== 'waiting_user')) {
+    clearComposerDock();
+  }
   const active = ACTIVE_RUN_STATES.has(status);
   const blocking = BLOCKING_RUN_STATES.has(status);
   $('#runStatus').hidden = !active;
@@ -1794,8 +2594,8 @@ function setRunStatus(status, text = '') {
   const input = $('#agentInput');
   if (input) {
     if (status === 'waiting_user') {
-      input.placeholder = state.delegateTitle
-        ? `回答子任务「${state.delegateTitle}」的问题…`
+      input.placeholder = entry.delegateTitle
+        ? `回答子任务「${entry.delegateTitle}」的问题…`
         : '回答 Agent 的问题…';
     } else {
       input.placeholder = '用 @ 引用知识库或日期，然后描述你想完成什么…';
@@ -1803,47 +2603,209 @@ function setRunStatus(status, text = '') {
   }
 }
 
+function setRunStatus(status, text = '') {
+  setSessionRunStatus(state.activeSession?.id || '', status, text);
+}
+
 function approvalBodyHtml(approval) {
   const name = approval.call?.name || '';
   const args = approval.call?.arguments && typeof approval.call.arguments === 'object' ? approval.call.arguments : {};
   if (name === 'image.generate') {
     const prompt = String(args.prompt || '').trim();
+    const provider = state.aiSettings?.imageProvider === 'getoken' ? 'getoken' : 'seedream';
     const extras = [];
     if (args.size) extras.push(`尺寸 ${args.size}`);
     if (args.model) extras.push(`模型 ${args.model}`);
-    if (typeof args.watermark === 'boolean') extras.push(args.watermark ? '含水印' : '无水印');
+    if (provider === 'getoken') {
+      if (args.quality) extras.push(`质量 ${args.quality}`);
+      const count = Number(args.n);
+      if (Number.isFinite(count) && count > 1) extras.push(`${count} 张`);
+    } else {
+      if (typeof args.watermark === 'boolean') extras.push(args.watermark ? '含水印' : '无水印');
+      if (args.output_format) extras.push(`格式 ${args.output_format}`);
+      const batchCount = Number(args.batch_size) || Number(args.max_images) || 0;
+      if (args.batch === true || args.sequential_image_generation === 'auto') {
+        extras.push(`组图${batchCount ? ` ${batchCount} 张` : ''}`);
+      }
+      if (args.layer_decomposition) extras.push('图层拆分');
+      if (args.web_search) extras.push('联网搜索');
+      if (args.background === 'transparent') extras.push('透明背景');
+    }
+    const images = Array.isArray(args.image) ? args.image : (args.image ? [args.image] : []);
+    if (images.length) extras.push(`参考图 ${images.length} 张`);
+    const providerLabel = provider === 'getoken' ? 'Getoken' : 'Seedream';
     return `
-      <p>将用 Seedream 生成图片。确认提示词无误后再允许执行。</p>
+      <p>将用 ${providerLabel} 生成图片。确认提示词无误后再允许执行。</p>
       <div class="approval-risk"><strong>提示词</strong><pre>${escHtml(prompt || '（空）')}</pre>${extras.length ? `<p>${escHtml(extras.join(' · '))}</p>` : ''}</div>`;
   }
-  return `<div class="approval-risk"><strong>参数</strong><pre>${escHtml(JSON.stringify(args, null, 2))}</pre></div>`;
+  const summary = summarizeApprovalArgs(name, args);
+  return `<div class="approval-risk"><strong>参数</strong><pre>${escHtml(JSON.stringify(summary, null, 2))}</pre></div>`;
+}
+
+const APPROVAL_STRING_LIMIT = 400;
+const APPROVAL_CONTENT_PREVIEW = 200;
+const APPROVAL_INPUT_PLACEHOLDER = '请先确认上方操作';
+const AGENT_QUESTION_DISPLAY_LIMIT = 800;
+const COMPOSER_HINT_DEFAULT = 'Enter 发送 · @ 引用知识';
+const COMPOSER_HINT_ANSWER = 'Enter 发送回答';
+
+function truncateApprovalString(value, max = APPROVAL_STRING_LIMIT) {
+  const text = String(value ?? '');
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…（共 ${text.length} 字）`;
+}
+
+function summarizeContentField(value) {
+  const text = String(value ?? '');
+  if (!text) return text;
+  if (text.length <= APPROVAL_CONTENT_PREVIEW) return text;
+  return { length: text.length, preview: `${text.slice(0, APPROVAL_CONTENT_PREVIEW)}…` };
+}
+
+function summarizeApprovalArgs(name, args) {
+  const source = args && typeof args === 'object' ? args : {};
+  if (['knowledge.create', 'knowledge.update'].includes(name)) {
+    const out = {};
+    for (const [key, value] of Object.entries(source)) {
+      if (key === 'content' && typeof value === 'string' && value.length > APPROVAL_CONTENT_PREVIEW) {
+        out.content = summarizeContentField(value);
+      } else if (typeof value === 'string') {
+        out[key] = truncateApprovalString(value);
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+  if (name === 'knowledge.import') {
+    const out = {};
+    for (const [key, value] of Object.entries(source)) {
+      if (typeof value === 'string' && (key === 'content' || value.length > APPROVAL_STRING_LIMIT)) {
+        out[key] = value.length > APPROVAL_CONTENT_PREVIEW
+          ? summarizeContentField(value)
+          : truncateApprovalString(value);
+      } else {
+        out[key] = value;
+      }
+    }
+    return out;
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value === 'string') {
+      out[key] = truncateApprovalString(value);
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const nested = {};
+      for (const [nestedKey, nestedValue] of Object.entries(value)) {
+        nested[nestedKey] = typeof nestedValue === 'string'
+          ? truncateApprovalString(nestedValue)
+          : nestedValue;
+      }
+      out[key] = nested;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function ensureComposerInputDefaults() {
+  const input = $('#agentInput');
+  if (input && !input.dataset.defaultPlaceholder) {
+    input.dataset.defaultPlaceholder = input.placeholder || '';
+  }
+}
+
+function setComposerHint(text = COMPOSER_HINT_DEFAULT) {
+  const hint = $('#agentComposer')?.querySelector('.composer-hint');
+  if (hint) hint.textContent = text;
+}
+
+function setComposerApprovalActive(active) {
+  const composer = $('#agentComposer');
+  const input = $('#agentInput');
+  if (!composer || !input) return;
+  ensureComposerInputDefaults();
+  composer.classList.toggle('agent-composer--approval', active);
+  if (active) {
+    composer.classList.remove('agent-composer--question');
+    input.disabled = true;
+    input.placeholder = APPROVAL_INPUT_PLACEHOLDER;
+    setComposerHint(COMPOSER_HINT_DEFAULT);
+    return;
+  }
+  if (activeRunState()?.status !== 'waiting_user') {
+    input.disabled = false;
+    input.placeholder = input.dataset.defaultPlaceholder
+      || '用 @ 引用知识库或日期，然后描述你想完成什么…';
+    setComposerHint(COMPOSER_HINT_DEFAULT);
+  }
+}
+
+function formatAgentQuestionText(text) {
+  const value = String(text || '');
+  if (value.length <= AGENT_QUESTION_DISPLAY_LIMIT) return escHtml(value);
+  return `${escHtml(value.slice(0, AGENT_QUESTION_DISPLAY_LIMIT))}…（共 ${value.length} 字）`;
+}
+
+function setComposerQuestionActive(active, { delegateTitle = '' } = {}) {
+  const composer = $('#agentComposer');
+  const input = $('#agentInput');
+  if (!composer || !input) return;
+  ensureComposerInputDefaults();
+  composer.classList.toggle('agent-composer--question', active);
+  if (active) {
+    composer.classList.remove('agent-composer--approval');
+    input.disabled = false;
+    input.placeholder = delegateTitle
+      ? `回答子任务「${delegateTitle}」的问题…`
+      : '回答 Agent 的问题…';
+    setComposerHint(COMPOSER_HINT_ANSWER);
+    return;
+  }
+  setComposerHint(COMPOSER_HINT_DEFAULT);
+  if (activeRunState()?.status !== 'waiting_approval') {
+    input.disabled = false;
+    if (activeRunState()?.status !== 'waiting_user') {
+      input.placeholder = input.dataset.defaultPlaceholder
+        || '用 @ 引用知识库或日期，然后描述你想完成什么…';
+    }
+  }
 }
 
 function renderAgentQuestion(question, delegateTitle = '') {
   const text = String(question || '').trim();
   if (!text) return;
   const cardKey = delegateTitle ? `${delegateTitle}::${text}` : text;
-  if (document.querySelector(`[data-agent-question="${CSS.escape(cardKey)}"]`)) return;
-  const card = document.createElement('section');
-  card.className = 'approval-card agent-question-card';
-  card.dataset.agentQuestion = cardKey;
+  const dock = $('#agentApprovalDock');
+  if (!dock) return;
+  if (dock.querySelector(`[data-agent-question="${CSS.escape(cardKey)}"]`)) return;
   const delegateHint = delegateTitle
     ? `<p class="approval-delegate-hint muted">子任务：${escHtml(delegateTitle)}</p>`
     : '';
-  card.innerHTML = `
-    <h3>Agent 需要你补充信息</h3>
-    ${delegateHint}
-    <p>${escHtml(text)}</p>
-    <p class="muted">直接在下方输入框回复即可。</p>`;
-  $('#agentMessageList').append(card);
-  scrollMessagesToBottom();
+  dock.hidden = false;
+  dock.innerHTML = `
+    <section class="approval-card agent-question-card" data-agent-question="${escHtml(cardKey)}">
+      <div class="approval-card-body">
+        <h3>Agent 需要你补充信息</h3>
+        ${delegateHint}
+        <p class="agent-question-text">${formatAgentQuestionText(text)}</p>
+      </div>
+    </section>`;
+  setComposerQuestionActive(true, { delegateTitle });
 }
 
-function clearApprovalDock() {
+function clearComposerDock() {
   const dock = $('#agentApprovalDock');
   if (!dock) return;
   dock.hidden = true;
   dock.innerHTML = '';
+  setComposerApprovalActive(false);
+  setComposerQuestionActive(false);
+}
+
+function clearApprovalDock() {
+  clearComposerDock();
 }
 
 function approvalProgressLabel(payload = {}, approval = null) {
@@ -1864,9 +2826,12 @@ function renderApproval(payload) {
       dock.hidden = false;
       dock.innerHTML = `
         <section class="approval-card">
-          <h3>需要你的判断</h3>
-          <p>工具连续失败，Agent 已暂停。可以停止当前运行并调整目标后重试。</p>
+          <div class="approval-card-body">
+            <h3>需要你的判断</h3>
+            <p>工具连续失败，Agent 已暂停。可以停止当前运行并调整目标后重试。</p>
+          </div>
         </section>`;
+      setComposerApprovalActive(true);
     } else {
       clearApprovalDock();
     }
@@ -1878,24 +2843,70 @@ function renderApproval(payload) {
   dock.hidden = false;
   dock.innerHTML = `
     <section class="approval-card" data-approval-card="${escHtml(approval.id)}">
-      <h3>确认执行 ${escHtml(name)}${escHtml(progress)}</h3>
-      ${approval.delegateTitle ? `<p class="approval-delegate-hint muted">子任务：${escHtml(approval.delegateTitle)}</p>` : ''}
-      ${name === 'image.generate' ? '' : '<p>Agent 请求执行一个会改变数据或访问外部服务的动作。</p>'}
-      ${approvalBodyHtml(approval)}
+      <div class="approval-card-body">
+        <h3>确认执行 ${escHtml(name)}${escHtml(progress)}</h3>
+        ${approval.delegateTitle ? `<p class="approval-delegate-hint muted">子任务：${escHtml(approval.delegateTitle)}</p>` : ''}
+        ${name === 'image.generate' ? '' : '<p>Agent 请求执行一个会改变数据或访问外部服务的动作。</p>'}
+        ${approvalBodyHtml(approval)}
+      </div>
       <div class="card-actions">
         <button class="secondary-action" type="button" data-approval-id="${escHtml(approval.id)}" data-approved="false">拒绝</button>
         <button class="primary-action compact" type="button" data-approval-id="${escHtml(approval.id)}" data-approved="true">允许执行</button>
       </div>
     </section>`;
+  setComposerApprovalActive(true);
 }
 
-function renderGeneratedImage(url, alt = '生成图片') {
-  if (!isSafeImageSrc(url) || !url.startsWith('/uploads/')) return;
-  if (document.querySelector(`[data-generated-image="${CSS.escape(url)}"]`)) return;
+function findGeneratedImageCard(url, runId = '') {
+  return [...document.querySelectorAll('.agent-image-preview')]
+    .find(card => {
+      if (card.dataset.generatedImage !== url) return false;
+      if (runId && card.dataset.runId !== runId) return false;
+      return true;
+    }) || null;
+}
+
+function removeRunImagePreviews(runId) {
+  if (!runId) return;
+  document.querySelectorAll(`.agent-image-preview[data-run-id="${CSS.escape(runId)}"]`)
+    .forEach(card => card.remove());
+}
+
+function sessionRunEntryForRunId(runId) {
+  if (!runId) return null;
+  for (const entry of state.sessionRuns.values()) {
+    if (entry.runId === runId) return entry;
+  }
+  return null;
+}
+
+function trackGeneratedImageUrlsFromToolResult(result, alt = '生成图片', runId = activeRunState()?.runId) {
+  const images = result?.data?.images;
+  if (Array.isArray(images) && images.length) {
+    for (const item of images) trackGeneratedImageUrl(item?.url, alt, runId);
+    return;
+  }
+  const url = result?.data?.url;
+  if (typeof url === 'string') trackGeneratedImageUrl(url, alt, runId);
+}
+
+function trackGeneratedImageUrl(rawUrl, alt = '生成图片', runId = activeRunState()?.runId) {
+  const url = normalizeUploadSrc(rawUrl);
+  if (!url.startsWith('/uploads/') || !isSafeImageSrc(url)) return;
+  const entry = sessionRunEntryForRunId(runId) || activeRunState();
+  if (entry && !entry.runImages.includes(url)) entry.runImages.push(url);
+  renderGeneratedImage(url, alt, runId);
+}
+
+function renderGeneratedImage(url, alt = '生成图片', runId = activeRunState()?.runId) {
+  const normalized = normalizeUploadSrc(url);
+  if (!normalized.startsWith('/uploads/') || !isSafeImageSrc(normalized)) return;
+  if (findGeneratedImageCard(normalized, runId)) return;
   const card = document.createElement('section');
   card.className = 'agent-image-preview';
-  card.dataset.generatedImage = url;
-  card.innerHTML = `<img src="${escHtml(url)}" alt="${escHtml(alt)}" loading="lazy">`;
+  card.dataset.generatedImage = normalized;
+  if (runId) card.dataset.runId = runId;
+  card.innerHTML = `<img src="${escHtml(normalized)}" alt="${escHtml(alt)}" loading="lazy">`;
   $('#agentMessageList').append(card);
   scrollMessagesToBottom();
 }
@@ -1932,176 +2943,260 @@ function runEventKey(event) {
   return `${event.type}|${event.at || ''}|${payload}`;
 }
 
-function handleRunEvent(event) {
-  const key = runEventKey(event);
-  if (state.runEventKeys.has(key)) return;
-  state.runEventKeys.add(key);
-  const payload = event.payload || {};
-  if (event.type === 'run.started') { setRunStatus('running'); trace('正在分析目标'); }
-  if (event.type === 'assistant.delta' && payload.text) trace('正在组织回答');
-  if (event.type === 'tool.proposed') trace(`准备使用 ${payload.calls?.map(call => call.name).join('、') || '工具'}`);
-  if (event.type === 'tool.started') trace(`正在执行 ${payload.name || payload.call?.name || '工具'}`);
-  if (event.type === 'tool.completed') {
-    trace(payload.result?.summary || payload.call?.name || '工具执行完成');
-    const url = payload.result?.data?.url;
-    if (typeof url === 'string' && url.startsWith('/uploads/')) {
-      if (!state.runImages.includes(url)) state.runImages.push(url);
-      renderGeneratedImage(url, payload.call?.arguments?.prompt || '生成图片');
-    }
-  }
-  if (event.type === 'checkpoint.updated') trace('已更新工作进度');
-  if (event.type === 'delegate.started') {
-    const childRunId = payload.childRunId || payload.child_run_id || '';
-    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
-    if (delegateTitle) state.delegateTitle = delegateTitle;
-    trace(delegateTitle ? `已委派子任务「${delegateTitle}」` : '已委派子任务');
-    if (childRunId) subscribeDelegateRun(childRunId, delegateTitle, state.runId);
-  }
-  if (event.type === 'delegate.completed') {
-    const childRunId = payload.childRunId || payload.child_run_id || '';
-    if (childRunId) unsubscribeDelegateRun(childRunId);
-    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
-    trace(delegateTitle ? `子任务「${delegateTitle}」已完成` : '子任务已完成');
-  }
-  if (event.type === 'delegate.progress') {
-    setRunStatus('running');
-    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
-    if (delegateTitle) state.delegateTitle = delegateTitle;
-    trace(delegateTitle ? `子任务「${delegateTitle}」继续执行` : '子任务继续执行');
-  }
-  if (event.type === 'user_input.required') {
-    setRunStatus('waiting_user');
-    state.delegateTitle = payload.delegateTitle || payload.delegate_title || '';
-    renderAgentQuestion(payload.question, state.delegateTitle);
-    const childRunId = payload.delegatedRunId || payload.delegated_run_id || state.activeChildRunId;
-    if (childRunId) {
-      subscribeDelegateRun(childRunId, state.delegateTitle, state.runId);
-      delegateTrace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', childRunId);
-    } else {
-      trace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答');
-    }
-  }
-  if (event.type === 'approval.required') {
-    setRunStatus('waiting_approval');
-    state.delegateTitle = payload.delegateTitle || payload.delegate_title || state.delegateTitle;
-    renderApproval(payload);
-    const childRunId = payload.approvals?.[0]?.delegatedRunId || state.activeChildRunId;
-    const progress = approvalProgressLabel(payload);
-    const traceLabel = progress ? `等待你的确认${progress}` : '等待你的确认';
-    if (payload.delegated && childRunId) {
-      subscribeDelegateRun(childRunId, state.delegateTitle, state.runId);
-      delegateTrace(traceLabel, childRunId);
-    } else {
-      trace(traceLabel);
-    }
-  }
-  if (event.type === 'client_tool.requested') {
-    setRunStatus('waiting_client_tool');
-    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
-    if (delegateTitle) state.delegateTitle = delegateTitle;
-    const childRunId = payload.delegatedRunId || payload.delegated_run_id || state.activeChildRunId;
-    if (childRunId) {
-      subscribeDelegateRun(childRunId, delegateTitle || state.delegateTitle, state.runId);
-      delegateTrace('等待浏览器返回结果', childRunId);
-    } else {
-      trace('等待浏览器返回结果');
-    }
-  }
-  if (event.type === 'memory.proposed') {
-    renderMemoryProposal(payload);
-    refreshMemoryPendingCount().catch(() => {});
-  }
-  if (event.type === 'run.completed') {
-    let text = payload.text || '已完成。';
-    for (const url of state.runImages) {
-      if (text.includes(url)) continue;
-      text += `\n\n![生成图片](${url})`;
-    }
-    addMessage('assistant', text, payload.citations || []);
-    for (const url of state.runImages) {
-      document.querySelector(`[data-generated-image="${CSS.escape(url)}"]`)?.remove();
-    }
-    trace('运行完成');
-    clearApprovalDock();
-    setRunStatus('');
-    state.delegateTitle = '';
-    for (const childRunId of [...state.childEventSources.keys()]) unsubscribeDelegateRun(childRunId);
-    state.eventSource?.close();
-    state.eventSource = null;
-    loadSessions().catch(() => {});
-  }
-  if (event.type === 'run.failed') {
-    const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
-    if (payload.error === 'cancelled') {
-      clearApprovalDock();
-    }
-    const card = document.createElement('div');
-    card.className = 'run-error';
-    card.textContent = message;
-    $('#agentMessageList').append(card);
-    trace(message);
-    clearApprovalDock();
-    setRunStatus('');
-    state.delegateTitle = '';
-    for (const childRunId of [...state.childEventSources.keys()]) unsubscribeDelegateRun(childRunId);
-    state.eventSource?.close();
-    state.eventSource = null;
-    scrollMessagesToBottom();
+function finishSessionRun(sessionId, { viewing = isViewingSession(sessionId) } = {}) {
+  const entry = getSessionRunState(sessionId);
+  if (!entry) return;
+  for (const childRunId of [...entry.childEventSources.keys()]) unsubscribeDelegateRun(sessionId, childRunId);
+  entry.eventSource?.close();
+  entry.eventSource = null;
+  entry.runId = '';
+  entry.status = '';
+  entry.delegateTitle = '';
+  entry.activeChildRunId = '';
+  entry.runEventKeys.clear();
+  entry.runImages = [];
+  updateSessionActiveRunInList(sessionId, null);
+  if (viewing) {
+    clearComposerDock();
+    setSessionRunStatus(sessionId, '');
+  } else {
+    entry.needsReload = true;
+    updateSessionRunBadge(sessionId, '');
   }
 }
 
-function subscribeRun(runId, initialStatus = 'queued') {
-  state.eventSource?.close();
-  state.runId = runId;
-  state.runEventKeys = new Set();
-  state.runImages = [];
-  state.delegateTitle = '';
-  state.activeChildRunId = '';
-  upsertRunTrace({ id: runId, trace: [] }, { live: true });
-  setRunStatus(initialStatus);
+function handleRunEvent(sessionId, event) {
+  const entry = ensureSessionRunState(sessionId);
+  const key = runEventKey(event);
+  if (entry.runEventKeys.has(key)) return;
+  entry.runEventKeys.add(key);
+  const payload = event.payload || {};
+  const viewing = isViewingSession(sessionId);
+  if (event.type === 'run.started') {
+    setSessionRunStatus(sessionId, 'running');
+    if (viewing) trace('正在分析目标', entry.runId);
+  }
+  if (event.type === 'assistant.delta' && payload.text && viewing) trace('正在组织回答', entry.runId);
+  if (event.type === 'tool.proposed' && viewing) {
+    trace(`准备使用 ${payload.calls?.map(call => call.name).join('、') || '工具'}`, entry.runId);
+  }
+  if (event.type === 'tool.started' && viewing) {
+    trace(`正在执行 ${payload.name || payload.call?.name || '工具'}`, entry.runId);
+  }
+  if (event.type === 'tool.completed') {
+    if (viewing) {
+      trace(payload.result?.summary || payload.call?.name || '工具执行完成', entry.runId);
+      trackGeneratedImageUrlsFromToolResult(
+        payload.result,
+        payload.call?.arguments?.prompt || '生成图片',
+        entry.runId,
+      );
+    }
+  }
+  if (event.type === 'checkpoint.updated' && viewing) trace('已更新工作进度', entry.runId);
+  if (event.type === 'delegate.started') {
+    const childRunId = payload.childRunId || payload.child_run_id || '';
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (delegateTitle) entry.delegateTitle = delegateTitle;
+    if (viewing) trace(delegateTitle ? `已委派子任务「${delegateTitle}」` : '已委派子任务', entry.runId);
+    if (childRunId) subscribeDelegateRun(sessionId, childRunId, delegateTitle, entry.runId);
+  }
+  if (event.type === 'delegate.completed') {
+    const childRunId = payload.childRunId || payload.child_run_id || '';
+    if (childRunId) unsubscribeDelegateRun(sessionId, childRunId);
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (viewing) trace(delegateTitle ? `子任务「${delegateTitle}」已完成` : '子任务已完成', entry.runId);
+  }
+  if (event.type === 'delegate.progress') {
+    setSessionRunStatus(sessionId, 'running');
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (delegateTitle) entry.delegateTitle = delegateTitle;
+    if (viewing) trace(delegateTitle ? `子任务「${delegateTitle}」继续执行` : '子任务继续执行', entry.runId);
+  }
+  if (event.type === 'user_input.required') {
+    setSessionRunStatus(sessionId, 'waiting_user');
+    entry.delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (viewing) renderAgentQuestion(payload.question, entry.delegateTitle);
+    const childRunId = payload.delegatedRunId || payload.delegated_run_id || entry.activeChildRunId;
+    if (childRunId) {
+      subscribeDelegateRun(sessionId, childRunId, entry.delegateTitle, entry.runId);
+      if (viewing) {
+        delegateTrace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', childRunId, sessionId);
+      }
+    } else if (viewing) {
+      trace(payload.question ? `等待你的回答：${payload.question}` : '等待你的回答', entry.runId);
+    }
+  }
+  if (event.type === 'approval.required') {
+    setSessionRunStatus(sessionId, 'waiting_approval');
+    entry.delegateTitle = payload.delegateTitle || payload.delegate_title || entry.delegateTitle;
+    if (viewing) renderApproval(payload);
+    const childRunId = payload.approvals?.[0]?.delegatedRunId || entry.activeChildRunId;
+    const progress = approvalProgressLabel(payload);
+    const traceLabel = progress ? `等待你的确认${progress}` : '等待你的确认';
+    if (payload.delegated && childRunId) {
+      subscribeDelegateRun(sessionId, childRunId, entry.delegateTitle, entry.runId);
+      if (viewing) delegateTrace(traceLabel, childRunId, sessionId);
+    } else if (viewing) {
+      trace(traceLabel, entry.runId);
+    }
+  }
+  if (event.type === 'client_tool.requested') {
+    setSessionRunStatus(sessionId, 'waiting_client_tool');
+    const delegateTitle = payload.delegateTitle || payload.delegate_title || '';
+    if (delegateTitle) entry.delegateTitle = delegateTitle;
+    const childRunId = payload.delegatedRunId || payload.delegated_run_id || entry.activeChildRunId;
+    if (childRunId) {
+      subscribeDelegateRun(sessionId, childRunId, delegateTitle || entry.delegateTitle, entry.runId);
+      if (viewing) delegateTrace('等待浏览器返回结果', childRunId, sessionId);
+    } else if (viewing) {
+      trace('等待浏览器返回结果', entry.runId);
+    }
+  }
+  if (event.type === 'memory.proposed') {
+    if (viewing) renderMemoryProposal(payload);
+    refreshMemoryPendingCount().catch(() => {});
+  }
+  if (event.type === 'run.completed') {
+    if (viewing) {
+      const list = $('#agentMessageList');
+      const known = collectKnownUploadUrls(list, { excludeRunId: entry.runId });
+      let text = dedupeImageMarkdown(payload.text || '已完成。', known);
+      for (const url of entry.runImages) {
+        if (known.has(url) || text.includes(url)) continue;
+        text += `\n\n![生成图片](${url})`;
+        known.add(url);
+      }
+      addMessage('assistant', text, payload.citations || []);
+      patchSessionSummaryAfterAssistantMessage(sessionId, text);
+      removeRunImagePreviews(entry.runId);
+      trace('运行完成', entry.runId);
+    }
+    finishSessionRun(sessionId, { viewing });
+  }
+  if (event.type === 'run.failed') {
+    const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
+    if (viewing) {
+      if (payload.error === 'cancelled') clearComposerDock();
+      removeRunImagePreviews(entry.runId);
+      const card = document.createElement('div');
+      card.className = 'run-error';
+      card.textContent = message;
+      $('#agentMessageList').append(card);
+      trace(message, entry.runId);
+      scrollMessagesToBottom();
+    }
+    finishSessionRun(sessionId, { viewing });
+  }
+}
+
+function patchSessionSummaryAfterAssistantMessage(sessionId, content) {
+  const summary = state.sessions.find(item => item.id === sessionId);
+  if (!summary) return;
+  summary.messageCount = sessionMessageCount(summary) + 1;
+  summary.lastMessagePreview = String(content || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  summary.updatedAt = Date.now();
+  if (state.activeSession?.id === sessionId) {
+    state.activeSession.messageCount = summary.messageCount;
+    state.activeSession.updatedAt = summary.updatedAt;
+    applyAgentTopbar(state.activeSession);
+  }
+  updateSessionRowMeta(sessionId);
+}
+
+function subscribeRun(sessionId, runId, initialStatus = 'queued') {
+  if (!sessionId || !runId) return;
+  if (isViewingSession(sessionId)) {
+    while (countActiveSessionSse(sessionId) >= MAX_PARALLEL_SESSION_SSE) {
+      const victim = findBackgroundSseSession(sessionId);
+      if (!victim) break;
+      pauseSessionSse(victim);
+    }
+  } else if (countActiveSessionSse() >= MAX_PARALLEL_SESSION_SSE) {
+    return;
+  }
+  const entry = ensureSessionRunState(sessionId);
+  const sameRun = entry.runId === runId;
+  if (entry.eventSource && entry.runId !== runId) {
+    entry.eventSource.close();
+    entry.eventSource = null;
+  }
+  if (!sameRun) {
+    entry.runEventKeys = new Set();
+    entry.runImages = [];
+  }
+  entry.runId = runId;
+  entry.delegateTitle = '';
+  entry.activeChildRunId = '';
+  entry.needsReload = false;
+  updateSessionActiveRunInList(sessionId, { id: runId, status: initialStatus });
+  if (isViewingSession(sessionId)) upsertRunTrace({ id: runId, trace: [] }, { live: true });
+  setSessionRunStatus(sessionId, initialStatus);
   const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
-  state.eventSource = source;
-  [
-    'run.started', 'assistant.delta', 'tool.proposed', 'approval.required', 'tool.started',
-    'tool.completed', 'checkpoint.updated', 'client_tool.requested', 'user_input.required', 'memory.proposed',
-    'delegate.started', 'delegate.completed', 'delegate.progress', 'run.completed', 'run.failed',
-  ].forEach(type => source.addEventListener(type, raw => {
-    try { handleRunEvent(JSON.parse(raw.data)); } catch { trace('收到无法识别的运行事件'); }
+  entry.eventSource = source;
+  RUN_EVENT_TYPES.forEach(type => source.addEventListener(type, raw => {
+    try { handleRunEvent(sessionId, JSON.parse(raw.data)); } catch {
+      if (isViewingSession(sessionId)) trace('收到无法识别的运行事件', runId);
+    }
   }));
   source.onerror = () => {
-    if (state.eventSource === source && ACTIVE_RUN_STATES.has(state.runStatus)) trace('连接暂时中断，正在自动重连');
+    if (entry.eventSource === source && sessionHasActiveRunStatus(entry.status) && isViewingSession(sessionId)) {
+      trace('连接暂时中断，正在自动重连', runId);
+    }
   };
+}
+
+function syncActiveSessionRunUi(session) {
+  if (!session?.id) return;
+  const entry = getSessionRunState(session.id);
+  const activeRun = session.activeRun || session.latestRun;
+  const runId = entry?.runId || activeRun?.id || '';
+  const status = entry?.status || activeRun?.status || '';
+  if (runId && sessionHasActiveRunStatus(status)) {
+    if (!entry?.eventSource) subscribeRun(session.id, runId, status);
+    else setSessionRunStatus(session.id, status);
+    return;
+  }
+  setSessionRunStatus(session.id, '');
 }
 
 async function sendAgentMessage(content) {
   let session = state.activeSession;
   if (!session) session = await createSession(content.slice(0, 30));
-  const resuming = state.runStatus === 'waiting_user' && state.runId;
-  addMessage('user', content);
-  setRunStatus(resuming ? 'running' : 'queued');
+  const entry = ensureSessionRunState(session.id);
+  const attachments = state.pendingAttachments.map(item => ({
+    url: item.url,
+    filename: item.filename,
+  }));
+  const resuming = entry.status === 'waiting_user' && entry.runId;
+  addMessage('user', content, [], attachments);
+  patchSessionSummaryAfterUserMessage(session.id, content);
+  state.pendingAttachments = [];
+  renderAttachmentPreview();
+  setSessionRunStatus(session.id, resuming ? 'running' : 'queued');
   const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(session.id)}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, attachments }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    setRunStatus(resuming ? 'waiting_user' : '');
+    setSessionRunStatus(session.id, resuming ? 'waiting_user' : '');
     throw new Error(data.error || 'Agent 启动失败');
   }
   if (data.resumed) {
-    subscribeRun(data.runId, data.status || 'running');
-    trace('已收到你的回答，继续运行');
+    subscribeRun(session.id, data.runId, data.status || 'running');
+    trace('已收到你的回答，继续运行', data.runId);
   } else {
-    subscribeRun(data.runId, data.status);
-    trace('目标已提交');
+    subscribeRun(session.id, data.runId, data.status);
+    trace('目标已提交', data.runId);
   }
-  loadSessions().catch(() => {});
 }
 
 async function stopCurrentRun() {
-  if (!state.runId) return;
-  const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(state.runId)}/cancel`, { method: 'POST' });
+  const entry = activeRunState();
+  if (!entry?.runId) return;
+  const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(entry.runId)}/cancel`, { method: 'POST' });
   if (!response.ok) showToast('无法停止当前运行', 'error');
 }
 
@@ -2929,9 +4024,7 @@ async function handleDocumentImageUpload(file) {
 
 async function handleDocumentImagePaste(event) {
   if (!state.activeDocument || state.activeDocument.sourceType === 'file' || state.activeDocument.status === 'archived') return;
-  const file = [...(event.clipboardData?.items || [])]
-    .find(item => item.kind === 'file' && item.type.startsWith('image/'))
-    ?.getAsFile();
+  const file = collectClipboardImageFiles(event)[0];
   if (!file) return;
   event.preventDefault();
   await handleDocumentImageUpload(file);
@@ -3002,8 +4095,13 @@ async function syncDiaryStatus() {
   const status = await getDiaryStatus();
   state.diaryUnlocked = status.enabled === false || !status.locked;
   const button = $('#diaryButton');
-  button.textContent = state.diaryUnlocked ? '私密知识已解锁' : '私密知识已锁定';
+  if (!button) return;
+  const label = state.diaryUnlocked ? '私密知识已解锁' : '私密知识已锁定';
+  button.setAttribute('aria-label', label);
+  button.title = label;
   button.classList.toggle('unlocked', state.diaryUnlocked);
+  button.querySelector('.diary-icon-locked')?.toggleAttribute('hidden', state.diaryUnlocked);
+  button.querySelector('.diary-icon-unlocked')?.toggleAttribute('hidden', !state.diaryUnlocked);
 }
 
 async function toggleDiary() {
@@ -3088,14 +4186,49 @@ function bindEvents() {
     event.preventDefault();
     const input = $('#agentInput');
     const content = input.value.trim();
-    if (!content || BLOCKING_RUN_STATES.has(state.runStatus)) return;
+    if (!content || BLOCKING_RUN_STATES.has(activeRunState()?.status || '')) return;
     input.value = '';
     autoResizeComposer();
     try { await sendAgentMessage(content); } catch (error) { showToast(error.message, 'error'); }
   });
+  $('#agentAttachButton')?.addEventListener('click', () => $('#agentAttachmentInput')?.click());
+  $('#agentAttachmentInput')?.addEventListener('change', async event => {
+    const files = event.target.files;
+    if (!files?.length) return;
+    try {
+      await uploadAgentAttachments(files);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      event.target.value = '';
+    }
+  });
+  $('#agentAttachmentPreview')?.addEventListener('click', event => {
+    const remove = event.target.closest('[data-remove-attachment]');
+    if (remove) {
+      const index = Number(remove.dataset.removeAttachment);
+      if (!Number.isInteger(index)) return;
+      state.pendingAttachments.splice(index, 1);
+      renderAttachmentPreview();
+      return;
+    }
+    const preview = event.target.closest('[data-preview-src]');
+    if (!preview) return;
+    const img = preview.querySelector('img');
+    openMarkdownImagePreview(img || preview.dataset.previewSrc);
+  });
+  $('#agentSeedreamModel')?.addEventListener('change', event => {
+    syncSeedreamSettingsUi(event.target.value);
+  });
+  $('#agentImageProvider')?.addEventListener('change', event => {
+    syncImageProviderSettingsUi(event.target.value);
+  });
   $('#agentInput').addEventListener('input', () => {
     autoResizeComposer();
     renderMentionMenu();
+  });
+  $('#agentInput')?.addEventListener('paste', event => {
+    handleAgentImagePaste(event).catch(error => showToast(error.message, 'error'));
   });
   $('#agentInput').addEventListener('keydown', event => {
     const menuOpen = !$('#mentionMenu')?.hidden;
@@ -3162,6 +4295,12 @@ function bindEvents() {
       openSettings('model').catch(error => showToast(error.message, 'error'));
       return;
     }
+    const copyBtn = event.target.closest('[data-copy-message]');
+    if (copyBtn) {
+      const message = copyBtn.closest('.message');
+      await copyMessageText(message?.dataset.copyText || '');
+      return;
+    }
     const citation = event.target.closest('[data-citation-document]');
     if (citation) {
       await navigate('knowledge', citation.dataset.citationDocument, {
@@ -3170,11 +4309,22 @@ function bindEvents() {
       });
       return;
     }
+    const attachmentPreview = event.target.closest('[data-preview-src]');
+    if (attachmentPreview) {
+      const img = attachmentPreview.querySelector('img');
+      openMarkdownImagePreview(img || attachmentPreview.dataset.previewSrc);
+      return;
+    }
     const approval = event.target.closest('[data-approval-id]');
     if (approval) {
       const card = approval.closest('.approval-card');
       card?.querySelectorAll('button').forEach(button => { button.disabled = true; });
-      const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(state.runId)}/approvals/${encodeURIComponent(approval.dataset.approvalId)}`, {
+      const runId = activeRunState()?.runId;
+      if (!runId) {
+        card?.querySelectorAll('button').forEach(button => { button.disabled = false; });
+        return showToast('当前会话没有进行中的运行', 'error');
+      }
+      const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approval.dataset.approvalId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved: approval.dataset.approved === 'true' }),
@@ -3325,6 +4475,7 @@ function bindEvents() {
   });
   window.addEventListener('popstate', applyRoute);
   window.addEventListener('hashchange', applyRoute);
+  window.addEventListener('focus', () => refreshBackgroundSessionRuns());
   mobileSidebarQuery.addEventListener('change', () => {
     document.body.classList.remove('sidebar-visible');
     syncMobileSidebarAccessibility();
@@ -3344,9 +4495,10 @@ function bindEvents() {
      await Promise.all([syncDiaryStatus(), loadKnowledgeTree(), state.selectedKnowledgeBase ? loadDocuments() : Promise.resolve()]);
     showToast('私密知识已解锁', 'success');
   });
-  $('#settingsButton').addEventListener('click', () => openSettings().catch(error => showToast(error.message, 'error')));
   $('#accountSettings').addEventListener('click', () => openSettings('account').catch(error => showToast(error.message, 'error')));
-  $('#agentComposerSettings').addEventListener('click', () => openSettings('model').catch(error => showToast(error.message, 'error')));
+  $('#agentComposerModelSelect')?.addEventListener('change', event => {
+    quickSaveAgentModel(event.target.value).catch(error => showToast(error.message, 'error'));
+  });
   $('#agentSidebarStatus').addEventListener('click', () => openSettings('model').catch(error => showToast(error.message, 'error')));
   $('#closeSettingsDialog').addEventListener('click', () => $('#settingsDialog').close());
   $('#settingsForm').addEventListener('submit', event => {
@@ -3356,6 +4508,63 @@ function bindEvents() {
   document.querySelector('.settings-nav').addEventListener('click', event => {
     const button = event.target.closest('[data-settings-nav]');
     if (button) setSettingsPanel(button.dataset.settingsNav);
+  });
+  $('#refreshOpenRouterModels')?.addEventListener('click', () => refreshOpenRouterModels().catch(error => showToast(error.message, 'error')));
+  $('#addCustomProvider')?.addEventListener('click', () => {
+    syncCustomProvidersDraftFromDom();
+    if ((state.customProvidersDraft || []).length >= MAX_CUSTOM_PROVIDERS) {
+      showToast(`最多添加 ${MAX_CUSTOM_PROVIDERS} 个自定义端点`, 'error');
+      return;
+    }
+    state.customProvidersDraft = [...(state.customProvidersDraft || []), createEmptyCustomProvider()];
+    state.customProviderExpandIndex = state.customProvidersDraft.length - 1;
+    renderCustomProvidersList();
+  });
+  $('#customProvidersList')?.addEventListener('click', event => {
+    const removeProvider = event.target.closest('[data-remove-provider]');
+    if (removeProvider) {
+      event.preventDefault();
+      event.stopPropagation();
+      syncCustomProvidersDraftFromDom();
+      const index = Number(removeProvider.dataset.removeProvider);
+      state.customProvidersDraft = (state.customProvidersDraft || []).filter((_, i) => i !== index);
+      renderCustomProvidersList();
+      return;
+    }
+    const addModel = event.target.closest('[data-add-model]');
+    if (addModel) {
+      event.stopPropagation();
+      syncCustomProvidersDraftFromDom();
+      const index = Number(addModel.dataset.addModel);
+      const provider = state.customProvidersDraft?.[index];
+      if (!provider) return;
+      if ((provider.models || []).length >= MAX_MODELS_PER_PROVIDER) {
+        showToast(`每个端点最多 ${MAX_MODELS_PER_PROVIDER} 个模型`, 'error');
+        return;
+      }
+      provider.models = [...(provider.models || []), { id: '', name: '' }];
+      renderCustomProvidersList();
+      return;
+    }
+    const removeModel = event.target.closest('[data-remove-model]');
+    if (removeModel) {
+      event.stopPropagation();
+      syncCustomProvidersDraftFromDom();
+      const providerIndex = Number(removeModel.dataset.removeModel);
+      const modelIndex = Number(removeModel.dataset.removeModelId);
+      const provider = state.customProvidersDraft?.[providerIndex];
+      if (!provider) return;
+      provider.models = (provider.models || []).filter((_, i) => i !== modelIndex);
+      if (!provider.models.length) provider.models = [{ id: '', name: '' }];
+      renderCustomProvidersList();
+      return;
+    }
+    const testModel = event.target.closest('[data-test-model]');
+    if (testModel) {
+      event.stopPropagation();
+      testCustomProviderModel(Number(testModel.dataset.testModel), Number(testModel.dataset.testModelId))
+        .catch(error => showToast(error.message, 'error'));
+    }
   });
   createBackupActions({
     confirmAction,
@@ -3437,7 +4646,7 @@ async function initialize() {
   renderKnowledgeSearchModeHint();
   const savedTheme = localStorage.getItem('theme');
   $('#themeSelect').value = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'system';
-  await Promise.all([loadAccount(), syncDiaryStatus(), loadAgentStatus()]);
+  await Promise.all([loadAccount(), syncDiaryStatus(), loadAgentStatus(), loadComposerModelOptions()]);
   await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();

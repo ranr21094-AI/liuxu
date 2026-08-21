@@ -156,6 +156,11 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 | `SEEDREAM_API_KEY` | 旧管理员工作区可使用的服务端 Seedream 回退 Key | empty |
 | `SEEDREAM_BASE_URL` | Seedream API 基础地址 | `https://ark.cn-beijing.volces.com/api/v3` |
 | `SEEDREAM_DEFAULT_MODEL` | 默认 Seedream 模型 | `doubao-seedream-5-0-260128` |
+| `GETOKEN_API_KEY` | 旧管理员工作区可使用的服务端 Getoken 回退 Key（`gpt-image-2`） | empty |
+| `GETOKEN_GROK_IMAGINE_API_KEY` | Getoken `grok-imagine-image` 模型回退 Key | empty |
+| `GETOKEN_NANO_BANANA_API_KEY` | Getoken `nano-banana-2` 模型回退 Key | empty |
+| `GETOKEN_BASE_URL` | Getoken API 基础地址 | `https://api.getoken.tech` |
+| `GETOKEN_DEFAULT_MODEL` | 默认 Getoken 模型 | `gpt-image-2` |
 | `WESTOCK_NPX_COMMAND` | WeStock CLI 启动命令 | `npx -y westock-data-clawhub@1.0.4` |
 | `QQ_EMAIL_ACCOUNT` | QQ 发信邮箱账号 | empty |
 | `QQ_EMAIL_AUTH_CODE` | QQ 邮箱 SMTP 授权码 | empty |

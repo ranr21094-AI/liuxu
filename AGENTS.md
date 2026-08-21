@@ -62,8 +62,8 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 - **State**: Module-local `state` in `workbench.js` — no framework.
 - **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images via `#insertImageButton` → `POST /api/upload`.
 - **Settings → 数据**: JSON/ZIP backup and restore (`workbench-backup.js`).
-- **Settings → Memory**: 11 tunables in `ai-settings.json` via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps, context injection counts). Defaults match former hardcoded values; min ≥ 1, no upper cap. L0 rules stay fixed in `memory.js`.
-- **Settings → 模型 → 高级 Agent 限制**: `lib/agent/agent-settings.js` — `agentDelegateMaxRounds`（子 run 独立轮数/tool 预算，与父 run 脱钩），护栏（连续失败、只读并发、重复写检测），`web.fetch` 上限，以及 `knowledge.search` / `knowledge.list` / `memory.search` 条数限制。`web.search` 同 session 24h 内相同 query 会缓存（最多 32 条），同 run 内重复请求直接返回缓存并跳过审批。Merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`.
+- **Settings → Memory**: tunables in `ai-settings.json` via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps). L2/L3 不再全量注入 Agent；仅 L0 规则在 system prompt。Agent 通过 `memory.list` / `memory.search` / `memory.read` 按需读取（`memoryContextMaxL2/L3` 保留兼容但不再控制注入）。
+- **Settings → 模型 → 高级 Agent 限制**: `lib/agent/agent-settings.js` — `agentDelegateMaxRounds`（子 run 独立轮数/tool 预算，与父 run 脱钩），护栏（连续失败、只读并发、重复写检测），`web.fetch` 上限，以及 `knowledge.search` / `knowledge.list` / `memory.list` / `memory.search` 条数限制。`web.search` 同 session 24h 内相同 query 会缓存（最多 32 条），同 run 内重复请求直接返回缓存并跳过审批。Merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`.
 - **Diary**: Unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 
 ### Key Patterns
@@ -87,7 +87,7 @@ See `README.md` § Relevant API for the full table. Notable groups:
 ### Notable Files
 
 - `lib/knowledge/` — documents, search, migrate-logs, routes
-- `lib/agent/` — runtime, routes, tools, `memory-settings.js` and `agent-settings.js` (tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.search`, `agent.delegate` (one-level sub-run; approval / ask_user / browser / memory.propose bubble to parent), `web.fetch`, `code.run` (PowerShell/Python shell runner), `ask_user`, `update_working_checkpoint`. 需用户确认的工具在一轮内进入 `queuedApprovals` 队列，仅逐条暴露给前端固定审批栏（`#agentApprovalDock`），并显示进度。
+- `lib/agent/` — runtime, routes, tools, `memory-settings.js` and `agent-settings.js` (tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.list` / `memory.read` / `memory.search` (L2/L3 on-demand; only L0 rules auto-injected), `agent.delegate` (one-level sub-run; approval / ask_user / browser / memory.propose bubble to parent), `web.fetch`, `code.run` (PowerShell/Python shell runner), `ask_user`, `update_working_checkpoint`. 需用户确认的工具在一轮内进入 `queuedApprovals` 队列，仅逐条暴露给前端嵌入 `#agentComposer` 顶部的交互区（`#agentApprovalDock`，textarea 上方），并显示进度；长参数在 UI 中摘要展示，内容区限高可滚动，操作按钮固定可见。`ask_user` 的问题同样显示在该 dock，用户在下方输入框直接回复。
 - `lib/workspace/` — ZIP export/restore
 - `lib/http/backup-routes.js` — JSON backup/restore HTTP handlers
 - `gen_images.py` — standalone script, unrelated to the web app
