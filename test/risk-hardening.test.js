@@ -10,6 +10,7 @@ const { pathToFileURL } = require('node:url');
 const { JSDOM } = require('jsdom');
 const businessDate = require('../business-date');
 const { DEFAULT_MEMORY_SETTINGS } = require('../lib/agent/memory-settings');
+const { DEFAULT_AGENT_SETTINGS } = require('../lib/agent/agent-settings');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
@@ -1015,6 +1016,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     agentMaxRounds: 12,
     agentFileReadMaxMb: 4,
     ...DEFAULT_MEMORY_SETTINGS,
+    ...DEFAULT_AGENT_SETTINGS,
   });
 
   const saved = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -1081,6 +1083,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     agentMaxRounds: 100,
     agentFileReadMaxMb: 64,
     ...DEFAULT_MEMORY_SETTINGS,
+    ...DEFAULT_AGENT_SETTINGS,
     memoryRefreshMaxRounds: 8,
     memoryRefreshMaxProposals: 12,
     memoryRefreshSessionLimit: 10,
@@ -2733,6 +2736,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#saveAgentSettings') !== null, true);
   assert.equal(document.querySelector('#agentMaxRounds') !== null, true);
   assert.equal(document.querySelector('#agentFileReadMaxMb') !== null, true);
+  assert.equal(document.querySelector('#agentDelegateMaxRounds') !== null, true);
+  assert.equal(document.querySelector('#agentMaxToolFailures') !== null, true);
   assert.equal(document.querySelector('[data-settings-nav="memory"]') !== null, true);
   assert.equal(document.querySelector('#memoryRefreshMaxRounds') !== null, true);
   assert.equal(document.querySelector('#memoryRefreshMaxProposals') !== null, true);

@@ -646,6 +646,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .settings-content { min-height: 0; overflow: auto; padding: 8px 20px 16px; }
 .settings-section { margin-top: 10px; }
 .settings-section h3 { margin: 0 0 7px; color: var(--faint); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.settings-subsection { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.settings-subsection h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--text); letter-spacing: normal; text-transform: none; }
+.settings-subsection .settings-copy { margin-bottom: 8px; }
 .settings-row, .settings-link { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 57px; border-top: 1px solid var(--line); color: inherit; text-decoration: none; }
 .settings-row span, .settings-link span:first-child { display: grid; }
 .settings-row strong, .settings-link strong { font-size: 12px; }

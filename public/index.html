@@ -499,6 +499,52 @@
               <input id="agentFileReadMaxMb" type="number" min="1" step="1" value="4">
               <small>Agent 的 file.read / file.patch 单文件大小上限。至少 1MB，默认 4，无上限。</small>
             </label>
+            <label class="settings-field" for="agentDelegateMaxRounds">子代理最大轮数
+              <input id="agentDelegateMaxRounds" type="number" min="1" step="1" value="8">
+              <small>agent.delegate 子 run 默认上限，与父 run 轮数/工具预算独立。至少 1，默认 8。</small>
+            </label>
+            <div class="settings-subsection">
+              <h4>高级 Agent 限制</h4>
+              <p class="settings-copy">护栏、并发与工具结果上限。至少 1，无上限。</p>
+              <label class="settings-field" for="agentMaxToolFailures">连续工具失败暂停
+                <input id="agentMaxToolFailures" type="number" min="1" step="1" value="3">
+                <small>同一 run 内连续工具失败后等待确认。默认 3。</small>
+              </label>
+              <label class="settings-field" for="agentReadConcurrency">只读工具并行数
+                <input id="agentReadConcurrency" type="number" min="1" step="1" value="4">
+                <small>每轮只读工具（search/list/read 等）并行执行数。默认 4。</small>
+              </label>
+              <label class="settings-field" for="agentRepeatMutationLimit">重复写操作检测
+                <input id="agentRepeatMutationLimit" type="number" min="1" step="1" value="3">
+                <small>相似写操作重复多少次后暂停并 ask_user。默认 3。</small>
+              </label>
+              <label class="settings-field" for="agentWebFetchMaxKb">web.fetch 体积上限（KB）
+                <input id="agentWebFetchMaxKb" type="number" min="1" step="1" value="512">
+                <small>单次抓取响应体上限。默认 512KB。</small>
+              </label>
+              <label class="settings-field" for="agentWebFetchTimeoutSec">web.fetch 超时（秒）
+                <input id="agentWebFetchTimeoutSec" type="number" min="1" step="1" value="15">
+                <small>单次 HTTP 抓取超时。默认 15 秒。</small>
+              </label>
+              <label class="settings-field" for="agentKnowledgeSearchLimit">knowledge.search 默认条数
+                <input id="agentKnowledgeSearchLimit" type="number" min="1" step="1" value="20">
+              </label>
+              <label class="settings-field" for="agentKnowledgeSearchMaxLimit">knowledge.search 最大条数
+                <input id="agentKnowledgeSearchMaxLimit" type="number" min="1" step="1" value="60">
+              </label>
+              <label class="settings-field" for="agentKnowledgeListLimit">knowledge.list 默认条数
+                <input id="agentKnowledgeListLimit" type="number" min="1" step="1" value="40">
+              </label>
+              <label class="settings-field" for="agentKnowledgeListMaxLimit">knowledge.list 最大条数
+                <input id="agentKnowledgeListMaxLimit" type="number" min="1" step="1" value="100">
+              </label>
+              <label class="settings-field" for="agentMemorySearchLimit">memory.search 默认条数
+                <input id="agentMemorySearchLimit" type="number" min="1" step="1" value="20">
+              </label>
+              <label class="settings-field" for="agentMemorySearchMaxLimit">memory.search 最大条数
+                <input id="agentMemorySearchMaxLimit" type="number" min="1" step="1" value="40">
+              </label>
+            </div>
             <label class="settings-row" for="agentReasoningMode"><span><strong>思考模式</strong><small>模型默认、关闭或指定强度</small></span>
               <select id="agentReasoningMode">
                 <option value="default">模型默认</option>

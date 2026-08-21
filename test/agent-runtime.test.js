@@ -1432,12 +1432,15 @@ test('web.fetch uses injected fetch handler', async (t) => {
   assert.equal(result.data.text, 'hello world');
 });
 
-test('agent.delegate shared tool budget stops child run when combined limit is exceeded', async (t) => {
+test('agent.delegate child tool budget is independent of parent usage', async (t) => {
   const db = tempDb(t);
-  db.saveAiSettings({ ...db.getAiSettings(), agentMaxRounds: 4 });
+  db.saveAiSettings({
+    ...db.getAiSettings(),
+    agentMaxRounds: 4,
+    agentDelegateMaxRounds: 2,
+  });
   const store = createAgentStore(db);
   const memory = createMemoryService(store);
-  let parentRound = 0;
   let parentDelegated = false;
   const runtime = createRuntime({
     db,
@@ -1450,15 +1453,11 @@ test('agent.delegate shared tool budget stops child run when combined limit is e
         if (inChild) {
           return {
             text: '',
-            toolCalls: Array.from({ length: 8 }, (_, index) => ({
+            toolCalls: Array.from({ length: 5 }, (_, index) => ({
               name: 'task.list',
               arguments: { note: String(index) },
             })),
           };
-        }
-        parentRound += 1;
-        if (parentRound === 1) {
-          return { text: '', toolCalls: [{ name: 'task.list', arguments: {} }] };
         }
         if (parentDelegated) {
           return { text: '预算测试完成', toolCalls: [] };
@@ -1466,7 +1465,10 @@ test('agent.delegate shared tool budget stops child run when combined limit is e
         parentDelegated = true;
         return {
           text: '',
-          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '耗尽预算', title: '预算子任务' } }],
+          toolCalls: [
+            ...Array.from({ length: 6 }, (_, index) => ({ name: 'task.list', arguments: { parent: String(index) } })),
+            { name: 'agent.delegate', arguments: { prompt: '耗尽预算', title: '预算子任务' } },
+          ],
         };
       },
     },
@@ -1478,11 +1480,14 @@ test('agent.delegate shared tool budget stops child run when combined limit is e
     await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
     live = await waitForRun(store, run.id, 1200);
   }
+  assert.ok((live.toolCalls || 0) >= 6);
   const child = store.listChildRuns(run.id).at(-1);
   assert.ok(child);
+  assert.equal(child.maxRoundsOverride, 2);
   const failedChild = await waitForRun(store, child.id, 1200);
   assert.equal(failedChild.status, 'failed');
   assert.equal(failedChild.error, 'Tool call limit exceeded');
+  assert.equal((failedChild.toolCalls || 0) <= 4, true);
 });
 
 test('session API includes delegate run traces nested under parent run', async (t) => {
@@ -1545,4 +1550,63 @@ test('trace lines include delegate lifecycle labels', () => {
     { type: 'delegate.started', payload: { delegateTitle: '整理笔记' } },
     { type: 'delegate.completed', payload: { delegateTitle: '整理笔记' } },
   ]), ['已委派子任务「整理笔记」', '子任务「整理笔记」已完成']);
+});
+
+test('resolveAgentSettings clamps defaults and enforces max limits', () => {
+  const { resolveAgentSettings } = require('../lib/agent/agent-settings');
+  const resolved = resolveAgentSettings({
+    agentDelegateMaxRounds: 12,
+    agentKnowledgeSearchLimit: 80,
+    agentKnowledgeSearchMaxLimit: 60,
+    agentKnowledgeListLimit: 120,
+    agentKnowledgeListMaxLimit: 100,
+    agentMemorySearchLimit: 50,
+    agentMemorySearchMaxLimit: 40,
+  });
+  assert.equal(resolved.agentDelegateMaxRounds, 12);
+  assert.equal(resolved.agentKnowledgeSearchLimit, 60);
+  assert.equal(resolved.agentKnowledgeSearchMaxLimit, 60);
+  assert.equal(resolved.agentKnowledgeListLimit, 100);
+  assert.equal(resolved.agentMemorySearchLimit, 40);
+});
+
+test('agentDelegateMaxRounds setting caps child delegate run rounds', async (t) => {
+  const db = tempDb(t);
+  db.saveAiSettings({ ...db.getAiSettings(), agentDelegateMaxRounds: 2, agentMaxRounds: 12 });
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let parentDelegated = false;
+  let childRounds = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete({ messages }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('两轮子任务'));
+        if (inChild) {
+          childRounds += 1;
+          return { text: '', toolCalls: [{ name: 'task.list', arguments: {} }] };
+        }
+        if (parentDelegated) return { text: '完成', toolCalls: [] };
+        parentDelegated = true;
+        return {
+          text: '',
+          toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '两轮子任务', title: '短子任务' } }],
+        };
+      },
+    },
+  });
+  const session = store.createSession('delegate-round-cap');
+  const run = await runtime.start({ session, goal: '轮数', userMessage: '轮数' });
+  let live = await waitForRun(store, run.id, 1200);
+  while (live?.status === 'waiting_approval' && (live.pendingApprovals || []).length) {
+    await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+    live = await waitForRun(store, run.id, 2000);
+  }
+  const child = store.listChildRuns(run.id).at(-1);
+  assert.ok(child);
+  assert.equal(child.maxRoundsOverride, 2);
+  assert.equal(childRounds, 2);
 });

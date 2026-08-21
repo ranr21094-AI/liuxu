@@ -703,8 +703,32 @@ const MEMORY_SETTING_FIELDS = Object.freeze([
   { key: 'memoryContextMaxL3', min: 1, fallback: 20 },
 ]);
 
+const AGENT_SETTING_FIELDS = Object.freeze([
+  { key: 'agentDelegateMaxRounds', min: 1, fallback: 8 },
+  { key: 'agentMaxToolFailures', min: 1, fallback: 3 },
+  { key: 'agentReadConcurrency', min: 1, fallback: 4 },
+  { key: 'agentRepeatMutationLimit', min: 1, fallback: 3 },
+  { key: 'agentWebFetchMaxKb', min: 1, fallback: 512 },
+  { key: 'agentWebFetchTimeoutSec', min: 1, fallback: 15 },
+  { key: 'agentKnowledgeSearchLimit', min: 1, fallback: 20 },
+  { key: 'agentKnowledgeSearchMaxLimit', min: 1, fallback: 60 },
+  { key: 'agentKnowledgeListLimit', min: 1, fallback: 40 },
+  { key: 'agentKnowledgeListMaxLimit', min: 1, fallback: 100 },
+  { key: 'agentMemorySearchLimit', min: 1, fallback: 20 },
+  { key: 'agentMemorySearchMaxLimit', min: 1, fallback: 40 },
+]);
+
 function fillMemorySettingsForm(settings = {}) {
   for (const field of MEMORY_SETTING_FIELDS) {
+    const input = $(`#${field.key}`);
+    if (!input) continue;
+    const value = Number(settings[field.key]);
+    input.value = Number.isFinite(value) ? Math.max(field.min, Math.round(value)) : field.fallback;
+  }
+}
+
+function fillAgentSettingsForm(settings = {}) {
+  for (const field of AGENT_SETTING_FIELDS) {
     const input = $(`#${field.key}`);
     if (!input) continue;
     const value = Number(settings[field.key]);
@@ -715,6 +739,19 @@ function fillMemorySettingsForm(settings = {}) {
 function readMemorySettingsFromForm(current = {}) {
   const values = {};
   for (const field of MEMORY_SETTING_FIELDS) {
+    const input = $(`#${field.key}`);
+    const parsed = Number(input?.value);
+    const currentValue = Number(current[field.key]);
+    values[field.key] = Number.isInteger(parsed) && parsed >= field.min
+      ? parsed
+      : (Number.isInteger(currentValue) ? currentValue : field.fallback);
+  }
+  return values;
+}
+
+function readAgentSettingsFromForm(current = {}) {
+  const values = {};
+  for (const field of AGENT_SETTING_FIELDS) {
     const input = $(`#${field.key}`);
     const parsed = Number(input?.value);
     const currentValue = Number(current[field.key]);
@@ -778,6 +815,7 @@ async function loadAgentSettingsForm() {
     const fileReadMb = Number(settings.agentFileReadMaxMb);
     $('#agentFileReadMaxMb').value = Number.isFinite(fileReadMb) ? Math.max(1, Math.round(fileReadMb)) : 4;
     fillMemorySettingsForm(settings);
+    fillAgentSettingsForm(settings);
     $('#agentReasoningMode').value = ['default', 'disabled', 'effort'].includes(settings.reasoningMode) ? settings.reasoningMode : 'effort';
     $('#agentThinkingMode').value = settings.thinkingMode === 'disabled' ? 'disabled' : 'enabled';
     $('#agentReasoningEffort').value = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.reasoningEffort)
@@ -861,6 +899,7 @@ function settingsSavePayload() {
     ? fileReadMb
     : (Number.isInteger(Number(current.agentFileReadMaxMb)) ? Number(current.agentFileReadMaxMb) : 4);
   Object.assign(payload, readMemorySettingsFromForm(current));
+  Object.assign(payload, readAgentSettingsFromForm(current));
   return payload;
 }
 

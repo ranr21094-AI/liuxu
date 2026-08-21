@@ -14,6 +14,7 @@ const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./busi
 const { isPrivateIpLiteral, validateGeneratedImageUrl } = require('./lib/net/ssrf');
 const { toolResult, toProviderTools, fromProviderName } = require('./lib/agent/tools');
 const { parseMemorySettingsInput } = require('./lib/agent/memory-settings');
+const { parseAgentSettingsInput } = require('./lib/agent/agent-settings');
 const { serviceFor: knowledgeServiceFor } = require('./lib/knowledge/routes');
 
 const app = express();
@@ -1388,6 +1389,7 @@ function parseAiSettingsInput(body, current = {}) {
   const agentMaxRounds = parseAgentMaxRoundsInput(body?.agentMaxRounds, current.agentMaxRounds);
   const agentFileReadMaxMb = parseAgentFileReadMaxMbInput(body?.agentFileReadMaxMb, current.agentFileReadMaxMb);
   const memorySettings = parseMemorySettingsInput(body, current);
+  const agentSettings = parseAgentSettingsInput(body, current);
   return {
     apiKey: nextStoredSecret(body, 'apiKey', current.apiKey),
     moonshotApiKey: nextStoredSecret(body, 'moonshotApiKey', current.moonshotApiKey),
@@ -1413,6 +1415,7 @@ function parseAiSettingsInput(body, current = {}) {
     agentMaxRounds,
     agentFileReadMaxMb,
     ...memorySettings,
+    ...agentSettings,
   };
 }
 
@@ -3139,9 +3142,12 @@ function createAgentWebSearch(req) {
 }
 
 function createAgentWebFetch(req) {
-  const WEB_FETCH_MAX_BYTES = 512 * 1024;
-  const WEB_FETCH_TIMEOUT_MS = 15000;
+  const { resolveAgentSettings } = require('./lib/agent/agent-settings');
   return async function agentWebFetch(args = {}) {
+    const userDb = req.user ? databaseForUser(req.user) : db;
+    const settings = resolveAgentSettings(userDb.getAiSettings?.() || {});
+    const WEB_FETCH_MAX_BYTES = settings.agentWebFetchMaxKb * 1024;
+    const WEB_FETCH_TIMEOUT_MS = settings.agentWebFetchTimeoutSec * 1000;
     const url = String(args.url || '').trim();
     if (!url) return toolResult({ ok: false, summary: 'URL is required', errorCode: 'invalid' });
     let parsed;
