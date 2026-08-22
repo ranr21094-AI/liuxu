@@ -794,8 +794,8 @@
           </section>
           <section class="settings-section" data-settings-panel="computer" hidden>
             <h3>电脑</h3>
-            <p class="settings-copy">开启后，管理员可让 Agent 在白名单目录里读写文件、删除文件并运行 PowerShell / Python。脚本在第一个白名单目录下执行。</p>
-            <label class="settings-row" for="computerToolsToggle"><span><strong>允许电脑工具</strong><small>file.* 与 code.run，需管理员账户</small></span><input id="computerToolsToggle" type="checkbox"></label>
+            <p class="settings-copy">开启后，管理员可让 Agent 在白名单目录里读写文件、删除文件，并运行 PowerShell / Python（code.run）或 Git Bash 命令（bash.run：git / npm / node 等，需确认）。脚本与 bash 命令在第一个白名单目录（或指定 cwd）下执行。</p>
+            <label class="settings-row" for="computerToolsToggle"><span><strong>允许电脑工具</strong><small>file.*、code.run 与 bash.run，需管理员账户</small></span><input id="computerToolsToggle" type="checkbox"></label>
             <div class="settings-field">
               <span>目录白名单</span>
               <div id="computerAllowlist" class="computer-allowlist"></div>

@@ -67,16 +67,35 @@ test('sanitizeCustomProvidersSync keeps provider api keys when omitted', () => {
   assert.equal(next[0].apiKey, 'secret-key');
 });
 
-test('normalizeCustomProviders rejects HTTPS private targets', async () => {
+test('normalizeCustomProviders allows HTTPS private and LAN targets', async () => {
+  const next = await normalizeCustomProviders([{
+    id: 'p_local001',
+    name: 'Local HTTPS',
+    baseUrl: 'https://127.0.0.1:11434/v1',
+    apiFormat: 'openai',
+    models: [{ id: 'm1', name: 'M1' }],
+  }, {
+    id: 'p_lan00001',
+    name: 'LAN HTTP',
+    baseUrl: 'http://192.168.1.10:8080/v1',
+    apiFormat: 'openai',
+    models: [{ id: 'm2', name: 'M2' }],
+  }], []);
+  assert.equal(next.length, 2);
+  assert.equal(next[0].baseUrl, 'https://127.0.0.1:11434/v1');
+  assert.equal(next[1].baseUrl, 'http://192.168.1.10:8080/v1');
+});
+
+test('normalizeCustomProviders rejects HTTP on public hosts', async () => {
   await assert.rejects(
     () => normalizeCustomProviders([{
       id: 'p_badurl01',
       name: 'Bad',
-      baseUrl: 'https://127.0.0.1/v1',
+      baseUrl: 'http://api.example.com/v1',
       apiFormat: 'openai',
       models: [{ id: 'm1', name: 'M1' }],
     }], []),
-    /private network/i,
+    /HTTP base URL is only allowed/i,
   );
 });
 

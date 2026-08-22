@@ -2906,6 +2906,10 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /function applyAgentTopbar/);
   assert.match(source, /formatSessionMeta\(session\)/);
   assert.doesNotMatch(source, /lastMessagePreview \|\| formatTime\(session\.updatedAt\)/);
+  assert.match(source, /function buildAssistantMetaHtml/);
+  assert.match(source, /Number\.isFinite\(time\)/);
+  assert.doesNotMatch(source, /function buildAssistantMetaHtml[\s\S]{0,220}new Date\(createdAt\)\.toISOString\(\)/);
+  assert.match(source, /lastRun\?\.completedAt/);
   assert.match(source, /from '\.\/markdown\.js'/);
   assert.match(source, /normalizeUploadSrc/);
   assert.match(source, /function findGeneratedImageCard/);

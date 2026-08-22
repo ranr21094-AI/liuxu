@@ -347,6 +347,12 @@ const refreshDocumentPreview = debounce(() => {
   if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
 }, 300);
 
+function formatMessageTime(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', { hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
 function formatTime(value) {
   const date = new Date(value || 0);
   if (!Number.isFinite(date.getTime())) return '';
@@ -1165,7 +1171,7 @@ function renderCustomProvidersList() {
         </label>
         <div class="custom-provider-conn-grid">
           <label class="custom-provider-inline-field">Base URL
-            <input type="url" class="custom-provider-base-url" value="${escHtml(provider.baseUrl)}" placeholder="https://api.example.com/v1" maxlength="500">
+            <input type="url" class="custom-provider-base-url" value="${escHtml(provider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
           </label>
           <label class="custom-provider-inline-field">API 格式
             <select class="custom-provider-format">
@@ -2136,7 +2142,7 @@ async function handleAgentImagePaste(event) {
   await uploadAgentAttachments(files);
 }
 
-const MESSAGE_COPY_ACTION = '<div class="message-actions"><button type="button" class="message-copy" data-copy-message title="复制" aria-label="复制">复制</button></div>';
+const MESSAGE_COPY_ACTION = '<button type="button" class="message-copy icon-button" data-copy-message title="复制" aria-label="复制"><svg class="message-copy-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"></path></svg></button>';
 
 function buildMessageCopyText(content, attachments = []) {
   const text = String(content || '');
@@ -2178,7 +2184,23 @@ async function copyMessageText(text) {
   }
 }
 
-function addMessage(role, content, citations = [], attachments = []) {
+function buildAssistantMetaHtml(createdAt) {
+  const time = Number(createdAt);
+  if (!Number.isFinite(time) || time <= 0) {
+    return `<div class="message-meta">${MESSAGE_COPY_ACTION}</div>`;
+  }
+  const date = new Date(time);
+  if (!Number.isFinite(date.getTime())) {
+    return `<div class="message-meta">${MESSAGE_COPY_ACTION}</div>`;
+  }
+  const label = formatMessageTime(time);
+  const timeHtml = label
+    ? `<time class="message-time" datetime="${escHtml(date.toISOString())}">${escHtml(label)}</time>`
+    : '';
+  return `<div class="message-meta">${MESSAGE_COPY_ACTION}${timeHtml}</div>`;
+}
+
+function addMessage(role, content, citations = [], attachments = [], { createdAt } = {}) {
   const list = $('#agentMessageList');
   list.querySelector('.agent-empty-state')?.remove();
   const article = document.createElement('article');
@@ -2199,8 +2221,8 @@ function addMessage(role, content, citations = [], attachments = []) {
     }).join('')}</div>`
     : '';
   article.innerHTML = role === 'user'
-    ? `<div class="message-body">${MESSAGE_COPY_ACTION}<div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div>`
-    : `<div class="message-avatar" aria-hidden="true">A</div><div class="message-body">${MESSAGE_COPY_ACTION}<div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>`;
+    ? `${MESSAGE_COPY_ACTION}<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div>`
+    : `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>${buildAssistantMetaHtml(createdAt)}`;
   article.dataset.copyText = buildMessageCopyText(content, role === 'user' ? attachments : []);
   list.append(article);
   scrollMessagesToBottom();
@@ -2243,11 +2265,17 @@ function renderSessionMessages(session, { force = false } = {}) {
     ? session.latestRun.id
     : '';
   let runIndex = 0;
+  let lastRun = null;
   deduped.forEach(message => {
+    if (message.role === 'assistant') {
+      const at = lastRun?.completedAt;
+      addMessage('assistant', message.content, [], message.attachments || [], { createdAt: at });
+      return;
+    }
     addMessage(message.role, message.content, [], message.attachments || []);
     if (message.role === 'user' && runIndex < runs.length) {
-      const run = runs[runIndex];
-      upsertRunTrace(run.id === liveId ? { id: run.id, trace: [] } : run, { live: run.id === liveId });
+      lastRun = runs[runIndex];
+      upsertRunTrace(lastRun.id === liveId ? { id: lastRun.id, trace: [] } : lastRun, { live: lastRun.id === liveId });
       runIndex += 1;
     }
   });
@@ -2637,6 +2665,12 @@ function approvalBodyHtml(approval) {
     return `
       <p>将用 ${providerLabel} 生成图片。确认提示词无误后再允许执行。</p>
       <div class="approval-risk"><strong>提示词</strong><pre>${escHtml(prompt || '（空）')}</pre>${extras.length ? `<p>${escHtml(extras.join(' · '))}</p>` : ''}</div>`;
+  }
+  if (name === 'web.search') {
+    const query = String(args.query || '').trim();
+    return `
+      <p>将联网搜索公开来源。确认关键词无误后再允许执行。</p>
+      <div class="approval-risk"><strong>搜索词</strong><pre>${escHtml(query || '（空）')}</pre></div>`;
   }
   const summary = summarizeApprovalArgs(name, args);
   return `<div class="approval-risk"><strong>参数</strong><pre>${escHtml(JSON.stringify(summary, null, 2))}</pre></div>`;
@@ -3067,7 +3101,7 @@ function handleRunEvent(sessionId, event) {
         text += `\n\n![生成图片](${url})`;
         known.add(url);
       }
-      addMessage('assistant', text, payload.citations || []);
+      addMessage('assistant', text, payload.citations || [], [], { createdAt: event.at || Date.now() });
       patchSessionSummaryAfterAssistantMessage(sessionId, text);
       removeRunImagePreviews(entry.runId);
       trace('运行完成', entry.runId);

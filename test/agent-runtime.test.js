@@ -12,7 +12,7 @@ const { createKnowledgeService } = require('../lib/knowledge/documents');
 const { savePolicy } = require('../lib/computer/policy');
 const { parseMentions, expandMentions } = require('../lib/agent/mentions');
 const { registerAgentRoutes, runtimeFor } = require('../lib/agent/routes');
-const { traceLinesFromEvents } = require('../lib/agent/trace');
+const { traceLinesFromEvents, summarizeRun } = require('../lib/agent/trace');
 const express = require('express');
 
 function tempDb(t) {
@@ -49,6 +49,9 @@ test('provider tools use native function calling shape', () => {
   assert.equal(tools.some(item => item.function.name === 'memory_search'), true);
   assert.equal(tools.some(item => item.function.name === 'agent_delegate'), true);
   assert.equal(tools.some(item => item.function.name === 'web_fetch'), true);
+  const webSearch = tools.find(item => item.function.name === 'web_search');
+  assert.ok(webSearch);
+  assert.deepEqual(webSearch.function.parameters.required, ['query']);
   for (const tool of tools) {
     assert.match(tool.function.name, /^[a-zA-Z0-9_-]+$/);
   }
@@ -303,6 +306,42 @@ test('agent approved tools increment run.toolCalls', async (t) => {
   assert.equal(live.toolCalls, 1);
 });
 
+test('agent web.search rejects empty query before approval', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  let searched = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    webSearch: async () => {
+      searched = true;
+      return { ok: true, summary: 'Found 1 web source', data: {}, evidence: [] };
+    },
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'web.search', arguments: {} }] };
+        }
+        return { text: '已补全搜索词', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('search-empty');
+  const run = await runtime.start({ session, goal: '搜索资料', userMessage: '网页搜索' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const live = store.getRun(run.id);
+  assert.notEqual(live.status, 'waiting_approval');
+  assert.equal(searched, false);
+  const toolMsg = live.messages.find(item => item.role === 'tool' && item.name === 'web.search');
+  assert.ok(toolMsg);
+  assert.match(toolMsg.content, /Search query is required/);
+});
+
 test('agent web.search uses the injected Tavily adapter after confirmation', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
@@ -498,6 +537,20 @@ test('trace lines collapse repeated assistant deltas', () => {
     { type: 'assistant.delta', payload: { text: 'ab' } },
     { type: 'run.completed', payload: { text: 'done' } },
   ]), ['正在分析目标', '正在组织回答', '运行完成']);
+});
+
+test('summarizeRun exposes completedAt for session message timestamps', () => {
+  const at = 1787365144571;
+  const summary = summarizeRun({
+    id: 'run-1',
+    status: 'completed',
+    events: [
+      { type: 'run.started', at },
+      { type: 'run.completed', at: at + 5000, payload: { text: 'done' } },
+    ],
+  });
+  assert.equal(summary.completedAt, at + 5000);
+  assert.deepEqual(summary.trace, ['正在分析目标', '运行完成']);
 });
 
 test('session API returns a trace for each conversation round', async (t) => {

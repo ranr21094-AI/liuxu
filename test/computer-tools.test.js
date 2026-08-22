@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { resolveAllowed, isSensitivePath, recentlyReauthed, markReauth, defaultPolicy, savePolicy, computerToolsAllowed, PREFERRED_ALLOWLIST } = require('../lib/computer/policy');
 const { createCodeRunner } = require('../lib/computer/code');
+const { createBashRunner, resolveBashExecutable } = require('../lib/computer/bash');
 const { sign } = require('../lib/computer/chrome');
 const { createComputerFacade } = require('../lib/computer/routes');
 const { createFileTools } = require('../lib/computer/files');
@@ -33,6 +34,80 @@ test('code runner executes python when available', async (t) => {
     return;
   }
   assert.match(result.data.output, /hi-agent/);
+});
+
+test('bash runner rejects empty command and script', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-empty-'));
+  try {
+    const runner = createBashRunner({ accountId: 'bash-empty', allowedDirectories: [dir], defaultWorkdir: dir });
+    const empty = await runner.execute('bash.run', {});
+    assert.equal(empty.ok, false);
+    assert.equal(empty.errorCode, 'invalid');
+    const both = await runner.execute('bash.run', { command: 'echo hi', script: 'echo hi' });
+    assert.equal(both.ok, false);
+    assert.equal(both.errorCode, 'invalid');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bash runner rejects cwd outside allowlist', async (t) => {
+  const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-allow-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-out-'));
+  t.after(() => {
+    fs.rmSync(allowed, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+  const runner = createBashRunner({ accountId: 'bash-cwd', allowedDirectories: [allowed], defaultWorkdir: allowed });
+  const result = await runner.execute('bash.run', { command: 'echo hi', cwd: outside });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'invalid');
+});
+
+test('bash runner executes echo when Git Bash is available', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-run-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runner = createBashRunner({ accountId: 'bash-echo', allowedDirectories: [dir], defaultWorkdir: dir });
+  const result = await runner.execute('bash.run', { command: 'echo hi-bash' });
+  if (!result.ok && result.errorCode === 'unavailable') {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  assert.equal(result.ok, true);
+  assert.match(result.data.output, /hi-bash/);
+});
+
+test('bash runner can run node when available in PATH', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-node-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runner = createBashRunner({ accountId: 'bash-node', allowedDirectories: [dir], defaultWorkdir: dir });
+  const result = await runner.execute('bash.run', { command: 'node -v' });
+  if (!result.ok && /not found|ENOENT|127/i.test(result.data?.output || result.summary)) {
+    t.skip('node is not on PATH in Git Bash');
+    return;
+  }
+  assert.equal(result.ok, true);
+  assert.match(result.data.output, /v\d+/);
+});
+
+test('bash runner shares busy slot with code runner', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-busy-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const { tryAcquireRunnerSlot, releaseRunnerSlot } = require('../lib/computer/run-lock');
+  tryAcquireRunnerSlot('shared-busy');
+  t.after(() => releaseRunnerSlot('shared-busy'));
+  const bash = createBashRunner({ accountId: 'shared-busy', allowedDirectories: [dir], defaultWorkdir: dir });
+  const result = await bash.execute('bash.run', { command: 'echo blocked' });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'busy');
 });
 
 test('chrome command signatures reject replay', () => {
@@ -78,6 +153,25 @@ test('computer facade lists and deletes files without reauth', async (t) => {
   const deleted = await facade.execute('file.delete', { path: note });
   assert.equal(deleted.ok, true);
   assert.equal(fs.existsSync(note), false);
+});
+
+test('computer facade runs bash.run for admin in allowlist', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'comp-bash-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  savePolicy(dir, { computerToolsEnabled: true, allowedDirectories: [dir], chromePaired: false });
+  const facade = createComputerFacade({ user: { id: 'admin-bash', role: 'admin' }, ip: '10.0.0.8' }, dir);
+  assert.ok(facade);
+  const result = await facade.execute('bash.run', { command: 'echo facade-bash' });
+  if (!result.ok && result.errorCode === 'unavailable') {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  assert.equal(result.ok, true);
+  assert.match(result.data.output, /facade-bash/);
 });
 
 test('file.read honors configurable max bytes', async (t) => {

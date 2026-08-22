@@ -265,31 +265,61 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .starter-prompts { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 24px; }
 .starter-prompts button { border: 1px solid var(--line); border-radius: 99px; background: var(--surface); padding: 8px 12px; color: var(--muted); cursor: pointer; font-size: 11px; }
 .starter-prompts button:hover { border-color: var(--line-strong); color: var(--text); }
-.message { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 11px; max-width: 760px; margin: 0 auto 25px; }
-.message.user { grid-template-columns: minmax(0, 1fr); justify-items: end; }
-.message-avatar { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 11px; }
+.message.user {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 760px;
+  margin: 0 auto 25px;
+}
+.message.assistant {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 760px;
+  margin: 0 auto 25px;
+}
 .message-body { position: relative; min-width: 0; }
-.message.user .message-body { max-width: min(620px, 88%); border-radius: 15px 15px 4px 15px; background: var(--surface-active); padding: 10px 14px; }
-.message-actions { display: flex; justify-content: flex-end; margin: -2px 0 4px; min-height: 22px; }
-.message-copy {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface);
-  padding: 3px 8px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 10px;
-  line-height: 1.4;
+.message.user .message-body { flex: 0 1 auto; max-width: min(620px, 88%); border-radius: 15px 15px 4px 15px; background: var(--surface-active); padding: 10px 14px; }
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
   opacity: 0;
-  transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: opacity 0.15s ease;
 }
-.message-copy:hover { border-color: var(--line-strong); color: var(--text); }
-.message-copy:focus-visible { opacity: 1; outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
-.message:hover .message-copy,
-.message:focus-within .message-copy { opacity: 1; }
+.message.assistant:hover .message-meta,
+.message.assistant:focus-within .message-meta { opacity: 1; }
 @media (hover: none) {
-  .message-copy { opacity: 0.72; }
+  .message.assistant .message-meta { opacity: 0.72; }
 }
+.message-time { color: var(--faint); font-size: 11px; white-space: nowrap; }
+.message-copy {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.message.user .message-copy {
+  align-self: flex-start;
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.message-copy-icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.message-copy:hover { color: var(--text); }
+.message-copy:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 2px; }
+.message.user:hover .message-copy,
+.message.user:focus-within .message-copy { opacity: 1; }
+.message.user .message-copy:focus-visible { opacity: 1; }
+@media (hover: none) {
+  .message.user .message-copy { opacity: 0.72; }
+}
+.message.assistant .message-copy { opacity: 1; }
 .message-content { color: var(--text); font-size: 14px; line-height: 1.72; overflow-wrap: anywhere; }
 .message-content p:first-child { margin-top: 0; }
 .message-content p:last-child { margin-bottom: 0; }

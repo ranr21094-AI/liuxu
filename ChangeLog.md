@@ -1,5 +1,11 @@
 # 更新日志
 
+## 2026-08-22
+
+### Agent bash.run
+
+- **`bash.run`**：管理员在白名单目录内通过 Git Bash（Windows）或 `/bin/bash` 执行 shell/git/npm/node 命令；与 `code.run` 共享并发锁，需用户确认。可选环境变量 `GIT_BASH_PATH`。
+
 ## 2026-08-20
 
 ### Agent 工具扩展与 sub-agent

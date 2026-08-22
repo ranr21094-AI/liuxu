@@ -3247,6 +3247,7 @@ function createAgentModelClient(req) {
         'Use knowledge.list to browse documents in a knowledge base or folder.',
         'L2/L3 long-term memories are not auto-injected. Use memory.list to browse titles, memory.search for keyword discovery, then memory.read for full content.',
         'Use code.run for short PowerShell or Python scripts (there is no separate shell.run tool).',
+        'Use bash.run for git, npm/npx/node, and shell commands in Git Bash within allowlisted directories (requires confirmation).',
         'For complex sub-tasks use agent.delegate once; it requires confirmation and child write actions still need approval.',
         'Never invent local evidence. If the user did not @ a knowledge base or date and no evidence exists, say so. Writes and external actions are proposed for confirmation.',
         options.profile?.supportsMedia

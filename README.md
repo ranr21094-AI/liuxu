@@ -81,7 +81,7 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 - 左侧按「今天 / 最近 7 天 / 更早」分组展示会话；每行显示标题，副行显示**最后更新时间 · 消息数**（不再显示最后一条消息预览）。
 - 支持新建会话、搜索（仍匹配标题与消息正文）、重命名、归档。
-- 对话区用 `@知识库` 或 `@日期` 注入本地材料；Agent 也可用 `knowledge.search` / `knowledge.tree` / `knowledge.list` 检索与浏览笔记；`memory.search` 可查找已保存的长期记忆；复杂子任务可用 `agent.delegate` 委派（需确认，子任务写入仍单独审批）。本地脚本用 `code.run`（PowerShell/Python）。
+- 对话区用 `@知识库` 或 `@日期` 注入本地材料；Agent 也可用 `knowledge.search` / `knowledge.tree` / `knowledge.list` 检索与浏览笔记；`memory.search` 可查找已保存的长期记忆；复杂子任务可用 `agent.delegate` 委派（需确认，子任务写入仍单独审批）。本地脚本用 `code.run`（PowerShell/Python）；Git Bash 下 git / npm / node 等用 `bash.run`（需确认，PATH 可用时）。
 - 写入类工具、联网搜索/抓取、生图、代码运行等需先确认。
 - 长期记忆以提案形式出现，确认后才写入 L2/L3；Memory 模式可浏览、归档或刷新提案。
 - 模型、联网、Seedream 生图、电脑工具策略在设置中配置；Agent 侧栏底部可快速打开模型设置。
@@ -216,7 +216,7 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 ## Chrome 扩展与 Windows 原生执行
 
 - 仓库 `chrome-extension/` 为 Manifest V3 扩展，仅与 localhost 应用页通信，通过配对码绑定标签页。
-- Windows 电脑工具默认关闭；管理员在本机环回访问中重新验证密码并配置目录白名单后，Agent 才可执行文件读写与 `code.run`（非沙箱，等同当前用户权限）。
+- Windows 电脑工具默认关闭；管理员配置目录白名单后，Agent 才可执行文件读写、`code.run`（PowerShell/Python）与 `bash.run`（Git Bash：git、npm、node 等；需确认；非沙箱，等同当前用户权限）。
 
 ## Mobile Access
 
