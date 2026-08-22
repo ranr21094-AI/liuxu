@@ -104,6 +104,7 @@ const state = {
   aiSettings: null,
   agentModelCatalog: [],
   customProviderExpandIndex: null,
+  providerModelOverrideKey: null,
   providerModelsPicker: null,
   settingsPanel: 'appearance',
   documentSaveTimer: null,
@@ -1153,6 +1154,33 @@ function customProviderThinkingOptions(thinking) {
   return options.map(option => `<option value="${escHtml(option.value)}" ${thinking === option.value ? 'selected' : ''}>${escHtml(option.label)}</option>`).join('');
 }
 
+function modelHasOverride(model) {
+  return typeof model?.supportsMedia === 'boolean' || Boolean(model?.thinking) || typeof model?.zdr === 'boolean';
+}
+
+function triSelect(name, value) {
+  // value: undefined (inherit) | true | false
+  const selected = typeof value === 'boolean' ? (value ? 'on' : 'off') : '';
+  return ['on', 'off', ''].map(option => `<option value="${option}" ${selected === option ? 'selected' : ''}>${option === 'on' ? '开启' : option === 'off' ? '关闭' : '继承供应商'}</option>`).join('');
+}
+
+function customModelOverrideRowHtml(providerIndex, modelIndex, model) {
+  const thinkingOptions = ['', 'none', 'deepseek', 'k3', 'optional', 'fixed'].map(option => `<option value="${escHtml(option)}" ${(model.thinking || '') === option ? 'selected' : ''}>${escHtml(option === '' ? '继承供应商' : option === 'none' ? '无' : option === 'deepseek' ? 'DeepSeek' : option)}</option>`).join('');
+  return `
+    <div class="custom-model-overrides" data-override-for="${modelIndex}">
+      <span class="custom-model-overrides-label">覆盖</span>
+      <label class="custom-model-override-field">图片
+        <select class="custom-model-ov-media">${triSelect('media', model.supportsMedia)}</select>
+      </label>
+      <label class="custom-model-override-field">思考
+        <select class="custom-model-ov-thinking">${thinkingOptions}</select>
+      </label>
+      <label class="custom-model-override-field">ZDR
+        <select class="custom-model-ov-zdr">${triSelect('zdr', model.zdr)}</select>
+      </label>
+    </div>`;
+}
+
 function renderCustomProvidersList() {
   const root = $('#customProvidersList');
   if (!root) return;
@@ -1204,16 +1232,21 @@ function renderCustomProvidersList() {
               <button type="button" class="secondary-action compact" data-add-model="${index}">添加模型</button>
             </span>
           </div>
-          ${(provider.models || []).map((model, modelIndex) => `
-            <div class="custom-provider-model-row">
+          ${(provider.models || []).map((model, modelIndex) => {
+            const overrideKey = `${index}:${modelIndex}`;
+            const showOverride = state.providerModelOverrideKey === overrideKey;
+            return `
+            <div class="custom-provider-model-row" data-model-index="${modelIndex}">
               <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
               <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
               <span class="custom-provider-model-actions">
+                <button type="button" class="secondary-action compact${modelHasOverride(model) ? ' has-override' : ''}" data-model-capabilities="${index}" data-model-capabilities-id="${modelIndex}" title="模型能力覆盖">${modelHasOverride(model) ? '能力•' : '能力'}</button>
                 <button type="button" class="secondary-action compact" data-test-model="${index}" data-test-model-id="${modelIndex}">测试</button>
                 <button type="button" class="danger-action compact custom-provider-model-remove" data-remove-model="${index}" data-remove-model-id="${modelIndex}" aria-label="删除模型">×</button>
               </span>
             </div>
-          `).join('')}
+            ${showOverride && model.id ? customModelOverrideRowHtml(index, modelIndex, model) : ''}`;
+          }).join('')}
         </div>
         <div class="custom-provider-capabilities">
           <label class="custom-provider-capability"><input type="checkbox" class="custom-provider-supports-media" ${provider.supportsMedia ? 'checked' : ''}>支持图片输入</label>
@@ -1237,7 +1270,29 @@ function syncCustomProvidersDraftFromDom() {
     card.querySelectorAll('.custom-provider-model-row').forEach(row => {
       const id = row.querySelector('.custom-model-id')?.value.trim() || '';
       const name = row.querySelector('.custom-model-name')?.value.trim() || '';
-      if (id) models.push({ id, name: name || id });
+      if (!id) return;
+      const entry = { id, name: name || id };
+      const prevModel = (prev.models || [])[models.length] || {};
+      for (const key of ['supportsMedia', 'thinking', 'zdr']) {
+        if (prevModel[key] !== undefined) entry[key] = prevModel[key];
+      }
+      const overrideRow = row.nextElementSibling?.classList?.contains('custom-model-overrides')
+        ? row.nextElementSibling
+        : null;
+      if (overrideRow) {
+        const media = overrideRow.querySelector('.custom-model-ov-media')?.value || '';
+        if (media === 'on') entry.supportsMedia = true;
+        else if (media === 'off') entry.supportsMedia = false;
+        else delete entry.supportsMedia;
+        const thinking = overrideRow.querySelector('.custom-model-ov-thinking')?.value || '';
+        if (thinking) entry.thinking = thinking;
+        else delete entry.thinking;
+        const zdr = overrideRow.querySelector('.custom-model-ov-zdr')?.value || '';
+        if (zdr === 'on') entry.zdr = true;
+        else if (zdr === 'off') entry.zdr = false;
+        else delete entry.zdr;
+      }
+      models.push(entry);
     });
     const apiKeyInput = card.querySelector('.custom-provider-key')?.value.trim() || '';
     list.push({
@@ -1270,6 +1325,9 @@ function readCustomProvidersForSave() {
     models: (provider.models || []).filter(model => model.id).map(model => ({
       id: model.id,
       name: model.name || model.id,
+      ...(typeof model.supportsMedia === 'boolean' ? { supportsMedia: model.supportsMedia } : {}),
+      ...(model.thinking ? { thinking: model.thinking } : {}),
+      ...(typeof model.zdr === 'boolean' ? { zdr: model.zdr } : {}),
     })),
   })).filter(provider => provider.name && provider.baseUrl);
 }
@@ -1293,6 +1351,7 @@ async function fetchProviderModels(providerIndex) {
         baseUrl: provider.baseUrl,
         apiFormat: provider.apiFormat,
         apiKey,
+        providerId: provider.id,
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -1401,6 +1460,7 @@ async function testCustomProviderModel(providerIndex, modelIndex) {
         apiFormat: provider.apiFormat,
         apiKey,
         model: model.id,
+        providerId: provider.id,
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -1525,7 +1585,13 @@ async function loadAgentSettingsForm() {
       thinking: provider.thinking || '',
       zdr: provider.zdr === true,
       models: (provider.models || []).length
-        ? provider.models.map(model => ({ id: model.id, name: model.name || model.id }))
+        ? provider.models.map(model => ({
+          id: model.id,
+          name: model.name || model.id,
+          ...(typeof model.supportsMedia === 'boolean' ? { supportsMedia: model.supportsMedia } : {}),
+          ...(model.thinking ? { thinking: model.thinking } : {}),
+          ...(typeof model.zdr === 'boolean' ? { zdr: model.zdr } : {}),
+        }))
         : [{ id: '', name: '' }],
     }));
     renderCustomProvidersList();
@@ -1699,6 +1765,10 @@ function renderComputerAllowlist() {
 
 async function loadComputerPolicyForm() {
   syncComputerSettingsVisibility();
+  const extensionIdInput = $('#chromeExtensionId');
+  if (extensionIdInput && !extensionIdInput.value) {
+    extensionIdInput.value = localStorage.getItem(CHROME_EXTENSION_ID_KEY) || '';
+  }
   if (!isAdminUser()) return;
   const response = await apiFetch('/api/admin/agent-policy');
   if (response.status === 403) {
@@ -3102,6 +3172,32 @@ function runEventKey(event) {
   return `${event.type}|${event.at || ''}|${payload}`;
 }
 
+const CHROME_EXTENSION_ID_KEY = 'worklogChromeExtensionId';
+
+function relayClientToolRequest(entry, payload) {
+  const extensionId = localStorage.getItem(CHROME_EXTENSION_ID_KEY) || '';
+  const runtime = window.chrome?.runtime;
+  if (!extensionId || !runtime?.sendMessage || !payload?.request?.name || !entry?.runId || !payload?.id) return;
+  const { name, args, nonce, signature } = payload.request;
+  try {
+    runtime.sendMessage(extensionId, { type: 'agent.command', name, args, nonce, signature }, response => {
+      if (window.chrome?.runtime?.lastError || !response) return;
+      if (response.ok === false) {
+        showToast(`浏览器工具失败：${response.error || '未知错误'}`, 'error');
+        return;
+      }
+      const result = response && typeof response === 'object' && 'result' in response ? response.result : response;
+      apiFetch(`/api/agent/runs/${encodeURIComponent(entry.runId)}/client-tools/${encodeURIComponent(payload.id)}/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ result, name, args, nonce, signature }),
+      }).catch(() => {});
+    });
+  } catch {
+    // Extension unavailable — the server-side timeout resolves the run.
+  }
+}
+
 function finishSessionRun(sessionId, { viewing = isViewingSession(sessionId) } = {}) {
   const entry = getSessionRunState(sessionId);
   if (!entry) return;
@@ -3211,6 +3307,9 @@ function handleRunEvent(sessionId, event) {
     } else if (viewing) {
       trace('等待浏览器返回结果', entry.runId);
     }
+    // Forward the request to the Chrome bridge extension; if it never
+    // responds, the server-side 30s timeout fails the tool call cleanly.
+    if (viewing) relayClientToolRequest(entry, payload);
   }
   if (event.type === 'memory.proposed') {
     if (viewing) renderMemoryProposal(payload);
@@ -4713,6 +4812,15 @@ function bindEvents() {
         .catch(error => showToast(error.message, 'error'));
       return;
     }
+    const modelCapabilities = event.target.closest('[data-model-capabilities]');
+    if (modelCapabilities) {
+      event.stopPropagation();
+      syncCustomProvidersDraftFromDom();
+      const key = `${Number(modelCapabilities.dataset.modelCapabilities)}:${Number(modelCapabilities.dataset.modelCapabilitiesId)}`;
+      state.providerModelOverrideKey = state.providerModelOverrideKey === key ? null : key;
+      renderCustomProvidersList();
+      return;
+    }
     const addModel = event.target.closest('[data-add-model]');
     if (addModel) {
       event.stopPropagation();
@@ -4785,6 +4893,11 @@ function bindEvents() {
     },
   }).bindBackupEvents();
   $('#btnComputerAllowlistAdd').addEventListener('click', addComputerAllowlistEntry);
+  $('#chromeExtensionId')?.addEventListener('change', event => {
+    const value = String(event.target?.value || '').trim();
+    if (value) localStorage.setItem(CHROME_EXTENSION_ID_KEY, value);
+    else localStorage.removeItem(CHROME_EXTENSION_ID_KEY);
+  });
   $('#computerAllowlistInput').addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();

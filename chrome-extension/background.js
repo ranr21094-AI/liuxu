@@ -1,13 +1,21 @@
 const BLOCKED = /^(chrome|edge|devtools|chrome-extension|file):/i;
 const LOGIN_PAGE = /(?:^|[\/#._-])(login|signin|sign-in|authorize|oauth)(?:[\/#?._-]|$)/i;
-const APP_ORIGINS = new Set(['http://127.0.0.1:3000', 'http://localhost:3000', 'http://127.0.0.1', 'http://localhost']);
+const SENSITIVE = /cookie|localstorage|sessionstorage|authorization|password/i;
+const ALLOWED_CDP = new Set([
+  'Page.captureScreenshot', 'Runtime.evaluate', 'DOM.getDocument', 'DOM.querySelector',
+  'DOM.getOuterHTML', 'Input.dispatchMouseEvent', 'Input.insertText', 'Page.navigate',
+]);
 
 let attached = new Map();
-let pairing = null;
 
 function isAppSender(sender) {
-  const origin = sender.origin || '';
-  return [...APP_ORIGINS].some(allowed => origin.startsWith(allowed));
+  // Any port on a loopback hostname is allowed; origin must be exact.
+  try {
+    const origin = new URL(sender.origin || '');
+    return origin.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(origin.hostname);
+  } catch {
+    return false;
+  }
 }
 
 async function attachTab(tabId) {
@@ -44,23 +52,76 @@ chrome.debugger.onDetach.addListener((source) => {
   }
 });
 
+async function listTabs() {
+  const tabs = await chrome.tabs.query({ currentWindow: true });
+  return tabs
+    .filter(tab => !BLOCKED.test(tab.url || '') && !LOGIN_PAGE.test(tab.url || ''))
+    .map(tab => ({ id: tab.id, title: tab.title, url: tab.url, attached: attached.has(tab.id) }));
+}
+
+async function resolveTabId(message) {
+  const requested = Number(message.tabId) || Number(message.args?.tabId);
+  if (requested) {
+    if (!attached.has(requested)) await attachTab(requested);
+    return requested;
+  }
+  const first = [...attached.keys()][0];
+  if (first) return first;
+  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!active) throw new Error('No browser tab is available');
+  await attachTab(active.id);
+  return active.id;
+}
+
+async function cdp(tabId, method, params) {
+  if (!ALLOWED_CDP.has(method)) throw new Error('Browser command is not allowed');
+  if (method === 'Runtime.evaluate' && SENSITIVE.test(String(params?.expression || ''))) {
+    throw new Error('Sensitive browser state is blocked');
+  }
+  return chrome.debugger.sendCommand({ tabId }, method, params || {});
+}
+
+async function executeAgentCommand(message) {
+  const name = String(message.name || message.command || '');
+  const args = message.args || {};
+  if (name === 'browser.scan' || message.type === 'tabs.scan') return { tabs: await listTabs() };
+  const tabId = await resolveTabId(message);
+  switch (name) {
+    case 'browser.screenshot': {
+      const result = await cdp(tabId, 'Page.captureScreenshot', { format: 'png' });
+      return { data: result?.data || '' };
+    }
+    case 'browser.navigate': {
+      const url = String(args.url || args.target || '');
+      if (!/^https?:\/\//i.test(url)) throw new Error('Only http(s) URLs are allowed');
+      return cdp(tabId, 'Page.navigate', { url });
+    }
+    case 'browser.click': {
+      const x = Number(args.x) || 0;
+      const y = Number(args.y) || 0;
+      await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+      return cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+    }
+    case 'browser.type': {
+      return cdp(tabId, 'Input.insertText', { text: String(args.text || args.value || '') });
+    }
+    case 'browser.select':
+    case 'browser.execute_js': {
+      const expression = String(args.code || args.script || args.expression || args.value || '');
+      if (!expression) throw new Error('code is required');
+      return cdp(tabId, 'Runtime.evaluate', { expression, returnByValue: true });
+    }
+    default: {
+      // Raw CDP passthrough (popup-style { method, params } commands).
+      return cdp(tabId, name, message.params);
+    }
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
-    if (message.type === 'pair.start') {
-      pairing = { code: Math.random().toString(16).slice(2, 8), key: crypto.getRandomValues(new Uint8Array(16)) };
-      sendResponse({ pairingCode: pairing.code });
-      return;
-    }
     if (message.type === 'tabs.scan') {
-      const tabs = await chrome.tabs.query({ currentWindow: true });
-      sendResponse({
-          tabs: tabs.filter(tab => !BLOCKED.test(tab.url || '') && !LOGIN_PAGE.test(tab.url || '')).map(tab => ({
-          id: tab.id,
-          title: tab.title,
-          url: tab.url,
-          attached: attached.has(tab.id),
-        })),
-      });
+      sendResponse({ ok: true, tabs: await listTabs() });
       return;
     }
     if (message.type === 'tabs.attach') {
@@ -74,12 +135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (message.type === 'agent.command') {
-      const { tabId, method, params } = message;
-      if (!attached.has(tabId)) throw new Error('Tab is not attached');
-      const allowedMethods = new Set(['Page.captureScreenshot', 'Runtime.evaluate', 'DOM.getDocument', 'DOM.querySelector', 'DOM.getOuterHTML', 'Input.dispatchMouseEvent', 'Input.insertText', 'Page.navigate']);
-      if (!allowedMethods.has(method)) throw new Error('Browser command is not allowed');
-      if (method === 'Runtime.evaluate' && /cookie|localstorage|sessionstorage|authorization|password/i.test(String(params?.expression || ''))) throw new Error('Sensitive browser state is blocked');
-      const result = await chrome.debugger.sendCommand({ tabId }, method, params || {});
+      const result = await executeAgentCommand(message);
       sendResponse({ ok: true, result: scrub(result) });
     }
   })().catch(err => sendResponse({ ok: false, error: err.message }));

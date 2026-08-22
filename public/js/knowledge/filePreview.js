@@ -32,36 +32,15 @@ function fileContentUrl(doc) {
   return doc?.fileMeta?.url || `/api/knowledge/files/${encodeURIComponent(doc.id)}/content`;
 }
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-preview-src="${src}"]`);
-    if (existing) {
-      if (existing.dataset.loaded === 'true') {
-        resolve();
-        return;
-      }
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = src;
-    script.dataset.previewSrc = src;
-    script.onload = () => {
-      script.dataset.loaded = 'true';
-      resolve();
-    };
-    script.onerror = () => reject(new Error(`Failed to load ${src}`));
-    document.head.appendChild(script);
-  });
-}
+let pdfjsModule = null;
 
 async function loadPdfJs() {
-  if (window.pdfjsLib) return window.pdfjsLib;
-  await loadScript('/vendor/pdfjs/pdf.min.js');
-  if (!window.pdfjsLib) throw new Error('pdf.js unavailable');
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.js';
-  return window.pdfjsLib;
+  // pdfjs-dist v4 ships ESM only — load it as a module instead of a UMD global.
+  if (!pdfjsModule) {
+    pdfjsModule = await import('/vendor/pdfjs/pdf.min.mjs');
+    pdfjsModule.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
+  }
+  return pdfjsModule;
 }
 
 function escapeHtml(value) {
@@ -121,7 +100,7 @@ async function renderPdfPreview(host, doc, token) {
   try {
     const [pdfjsLib, data] = await Promise.all([loadPdfJs(), loadPdfData(doc)]);
     if (token !== pdfRenderToken) return () => {};
-    const loadingTask = pdfjsLib.getDocument({ data });
+    const loadingTask = pdfjsLib.getDocument({ data, isEvalSupported: false });
     const pdf = await loadingTask.promise;
     if (token !== pdfRenderToken) {
       loadingTask.destroy?.();

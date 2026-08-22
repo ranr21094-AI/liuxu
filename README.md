@@ -2,7 +2,7 @@
 
 本地优先、支持多账户隔离的 Agent 工作台。工作日志作为知识库文档，另有待办、倒数日和可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream、WeStock 能力。数据保存在 JSON 文件中。
 
-更新记录见 [ChangeLog.md](ChangeLog.md)。
+更新记录见 [ChangeLog.md](ChangeLog.md)。本次全量代码审查的问题说明、临时措施与分阶段修复安排见 [code-review-remediation.md](code-review-remediation.md)。
 
 ## Quick Start
 

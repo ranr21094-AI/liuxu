@@ -1,4 +1,4 @@
-import { rm, mkdir, copyFile, cp } from 'node:fs/promises';
+import { rm, mkdir, copyFile, cp, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,5 +19,9 @@ await cp(path.join(rootDir, 'node_modules', 'katex', 'dist', 'fonts'), path.join
 
 const pdfjsDir = path.join(vendorDir, 'pdfjs');
 await mkdir(pdfjsDir, { recursive: true });
-await copyFile(path.join(rootDir, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.min.js'), path.join(pdfjsDir, 'pdf.min.js'));
-await copyFile(path.join(rootDir, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.min.js'), path.join(pdfjsDir, 'pdf.worker.min.js'));
+// pdfjs-dist v4 ships ESM only; drop stale v3 UMD copies if present.
+for (const stale of ['pdf.min.js', 'pdf.worker.min.js']) {
+  await unlink(path.join(pdfjsDir, stale)).catch(() => {});
+}
+await copyFile(path.join(rootDir, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.min.mjs'), path.join(pdfjsDir, 'pdf.min.mjs'));
+await copyFile(path.join(rootDir, 'node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.min.mjs'), path.join(pdfjsDir, 'pdf.worker.min.mjs'));

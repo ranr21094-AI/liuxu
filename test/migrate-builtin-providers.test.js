@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createDatabase } = require('../database');
-const { ensureBuiltinProvidersMigrated } = require('../lib/agent/migrate-builtin-providers');
-const { parseCustomModelId } = require('../lib/agent/custom-providers');
+const { ensureBuiltinProvidersMigrated, migrateBuiltinProviderModelCapabilities } = require('../lib/agent/migrate-builtin-providers');
+const { parseCustomModelId, resolveModelCapability } = require('../lib/agent/custom-providers');
 
 function tempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'migrate-providers-'));
@@ -153,4 +153,68 @@ test('custom providers are no longer capped at eight entries', () => {
 
   ensureBuiltinProvidersMigrated(db);
   assert.equal(db.getAiSettings().customProviders.length, 10);
+});
+
+test('v2 migration restores per-model capabilities on untouched v1 cards', () => {
+  const dir = tempDir();
+  const db = createDatabase(dir);
+  db.saveAiSettings({
+    apiKey: 'sk-ds-key',
+    moonshotApiKey: 'sk-ms-key',
+    model: 'deepseek-v4-flash',
+  });
+  ensureBuiltinProvidersMigrated(db);
+
+  const first = migrateBuiltinProviderModelCapabilities(db);
+  assert.equal(first.skipped, false);
+  assert.equal(first.changed, true);
+
+  const settings = db.getAiSettings();
+  const byName = new Map(settings.customProviders.map(item => [item.name, item]));
+  const deepseek = byName.get('DeepSeek');
+  const kimi = byName.get('Kimi');
+
+  const vision = deepseek.models.find(model => model.id === 'deepseek-v4-flash-vision-exp');
+  assert.equal(vision.supportsMedia, true);
+  const plain = deepseek.models.find(model => model.id === 'deepseek-v4-flash');
+  assert.equal(plain.supportsMedia, undefined, 'unrelated models keep inheriting');
+
+  assert.deepEqual(
+    kimi.models.map(model => model.thinking),
+    ['k3', 'fixed', 'optional'],
+  );
+  assert.equal(kimi.thinking, 'optional', 'provider default stays as fallback');
+
+  // Effective capability: vision model sees images, plain model does not.
+  assert.equal(resolveModelCapability(deepseek, vision).supportsMedia, true);
+  assert.equal(resolveModelCapability(deepseek, plain).supportsMedia, false);
+
+  assert.equal(fs.existsSync(path.join(dir, 'ai-settings.pre-capabilities.bak')), true);
+  assert.equal(fs.existsSync(path.join(dir, '.builtin-providers-capabilities.json')), true);
+
+  const second = migrateBuiltinProviderModelCapabilities(db);
+  assert.equal(second.skipped, true);
+});
+
+test('v2 migration leaves user-edited cards alone', () => {
+  const dir = tempDir();
+  const db = createDatabase(dir);
+  db.saveAiSettings({
+    apiKey: 'sk-ds-key',
+    model: 'deepseek-v4-flash',
+  });
+  ensureBuiltinProvidersMigrated(db);
+  // Simulate user edits: extra model + a manual capability override.
+  const settings = db.getAiSettings();
+  const deepseek = settings.customProviders.find(item => item.name === 'DeepSeek');
+  deepseek.models.push({ id: 'custom-extra', name: 'Custom Extra' });
+  deepseek.models[0].supportsMedia = true;
+  db.saveAiSettings({ ...settings, customProviders: settings.customProviders });
+
+  const result = migrateBuiltinProviderModelCapabilities(db);
+  assert.equal(result.changed, false);
+  const after = db.getAiSettings().customProviders.find(item => item.name === 'DeepSeek');
+  assert.equal(after.models.some(model => model.id === 'custom-extra'), true);
+  const vision = after.models.find(model => model.id === 'deepseek-v4-flash-vision-exp');
+  assert.equal(vision.supportsMedia, undefined, 'edited card is not auto-corrected');
 });

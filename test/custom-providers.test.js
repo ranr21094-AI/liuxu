@@ -12,6 +12,7 @@ const {
   normalizeCustomProviders,
   isStoredCustomModel,
   publicCustomProviders,
+  resolveModelCapability,
 } = require('../lib/agent/custom-providers');
 const {
   buildCustomProviderRequest,
@@ -37,6 +38,48 @@ test('parseCustomModelId parses custom model refs', () => {
     modelId: 'anthropic/claude-4',
   });
   assert.equal(isCustomModelId('custom/p_abcd1234/anthropic/claude-4'), true);
+});
+
+test('model-level capability overrides beat provider defaults', () => {
+  const [provider] = sanitizeCustomProvidersSync([{
+    id: 'p_caps5678',
+    name: 'Mixed',
+    baseUrl: 'https://api.example.com/v1',
+    apiFormat: 'openai',
+    supportsMedia: true,
+    thinking: 'optional',
+    zdr: true,
+    models: [
+      'plain-string-model',
+      { id: 'vision-off', supportsMedia: false },
+      { id: 'thinking-off', thinking: 'none' },
+      { id: 'zdr-off', zdr: false },
+    ],
+  }]);
+  assert.deepEqual(provider.models.map(model => model.id), [
+    'plain-string-model', 'vision-off', 'thinking-off', 'zdr-off',
+  ]);
+  assert.deepEqual(resolveModelCapability(provider, provider.models[0]), {
+    supportsMedia: true, thinking: 'optional', zdr: true,
+  });
+  assert.deepEqual(resolveModelCapability(provider, provider.models[1]), {
+    supportsMedia: false, thinking: 'optional', zdr: true,
+  });
+  assert.deepEqual(resolveModelCapability(provider, provider.models[2]), {
+    supportsMedia: true, thinking: 'none', zdr: true,
+  });
+  assert.deepEqual(resolveModelCapability(provider, provider.models[3]), {
+    supportsMedia: true, thinking: 'optional', zdr: false,
+  });
+
+  const records = buildCustomModelRecords([provider]);
+  assert.deepEqual(records[0].inputModalities, ['text', 'image']);
+  assert.deepEqual(records[1].inputModalities, ['text']);
+
+  const [publicProvider] = publicCustomProviders([provider]);
+  assert.equal(publicProvider.models[1].supportsMedia, false);
+  assert.equal(publicProvider.models[2].thinking, 'none');
+  assert.equal(publicProvider.models[3].zdr, false);
 });
 
 test('normalizeCustomProvider passes through capability fields and allows zero models', () => {

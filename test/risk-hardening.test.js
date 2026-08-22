@@ -35,7 +35,7 @@ function clearAppModules() {
   }
 }
 
-function loadFreshApp(t, { authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, moonshotApiKey, moonshotBaseUrl, openrouterApiKey, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode } = {}) {
+function loadFreshApp(t, { authToken, deepseekApiKey, deepseekBaseUrl, deepseekDefaultModel, moonshotApiKey, moonshotBaseUrl, openrouterApiKey, tavilyApiKey, tavilyBaseUrl, perplexityApiKey, perplexityBaseUrl, seedreamApiKey, seedreamBaseUrl, seedreamDefaultModel, westockNpxCommand, qqEmailAccount, qqEmailAuthCode, getokenApiKey, getokenGrokImagineApiKey, getokenNanoBananaApiKey, getokenBaseUrl, getokenDefaultModel } = {}) {
   const dataDir = makeTempDataDir(t);
   process.env.DATA_DIR = dataDir;
   process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
@@ -57,6 +57,11 @@ function loadFreshApp(t, { authToken, deepseekApiKey, deepseekBaseUrl, deepseekD
   process.env.WESTOCK_NPX_COMMAND = westockNpxCommand || 'npx -y westock-data-clawhub@1.0.4';
   process.env.QQ_EMAIL_ACCOUNT = qqEmailAccount || '';
   process.env.QQ_EMAIL_AUTH_CODE = qqEmailAuthCode || '';
+  process.env.GETOKEN_API_KEY = getokenApiKey || '';
+  process.env.GETOKEN_GROK_IMAGINE_API_KEY = getokenGrokImagineApiKey || '';
+  process.env.GETOKEN_NANO_BANANA_API_KEY = getokenNanoBananaApiKey || '';
+  process.env.GETOKEN_BASE_URL = getokenBaseUrl || 'https://api.getoken.tech';
+  process.env.GETOKEN_DEFAULT_MODEL = getokenDefaultModel || 'gpt-image-2';
   clearAppModules();
 
   const db = require(path.join(ROOT, 'database.js'));
@@ -86,6 +91,11 @@ function loadFreshApp(t, { authToken, deepseekApiKey, deepseekBaseUrl, deepseekD
     delete process.env.WESTOCK_NPX_COMMAND;
     delete process.env.QQ_EMAIL_ACCOUNT;
     delete process.env.QQ_EMAIL_AUTH_CODE;
+    delete process.env.GETOKEN_API_KEY;
+    delete process.env.GETOKEN_GROK_IMAGINE_API_KEY;
+    delete process.env.GETOKEN_NANO_BANANA_API_KEY;
+    delete process.env.GETOKEN_BASE_URL;
+    delete process.env.GETOKEN_DEFAULT_MODEL;
     clearAppModules();
   });
 
@@ -1273,6 +1283,119 @@ test('legacy AI chat, editor, image, skills, and conversation routes are gone', 
   assert.match(serverSource, /app\.get\('\/api\/ai\/settings'/);
   assert.match(serverSource, /app\.get\('\/api\/ai\/models'/);
   assert.doesNotMatch(serverSource, /app\.post\('\/api\/ai\/chat'/);
+});
+
+test('remediation batch: routes unique, payload params independent, strict approvals, env isolation', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+
+  // CR-15: /api/restore and /api/backup must be registered exactly once
+  // across server.js and the modular backup routes.
+  const serverSource = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const backupRoutesSource = fs.readFileSync(path.join(ROOT, 'lib', 'http', 'backup-routes.js'), 'utf8');
+  const restoreCount = (serverSource.match(/app\.post\('\/api\/restore'/g) || []).length
+    + (backupRoutesSource.match(/app\.post\('\/api\/restore'/g) || []).length;
+  const backupCount = (serverSource.match(/app\.get\('\/api\/backup'/g) || []).length
+    + (backupRoutesSource.match(/app\.get\('\/api\/backup'/g) || []).length;
+  assert.equal(restoreCount, 1);
+  assert.equal(backupCount, 1);
+  assert.match(backupRoutesSource, /invalidateKnowledgeCache/);
+
+  // CR-08: thinking params and OpenRouter-style params compose independently.
+  assert.match(serverSource, /const openrouterStyle = options\.provider === 'openrouter' \|\| options\.profile\?\.zdr === true/);
+  assert.doesNotMatch(serverSource, /else if \(options\.provider === 'openrouter' \|\| options\.profile\?\.customProvider\?\.zdr === true\)/);
+
+  // CR-07: approvals without a boolean approved field are rejected.
+  const missingApproval = await fetch(`${baseUrl}/api/agent/runs/run-x/approvals/appr-x`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(missingApproval.status, 400);
+  const stringApproval = await fetch(`${baseUrl}/api/agent/runs/run-x/approvals/appr-x`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved: 'yes' }),
+  });
+  assert.equal(stringApproval.status, 400);
+
+  // CR-16: local GETOKEN env keys must not leak into settings defaults.
+  const settingsWithEnv = await fetch(`${baseUrl}/api/ai/settings`);
+  const settingsData = await settingsWithEnv.json();
+  assert.equal(settingsData.getokenApiKey, '');
+
+  // CR-02: pdfjs v4 ESM vendored + isEvalSupported disabled everywhere.
+  const importSource = fs.readFileSync(path.join(ROOT, 'lib', 'knowledge', 'import.js'), 'utf8');
+  const previewSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'knowledge', 'filePreview.js'), 'utf8');
+  assert.match(importSource, /isEvalSupported: false/);
+  assert.doesNotMatch(importSource, /disableWorker/);
+  assert.match(previewSource, /isEvalSupported: false/);
+  assert.match(previewSource, /\/vendor\/pdfjs\/pdf\.min\.mjs/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'public', 'vendor', 'pdfjs', 'pdf.min.mjs')), true);
+});
+
+test('fetching model lists reuses stored provider keys only for identical endpoints', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+  const http = require('node:http');
+  const seenAuth = [];
+  const upstream = http.createServer((req, res) => {
+    seenAuth.push(String(req.headers.authorization || ''));
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ data: [{ id: 'vendor/model-a' }, { id: 'vendor/model-b' }] }));
+  });
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve));
+  const upstreamUrl = `http://127.0.0.1:${upstream.address().port}/v1`;
+  t.after(() => new Promise(resolve => upstream.close(resolve)));
+
+  const saved = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      customProviders: [{
+        id: 'p_reuse01',
+        name: 'MockVendor',
+        baseUrl: upstreamUrl,
+        apiFormat: 'openai',
+        apiKey: 'sk-stored-key',
+        models: [{ id: 'vendor/model-a', name: 'Model A' }],
+      }],
+      model: 'custom/p_reuse01/vendor/model-a',
+    }),
+  });
+  assert.equal(saved.status, 200, JSON.stringify(await saved.json().catch(() => ({}))));
+
+  // No apiKey in the body: the stored key must be reused for the same endpoint.
+  seenAuth.length = 0;
+  const reuse = await fetch(`${baseUrl}/api/ai/custom-providers/models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ providerId: 'p_reuse01', baseUrl: upstreamUrl, apiFormat: 'openai' }),
+  });
+  const reuseData = await reuse.json().catch(() => ({}));
+  assert.equal(reuse.status, 200, JSON.stringify(reuseData));
+  assert.deepEqual(seenAuth, ['Bearer sk-stored-key']);
+  assert.equal(reuseData.total, 2);
+
+  // A different endpoint with the same providerId must not reuse the key.
+  seenAuth.length = 0;
+  const otherUpstream = http.createServer((req, res) => {
+    seenAuth.push(String(req.headers.authorization || ''));
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ data: [{ id: 'other/model' }] }));
+  });
+  await new Promise(resolve => otherUpstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => otherUpstream.close(resolve)));
+  const noReuse = await fetch(`${baseUrl}/api/ai/custom-providers/models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      providerId: 'p_reuse01',
+      baseUrl: `http://127.0.0.1:${otherUpstream.address().port}/v1`,
+      apiFormat: 'openai',
+    }),
+  });
+  const noReuseData = await noReuse.json().catch(() => ({}));
+  assert.equal(noReuse.status, 200, JSON.stringify(noReuseData));
+  assert.deepEqual(seenAuth, [''], 'stored key must not leak to a different base URL');
 });
 
 test('workbench frontend no longer exposes chat, editor AI, or user profile', () => {
@@ -3076,7 +3199,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /enableMarkdownImagePreview\(host, '\.markdown-preview img'\)/);
   assert.match(styles, /\.prose table/);
   assert.match(styles, /\.markdown-preview img \{ cursor: zoom-in;/);
-  assert.equal(fs.existsSync(path.join(ROOT, 'public', 'vendor', 'pdfjs', 'pdf.worker.min.js')), true);
+  assert.equal(fs.existsSync(path.join(ROOT, 'public', 'vendor', 'pdfjs', 'pdf.worker.min.mjs')), true);
   const toolSource = fs.readFileSync(path.join(ROOT, 'lib', 'agent', 'tools.js'), 'utf8');
   assert.match(toolSource, /name: 'knowledge\.import'/);
   assert.match(toolSource, /name: 'file\.delete'/);

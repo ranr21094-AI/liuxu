@@ -18,7 +18,9 @@ const {
   normalizeCustomProviders,
   mergeCustomProviderSecrets,
   validateProviderBaseUrl,
+  normalizeBaseUrl,
   resolveCustomModel,
+  resolveModelCapability,
   buildCustomModelRecords,
   publicCustomProviders,
   isStoredCustomModel,
@@ -32,7 +34,7 @@ const {
   normalizeOpenAiBaseUrl,
   normalizeAnthropicBaseUrl,
 } = require('./lib/agent/custom-api');
-const { ensureBuiltinProvidersMigrated } = require('./lib/agent/migrate-builtin-providers');
+const { ensureBuiltinProvidersMigrated, migrateBuiltinProviderModelCapabilities } = require('./lib/agent/migrate-builtin-providers');
 const { parseMemorySettingsInput } = require('./lib/agent/memory-settings');
 const { parseAgentSettingsInput } = require('./lib/agent/agent-settings');
 const {
@@ -192,6 +194,7 @@ function builtinEnvSecrets() {
 function runBuiltinProvidersMigration(db, { envSecrets = {} } = {}) {
   try {
     ensureBuiltinProvidersMigrated(db, { envSecrets });
+    migrateBuiltinProviderModelCapabilities(db);
   } catch (err) {
     console.error('[migrate-builtin-providers] failed:', err.message);
   }
@@ -931,6 +934,8 @@ app.get(['/', '/index.html'], (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// pdfjs-dist v4 ships ESM; ensure .mjs is served as JavaScript for module imports.
+express.static.mime.define({ 'application/javascript': ['mjs'] }, true);
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 app.use('/api/ai', rateLimiter(60, 60 * 1000));
@@ -1329,18 +1334,18 @@ async function resolveAiModelProfile(model, apiKey, signal, settings = null) {
   const aiSettings = settings || db.getAiSettings();
   const custom = resolveCustomModel(aiSettings, model);
   if (custom) {
-    const thinking = custom.provider.thinking || '';
-    const supportsMedia = custom.provider.supportsMedia === true;
+    const caps = resolveModelCapability(custom.provider, custom.catalogModel);
     return {
       provider: 'custom',
       name: custom.catalogModel.name || custom.modelId,
       baseUrl: custom.provider.baseUrl,
       apiFormat: custom.provider.apiFormat || 'openai',
       customProviderId: custom.provider.id,
-      thinking,
-      supportsMedia,
-      preserveReasoning: Boolean(thinking),
-      inputModalities: supportsMedia ? ['text', 'image'] : ['text'],
+      thinking: caps.thinking,
+      supportsMedia: caps.supportsMedia,
+      zdr: caps.zdr,
+      preserveReasoning: Boolean(caps.thinking),
+      inputModalities: caps.supportsMedia ? ['text', 'image'] : ['text'],
       outputModalities: ['text'],
       contextLength: null,
       supportedParameters: custom.provider.apiFormat === 'anthropic' ? [] : ['tools'],
@@ -1708,7 +1713,11 @@ async function persistSeedreamItem(item) {
 async function requestSeedreamGeneration(options) {
   const preferPublicUrl = process.env.SEEDREAM_PREFER_PUBLIC_URL === '1';
   const publicOrigin = options.req ? `${options.req.protocol}://${options.req.get('host')}` : '';
-  const resolvedImages = await resolveReferenceImages(options.images, {
+  let referenceImages = Array.isArray(options.images) ? options.images : [];
+  if (typeof db.isPrivateUpload === 'function' && !(options.req && hasDiaryAccess(options.req))) {
+    referenceImages = referenceImages.filter(url => !db.isPrivateUpload(String(url || '').replace(/^\/uploads\//, '')));
+  }
+  const resolvedImages = await resolveReferenceImages(referenceImages, {
     dataDir: options.dataDir,
     isSafeUploadFilename: db.isSafeUploadFilename,
     preferPublicUrl,
@@ -2333,17 +2342,29 @@ app.post('/api/ai/custom-providers/test', async (req, res) => {
       : body.apiFormat === 'responses'
         ? 'responses'
         : 'openai';
-    const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim().slice(0, 120) : '';
+    const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim().slice(0, 160) : '';
     const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : '';
     const urlCheck = await validateProviderBaseUrl(body.baseUrl);
     if (urlCheck.error) return res.status(400).json({ error: urlCheck.error });
     if (!model) return res.status(400).json({ error: 'Model id is required' });
-    if (apiFormat === 'anthropic' && !apiKey) return res.status(400).json({ error: 'Anthropic custom endpoints require an API key' });
+    let effectiveApiKey = apiKey;
+    if (!effectiveApiKey && providerId) {
+      const savedSettings = db.getAiSettings();
+      const savedProvider = (Array.isArray(savedSettings.customProviders) ? savedSettings.customProviders : [])
+        .find(item => item?.id === providerId);
+      if (savedProvider
+        && normalizeBaseUrl(savedProvider.baseUrl) === urlCheck.value
+        && (savedProvider.apiFormat || 'openai') === apiFormat) {
+        effectiveApiKey = savedProvider.apiKey || '';
+      }
+    }
+    if (apiFormat === 'anthropic' && !effectiveApiKey) return res.status(400).json({ error: 'Anthropic custom endpoints require an API key' });
     const options = {
       provider: 'custom',
       apiFormat,
       baseUrl: urlCheck.value,
-      apiKey,
+      apiKey: effectiveApiKey,
       model,
       profile: { apiFormat },
     };
@@ -2383,9 +2404,23 @@ app.post('/api/ai/custom-providers/models', async (req, res) => {
         : 'openai';
     const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
     const query = typeof body.query === 'string' ? body.query.trim().toLowerCase().slice(0, 100) : '';
+    const providerId = typeof body.providerId === 'string' ? body.providerId.trim() : '';
     const urlCheck = await validateProviderBaseUrl(body.baseUrl);
     if (urlCheck.error) return res.status(400).json({ error: urlCheck.error });
-    const request = buildCustomProviderModelsRequest({ baseUrl: urlCheck.value, apiFormat, apiKey });
+    let effectiveApiKey = apiKey;
+    if (!effectiveApiKey && providerId) {
+      // Reuse the stored (encrypted) key only when the endpoint identity is
+      // unchanged; a different base URL or format must require a fresh key.
+      const saved = db.getAiSettings();
+      const savedProvider = (Array.isArray(saved.customProviders) ? saved.customProviders : [])
+        .find(item => item?.id === providerId);
+      if (savedProvider
+        && normalizeBaseUrl(savedProvider.baseUrl) === urlCheck.value
+        && (savedProvider.apiFormat || 'openai') === apiFormat) {
+        effectiveApiKey = savedProvider.apiKey || '';
+      }
+    }
+    const request = buildCustomProviderModelsRequest({ baseUrl: urlCheck.value, apiFormat, apiKey: effectiveApiKey });
     const upstream = await fetchWithTimeout(request.url, {
       method: 'GET',
       headers: request.headers,
@@ -2519,32 +2554,6 @@ app.get('/api/stats', (req, res) => {
     const diaryUnlocked = hasDiaryAccess(req);
     const stats = db.getStats(diaryUnlocked);
     res.json(stats);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Backup full data as JSON
-app.get('/api/backup', (req, res) => {
-  try {
-    if (restoreRequiresDiaryAccess(req) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
-    const data = db.backup();
-    res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename=work-log-backup-${businessDateString()}.json`);
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Restore from backup JSON (?mode=merge for non-destructive merge)
-app.post('/api/restore', (req, res) => {
-  try {
-    if (restoreRequiresDiaryAccess(req) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
-    const mode = req.query.mode === 'merge' ? 'merge' : 'replace';
-    const result = db.restore(req.body, mode);
-    if (result.error) return res.status(400).json(result);
-    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3080,6 +3089,9 @@ function aiProviderPayload({ options, messages, stream = false, tools, toolChoic
     messages,
     stream,
   };
+  // Thinking/reasoning style params and OpenRouter-style params (reasoning
+  // control, ZDR, web search) are composed independently so enabling both on
+  // one provider sends both.
   const thinking = options.profile?.thinking || '';
   if (thinking === 'deepseek') {
     payload.thinking = { type: options.thinkingMode };
@@ -3090,10 +3102,16 @@ function aiProviderPayload({ options, messages, stream = false, tools, toolChoic
     payload.thinking = options.thinkingMode === 'disabled'
       ? { type: 'disabled' }
       : { type: 'enabled', keep: 'all' };
-  } else if (options.provider === 'openrouter' || options.profile?.customProvider?.zdr === true) {
-    if (options.reasoningMode === 'disabled') payload.reasoning = { enabled: false };
-    if (options.reasoningMode === 'effort') payload.reasoning = { effort: options.reasoningEffort };
-    if (options.provider === 'openrouter' ? options.openrouterZdrEnabled === true : options.profile?.customProvider?.zdr === true) {
+  }
+  const openrouterStyle = options.provider === 'openrouter' || options.profile?.zdr === true;
+  if (openrouterStyle) {
+    if (options.reasoningMode === 'disabled' && thinking !== 'deepseek' && thinking !== 'k3') {
+      payload.reasoning = { enabled: false };
+    }
+    if (options.reasoningMode === 'effort' && thinking !== 'deepseek' && thinking !== 'k3') {
+      payload.reasoning = { effort: options.reasoningEffort };
+    }
+    if (options.provider === 'openrouter' ? options.openrouterZdrEnabled === true : options.profile?.zdr === true) {
       payload.provider = { zdr: true };
     }
     if (enableWebSearch) {
@@ -3336,6 +3354,8 @@ function createAgentModelClient(req) {
       ], options, {
         dataDir: userDb.dataDir,
         isSafeUploadFilename: userDb.isSafeUploadFilename.bind(userDb),
+        isPrivateUpload: userDb.isPrivateUpload.bind(userDb),
+        allowPrivate: hasDiaryAccess(req),
       });
       const providerTools = toProviderTools(tools || []);
       const reply = await fetchAiProviderReply({
@@ -3430,9 +3450,38 @@ function createAgentWebFetch(req) {
         redirect: 'follow',
         headers: { 'User-Agent': 'WorkLog-Agent/1.0' },
       });
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (buffer.length > WEB_FETCH_MAX_BYTES) {
-        return toolResult({ ok: false, summary: `Response too large (${buffer.length} bytes)`, errorCode: 'too_large' });
+      // Stream the body and abort as soon as the size cap is exceeded instead
+      // of buffering the whole response before checking.
+      let buffer;
+      const reader = response.body?.getReader ? response.body.getReader() : null;
+      if (reader) {
+        const chunks = [];
+        let total = 0;
+        let exceeded = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > WEB_FETCH_MAX_BYTES) {
+            exceeded = true;
+            await reader.cancel().catch(() => {});
+            break;
+          }
+          chunks.push(Buffer.from(value));
+        }
+        if (exceeded) {
+          return toolResult({
+            ok: false,
+            summary: `Response too large (over ${WEB_FETCH_MAX_BYTES} bytes)`,
+            errorCode: 'too_large',
+          });
+        }
+        buffer = Buffer.concat(chunks);
+      } else {
+        buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length > WEB_FETCH_MAX_BYTES) {
+          return toolResult({ ok: false, summary: `Response too large (${buffer.length} bytes)`, errorCode: 'too_large' });
+        }
       }
       const contentType = response.headers.get('content-type') || '';
       let text = buffer.toString('utf8');
@@ -3624,6 +3673,7 @@ mountNewApis(app, {
   authStore,
   hasDiaryAccess,
   rejectLockedDiary,
+  restoreRequiresDiaryAccess,
   requireAdmin,
   modelClientFor: createAgentModelClient,
   agentStatusFor: createAgentStatus,

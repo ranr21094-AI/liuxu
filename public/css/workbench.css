@@ -1807,6 +1807,29 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .custom-provider-thinking { margin: 0; }
 .custom-provider-thinking select { max-width: 150px; }
+.custom-model-overrides {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.custom-model-overrides-label { font-size: 11px; color: var(--faint); }
+.custom-model-override-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.custom-model-override-field select { max-width: 130px; }
+.custom-provider-model-actions .has-override {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
 .custom-provider-model-remove {
   min-width: 28px;
   padding: 0 8px;

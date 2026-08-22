@@ -306,6 +306,76 @@ test('agent approved tools increment run.toolCalls', async (t) => {
   assert.equal(live.toolCalls, 1);
 });
 
+test('run snapshots diary permission at start', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let diaryOpen = true;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: () => diaryOpen,
+    modelClient: {
+      async complete() {
+        diaryOpen = false; // another tab locks the diary mid-run
+        return { text: '回答完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('diary-snapshot');
+  const run = await runtime.start({ session, goal: '读私密内容', userMessage: '开始' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const live = store.getRun(run.id);
+  assert.equal(live.diaryUnlocked, true, 'run keeps the permission it started with');
+  assert.equal(live.status, 'completed');
+});
+
+test('duplicate client tool submissions return the first outcome', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    chrome: {
+      request(name) {
+        return {
+          clientTool: true,
+          request: { name, args: {}, nonce: 'n1', signature: 's1' },
+        };
+      },
+    },
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'browser.scan', arguments: {} }] };
+        }
+        return { text: '浏览器扫描完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('client-tool-dedup');
+  const run = await runtime.start({ session, goal: '扫描浏览器', userMessage: '扫描' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  assert.equal(waiting.status, 'waiting_client_tool');
+  const requestId = waiting.pendingClientTool.id;
+
+  const first = await runtime.clientToolResult(run.id, requestId, { ok: true, tabs: [] });
+  assert.ok(!first.error);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(store.getRun(run.id).status, 'completed');
+
+  const second = await runtime.clientToolResult(run.id, requestId, { ok: true, tabs: [] });
+  assert.ok(!second.error, 'duplicate submission is a no-op, not an error');
+  assert.equal(store.getRun(run.id).status, 'completed');
+});
+
 test('agent web.search rejects empty query before approval', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
