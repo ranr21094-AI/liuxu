@@ -502,27 +502,18 @@
           </section>
           <section class="settings-section" data-settings-panel="model" hidden>
             <h3>模型</h3>
-            <p class="settings-copy">内置供应商与自定义端点共用同一默认模型。留空密钥可保持已保存的值。</p>
+            <p class="settings-copy">所有模型统一由供应商卡片提供（OpenAI / Anthropic 兼容 API）。留空密钥可保持已保存的值。</p>
             <div class="settings-subsection">
-              <h4>内置供应商</h4>
-              <label class="settings-field" for="agentDeepseekKey">DeepSeek API Key<input id="agentDeepseekKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
-              <label class="settings-field" for="agentMoonshotKey">Moonshot / Kimi API Key<input id="agentMoonshotKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..."></label>
-              <label class="settings-field" for="agentOpenrouterKey">OpenRouter API Key<input id="agentOpenrouterKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-or-..."></label>
+              <div class="settings-subhead-row">
+                <h4>供应商</h4>
+                <button type="button" class="secondary-action compact" id="addCustomProvider">添加供应商</button>
+              </div>
+              <p class="settings-copy">每个供应商维护自己的地址、密钥与模型列表；可用"拉取模型列表"自动发现。</p>
+              <div id="customProvidersList" class="custom-providers-list"></div>
             </div>
             <div class="settings-subsection">
               <h4>默认模型</h4>
-              <div class="settings-row settings-row-actions">
-                <label class="settings-row" for="agentModelSelect"><span><strong>模型</strong><small>Agent 运行时使用</small></span><select id="agentModelSelect"></select></label>
-                <button type="button" class="secondary-action compact" id="refreshOpenRouterModels">刷新 OpenRouter</button>
-              </div>
-            </div>
-            <div class="settings-subsection">
-              <div class="settings-subhead-row">
-                <h4>自定义端点</h4>
-                <button type="button" class="secondary-action compact" id="addCustomProvider">添加端点</button>
-              </div>
-              <p class="settings-copy">OpenAI / Anthropic 兼容 API；最多 8 个端点，每端点 16 个模型。</p>
-              <div id="customProvidersList" class="custom-providers-list"></div>
+              <label class="settings-row" for="agentModelSelect"><span><strong>模型</strong><small>Agent 运行时使用</small></span><select id="agentModelSelect"></select></label>
             </div>
             <div class="settings-subsection">
               <h4>推理</h4>
@@ -533,7 +524,7 @@
                   <option value="effort">指定强度</option>
                 </select>
               </label>
-              <label class="settings-row" for="agentThinkingMode"><span><strong>K2.6 思考模式</strong><small>开启并保留或关闭</small></span>
+              <label class="settings-row" for="agentThinkingMode"><span><strong>DeepSeek / Kimi 思考模式</strong><small>开启并保留或关闭</small></span>
                 <select id="agentThinkingMode">
                   <option value="enabled">开启并保留</option>
                   <option value="disabled">关闭</option>
@@ -549,7 +540,6 @@
                   <option value="max">最高</option>
                 </select>
               </label>
-              <label class="settings-row" for="agentOpenRouterZdr"><span><strong>OpenRouter 零数据保留</strong><small>默认仅路由到 ZDR 端点；可能减少可用供应商</small></span><input id="agentOpenRouterZdr" type="checkbox"></label>
             </div>
           </section>
           <section class="settings-section" data-settings-panel="agent" hidden>
@@ -920,6 +910,31 @@
       <header><h2 id="confirmTitle">确认操作</h2></header>
       <p id="confirmMessage"></p>
       <div class="dialog-actions"><button class="secondary-action" id="confirmCancel" value="cancel">取消</button><button class="danger-action" id="confirmAccept" value="confirm">确认</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="workspace-dialog provider-models-dialog" id="providerModelsDialog" aria-labelledby="providerModelsTitle">
+    <form class="dialog-card compact-dialog" id="providerModelsForm" autocomplete="off">
+      <header>
+        <div>
+          <span class="dialog-eyebrow">模型</span>
+          <h2 id="providerModelsTitle">选择要添加的模型</h2>
+        </div>
+        <button class="icon-button" id="providerModelsClose" type="button" aria-label="关闭">×</button>
+      </header>
+      <div class="provider-models-toolbar">
+        <input type="search" id="providerModelsSearch" placeholder="搜索模型 id…" maxlength="100" aria-label="搜索模型">
+        <span class="muted" id="providerModelsCount"></span>
+        <span class="provider-models-toolbar-actions">
+          <button type="button" class="secondary-action compact" id="providerModelsSelectAll">全选</button>
+          <button type="button" class="secondary-action compact" id="providerModelsClear">清空</button>
+        </span>
+      </div>
+      <div class="provider-models-list" id="providerModelsList"></div>
+      <div class="dialog-actions">
+        <button type="button" class="secondary-action" id="providerModelsCancel">取消</button>
+        <button type="button" class="primary-action compact" id="providerModelsAdd">添加所选</button>
+      </div>
     </form>
   </dialog>
 

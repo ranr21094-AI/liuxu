@@ -104,6 +104,7 @@ const state = {
   aiSettings: null,
   agentModelCatalog: [],
   customProviderExpandIndex: null,
+  providerModelsPicker: null,
   settingsPanel: 'appearance',
   documentSaveTimer: null,
   annotationSaveTimer: null,
@@ -350,7 +351,13 @@ const refreshDocumentPreview = debounce(() => {
 function formatMessageTime(value) {
   const date = new Date(value || 0);
   if (!Number.isFinite(date.getTime())) return '';
-  return new Intl.DateTimeFormat('zh-CN', { hour: 'numeric', minute: '2-digit' }).format(date);
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function formatTime(value) {
@@ -917,7 +924,7 @@ async function loadAgentStatus() {
 
 function idleAgentLabel() {
   if (state.agentStatus?.configured && state.agentStatus.model) {
-    return `已就绪 · ${state.agentStatus.model}`;
+    return `已就绪 · ${agentModelLabel(state.agentStatus.model)}`;
   }
   if (state.agentStatus && state.agentStatus.configured === false) {
     return '未配置模型';
@@ -927,7 +934,7 @@ function idleAgentLabel() {
 
 function agentSetupHintHtml() {
   const hidden = state.agentStatus?.configured !== false ? ' hidden' : '';
-  return `<p class="agent-setup-hint"${hidden}>尚未配置模型。请先在设置中填写 API Key，然后回到这里发送消息。<button type="button" data-open-settings>打开设置</button></p>`;
+  return `<p class="agent-setup-hint"${hidden}>尚未配置模型。请先在设置 → 模型中添加供应商（填写地址与密钥、选择模型），然后回到这里发送消息。<button type="button" data-open-settings>打开设置</button></p>`;
 }
 
 function applyAgentStatus() {
@@ -945,14 +952,79 @@ function syncComposerModelSelectState() {
   select.disabled = state.agentStatus?.configured === false;
 }
 
-const DIRECT_AGENT_MODELS = [
-  { id: 'deepseek-v4-flash', name: 'DeepSeek Flash' },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek Pro' },
-  { id: 'deepseek-v4-flash-vision-exp', name: 'DeepSeek Flash Vision' },
-  { id: 'kimi-k3', name: 'Kimi K3' },
-  { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code' },
-  { id: 'kimi-k2.6', name: 'Kimi K2.6' },
-];
+function providerModelGroups() {
+  // While the settings dialog is open, prefer the in-editor draft so freshly
+  // fetched/picked models show up in the default-model select before saving.
+  const providers = $('#settingsDialog')?.open && Array.isArray(state.customProvidersDraft)
+    ? state.customProvidersDraft
+    : (Array.isArray(state.aiSettings?.customProviders) ? state.aiSettings.customProviders : []);
+  return providers
+    .map(provider => ({
+      label: provider.name || provider.id || '未命名供应商',
+      items: (provider.models || []).map(model => ({
+        id: `custom/${provider.id}/${model.id}`,
+        name: model.name || model.id,
+      })),
+    }))
+    .filter(group => group.items.length);
+}
+
+function populateAgentModelSelectElement(select, selected) {
+  if (!select) return;
+  const groups = providerModelGroups();
+  select.innerHTML = groups
+    .map(group => `<optgroup label="${escHtml(group.label)}">${group.items.map(item => `<option value="${escHtml(item.id)}">${escHtml(item.name)}</option>`).join('')}</optgroup>`)
+    .join('');
+  const known = groups.some(group => group.items.some(item => item.id === selected));
+  select.value = known ? selected : '';
+}
+
+function populateAgentModelSelects(selected) {
+  populateAgentModelSelectElement($('#agentModelSelect'), selected);
+  populateAgentModelSelectElement($('#agentComposerModelSelect'), selected);
+}
+
+function populateAgentModelSelect(selected) {
+  populateAgentModelSelects(selected);
+}
+
+async function loadComposerModelOptions() {
+  try {
+    const settingsResponse = await apiFetch('/api/ai/settings');
+    const settings = await settingsResponse.json().catch(() => ({}));
+    if (settingsResponse.ok) state.aiSettings = settings;
+    populateAgentModelSelects(state.aiSettings?.model || settings.model || '');
+  } catch {
+    populateAgentModelSelects('');
+  }
+  syncComposerModelSelectState();
+}
+
+async function quickSaveAgentModel(modelId) {
+  const select = $('#agentComposerModelSelect');
+  if (!select || !state.aiSettings) return;
+  const previous = state.aiSettings.model || select.value;
+  if (modelId === previous) return;
+  select.disabled = true;
+  try {
+    const response = await apiFetch('/api/ai/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '模型切换失败');
+    state.aiSettings = data;
+    populateAgentModelSelects(data.model || '');
+    await loadAgentStatus();
+    showToast('模型已切换', 'success');
+  } catch (error) {
+    populateAgentModelSelects(previous);
+    showToast(error.message || '模型切换失败', 'error');
+  } finally {
+    syncComposerModelSelectState();
+  }
+}
 
 const MEMORY_SETTING_FIELDS = Object.freeze([
   { key: 'memoryRefreshMaxRounds', min: 1, fallback: 4 },
@@ -1034,82 +1106,7 @@ function keyPlaceholder(configured, fallback) {
   return configured ? '已配置；留空保持不变' : fallback;
 }
 
-function populateAgentModelSelectElement(select, models, selected) {
-  if (!select) return;
-  const builtinIds = new Set(DIRECT_AGENT_MODELS.map(item => item.id));
-  const extras = (models || []).filter(model => model?.id && !builtinIds.has(model.id));
-  const openrouter = extras.filter(model => model.provider === 'openrouter' || (!String(model.id).startsWith('custom/') && model.provider !== 'custom'));
-  const custom = extras.filter(model => model.provider === 'custom' || String(model.id).startsWith('custom/'));
-  const groups = [
-    { label: '内置', items: DIRECT_AGENT_MODELS.map(item => ({ ...item })) },
-    { label: 'OpenRouter', items: openrouter.map(model => ({ id: model.id, name: model.name || model.id })) },
-    { label: '自定义', items: custom.map(model => ({ id: model.id, name: model.name || model.id })) },
-  ];
-  if (selected && !groups.some(group => group.items.some(item => item.id === selected))) {
-    groups[0].items.unshift({ id: selected, name: selected });
-  }
-  select.innerHTML = groups
-    .filter(group => group.items.length)
-    .map(group => `<optgroup label="${escHtml(group.label)}">${group.items.map(item => `<option value="${escHtml(item.id)}">${escHtml(item.name)}</option>`).join('')}</optgroup>`)
-    .join('');
-  select.value = selected || 'deepseek-v4-flash';
-}
-
-function populateAgentModelSelects(models, selected) {
-  if (Array.isArray(models)) state.agentModelCatalog = models;
-  populateAgentModelSelectElement($('#agentModelSelect'), models, selected);
-  populateAgentModelSelectElement($('#agentComposerModelSelect'), models, selected);
-}
-
-function populateAgentModelSelect(models, selected) {
-  populateAgentModelSelects(models, selected);
-}
-
-async function loadComposerModelOptions() {
-  try {
-    const [settingsResponse, modelsResponse] = await Promise.all([
-      apiFetch('/api/ai/settings'),
-      apiFetch('/api/ai/models'),
-    ]);
-    const settings = await settingsResponse.json().catch(() => ({}));
-    const modelsData = await modelsResponse.json().catch(() => ({}));
-    if (settingsResponse.ok) state.aiSettings = settings;
-    const models = modelsResponse.ok && Array.isArray(modelsData.models) ? modelsData.models : [];
-    populateAgentModelSelects(models, state.aiSettings?.model || settings.model);
-  } catch {
-    populateAgentModelSelects([], state.aiSettings?.model || 'deepseek-v4-flash');
-  }
-  syncComposerModelSelectState();
-}
-
-async function quickSaveAgentModel(modelId) {
-  const select = $('#agentComposerModelSelect');
-  if (!select || !state.aiSettings) return;
-  const previous = state.aiSettings.model || select.value;
-  if (modelId === previous) return;
-  select.disabled = true;
-  try {
-    const response = await apiFetch('/api/ai/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: modelId }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || '模型切换失败');
-    state.aiSettings = data;
-    populateAgentModelSelects(state.agentModelCatalog || [], data.model);
-    await loadAgentStatus();
-    showToast('模型已切换', 'success');
-  } catch (error) {
-    populateAgentModelSelects(state.agentModelCatalog || [], previous);
-    showToast(error.message || '模型切换失败', 'error');
-  } finally {
-    syncComposerModelSelectState();
-  }
-}
-
-const MAX_CUSTOM_PROVIDERS = 8;
-const MAX_MODELS_PER_PROVIDER = 16;
+const MAX_MODELS_PER_PROVIDER = 200;
 
 function randomProviderId() {
   const bytes = new Uint8Array(4);
@@ -1131,6 +1128,9 @@ function createEmptyCustomProvider() {
     apiFormat: 'openai',
     apiKey: '',
     apiKeyConfigured: false,
+    supportsMedia: false,
+    thinking: '',
+    zdr: false,
     models: [{ id: '', name: '' }],
   };
 }
@@ -1141,12 +1141,24 @@ function customProviderFormatLabel(format) {
   return 'OpenAI';
 }
 
+function customProviderThinkingOptions(thinking) {
+  const options = [
+    { value: '', label: '不发送' },
+    { value: 'deepseek', label: 'DeepSeek 风格' },
+    { value: 'optional', label: 'Kimi 风格' },
+  ];
+  if (thinking === 'k3' || thinking === 'fixed') {
+    options.push({ value: thinking, label: thinking === 'k3' ? '自定义（k3）' : '自定义（fixed）' });
+  }
+  return options.map(option => `<option value="${escHtml(option.value)}" ${thinking === option.value ? 'selected' : ''}>${escHtml(option.label)}</option>`).join('');
+}
+
 function renderCustomProvidersList() {
   const root = $('#customProvidersList');
   if (!root) return;
   const list = state.customProvidersDraft || [];
   if (!list.length) {
-    root.innerHTML = '<p class="empty-list">还没有自定义端点。添加后可接入 OpenAI / Anthropic 兼容 API。</p>';
+    root.innerHTML = '<p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p>';
     return;
   }
   const expandIndex = Number.isInteger(state.customProviderExpandIndex)
@@ -1154,7 +1166,7 @@ function renderCustomProvidersList() {
     : null;
   root.innerHTML = list.map((provider, index) => {
     const modelCount = (provider.models || []).filter(model => model.id).length;
-    const summaryName = provider.name?.trim() || '未命名端点';
+    const summaryName = provider.name?.trim() || '未命名供应商';
     const shouldOpen = expandIndex === index || list.length === 1;
     return `
     <details class="custom-provider-card" data-provider-index="${index}"${shouldOpen ? ' open' : ''}>
@@ -1163,11 +1175,11 @@ function renderCustomProvidersList() {
           <span class="custom-provider-summary-name">${escHtml(summaryName)}</span>
           <span class="custom-provider-summary-meta">${escHtml(customProviderFormatLabel(provider.apiFormat))} · ${modelCount} 个模型</span>
         </span>
-        <button type="button" class="danger-action compact custom-provider-delete" data-remove-provider="${index}" aria-label="删除端点">删除</button>
+        <button type="button" class="danger-action compact custom-provider-delete" data-remove-provider="${index}" aria-label="删除供应商">删除</button>
       </summary>
       <div class="custom-provider-body">
-        <label class="custom-provider-inline-field">端点名称
-          <input type="text" class="custom-provider-name" value="${escHtml(provider.name)}" placeholder="端点名称" maxlength="80">
+        <label class="custom-provider-inline-field">供应商名称
+          <input type="text" class="custom-provider-name" value="${escHtml(provider.name)}" placeholder="例如 DeepSeek / Kimi / OpenRouter" maxlength="80">
         </label>
         <div class="custom-provider-conn-grid">
           <label class="custom-provider-inline-field">Base URL
@@ -1187,11 +1199,14 @@ function renderCustomProvidersList() {
         <div class="custom-provider-models">
           <div class="custom-provider-models-head">
             <strong>模型</strong>
-            <button type="button" class="secondary-action compact" data-add-model="${index}">添加模型</button>
+            <span class="custom-provider-models-actions">
+              <button type="button" class="secondary-action compact" data-fetch-models="${index}">拉取模型列表</button>
+              <button type="button" class="secondary-action compact" data-add-model="${index}">添加模型</button>
+            </span>
           </div>
           ${(provider.models || []).map((model, modelIndex) => `
             <div class="custom-provider-model-row">
-              <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="120" aria-label="模型 ID">
+              <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
               <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
               <span class="custom-provider-model-actions">
                 <button type="button" class="secondary-action compact" data-test-model="${index}" data-test-model-id="${modelIndex}">测试</button>
@@ -1199,6 +1214,13 @@ function renderCustomProvidersList() {
               </span>
             </div>
           `).join('')}
+        </div>
+        <div class="custom-provider-capabilities">
+          <label class="custom-provider-capability"><input type="checkbox" class="custom-provider-supports-media" ${provider.supportsMedia ? 'checked' : ''}>支持图片输入</label>
+          <label class="custom-provider-inline-field custom-provider-thinking">思考/推理参数
+            <select class="custom-provider-thinking-select">${customProviderThinkingOptions(provider.thinking || '')}</select>
+          </label>
+          <label class="custom-provider-capability" title="仅 OpenRouter 端点生效"><input type="checkbox" class="custom-provider-zdr" ${provider.zdr ? 'checked' : ''}>ZDR 零数据保留</label>
         </div>
       </div>
     </details>`;
@@ -1225,6 +1247,9 @@ function syncCustomProvidersDraftFromDom() {
       apiFormat: normalizeCustomProviderApiFormat(card.querySelector('.custom-provider-format')?.value),
       apiKey: apiKeyInput,
       apiKeyConfigured: Boolean(prev.apiKeyConfigured && !apiKeyInput),
+      supportsMedia: card.querySelector('.custom-provider-supports-media')?.checked === true,
+      thinking: card.querySelector('.custom-provider-thinking-select')?.value || '',
+      zdr: card.querySelector('.custom-provider-zdr')?.checked === true,
       models: models.length ? models : [{ id: '', name: '' }],
     });
   });
@@ -1239,27 +1264,122 @@ function readCustomProvidersForSave() {
     baseUrl: provider.baseUrl,
     apiFormat: provider.apiFormat || 'openai',
     apiKey: provider.apiKey || '',
+    supportsMedia: provider.supportsMedia === true,
+    thinking: provider.thinking || '',
+    zdr: provider.zdr === true,
     models: (provider.models || []).filter(model => model.id).map(model => ({
       id: model.id,
       name: model.name || model.id,
     })),
-  })).filter(provider => provider.name && provider.baseUrl && provider.models.length);
+  })).filter(provider => provider.name && provider.baseUrl);
 }
 
-async function refreshOpenRouterModels() {
-  const button = $('#refreshOpenRouterModels');
+async function fetchProviderModels(providerIndex) {
+  syncCustomProvidersDraftFromDom();
+  const provider = state.customProvidersDraft?.[providerIndex];
+  if (!provider?.baseUrl) {
+    showToast('请先填写 Base URL', 'error');
+    return;
+  }
+  const card = document.querySelector(`.custom-provider-card[data-provider-index="${providerIndex}"]`);
+  const button = card?.querySelector(`[data-fetch-models="${providerIndex}"]`);
   if (button) button.disabled = true;
+  const apiKey = card?.querySelector('.custom-provider-key')?.value.trim() || '';
   try {
-    const response = await apiFetch('/api/ai/models?refresh=1');
+    const response = await apiFetch('/api/ai/custom-providers/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        baseUrl: provider.baseUrl,
+        apiFormat: provider.apiFormat,
+        apiKey,
+      }),
+    });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'OpenRouter 模型刷新失败');
-    populateAgentModelSelects(data.models, $('#agentModelSelect')?.value || state.aiSettings?.model);
-    showToast('OpenRouter 模型已刷新', 'success');
+    if (!response.ok) throw new Error(data.error || '拉取模型列表失败');
+    const ids = Array.isArray(data.models) ? data.models.map(item => String(item?.id || '').trim()).filter(Boolean) : [];
+    if (!ids.length) throw new Error('端点未返回任何模型');
+    openProviderModelsPicker(providerIndex, ids, Number(data.total) || ids.length);
   } catch (error) {
-    showToast(error.message || 'OpenRouter 模型刷新失败', 'error');
+    showToast(error.message || '拉取模型列表失败', 'error');
   } finally {
     if (button) button.disabled = false;
   }
+}
+
+function openProviderModelsPicker(providerIndex, ids, total) {
+  const provider = state.customProvidersDraft?.[providerIndex];
+  const dialog = $('#providerModelsDialog');
+  if (!provider || !dialog) return;
+  const existing = new Set((provider.models || []).filter(model => model.id).map(model => model.id));
+  state.providerModelsPicker = {
+    providerIndex,
+    ids,
+    total,
+    selected: new Set(ids.filter(id => existing.has(id))),
+    filter: '',
+  };
+  $('#providerModelsTitle').textContent = `选择要添加的模型 · ${provider.name?.trim() || '未命名供应商'}`;
+  $('#providerModelsSearch').value = '';
+  renderProviderModelsList();
+  dialog.showModal();
+}
+
+function closeProviderModelsPicker() {
+  state.providerModelsPicker = null;
+  const dialog = $('#providerModelsDialog');
+  if (dialog?.open) dialog.close();
+}
+
+function providerModelsVisibleIds(picker) {
+  const filter = String(picker.filter || '').trim().toLowerCase();
+  if (!filter) return picker.ids;
+  return picker.ids.filter(id => id.toLowerCase().includes(filter));
+}
+
+function renderProviderModelsList() {
+  const picker = state.providerModelsPicker;
+  const list = $('#providerModelsList');
+  const countEl = $('#providerModelsCount');
+  if (!picker || !list) return;
+  const visible = providerModelsVisibleIds(picker);
+  list.innerHTML = visible.map(id => `
+    <label class="provider-models-item">
+      <input type="checkbox" data-provider-model-id="${escHtml(id)}" ${picker.selected.has(id) ? 'checked' : ''}>
+      <span class="provider-models-item-id">${escHtml(id)}</span>
+    </label>`).join('') || '<p class="empty-list">没有匹配的模型</p>';
+  if (countEl) {
+    const shown = visible.length === picker.ids.length ? `${picker.ids.length}` : `${visible.length} / ${picker.ids.length}`;
+    const tail = picker.total > picker.ids.length ? `（目录共 ${picker.total} 个）` : ' 个模型';
+    countEl.textContent = `${shown}${tail}`;
+  }
+}
+
+function applyProviderModelsSelection() {
+  const picker = state.providerModelsPicker;
+  const provider = picker ? state.customProvidersDraft?.[picker.providerIndex] : null;
+  if (!picker || !provider) return;
+  const names = new Map((provider.models || []).filter(model => model.id).map(model => [model.id, model.name && model.name !== model.id ? model.name : '']));
+  const kept = (provider.models || []).filter(model => model.id);
+  const keptIds = new Set(kept.map(model => model.id));
+  const additions = [...picker.selected].filter(id => !keptIds.has(id)).map(id => ({ id, name: names.get(id) || id }));
+  const overflow = Math.max(0, kept.length + additions.length - MAX_MODELS_PER_PROVIDER);
+  provider.models = [...kept, ...additions].slice(0, MAX_MODELS_PER_PROVIDER);
+  state.customProviderExpandIndex = picker.providerIndex;
+  closeProviderModelsPicker();
+  renderCustomProvidersList();
+  refreshModelSelects();
+  if (additions.length) {
+    const note = overflow ? `（超出每供应商 ${MAX_MODELS_PER_PROVIDER} 上限，已截断 ${overflow} 个）` : '';
+    showToast(`已添加 ${additions.length} 个模型${note}`, 'success');
+  } else {
+    showToast('没有选择新的模型', 'success');
+  }
+}
+
+function refreshModelSelects() {
+  const selected = $('#agentModelSelect')?.value || state.aiSettings?.model || '';
+  populateAgentModelSelects(selected);
 }
 
 async function testCustomProviderModel(providerIndex, modelIndex) {
@@ -1336,22 +1456,12 @@ function syncSeedreamSettingsUi(model) {
 async function loadAgentSettingsForm() {
   $('#saveAgentSettings').disabled = true;
   try {
-    const [settingsResponse, modelsResponse] = await Promise.all([
-      apiFetch('/api/ai/settings'),
-      apiFetch('/api/ai/models'),
-    ]);
+    const settingsResponse = await apiFetch('/api/ai/settings');
     const settings = await settingsResponse.json().catch(() => ({}));
-    const modelsData = await modelsResponse.json().catch(() => ({}));
     if (!settingsResponse.ok) throw new Error(settings.error || '模型设置加载失败');
     state.aiSettings = settings;
-    $('#agentDeepseekKey').value = '';
-    $('#agentMoonshotKey').value = '';
-    $('#agentOpenrouterKey').value = '';
     $('#agentTavilyApiKey').value = '';
     $('#agentPerplexityKey').value = '';
-    $('#agentDeepseekKey').placeholder = keyPlaceholder(settings.apiKeyConfigured, 'sk-...');
-    $('#agentMoonshotKey').placeholder = keyPlaceholder(settings.moonshotApiKeyConfigured, 'sk-...');
-    $('#agentOpenrouterKey').placeholder = keyPlaceholder(settings.openrouterApiKeyConfigured, 'sk-or-...');
     $('#agentTavilyApiKey').placeholder = keyPlaceholder(settings.tavilyApiKeyConfigured, 'tvly-...');
     $('#agentPerplexityKey').placeholder = keyPlaceholder(settings.perplexityApiKeyConfigured, 'pplx-...');
     $('#agentSeedreamKey').value = '';
@@ -1403,7 +1513,7 @@ async function loadAgentSettingsForm() {
     $('#agentSeedreamLayerDecomposition').checked = Boolean(settings.seedreamLayerDecomposition);
     $('#agentSeedreamBackground').value = settings.seedreamBackground === 'transparent' ? 'transparent' : 'opaque';
     $('#agentSeedreamStream').checked = settings.seedreamStream !== false;
-    populateAgentModelSelects(modelsResponse.ok ? modelsData.models : [], settings.model);
+    populateAgentModelSelects(settings.model || '');
     state.customProvidersDraft = (settings.customProviders || []).map(provider => ({
       id: provider.id,
       name: provider.name || '',
@@ -1411,6 +1521,9 @@ async function loadAgentSettingsForm() {
       apiFormat: normalizeCustomProviderApiFormat(provider.apiFormat),
       apiKey: '',
       apiKeyConfigured: Boolean(provider.apiKeyConfigured),
+      supportsMedia: provider.supportsMedia === true,
+      thinking: provider.thinking || '',
+      zdr: provider.zdr === true,
       models: (provider.models || []).length
         ? provider.models.map(model => ({ id: model.id, name: model.name || model.id }))
         : [{ id: '', name: '' }],
@@ -1427,7 +1540,6 @@ async function loadAgentSettingsForm() {
     $('#agentReasoningEffort').value = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(settings.reasoningEffort)
       ? settings.reasoningEffort
       : 'high';
-    $('#agentOpenRouterZdr').checked = settings.openrouterZdrEnabled !== false;
     $('#agentWebSearchToggle').checked = Boolean(settings.webSearchEnabled);
     $('#agentWebSearchDepth').value = settings.webSearchDepth === 'advanced' ? 'advanced' : 'basic';
     $('#agentKimiWebSearchToggle').checked = Boolean(settings.kimiWebSearchEnabled);
@@ -1437,7 +1549,7 @@ async function loadAgentSettingsForm() {
     $('#saveAgentSettings').disabled = false;
     syncComposerModelSelectState();
   } catch (error) {
-    populateAgentModelSelects([], state.aiSettings?.model || 'deepseek-v4-flash');
+    populateAgentModelSelects(state.aiSettings?.model || '');
     showToast(error.message || '模型设置加载失败', 'error');
     $('#saveAgentSettings').disabled = false;
     syncComposerModelSelectState();
@@ -1478,9 +1590,6 @@ function settingsSavePayload() {
   ['apiKeyConfigured', 'moonshotApiKeyConfigured', 'openrouterApiKeyConfigured', 'tavilyApiKeyConfigured', 'perplexityApiKeyConfigured', 'seedreamApiKeyConfigured', 'getokenApiKeyConfigured', 'getokenGrokImagineApiKeyConfigured', 'getokenNanoBananaApiKeyConfigured'].forEach(key => {
     delete payload[key];
   });
-  payload.apiKey = $('#agentDeepseekKey').value.trim();
-  payload.moonshotApiKey = $('#agentMoonshotKey').value.trim();
-  payload.openrouterApiKey = $('#agentOpenrouterKey').value.trim();
   payload.tavilyApiKey = $('#agentTavilyApiKey').value.trim();
   payload.perplexityApiKey = $('#agentPerplexityKey').value.trim();
   payload.seedreamApiKey = $('#agentSeedreamKey').value.trim();
@@ -1503,11 +1612,10 @@ function settingsSavePayload() {
   payload.seedreamLayerDecomposition = $('#agentSeedreamLayerDecomposition').checked;
   payload.seedreamBackground = $('#agentSeedreamBackground').value === 'transparent' ? 'transparent' : 'opaque';
   payload.seedreamStream = $('#agentSeedreamStream').checked;
-  payload.model = $('#agentModelSelect').value || current.model || 'deepseek-v4-flash';
+  payload.model = $('#agentModelSelect').value || current.model || '';
   payload.reasoningMode = $('#agentReasoningMode').value || current.reasoningMode || 'effort';
   payload.thinkingMode = $('#agentThinkingMode').value || current.thinkingMode || 'enabled';
   payload.reasoningEffort = $('#agentReasoningEffort').value || current.reasoningEffort || 'high';
-  payload.openrouterZdrEnabled = $('#agentOpenRouterZdr').checked;
   payload.webSearchEnabled = $('#agentWebSearchToggle').checked;
   payload.webSearchDepth = $('#agentWebSearchDepth').value === 'advanced' ? 'advanced' : 'basic';
   payload.kimiWebSearchEnabled = $('#agentKimiWebSearchToggle').checked;
@@ -2184,23 +2292,40 @@ async function copyMessageText(text) {
   }
 }
 
-function buildAssistantMetaHtml(createdAt) {
+function agentModelLabel(modelId) {
+  const id = String(modelId || '').trim();
+  if (!id) return '';
+  const customRef = /^custom\/([a-z0-9_-]{1,32})\/(.+)$/i.exec(id);
+  if (customRef) {
+    const provider = (state.aiSettings?.customProviders || []).find(item => item?.id === customRef[1]);
+    const model = (provider?.models || []).find(item => item.id === customRef[2]);
+    return model?.name || model?.id || id;
+  }
+  const entry = (state.agentModelCatalog || []).find(item => item?.id === id);
+  return entry?.name || id;
+}
+
+function buildAssistantMetaHtml(createdAt, model = '') {
+  const modelLabel = agentModelLabel(model);
+  const modelHtml = modelLabel
+    ? `<span class="message-model" title="${escHtml(String(model || ''))}">${escHtml(modelLabel)}</span>`
+    : '';
   const time = Number(createdAt);
   if (!Number.isFinite(time) || time <= 0) {
-    return `<div class="message-meta">${MESSAGE_COPY_ACTION}</div>`;
+    return `<div class="message-meta">${modelHtml}${MESSAGE_COPY_ACTION}</div>`;
   }
   const date = new Date(time);
   if (!Number.isFinite(date.getTime())) {
-    return `<div class="message-meta">${MESSAGE_COPY_ACTION}</div>`;
+    return `<div class="message-meta">${modelHtml}${MESSAGE_COPY_ACTION}</div>`;
   }
   const label = formatMessageTime(time);
   const timeHtml = label
     ? `<time class="message-time" datetime="${escHtml(date.toISOString())}">${escHtml(label)}</time>`
     : '';
-  return `<div class="message-meta">${MESSAGE_COPY_ACTION}${timeHtml}</div>`;
+  return `<div class="message-meta">${modelHtml}${MESSAGE_COPY_ACTION}${timeHtml}</div>`;
 }
 
-function addMessage(role, content, citations = [], attachments = [], { createdAt } = {}) {
+function addMessage(role, content, citations = [], attachments = [], { createdAt, model } = {}) {
   const list = $('#agentMessageList');
   list.querySelector('.agent-empty-state')?.remove();
   const article = document.createElement('article');
@@ -2222,7 +2347,7 @@ function addMessage(role, content, citations = [], attachments = [], { createdAt
     : '';
   article.innerHTML = role === 'user'
     ? `${MESSAGE_COPY_ACTION}<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div>`
-    : `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>${buildAssistantMetaHtml(createdAt)}`;
+    : `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>${buildAssistantMetaHtml(createdAt, model)}`;
   article.dataset.copyText = buildMessageCopyText(content, role === 'user' ? attachments : []);
   list.append(article);
   scrollMessagesToBottom();
@@ -2269,7 +2394,7 @@ function renderSessionMessages(session, { force = false } = {}) {
   deduped.forEach(message => {
     if (message.role === 'assistant') {
       const at = lastRun?.completedAt;
-      addMessage('assistant', message.content, [], message.attachments || [], { createdAt: at });
+      addMessage('assistant', message.content, [], message.attachments || [], { createdAt: at, model: lastRun?.model });
       return;
     }
     addMessage(message.role, message.content, [], message.attachments || []);
@@ -3101,7 +3226,7 @@ function handleRunEvent(sessionId, event) {
         text += `\n\n![生成图片](${url})`;
         known.add(url);
       }
-      addMessage('assistant', text, payload.citations || [], [], { createdAt: event.at || Date.now() });
+      addMessage('assistant', text, payload.citations || [], [], { createdAt: event.at || Date.now(), model: payload.model });
       patchSessionSummaryAfterAssistantMessage(sessionId, text);
       removeRunImagePreviews(entry.runId);
       trace('运行完成', entry.runId);
@@ -4352,20 +4477,41 @@ function bindEvents() {
     const approval = event.target.closest('[data-approval-id]');
     if (approval) {
       const card = approval.closest('.approval-card');
+      const dock = $('#agentApprovalDock');
       card?.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      const sessionId = state.activeSession?.id;
       const runId = activeRunState()?.runId;
       if (!runId) {
         card?.querySelectorAll('button').forEach(button => { button.disabled = false; });
         return showToast('当前会话没有进行中的运行', 'error');
       }
-      const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approval.dataset.approvalId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approved: approval.dataset.approved === 'true' }),
-      });
-      if (!response.ok) {
-        card?.querySelectorAll('button').forEach(button => { button.disabled = false; });
+      const approved = approval.dataset.approved === 'true';
+      // The request stays pending until the tool finishes, so clear the card
+      // right away instead of leaving a disabled card above the composer.
+      setSessionRunStatus(sessionId, 'running');
+      trace(approved ? '已允许，继续执行' : '已拒绝，继续执行', runId);
+      const restoreCard = () => {
+        if (!card || !dock || dock.querySelector('.approval-card')) return;
+        setSessionRunStatus(sessionId, 'waiting_approval');
+        dock.hidden = false;
+        dock.append(card);
+        card.querySelectorAll('button').forEach(button => { button.disabled = false; });
+        setComposerApprovalActive(true);
+      };
+      let response;
+      try {
+        response = await apiFetch(`/api/agent/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approval.dataset.approvalId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approved }),
+        });
+      } catch {
+        restoreCard();
         return showToast('无法处理这项确认', 'error');
+      }
+      if (!response.ok) {
+        if (response.status !== 404) restoreCard();
+        return showToast(response.status === 404 ? '该确认已失效' : '无法处理这项确认', 'error');
       }
       return;
     }
@@ -4543,13 +4689,8 @@ function bindEvents() {
     const button = event.target.closest('[data-settings-nav]');
     if (button) setSettingsPanel(button.dataset.settingsNav);
   });
-  $('#refreshOpenRouterModels')?.addEventListener('click', () => refreshOpenRouterModels().catch(error => showToast(error.message, 'error')));
   $('#addCustomProvider')?.addEventListener('click', () => {
     syncCustomProvidersDraftFromDom();
-    if ((state.customProvidersDraft || []).length >= MAX_CUSTOM_PROVIDERS) {
-      showToast(`最多添加 ${MAX_CUSTOM_PROVIDERS} 个自定义端点`, 'error');
-      return;
-    }
     state.customProvidersDraft = [...(state.customProvidersDraft || []), createEmptyCustomProvider()];
     state.customProviderExpandIndex = state.customProvidersDraft.length - 1;
     renderCustomProvidersList();
@@ -4565,6 +4706,13 @@ function bindEvents() {
       renderCustomProvidersList();
       return;
     }
+    const fetchModels = event.target.closest('[data-fetch-models]');
+    if (fetchModels) {
+      event.stopPropagation();
+      fetchProviderModels(Number(fetchModels.dataset.fetchModels))
+        .catch(error => showToast(error.message, 'error'));
+      return;
+    }
     const addModel = event.target.closest('[data-add-model]');
     if (addModel) {
       event.stopPropagation();
@@ -4573,7 +4721,7 @@ function bindEvents() {
       const provider = state.customProvidersDraft?.[index];
       if (!provider) return;
       if ((provider.models || []).length >= MAX_MODELS_PER_PROVIDER) {
-        showToast(`每个端点最多 ${MAX_MODELS_PER_PROVIDER} 个模型`, 'error');
+        showToast(`每个供应商最多 ${MAX_MODELS_PER_PROVIDER} 个模型`, 'error');
         return;
       }
       provider.models = [...(provider.models || []), { id: '', name: '' }];
@@ -4599,6 +4747,35 @@ function bindEvents() {
       testCustomProviderModel(Number(testModel.dataset.testModel), Number(testModel.dataset.testModelId))
         .catch(error => showToast(error.message, 'error'));
     }
+  });
+  $('#providerModelsClose')?.addEventListener('click', () => closeProviderModelsPicker());
+  $('#providerModelsCancel')?.addEventListener('click', () => closeProviderModelsPicker());
+  $('#providerModelsAdd')?.addEventListener('click', () => applyProviderModelsSelection());
+  $('#providerModelsSelectAll')?.addEventListener('click', () => {
+    const picker = state.providerModelsPicker;
+    if (!picker) return;
+    providerModelsVisibleIds(picker).forEach(id => picker.selected.add(id));
+    renderProviderModelsList();
+  });
+  $('#providerModelsClear')?.addEventListener('click', () => {
+    if (!state.providerModelsPicker) return;
+    state.providerModelsPicker.selected.clear();
+    renderProviderModelsList();
+  });
+  $('#providerModelsSearch')?.addEventListener('input', event => {
+    if (!state.providerModelsPicker) return;
+    state.providerModelsPicker.filter = event.target.value || '';
+    renderProviderModelsList();
+  });
+  $('#providerModelsList')?.addEventListener('change', event => {
+    const input = event.target.closest('[data-provider-model-id]');
+    const picker = state.providerModelsPicker;
+    if (!input || !picker) return;
+    if (input.checked) picker.selected.add(input.dataset.providerModelId);
+    else picker.selected.delete(input.dataset.providerModelId);
+  });
+  $('#providerModelsDialog')?.addEventListener('close', () => {
+    state.providerModelsPicker = null;
   });
   createBackupActions({
     confirmAction,

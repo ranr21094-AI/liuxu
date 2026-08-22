@@ -26,11 +26,13 @@ const {
 } = require('./lib/agent/custom-providers');
 const {
   buildCustomProviderRequest,
+  buildCustomProviderModelsRequest,
   parseCustomProviderReply,
   buildCustomProviderTestBody,
   normalizeOpenAiBaseUrl,
   normalizeAnthropicBaseUrl,
 } = require('./lib/agent/custom-api');
+const { ensureBuiltinProvidersMigrated } = require('./lib/agent/migrate-builtin-providers');
 const { parseMemorySettingsInput } = require('./lib/agent/memory-settings');
 const { parseAgentSettingsInput } = require('./lib/agent/agent-settings');
 const {
@@ -179,15 +181,34 @@ function userDataDirectory(user) {
   return target;
 }
 
+function builtinEnvSecrets() {
+  return {
+    deepseek: typeof process.env.DEEPSEEK_API_KEY === 'string' ? process.env.DEEPSEEK_API_KEY : '',
+    moonshot: typeof process.env.MOONSHOT_API_KEY === 'string' ? process.env.MOONSHOT_API_KEY : '',
+    openrouter: typeof process.env.OPENROUTER_API_KEY === 'string' ? process.env.OPENROUTER_API_KEY : '',
+  };
+}
+
+function runBuiltinProvidersMigration(db, { envSecrets = {} } = {}) {
+  try {
+    ensureBuiltinProvidersMigrated(db, { envSecrets });
+  } catch (err) {
+    console.error('[migrate-builtin-providers] failed:', err.message);
+  }
+}
+
 function databaseForUser(user) {
   const storageKey = user?.storage_key || 'legacy';
   if (!databaseInstances.has(storageKey)) {
-    databaseInstances.set(storageKey, database.createDatabase(userDataDirectory(user), { secretScope: storageKey }));
+    const instance = database.createDatabase(userDataDirectory(user), { secretScope: storageKey });
+    databaseInstances.set(storageKey, instance);
+    runBuiltinProvidersMigration(instance);
   }
   return databaseInstances.get(storageKey);
 }
 
 for (const storedUser of authStore.listStoredUsers()) databaseForUser(storedUser).getAiSettings();
+runBuiltinProvidersMigration(database, { envSecrets: builtinEnvSecrets() });
 
 function currentDatabase() {
   return databaseContext.getStore() || database;
@@ -1308,15 +1329,18 @@ async function resolveAiModelProfile(model, apiKey, signal, settings = null) {
   const aiSettings = settings || db.getAiSettings();
   const custom = resolveCustomModel(aiSettings, model);
   if (custom) {
+    const thinking = custom.provider.thinking || '';
+    const supportsMedia = custom.provider.supportsMedia === true;
     return {
       provider: 'custom',
       name: custom.catalogModel.name || custom.modelId,
       baseUrl: custom.provider.baseUrl,
       apiFormat: custom.provider.apiFormat || 'openai',
       customProviderId: custom.provider.id,
-      supportsMedia: false,
-      preserveReasoning: false,
-      inputModalities: ['text'],
+      thinking,
+      supportsMedia,
+      preserveReasoning: Boolean(thinking),
+      inputModalities: supportsMedia ? ['text', 'image'] : ['text'],
       outputModalities: ['text'],
       contextLength: null,
       supportedParameters: custom.provider.apiFormat === 'anthropic' ? [] : ['tools'],
@@ -1372,7 +1396,7 @@ function validateReasoningSelection(profile, mode, effort) {
 }
 
 async function parseAiSettingsInput(body, current = {}) {
-  const model = body?.model ?? current.model ?? 'deepseek-v4-flash';
+  const model = body?.model ?? current.model ?? '';
   const reasoningEffort = body?.reasoningEffort ?? current.reasoningEffort ?? 'high';
   const reasoningMode = body?.reasoningMode ?? current.reasoningMode ?? 'effort';
   const thinkingMode = body?.thinkingMode ?? current.thinkingMode ?? 'enabled';
@@ -1389,7 +1413,7 @@ async function parseAiSettingsInput(body, current = {}) {
     current.customProviders || [],
   );
   const candidateSettings = { ...current, ...body, customProviders };
-  if (!AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model) && !isStoredCustomModel(model, candidateSettings)) {
+  if (model !== '' && !AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model) && !isStoredCustomModel(model, candidateSettings)) {
     throw new Error('Unsupported AI model');
   }
   if (!AI_ALLOWED_REASONING.has(reasoningEffort)) {
@@ -1731,7 +1755,12 @@ async function requestSeedreamImage(options) {
 
 async function resolveAiChatOptions(body, user, signal) {
   const saved = db.getAiSettings();
-  const model = body?.model || saved.model || DEEPSEEK_DEFAULT_MODEL;
+  const model = body?.model || saved.model || '';
+  if (!model) {
+    const error = new Error('AI model is not configured');
+    error.status = 400;
+    throw error;
+  }
   const thinkingMode = body?.thinkingMode || saved.thinkingMode || 'enabled';
   const reasoningEffort = body?.reasoningEffort || saved.reasoningEffort || 'high';
   const reasoningMode = body?.reasoningMode || saved.reasoningMode || 'effort';
@@ -2283,7 +2312,7 @@ app.put('/api/ai/settings', async (req, res) => {
   try {
     const current = db.getAiSettings();
     const candidate = await parseAiSettingsInput(req.body, current);
-    if (!AI_MODEL_PROFILES[candidate.model]) {
+    if (candidate.model !== '' && !AI_MODEL_PROFILES[candidate.model]) {
       const apiKey = openrouterApiKeyForUser(candidate, req.user);
       const profile = await resolveAiModelProfile(candidate.model, apiKey, undefined, candidate);
       validateReasoningSelection(profile, candidate.reasoningMode, candidate.reasoningEffort);
@@ -2339,6 +2368,43 @@ app.post('/api/ai/custom-providers/test', async (req, res) => {
     res.json({ ok: true, status: upstream.status });
   } catch (err) {
     res.status(502).json({ error: err.message || 'Connection test failed' });
+  }
+});
+
+const MAX_FETCHED_MODELS = 500;
+
+app.post('/api/ai/custom-providers/models', async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const apiFormat = body.apiFormat === 'anthropic'
+      ? 'anthropic'
+      : body.apiFormat === 'responses'
+        ? 'responses'
+        : 'openai';
+    const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
+    const query = typeof body.query === 'string' ? body.query.trim().toLowerCase().slice(0, 100) : '';
+    const urlCheck = await validateProviderBaseUrl(body.baseUrl);
+    if (urlCheck.error) return res.status(400).json({ error: urlCheck.error });
+    const request = buildCustomProviderModelsRequest({ baseUrl: urlCheck.value, apiFormat, apiKey });
+    const upstream = await fetchWithTimeout(request.url, {
+      method: 'GET',
+      headers: request.headers,
+    }, 15000);
+    const data = await upstream.json().catch(() => ({}));
+    if (!upstream.ok || data?.error) {
+      return res.status(502).json({ error: safeAiProviderError('custom', upstream.status, data) });
+    }
+    const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.models) ? data.models : []);
+    let ids = list
+      .map(item => (typeof item === 'string' ? item : String(item?.id || '')))
+      .map(id => id.trim())
+      .filter(Boolean);
+    if (query) ids = ids.filter(id => id.toLowerCase().includes(query));
+    const total = ids.length;
+    const capped = ids.slice(0, MAX_FETCHED_MODELS);
+    res.json({ ok: true, models: capped.map(id => ({ id })), total });
+  } catch (err) {
+    res.status(502).json({ error: err.message || 'Failed to fetch the model list' });
   }
 });
 
@@ -3014,19 +3080,22 @@ function aiProviderPayload({ options, messages, stream = false, tools, toolChoic
     messages,
     stream,
   };
-  if (options.provider === 'deepseek') {
+  const thinking = options.profile?.thinking || '';
+  if (thinking === 'deepseek') {
     payload.thinking = { type: options.thinkingMode };
     if (options.thinkingMode === 'enabled') payload.reasoning_effort = options.reasoningEffort;
-  } else if (options.profile.thinking === 'k3') {
+  } else if (thinking === 'k3') {
     payload.reasoning_effort = 'max';
-  } else if (options.profile.thinking === 'optional') {
+  } else if (thinking === 'optional') {
     payload.thinking = options.thinkingMode === 'disabled'
       ? { type: 'disabled' }
       : { type: 'enabled', keep: 'all' };
-  } else if (options.provider === 'openrouter') {
+  } else if (options.provider === 'openrouter' || options.profile?.customProvider?.zdr === true) {
     if (options.reasoningMode === 'disabled') payload.reasoning = { enabled: false };
     if (options.reasoningMode === 'effort') payload.reasoning = { effort: options.reasoningEffort };
-    if (options.openrouterZdrEnabled) payload.provider = { zdr: true };
+    if (options.provider === 'openrouter' ? options.openrouterZdrEnabled === true : options.profile?.customProvider?.zdr === true) {
+      payload.provider = { zdr: true };
+    }
     if (enableWebSearch) {
       payload.tools = [{
         type: 'openrouter:web_search',
@@ -3043,8 +3112,8 @@ function aiProviderPayload({ options, messages, stream = false, tools, toolChoic
 }
 
 function shouldPreserveMoonshotReasoning(options) {
-  return options.provider === 'moonshot' && options.profile.preserveReasoning &&
-    (options.profile.thinking !== 'optional' || options.thinkingMode !== 'disabled');
+  return options.profile?.preserveReasoning === true
+    && (options.profile?.thinking !== 'optional' || options.thinkingMode !== 'disabled');
 }
 
 
@@ -3284,7 +3353,7 @@ function createAgentModelClient(req) {
         if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
         return { name: fromProviderName(name, tools), arguments: args };
       }).filter(call => call.name);
-      return { text: reply.content || '', toolCalls: nativeCalls, citations: reply.sources || [] };
+      return { text: reply.content || '', toolCalls: nativeCalls, citations: reply.sources || [], model: options.model || '' };
     },
   };
 }

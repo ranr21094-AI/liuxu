@@ -123,12 +123,12 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 AI 设置保存在当前账户的 `ai-settings.json`（Key 经 AES-256-GCM 加密），供 **Agent** 使用；不再提供独立 AI 对话页或日志内 AI 面板。
 
-- **设置 → 模型**：DeepSeek、Moonshot/Kimi、OpenRouter Key、默认模型、Agent 最大循环轮数（`agentMaxRounds`，默认 12）、`file.read` 单次读取上限 MB（`agentFileReadMaxMb`，默认 4）、思考模式等。
+- **设置 → 模型**：所有模型统一由**供应商卡片**提供（OpenAI / Anthropic 兼容 API，数量不限）。每张卡片维护自己的 Base URL、API 格式、密钥、模型列表（可用"拉取模型列表"自动发现，每供应商上限 200 个）以及能力开关（支持图片输入、思考/推理参数、ZDR）；面板内另选默认模型与思考强度。旧版内置供应商（DeepSeek / Kimi / OpenRouter）的 Key 会在首次启动时自动迁移为供应商条目。
 - **设置 → Memory**：记忆刷新轮次/提案数、近期会话扫描条数与字符预算、L2/L3 标题与内容上限、注入 Agent 上下文的 L2/L3 条数（见上节）。
 - **设置 → 联网**：Tavily、Perplexity；Agent 通过 `web.search` / `web.fetch` 等工具在确认后调用。
 - **设置 → 生图**：Seedream Key 与默认参数；Agent 通过 `image.generate` 在确认后生图。
 - **设置 → 技能**：WeStock 等工具策略（具体以 Agent 工具注册为准）。
-- OpenRouter 模型目录通过 `GET /api/ai/models` 拉取；旧管理员工作区仍可使用 `.env` 中的服务端回退 Key。
+- 模型列表可经 `POST /api/ai/custom-providers/models` 从任意 OpenAI 兼容端点拉取（拉取后在弹窗中搜索并勾选添加，单端点单次返回上限 500 条、每供应商保存上限 200 个）；旧管理员工作区仍可使用 `.env` 中的服务端回退 Key（仅随迁移写入）。
 
 Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁后才进入 `@` 引用与知识搜索。
 

@@ -342,6 +342,48 @@ test('agent web.search rejects empty query before approval', async (t) => {
   assert.match(toolMsg.content, /Search query is required/);
 });
 
+test('agent web.search rejects oversized query before approval', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  let searched = false;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    webSearch: async () => {
+      searched = true;
+      return { ok: true, summary: 'Found 1 web source', data: {}, evidence: [] };
+    },
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'web.search', arguments: { query: 'x'.repeat(401) } }] };
+        }
+        return { text: '已缩短搜索词', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('search-long');
+  const run = await runtime.start({ session, goal: '搜索资料', userMessage: '网页搜索' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const live = store.getRun(run.id);
+  assert.notEqual(live.status, 'waiting_approval');
+  assert.equal(searched, false);
+  const toolMsg = live.messages.find(item => item.role === 'tool' && item.name === 'web.search');
+  assert.ok(toolMsg);
+  assert.match(toolMsg.content, /at most 400 characters/);
+});
+
+test('web.search fingerprint caps query length', () => {
+  const { webSearchFingerprint } = require('../lib/agent/web-search-cache');
+  const long = webSearchFingerprint({ query: 'q'.repeat(2000) });
+  assert.ok(long.length <= 'web.search:'.length + 400);
+});
+
 test('agent web.search uses the injected Tavily adapter after confirmation', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
@@ -539,18 +581,47 @@ test('trace lines collapse repeated assistant deltas', () => {
   ]), ['正在分析目标', '正在组织回答', '运行完成']);
 });
 
-test('summarizeRun exposes completedAt for session message timestamps', () => {
+test('summarizeRun exposes completedAt and model for session message timestamps', () => {
   const at = 1787365144571;
   const summary = summarizeRun({
     id: 'run-1',
     status: 'completed',
+    model: 'gemini-test-pro',
     events: [
       { type: 'run.started', at },
       { type: 'run.completed', at: at + 5000, payload: { text: 'done' } },
     ],
   });
   assert.equal(summary.completedAt, at + 5000);
+  assert.equal(summary.model, 'gemini-test-pro');
   assert.deepEqual(summary.trace, ['正在分析目标', '运行完成']);
+  assert.equal(summarizeRun({ id: 'run-2', status: 'completed', events: [] }).model, '');
+});
+
+test('run records the model used and emits it on completion', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        return { text: '直接回答', toolCalls: [], model: 'test-model-x' };
+      },
+    },
+  });
+  const session = store.createSession('model-record');
+  const run = await runtime.start({ session, goal: '随便回答', userMessage: '你好' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const live = store.getRun(run.id);
+  assert.equal(live.status, 'completed');
+  assert.equal(live.model, 'test-model-x');
+  const completedEvent = (live.events || []).find(item => item.type === 'run.completed');
+  assert.ok(completedEvent);
+  assert.equal(completedEvent.payload.model, 'test-model-x');
 });
 
 test('session API returns a trace for each conversation round', async (t) => {

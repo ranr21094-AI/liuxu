@@ -38,7 +38,7 @@ const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   moonshotApiKey: '',
   openrouterApiKey: '',
-  model: 'deepseek-v4-flash',
+  model: '',
   reasoningEffort: 'high',
   reasoningMode: 'effort',
   thinkingMode: 'enabled',
@@ -392,6 +392,7 @@ function writePrivateUploads(filenames) {
 }
 
 function isStoredAiModel(value, settings = null) {
+  if (value === '') return true; // '' = unconfigured, no default model selected yet
   if (typeof value !== 'string' || !value) return false;
   if (['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp', 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'].includes(value)) return true;
   if (isCustomModelId(value)) {

@@ -994,7 +994,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     moonshotApiKeyConfigured: false,
     openrouterApiKey: '',
     openrouterApiKeyConfigured: false,
-    model: 'deepseek-v4-flash',
+    model: '',
     reasoningEffort: 'high',
     reasoningMode: 'effort',
     thinkingMode: 'enabled',
@@ -1182,6 +1182,62 @@ test('AI settings persist to local data storage and validate options', async (t)
     });
     assert.equal(invalid.status, 400);
   }
+});
+
+test('fetched slash model ids survive the full settings save cycle', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+  const models = Array.from({ length: 60 }, (_, index) => ({
+    id: `vendor${index}/model-${index}:free`,
+    name: `vendor${index}/model-${index}:free`,
+  }));
+  const provider = {
+    id: 'p_or0001',
+    name: 'OpenRouter',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    apiFormat: 'openai',
+    apiKey: 'sk-or-test',
+    supportsMedia: false,
+    thinking: '',
+    zdr: true,
+    models,
+  };
+
+  const initial = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customProviders: [provider], model: 'custom/p_or0001/vendor0/model-0:free' }),
+  });
+  const initialData = await initial.json().catch(() => ({}));
+  assert.equal(initial.status, 200, JSON.stringify(initialData));
+  assert.equal(initialData.model, 'custom/p_or0001/vendor0/model-0:free');
+  assert.equal(initialData.customProviders[0].models.length, 60);
+
+  // simulate the frontend save flow: take the public GET response, blank the
+  // provider keys (draft style), PUT the whole payload back
+  const publicResponse = await fetch(`${baseUrl}/api/ai/settings`);
+  const publicSettings = await publicResponse.json();
+  const draftProviders = publicSettings.customProviders.map(item => ({ ...item, apiKey: '' }));
+  const resave = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...publicSettings, customProviders: draftProviders }),
+  });
+  const resaveData = await resave.json().catch(() => ({}));
+  assert.equal(resave.status, 200, JSON.stringify(resaveData));
+  assert.equal(resaveData.customProviders[0].models.length, 60, 'models survive a re-save');
+  assert.equal(resaveData.model, 'custom/p_or0001/vendor0/model-0:free');
+  assert.equal(resaveData.customProviders[0].apiKeyConfigured, true, 'blank key keeps the stored secret');
+
+  // quickSaveAgentModel path: PUT {model} alone against already-saved providers
+  const quick = await fetch(`${baseUrl}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'custom/p_or0001/vendor7/model-7:free' }),
+  });
+  const quickData = await quick.json().catch(() => ({}));
+  assert.equal(quick.status, 200, JSON.stringify(quickData));
+  assert.equal(quickData.model, 'custom/p_or0001/vendor7/model-7:free');
+  assert.equal(quickData.customProviders[0].models.length, 60);
 });
 
 
@@ -2832,9 +2888,11 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#btnAdminUsers') !== null, true);
   assert.equal(document.querySelector('#agentUserProfile'), null);
   assert.equal(document.querySelector('#aiChatView'), null);
-  assert.equal(document.querySelector('#agentDeepseekKey') !== null, true);
-  assert.equal(document.querySelector('#agentMoonshotKey') !== null, true);
-  assert.equal(document.querySelector('#agentOpenrouterKey') !== null, true);
+  assert.equal(document.querySelector('#agentDeepseekKey'), null);
+  assert.equal(document.querySelector('#agentMoonshotKey'), null);
+  assert.equal(document.querySelector('#agentOpenrouterKey'), null);
+  assert.equal(document.querySelector('#agentOpenRouterZdr'), null);
+  assert.equal(document.querySelector('#refreshOpenRouterModels'), null);
   assert.equal(document.querySelector('#addCustomProvider') !== null, true);
   assert.equal(document.querySelector('#customProvidersList') !== null, true);
   assert.match(source, /function customProviderFormatLabel/);
@@ -2842,6 +2900,23 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /custom-provider-summary/);
   assert.match(styles, /\.custom-provider-conn-grid/);
   assert.match(source, /customProviderExpandIndex/);
+  assert.match(source, /data-fetch-models/);
+  assert.match(source, /function fetchProviderModels/);
+  assert.match(source, /function openProviderModelsPicker/);
+  assert.match(source, /function applyProviderModelsSelection/);
+  assert.match(source, /provider-models-item/);
+  assert.match(html, /id="providerModelsDialog"/);
+  assert.match(html, /id="providerModelsSearch"/);
+  assert.match(html, /id="providerModelsList"/);
+  assert.match(styles, /\.provider-models-list/);
+  assert.doesNotMatch(source, /custom-provider-fetch-query/);
+  assert.match(source, /\$\('#settingsDialog'\)\?\.open && Array\.isArray\(state\.customProvidersDraft\)/);
+  assert.match(source, /custom-provider-supports-media/);
+  assert.match(source, /custom-provider-thinking-select/);
+  assert.match(source, /custom-provider-zdr/);
+  assert.match(styles, /\.custom-provider-capabilities/);
+  assert.match(source, /function providerModelGroups/);
+  assert.doesNotMatch(source, /DIRECT_AGENT_MODELS/);
   assert.equal(document.querySelector('#agentSeedreamKey') !== null, true);
   assert.equal(document.querySelector('#agentImageProvider') !== null, true);
   assert.equal(document.querySelector('#agentGetokenKey') !== null, true);
@@ -2902,6 +2977,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /function setComposerQuestionActive/);
   assert.match(source, /function renderAgentQuestion[\s\S]{0,500}#agentApprovalDock/);
   assert.doesNotMatch(source, /function renderAgentQuestion[\s\S]{0,500}#agentMessageList/);
+  assert.match(source, /closest\('\[data-approval-id\]'\)[\s\S]{0,1600}setSessionRunStatus\(sessionId, 'running'\)/);
+  assert.match(source, /const restoreCard = \(\) =>/);
   assert.match(source, /function formatSessionMeta/);
   assert.match(source, /function applyAgentTopbar/);
   assert.match(source, /formatSessionMeta\(session\)/);
@@ -2910,6 +2987,9 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /Number\.isFinite\(time\)/);
   assert.doesNotMatch(source, /function buildAssistantMetaHtml[\s\S]{0,220}new Date\(createdAt\)\.toISOString\(\)/);
   assert.match(source, /lastRun\?\.completedAt/);
+  assert.match(source, /function agentModelLabel/);
+  assert.match(source, /buildAssistantMetaHtml\(createdAt, model\)/);
+  assert.match(source, /class="message-model"/);
   assert.match(source, /from '\.\/markdown\.js'/);
   assert.match(source, /normalizeUploadSrc/);
   assert.match(source, /function findGeneratedImageCard/);

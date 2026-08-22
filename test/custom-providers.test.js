@@ -32,6 +32,63 @@ test('parseCustomModelId parses custom model refs', () => {
   });
   assert.equal(parseCustomModelId('deepseek-v4-flash'), null);
   assert.equal(isCustomModelId('custom/p_abcd1234/llama-3.1'), true);
+  assert.deepEqual(parseCustomModelId('custom/p_abcd1234/anthropic/claude-4'), {
+    providerId: 'p_abcd1234',
+    modelId: 'anthropic/claude-4',
+  });
+  assert.equal(isCustomModelId('custom/p_abcd1234/anthropic/claude-4'), true);
+});
+
+test('normalizeCustomProvider passes through capability fields and allows zero models', () => {
+  const [provider] = sanitizeCustomProvidersSync([{
+    id: 'p_caps1234',
+    name: 'Capable',
+    baseUrl: 'https://api.example.com/v1',
+    apiFormat: 'openai',
+    apiKey: 'sk-x',
+    supportsMedia: true,
+    thinking: 'deepseek',
+    zdr: true,
+    models: [],
+  }]);
+  assert.ok(provider);
+  assert.equal(provider.supportsMedia, true);
+  assert.equal(provider.thinking, 'deepseek');
+  assert.equal(provider.zdr, true);
+  assert.deepEqual(provider.models, []);
+  assert.equal(buildCustomModelRecords([provider]).length, 0);
+
+  const [flagged] = sanitizeCustomProvidersSync([{
+    id: 'p_caps1234',
+    name: 'Capable',
+    baseUrl: 'https://api.example.com/v1',
+    apiFormat: 'openai',
+    supportsMedia: false,
+    thinking: 'bogus-style',
+    zdr: false,
+    models: [{ id: 'anthropic/claude-4', name: 'Claude 4' }],
+  }]);
+  assert.equal(flagged.supportsMedia, false);
+  assert.equal(flagged.thinking, '');
+  assert.equal(flagged.zdr, false);
+  const record = buildCustomModelRecords([flagged])[0];
+  assert.equal(record.id, 'custom/p_caps1234/anthropic/claude-4');
+  assert.deepEqual(record.inputModalities, ['text']);
+
+  const [vision] = sanitizeCustomProvidersSync([{
+    id: 'p_vision12',
+    name: 'Vision',
+    baseUrl: 'https://api.example.com/v1',
+    apiFormat: 'openai',
+    supportsMedia: true,
+    models: [{ id: 'vision-model', name: 'Vision' }],
+  }]);
+  assert.deepEqual(buildCustomModelRecords([vision])[0].inputModalities, ['text', 'image']);
+
+  const [publicProvider] = publicCustomProviders([flagged]);
+  assert.equal(publicProvider.apiKey, undefined);
+  assert.equal(publicProvider.thinking, '');
+  assert.equal(publicProvider.supportsMedia, false);
 });
 
 test('buildCustomModelRecords exposes grouped custom models', () => {

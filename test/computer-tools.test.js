@@ -110,6 +110,91 @@ test('bash runner shares busy slot with code runner', async (t) => {
   assert.equal(result.errorCode, 'busy');
 });
 
+test('bash runner releases the slot when spawn fails synchronously', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-spawn-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runner = createBashRunner({ accountId: 'bash-spawn', allowedDirectories: [dir], defaultWorkdir: dir });
+  const bad = await runner.execute('bash.run', { command: 'echo \0bad' });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.errorCode, 'spawn_error');
+  const follow = await runner.execute('bash.run', { command: 'echo recovered' });
+  assert.notEqual(follow.errorCode, 'busy');
+});
+
+test('bash runner runs script mode from a temp file', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-script-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runner = createBashRunner({ accountId: 'bash-script', allowedDirectories: [dir], defaultWorkdir: dir });
+  const result = await runner.execute('bash.run', { script: 'echo script-mode-ok' });
+  assert.equal(result.ok, true);
+  assert.match(result.data.output, /script-mode-ok/);
+  assert.equal(result.data.script, 'echo script-mode-ok');
+});
+
+test('bash runner caps output beyond the limit', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-overflow-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runner = createBashRunner({ accountId: 'bash-overflow', allowedDirectories: [dir], defaultWorkdir: dir });
+  const result = await runner.execute('bash.run', { command: "yes 'x' | head -c 3000000" });
+  assert.equal(result.ok, false);
+  assert.equal(result.errorCode, 'output_limit');
+  assert.equal(result.data.outputTruncated, true);
+  assert.ok(result.data.output.length <= 1024 * 1024);
+});
+
+test('bash runner enforces timeout and releases the slot', async (t) => {
+  if (!resolveBashExecutable()) {
+    t.skip('Git Bash / bash is not installed');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bash-timeout-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const runner = createBashRunner({ accountId: 'bash-timeout', allowedDirectories: [dir], defaultWorkdir: dir });
+  const startedAt = Date.now();
+  const result = await runner.execute('bash.run', { command: 'sleep 30', timeoutMs: 500 });
+  assert.equal(result.ok, false);
+  assert.ok(['timeout', 'exit_error'].includes(result.errorCode));
+  assert.ok(Date.now() - startedAt < 15000);
+  const follow = await runner.execute('bash.run', { command: 'echo recovered' });
+  assert.notEqual(follow.errorCode, 'busy');
+});
+
+test('allowlist tolerates case differences on Windows', (t) => {
+  if (process.platform !== 'win32') {
+    t.skip('Windows-only path casing');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allow-case-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const real = fs.realpathSync(dir);
+  const flipped = /^[A-Z]:/.test(real)
+    ? real.replace(/^([A-Z]):/, match => match.toLowerCase())
+    : real.replace(/^([a-z]):/, match => match.toUpperCase());
+  assert.equal(resolveAllowed(real, [flipped]), real);
+});
+
+test('allowlist skips deleted directories with a clear error', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allow-gone-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const inside = path.join(dir, 'note.txt');
+  fs.writeFileSync(inside, 'x');
+  const missing = path.join(dir, 'deleted-sibling');
+  assert.equal(resolveAllowed(inside, [missing, dir]), fs.realpathSync(inside));
+  assert.throws(() => resolveAllowed(inside, [missing]), /no longer exist/);
+});
+
 test('chrome command signatures reject replay', () => {
   const key = 'abc';
   const nonce = 'n1';
