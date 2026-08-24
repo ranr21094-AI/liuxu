@@ -195,14 +195,16 @@
       <section class="workspace-view agent-view" id="agentView" data-main-mode="agent">
         <div class="conversation" id="conversation">
           <div class="message-list" id="agentMessageList" aria-live="polite">
-            <div class="agent-empty-state">
-              <span class="empty-mark" aria-hidden="true">✦</span>
-              <h1>今天想一起完成什么？</h1>
-              <p>用 @知识库 或 @日期 带上材料，再描述你想完成的事。</p>
-              <p class="agent-setup-hint" hidden>尚未配置模型。请先在设置中填写 API Key，然后回到这里发送消息。<button type="button" data-open-settings>打开设置</button></p>
-              <div class="starter-prompts">
-                <button type="button" data-starter="@开发 总结最近的项目记录和下一步">总结项目记录</button>
-                <button type="button" data-starter="@开发 根据这些材料规划今天最重要的三件事">规划今天</button>
+            <div class="agent-empty-state agent-empty-hero" data-agent-hero>
+              <div class="agent-empty-hero__frame">
+                <div class="agent-empty-hero__pattern" aria-hidden="true"></div>
+                <div class="agent-empty-hero__layer agent-empty-hero__layer--base">
+                  <h1 lang="zh-CN">你好，我是Rangent</h1>
+                </div>
+                <div class="agent-empty-hero__layer agent-empty-hero__layer--spotlight" aria-hidden="true">
+                  <div class="agent-empty-hero__pattern agent-empty-hero__pattern--spotlight"></div>
+                  <h1 lang="en">HELLO, I'm Rangent</h1>
+                </div>
               </div>
             </div>
           </div>

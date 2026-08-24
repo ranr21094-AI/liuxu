@@ -23,6 +23,7 @@ import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js'
 import { fillAccountSettings, initAccounts } from './accounts.js';
 import { createBackupActions } from './workbench-backup.js';
 import { initSelectControls, syncSelectControls } from './selectControl.js';
+import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
 
 const $ = selector => document.querySelector(selector);
 const DOCUMENT_SELECT_IDS = ['documentKnowledgeBase', 'documentFolderPath'];
@@ -228,6 +229,7 @@ function prependSessionSummary(session) {
 
 function showSessionLoadingPlaceholder() {
   const list = $('#agentMessageList');
+  unmountAgentEmptyHero(list);
   list.innerHTML = `
     <div class="agent-empty-state agent-session-loading" aria-busy="true">
       <span class="empty-mark" aria-hidden="true">…</span>
@@ -979,6 +981,13 @@ function idleAgentLabel() {
 function agentSetupHintHtml() {
   const hidden = state.agentStatus?.configured !== false ? ' hidden' : '';
   return `<p class="agent-setup-hint"${hidden}>尚未配置模型。请先在设置 → 模型中添加供应商（填写地址与密钥、选择模型），然后回到这里发送消息。<button type="button" data-open-settings>打开设置</button></p>`;
+}
+
+function setAgentEmptyHero() {
+  const list = $('#agentMessageList');
+  unmountAgentEmptyHero(list);
+  list.innerHTML = renderAgentEmptyHero();
+  mountAgentEmptyHero(list);
 }
 
 function applyAgentStatus() {
@@ -2295,17 +2304,7 @@ function showEmptySession() {
   stopLiveTrace();
   setRunStatus('');
   applyAgentTopbar(null);
-  $('#agentMessageList').innerHTML = `
-    <div class="agent-empty-state">
-      <span class="empty-mark" aria-hidden="true">✦</span>
-      <h1>今天想一起完成什么？</h1>
-      <p>用 @知识库 或 @日期 带上材料，再描述你想完成的事。</p>
-      ${agentSetupHintHtml()}
-      <div class="starter-prompts">
-        <button type="button" data-starter="@开发 总结最近的项目记录和下一步">总结项目记录</button>
-        <button type="button" data-starter="@开发 根据这些材料规划今天最重要的三件事">规划今天</button>
-      </div>
-    </div>`;
+  setAgentEmptyHero();
   renderSessions();
 }
 
@@ -2440,6 +2439,7 @@ function buildAssistantMetaHtml(createdAt, model = '') {
 
 function addMessage(role, content, citations = [], attachments = [], { createdAt, model, scroll = true } = {}) {
   const list = $('#agentMessageList');
+  unmountAgentEmptyHero(list);
   list.querySelector('.agent-empty-state')?.remove();
   const article = document.createElement('article');
   article.className = `message ${role === 'user' ? 'user' : 'assistant'}`;
@@ -2561,13 +2561,7 @@ function renderSessionMessages(session, { force = false } = {}) {
 }
 
 function showEmptySessionContent() {
-  $('#agentMessageList').innerHTML = `
-    <div class="agent-empty-state">
-      <span class="empty-mark" aria-hidden="true">✦</span>
-      <h1>从一个具体目标开始</h1>
-      <p>用 @知识库 或 @日期 带上材料，再描述希望得到的结果。</p>
-      ${agentSetupHintHtml()}
-    </div>`;
+  setAgentEmptyHero();
 }
 
 async function openSession(id, serial = state.routeSerial) {
@@ -2845,6 +2839,7 @@ function runTraceHost(runId) {
 function upsertRunTrace(run, { live = false } = {}) {
   if (!run?.id) return null;
   const list = $('#agentMessageList');
+  unmountAgentEmptyHero(list);
   list.querySelector('.agent-empty-state')?.remove();
   let details = runTraceHost(run.id);
   if (!details) {

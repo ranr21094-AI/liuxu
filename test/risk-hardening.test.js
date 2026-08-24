@@ -3156,13 +3156,13 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /\/api\/agent\/memory\/refresh/);
   assert.equal(document.querySelector('#mentionMenu') !== null, true);
   assert.equal(document.querySelector('#mentionMenu [data-mention="today"]') !== null, true);
-  assert.match(html, /@知识库/);
+  assert.match(html, /用 @ 引用知识库/);
   assert.match(source, /data-mention/);
   assert.match(source, /renderMentionMenu/);
   assert.equal(document.querySelector('#agentComposerModelSelect') !== null, true);
   assert.equal(document.querySelector('#agentComposerModelSelect').getAttribute('aria-label'), '切换 Agent 模型');
   assert.equal(document.querySelector('#agentSidebarStatus')?.tagName, 'BUTTON');
-  assert.equal(document.querySelector('.agent-empty-state [data-open-settings]') !== null, true);
+  assert.equal(document.querySelector('.agent-empty-state [data-open-settings]'), null);
   assert.match(source, /\/api\/agent\/status/);
   assert.match(source, /\/api\/ai\/settings/);
   assert.match(source, /未配置模型/);
