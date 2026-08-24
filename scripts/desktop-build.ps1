@@ -102,12 +102,12 @@ function Invoke-TestsWithTimeout {
 
 Push-Location $projectRoot
 try {
-  $runningDesktop = Get-Process -Name 'Work Log' -ErrorAction SilentlyContinue
+  $runningDesktop = Get-Process -Name 'Work Log', 'LiuXu' -ErrorAction SilentlyContinue
   if ($runningDesktop) {
-    throw '检测到正在运行的 Work Log。请先退出客户端再构建。'
+    throw '检测到正在运行的留序（或旧版 Work Log）。请先退出客户端再构建。'
   }
 
-  Invoke-NativeStep -Name '安装锁定依赖（跳过第三方安装脚本）' -Command { npm ci --ignore-scripts }
+  Invoke-NativeStep -Name '安装锁定依赖（跳过第三方安装脚本和未使用的可选原生模块）' -Command { npm ci --ignore-scripts --omit=optional }
   Invoke-NativeStep -Name '下载锁定的 Electron 运行时' -Command { node node_modules/electron/install.js }
   $sqlitePrebuild = Join-Path $projectRoot 'node_modules\better-sqlite3\prebuilds\win32-x64.node'
   if (-not (Test-Path -LiteralPath $sqlitePrebuild -PathType Leaf)) {
@@ -127,7 +127,7 @@ try {
   Invoke-NativeStep -Name '生成 Windows NSIS 安装包' -Command { npx electron-builder --win nsis --x64 }
 
   $package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw | ConvertFrom-Json
-  $artifact = Join-Path $projectRoot "dist\desktop\Work Log Setup $($package.version).exe"
+  $artifact = Join-Path $projectRoot "dist\desktop\LiuXu-Setup-$($package.version)-x64.exe"
   if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
     throw "安装包未生成：$artifact"
   }
@@ -137,12 +137,14 @@ try {
   $artifactInfo = Get-Item -LiteralPath $artifact
   $summary = [ordered]@{
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    productName = '留序 LiuXu'
     artifact = $artifactInfo.FullName
     sizeBytes = $artifactInfo.Length
     sha256 = $hash
     electron = '43.4.1'
     electronBuilder = '26.15.3'
     buildCache = $buildRoot
+    optionalDependencies = 'omitted'
     tests = 'passed'
     signed = $false
   }

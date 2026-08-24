@@ -200,6 +200,15 @@ test('desktop package includes every root-level runtime module', () => {
 
 test('NSIS uses the standard per-user installation directory', () => {
   const builderConfig = fs.readFileSync(path.join(__dirname, '..', 'electron-builder.yml'), 'utf8');
+  assert.match(builderConfig, /^appId: com\.worklog\.desktop$/m);
+  assert.match(builderConfig, /^productName: 留序 LiuXu$/m);
+  assert.match(builderConfig, /^\s*executableName: LiuXu$/m);
+  assert.match(builderConfig, /^\s*artifactName: "LiuXu-Setup-\$\{version\}-x64\.\$\{ext\}"$/m);
+  assert.match(builderConfig, /^\s*shortcutName: 留序 LiuXu$/m);
+  assert.match(builderConfig, /!node_modules\/pdfjs-dist\/node_modules\/canvas\/\*\*/);
+
+  const buildScript = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'desktop-build.ps1'), 'utf8');
+  assert.match(buildScript, /npm ci --ignore-scripts --omit=optional/);
   assert.match(builderConfig, /^\s*oneClick: false$/m);
   assert.match(builderConfig, /^\s*perMachine: false$/m);
   assert.match(builderConfig, /^\s*allowToChangeInstallationDirectory: true$/m);

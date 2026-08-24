@@ -1099,7 +1099,7 @@ async function fetchOpenRouterModelCatalog(apiKey, signal) {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Accept': 'application/json',
-        'X-Title': 'Work Log',
+        'X-Title': 'LiuXu',
       },
       signal,
     }, 20000);
@@ -2832,7 +2832,7 @@ async function fetchAiProviderUpstream(options, payload, signal) {
       'Authorization': `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
     };
-    if (options.provider === 'openrouter') headers['X-Title'] = 'Work Log';
+    if (options.provider === 'openrouter') headers['X-Title'] = 'LiuXu';
     return await fetchWithTimeout(aiProviderChatUrl(options), {
       method: 'POST',
       headers,
@@ -3162,7 +3162,7 @@ function createAgentModelClient(req) {
         ? `Working checkpoint:\n${JSON.stringify(checkpoint)}`
         : '';
       const system = [
-        'You are the local Work Log Agent. Work only from @ injected local knowledge, tool results, and the user goal.',
+        'You are the local LiuXu Agent. Work only from @ injected local knowledge, tool results, and the user goal.',
         'Prefer native function tools. When you need a tool, call it instead of chatting.',
         'You may also return exactly one JSON object with no Markdown fences.',
         'For a tool call: {"action":"tool","tools":[{"name":"knowledge.read","arguments":{"id":"..."}}]} .',
@@ -3536,7 +3536,7 @@ function startServer(port = PORT, host = HOST) {
     }
     todoReminderService = createTodoReminderCoordinator();
     const server = app.listen(port, host, () => {
-      console.log(`Work Log server running at http://${host}:${server.address().port}`);
+      console.log(`LiuXu server running at http://${host}:${server.address().port}`);
       if (!isLoopbackHost(host)) {
         console.warn('Warning: no account authentication; binding to a non-loopback address exposes the workspace to the network.');
       }

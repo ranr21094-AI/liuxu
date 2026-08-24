@@ -136,7 +136,7 @@ function assertLegacySourceIdle(sourceDir) {
   if (!fs.existsSync(lockPath)) return;
   const pid = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
   if (isPidAlive(pid)) {
-    throw new Error(`旧数据仍被进程 ${pid} 使用。请先关闭旧版 Work Log 或开发服务器，再重新启动客户端。`);
+    throw new Error(`旧数据仍被进程 ${pid} 使用。请先关闭留序（旧称 Work Log）或开发服务器，再重新启动客户端。`);
   }
 }
 

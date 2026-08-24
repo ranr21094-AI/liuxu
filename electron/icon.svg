@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="留序 LiuXu 图标">
+  <rect width="512" height="512" rx="116" fill="#f7f5ef"/>
+  <path d="M139 128h218a31 31 0 0 1 31 31v234H170a31 31 0 0 1-31-31V128Z" fill="#d9d9d2"/>
+  <path d="M112 101h218a31 31 0 0 1 31 31v234H143a31 31 0 0 1-31-31V101Z" fill="#fff" stroke="#2f332f" stroke-width="18"/>
+  <path d="M196 101h82v151l-41-27-41 27V101Z" fill="#c6773d"/>
+  <path d="M171 300h132M171 335h91" fill="none" stroke="#2f332f" stroke-linecap="round" stroke-width="18"/>
+</svg>

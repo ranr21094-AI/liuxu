@@ -22,7 +22,7 @@ let log = () => {};
 
 function showStartupError(error) {
   log('error', 'desktop startup failed', error);
-  dialog.showErrorBox('Work Log 启动失败', error?.message || String(error));
+  dialog.showErrorBox('留序 LiuXu 启动失败', error?.message || String(error));
 }
 
 function loadLegacySecretKeySetting(envPath) {
@@ -100,7 +100,7 @@ async function createMainWindow(appUrl) {
     height: 860,
     minWidth: 720,
     minHeight: 520,
-    title: 'Work Log',
+    title: '留序 LiuXu',
     autoHideMenuBar: true,
     show: false,
     backgroundColor: '#f5f2ea',
@@ -122,7 +122,7 @@ async function createMainWindow(appUrl) {
     if (details.reason === 'clean-exit' || window.isDestroyed()) return;
     dialog.showMessageBox(window, {
       type: 'error',
-      title: 'Work Log 页面异常退出',
+      title: '留序 LiuXu 页面异常退出',
       message: '客户端页面发生异常，可以尝试重新载入。',
       detail: `原因：${details.reason}`,
       buttons: ['重新载入', '退出'],

@@ -497,7 +497,7 @@ test('single-user workspace opens without login and serves backup/uploads direct
   assert.equal(authorized.status, 200);
   assert.match(
     authorized.headers.get('content-disposition') || '',
-    /^attachment; filename=work-log-backup-\d{4}-\d{2}-\d{2}\.json$/,
+    /^attachment; filename=liuxu-backup-\d{4}-\d{2}-\d{2}\.json$/,
   );
 
   const form = new FormData();
@@ -1027,7 +1027,7 @@ test('OpenRouter discovers account models and preserves provider-specific reason
     }
     if (url === 'https://openrouter.ai/api/v1/chat/completions') {
       assert.equal(options.headers.Authorization, 'Bearer sk-or-test-key');
-      assert.equal(options.headers['X-Title'], 'Work Log');
+      assert.equal(options.headers['X-Title'], 'LiuXu');
       chatCalls.push(JSON.parse(options.body));
       return new Response(JSON.stringify({
         choices: [{

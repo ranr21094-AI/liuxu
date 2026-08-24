@@ -1,6 +1,6 @@
-const PATTERN_WORD = 'RANGENT';
-const TITLE_ZH = '你好，我是Rangent';
-const TITLE_EN = "HELLO, I'm Rangent";
+const PATTERN_WORD = 'LIUXU';
+const TITLE_ZH = '你好，我是留序';
+const TITLE_EN = "HELLO, I'm LiuXu";
 const PATTERN_CELL_COUNT = 100;
 
 const cleanups = new WeakMap();

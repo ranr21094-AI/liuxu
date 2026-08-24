@@ -1,5 +1,5 @@
 appId: com.worklog.desktop
-productName: Work Log
+productName: 留序 LiuXu
 compression: maximum
 directories:
   output: dist/desktop
@@ -17,6 +17,7 @@ files:
   - "!data/**"
   - "!dist/**"
   - "!test/**"
+  - "!node_modules/pdfjs-dist/node_modules/canvas/**"
   - "!.git/**"
   - "!.cursor/**"
   - "!.zcode/**"
@@ -27,20 +28,21 @@ asarUnpack:
   - "**/node_modules/better-sqlite3/**"
 npmRebuild: false
 win:
+  executableName: LiuXu
   target:
     - target: nsis
       arch:
         - x64
-  icon: electron/icon.png
+  icon: electron/icon.ico
   requestedExecutionLevel: asInvoker
 nsis:
-  artifactName: "${productName} Setup ${version}.${ext}"
+  artifactName: "LiuXu-Setup-${version}-x64.${ext}"
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
   allowElevation: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
-  shortcutName: Work Log
+  shortcutName: 留序 LiuXu
   runAfterFinish: true
   deleteAppDataOnUninstall: false

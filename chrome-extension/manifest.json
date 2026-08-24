@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Work Log Agent Bridge",
+  "name": "留序 LiuXu Agent Bridge",
   "version": "1.0.0",
-  "description": "Attach selected daily Chrome tabs to the local Work Log Agent. This is not remote debugging.",
+  "description": "Attach selected Chrome tabs to the local LiuXu Agent. This is not remote debugging.",
   "permissions": ["debugger", "tabs", "activeTab", "storage"],
   "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_title": "Work Log Agent", "default_popup": "popup.html" },
+  "action": { "default_title": "留序 LiuXu Agent", "default_popup": "popup.html" },
   "externally_connectable": {
     "matches": ["http://127.0.0.1/*", "http://localhost/*"]
   }

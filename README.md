@@ -1,274 +1,206 @@
-# Work Log
+# 留序 LiuXu
 
-本地优先的单用户 Agent 工作台。工作日志作为知识库文档，另有待办、倒数日和可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream、WeStock 能力。数据保存在 `{DATA_DIR}/schedule.db` 与相关附件目录中。
+**让重要信息留下，让下一步行动有序。**
 
-更新记录见 [ChangeLog.md](ChangeLog.md)。本次全量代码审查的问题说明、临时措施与分阶段修复安排见 [code-review-remediation.md](code-review-remediation.md)。
+[![Windows 11 x64](https://img.shields.io/badge/Windows-11%20x64-2563eb?logo=windows11&logoColor=white)](https://github.com/ranr21094-AI/liuxu/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/ranr21094-AI/liuxu?display_name=tag&sort=semver)](https://github.com/ranr21094-AI/liuxu/releases/latest)
+[![MIT License](https://img.shields.io/badge/license-MIT-2f332f)](LICENSE)
 
-## Quick Start
+留序是一个本地优先的个人 AI 工作台，把 **Agent、知识库、长期记忆和待办** 放在同一个桌面应用里。你的数据库和附件保存在自己的电脑上；需要 AI 时，由你选择并配置模型服务商。
+
+## 下载与安装
+
+### Windows 11 x64
+
+[**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
+
+1. 在最新版本页面下载 `LiuXu-Setup-1.0.0-x64.exe`。
+2. 双击安装包，按向导选择程序安装位置。
+3. 从桌面或开始菜单打开 **留序 LiuXu**。
+
+安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
+
+```powershell
+Get-FileHash .\LiuXu-Setup-1.0.0-x64.exe -Algorithm SHA256
+```
+
+![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
+
+## 你可以用留序做什么
+
+| 区域 | 用途 |
+| --- | --- |
+| **Agent** | 与自己选择的模型协作，按确认权限检索知识、维护待办、联网搜索或执行本地工具。 |
+| **知识库** | 编写 Markdown 笔记，导入 PDF、DOCX、TXT、Markdown 和图片，按知识库与文件夹整理。 |
+| **Memory** | 保存长期事实、习惯和流程；新记忆先以提案形式展示，经你确认后才写入。 |
+| **待办** | 管理分类、优先级、重复任务、倒数日和可选的每日邮件提醒。 |
+
+还包括私密知识锁定、Agent 会话归档、JSON/ZIP 备份恢复、模型级能力配置，以及可选的 Chrome 桥接和电脑工具。
+
+## 第一次使用
+
+留序无需注册或登录。打开后可以直接记录笔记和待办；使用 Agent 前，请进入 **设置 → 模型**：
+
+1. 新建一个模型供应商。
+2. 填写服务地址、API 格式和你自己的 API Key。
+3. 获取或手动添加模型，选择默认模型。
+
+API Key 会使用本机密钥加密保存。调用模型、联网搜索或生图时，相应的提示词、你明确提供的材料或工具结果会发送给所选服务商；这些服务受各自隐私政策约束。
+
+## 数据与隐私
+
+### 数据保存在哪里
+
+Windows 安装版默认使用：
+
+```text
+%LOCALAPPDATA%\Work Log Data
+```
+
+这里的旧目录名为兼容现有版本而保留。主要内容包括：
+
+| 内容 | 位置 |
+| --- | --- |
+| 知识、待办、Agent、设置 | `schedule.db` |
+| 兼容认证数据库 | `users.db` |
+| 笔记图片 | `uploads/` |
+| 导入的知识附件 | `knowledge-files/` |
+| Agent 生成的文件 | `agent-assets/` |
+| 桌面启动日志 | `logs/desktop-main.log` |
+
+模型密钥的本机主密钥单独保存在：
+
+```text
+%LOCALAPPDATA%\work-log\ai-secrets.key
+```
+
+覆盖安装或卸载留序不会主动删除数据目录。正式清理电脑前，请先在 **设置 → 数据** 导出备份。
+
+### 更换数据目录
+
+目前安装向导可以选择程序位置，但应用内还没有数据目录选择器。请先完全退出留序，再编辑：
+
+```text
+%APPDATA%\work-log\desktop-config.json
+```
+
+例如：
+
+```json
+{
+  "version": 1,
+  "dataDir": "D:\\LiuXu Data"
+}
+```
+
+如果原目录已经有数据，请先完整复制到新位置，再修改配置。也可以在启动前设置 `DATA_DIR` 环境变量；其优先级高于配置文件。
+
+### 换一台电脑
+
+1. 在旧电脑正常退出留序。
+2. 复制整个 `%LOCALAPPDATA%\Work Log Data`。
+3. 同时复制 `%LOCALAPPDATA%\work-log\ai-secrets.key`；缺少它时，已保存的模型 API Key 无法解密，需要重新填写。
+4. 在新电脑安装留序，并在首次启动前把上述内容放到对应位置。
+5. 如果使用自定义数据目录，在新电脑重新创建 `desktop-config.json`。
+
+ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`。密钥文件应单独保管，不要上传到 GitHub 或网盘公开链接。
+
+## 备份与恢复
+
+在 **设置 → 数据** 中可以使用：
+
+- **JSON 备份**：适合导出结构数据，不包含附件。
+- **ZIP 工作区**：包含数据库、知识附件、上传图片和 Agent 文件，适合完整迁移。
+- **合并恢复**：把备份内容并入当前工作区。
+- **替换恢复**：验证通过后替换当前数据；写入前会保存恢复前副本。
+
+恢复期间如果存在活动 Agent 任务，留序会拒绝操作，避免写入冲突。
+
+## 常见问题
+
+### 点击图标没有反应
+
+留序采用单实例启动。再次点击会恢复并聚焦已有窗口。如果仍没有窗口：
+
+1. 在任务管理器确认没有残留的 `LiuXu.exe` 或旧版 `Work Log.exe`。
+2. 查看 `%LOCALAPPDATA%\Work Log Data\logs\desktop-main.log`。
+3. 检查数据目录是否可写，以及 `.schedule.lock` 中记录的旧进程是否仍在运行。
+
+### Windows 提示未知发布者
+
+`v1.0.0` 安装包未签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+
+### 卸载后数据还在
+
+这是为了防止误删。确认已经备份且不再需要后，才手动删除 `%LOCALAPPDATA%\Work Log Data` 和本机密钥文件。
+
+### Agent 显示未配置
+
+进入 **设置 → 模型** 添加供应商、API Key 和至少一个模型。留序不内置公共模型额度。
+
+## 开发与构建
+
+### 环境要求
+
+- Node.js `^20.19.0`、`^22.12.0` 或 `>=24.0.0`
+- Windows 11 x64（桌面安装包）
+- 从当前 C 盘项目构建时，脚本使用 `D:\Temp\work-log-build-c` 作为缓存并要求 D 盘至少 5 GB 可用空间
 
 ```bash
 npm install
-copy .env.example .env
 npm start
 ```
 
-macOS 或 Linux 可用 `cp .env.example .env`。打开 `http://localhost:3000` 即可使用，无需登录。
+打开 `http://127.0.0.1:3000`。开发模式使用项目根目录的 `data/`。
 
 常用命令：
 
 ```bash
-npm run build
-npm test
-npm run desktop          # Electron 开发调试（窗口 + 本地服务）
-npm run desktop:build    # Windows NSIS 安装包（从当前 C 盘项目构建）
+npm run build          # 生成浏览器 vendor 资源
+npm test               # 完整测试
+npm run desktop        # Electron 开发模式
+npm run desktop:build  # Windows NSIS 安装包
 ```
 
-### Windows 安装版
+构建产物位于 `dist/desktop/`：
 
-安装后通过桌面或开始菜单的 **Work Log** 快捷方式一键运行，内嵌浏览器与仅监听本机的 Express 服务，无需登录。
-
-**开发调试**
-
-```bash
-npm run desktop
+```text
+LiuXu-Setup-1.0.0-x64.exe
+LiuXu-Setup-1.0.0-x64.exe.sha256
+desktop-build-summary.json
 ```
 
-开发模式仍使用项目根目录的 `./data`，与 `npm start` 行为一致。
+安装包、个人数据库、附件、`.env` 和 `.zcode/` 不会进入 Git。
 
-**打包（Windows x64）**
+### 数据目录优先级
 
-```bash
-npm run desktop:build
-```
+桌面安装版按以下顺序选择数据目录：
 
-构建脚本要求项目位于 C 盘；源码和最终产物都留在项目中，仅把系统临时目录、npm、Electron 和 electron-builder 缓存切换到 `D:\Temp\work-log-build-c`。脚本依次执行锁定依赖安装、Electron 运行时下载、`better-sqlite3` Windows x64 预编译模块校验、前端构建、全量测试和 NSIS 打包；D 盘缓存不足 5 GB 或 C 盘输出空间不足 800 MB 时会提前停止。
+1. `DATA_DIR` 环境变量。
+2. `%APPDATA%\work-log\desktop-config.json` 的 `dataDir`。
+3. `%LOCALAPPDATA%\Work Log Data`。
 
-产物：`dist/desktop/Work Log Setup 1.0.0.exe`，同时生成 `.sha256` 校验文件和 `desktop-build-summary.json`。本次安装包未签名，Windows 首次运行可能显示「未知发布者」。
+开发服务器默认使用 `./data`。可用 `PORT` 修改端口；默认只监听 `127.0.0.1`。如果把 `HOST` 改为 `0.0.0.0` 或其他非本机地址，服务本身没有账户访问控制，必须自行配置可信网络、HTTPS 和反向代理保护。
 
-安装向导默认使用 Windows 当前用户的标准程序目录，允许手动改路径，并创建桌面与开始菜单快捷方式。应用数据独立保存到 `%LOCALAPPDATA%\Work Log Data`，覆盖安装或卸载程序都不会删除该目录。
+### 技术结构
 
-首次启动且新数据目录为空时，客户端会从当前用户的 `OneDrive\Desktop\schedule\data` 暂存复制、核对文件数量和大小、验证 `schedule.db` / `users.db`，并把 AI 密钥的加密作用域安全迁移到新目录，成功后再原子切换；原数据不会删除。若旧服务仍在使用 `.schedule.lock`，客户端会提示先关闭旧进程。项目根目录的 `.env` 只会在目标不存在时复制到新数据目录。
+- Electron 主进程启动本机随机端口的 Express 服务，并以沙箱窗口加载。
+- SQLite 保存知识、待办、Agent、Memory 和设置，二进制附件保存在数据目录。
+- 前端使用原生 JavaScript ES Modules，没有前端框架。
+- Markdown 预览使用 marked、DOMPurify、KaTeX 和 PDF.js。
+- `better-sqlite3` 原生模块随 Windows x64 安装包分发。
 
-数据目录优先级为：显式 `DATA_DIR` 环境变量 → `%APPDATA%\work-log\desktop-config.json` → `%LOCALAPPDATA%\Work Log Data`。启动日志位于 `{DATA_DIR}\logs\desktop-main.log`。
+### Chrome 桥接与电脑工具
 
-`bash.run`、Chrome 扩展等电脑工具仍依赖本机 Git Bash / Chrome，不随安装包捆绑。
+`chrome-extension/` 是 Manifest V3 扩展，仅允许与 `127.0.0.1` / `localhost` 上的留序通信。电脑工具默认按本地白名单策略启用；写入、命令执行、联网和浏览器操作仍按工具风险请求确认，也可以在设置中关闭。
 
-`npm start` 和 `npm test` 会自动把 marked、DOMPurify、KaTeX、pdf.js 拷到 `public/vendor/`；如果直接运行 `node server.js`，请先执行 `npm run build`。
+## 文档
 
-默认监听 `127.0.0.1:3000`。若将 `HOST` 设为 `0.0.0.0` 或绑定到非本机地址，**没有任何访问控制**——请仅在可信网络中使用，或通过 HTTPS 反向代理保护。
+- [更新日志](ChangeLog.md)
+- [代码审查与修复记录](code-review-remediation.md)
+- [v1.0.0 发布说明](docs/releases/v1.0.0.md)
+- [贡献与仓库说明](AGENTS.md)
 
-待办提醒测试命令：
+## 许可证
 
-```bash
-npm run todo:reminder:test -- --to your@email.com --all-open
-```
-
-只预览正文、不真正发送：
-
-```bash
-npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
-```
-
-## Recent Updates
-
-- 默认首页为 Agent 工作台：顶栏切换 **Agent / 知识库 / Memory / 待办** 四个模式；桌面端固定侧栏，窄屏为抽屉。
-- 知识库侧栏为两级导航（知识库列表 → 文件夹与文档）；支持 MiniSearch 检索、Markdown/KaTeX 预览、文件导入（MD/TXT/PDF/DOCX/图片）、归档与恢复。
-- Agent 会话侧栏显示日期与消息数；支持搜索、重命名、归档，归档会话在设置 → 会话中恢复或删除。
-- 独立 AI 对话页、日志内 AI、照片墙、`/legacy.html` 和 CodeMirror 日志编辑器已移除；模型与联网配置统一在设置中，供 Agent 使用。
-- 完整变更见 [ChangeLog.md](ChangeLog.md)。
-
-## 工作台概览
-
-| 模式 | Hash | 侧栏 | 主区域 |
-| --- | --- | --- | --- |
-| Agent | `#agent` / `#agent/:sessionId` | 会话列表（按时间分组） | 对话、工具审批、记忆建议 |
-| 知识库 | `#knowledge` / `#knowledge?base=…` / `#knowledge/:documentId` | 知识库 → 文件夹 → 文档 | 笔记/日志编辑或导入文件预览 |
-| Memory | `#memory` | L2 事实 / L3 流程 | 长期记忆与待确认提案 |
-| 待办 | `#todos` | 分类筛选、邮件提醒 | 待办与倒数日 |
-
-旧链接 `#knowledge?view=todos` 会自动重定向到 `#todos`。
-
-顶栏还提供「私密知识」锁定状态、运行状态，以及设置入口（模型/Memory/联网/生图/电脑工具/归档会话等）。
-
-## Main Areas
-
-### Agent
-
-- 左侧按「今天 / 最近 7 天 / 更早」分组展示会话；每行显示标题，副行显示**最后更新时间 · 消息数**（不再显示最后一条消息预览）。
-- 支持新建会话、搜索（仍匹配标题与消息正文）、重命名、归档。
-- 对话区用 `@知识库` 或 `@日期` 注入本地材料；Agent 也可用 `knowledge.search` / `knowledge.tree` / `knowledge.list` 检索与浏览笔记；`memory.search` 可查找已保存的长期记忆；复杂子任务可用 `agent.delegate` 委派（需确认，子任务写入仍单独审批）。本地脚本用 `code.run`（PowerShell/Python）；Git Bash 下 git / npm / node 等用 `bash.run`（需确认，PATH 可用时）。
-- 写入类工具、联网搜索/抓取、生图、代码运行等需先确认。
-- 长期记忆以提案形式出现，确认后才写入 L2/L3；Memory 模式可浏览、归档或刷新提案。
-- 模型、联网、Seedream 生图、电脑工具策略在设置中配置；Agent 侧栏底部可快速打开模型设置。
-
-### 知识库与日志
-
-- 根级侧栏只列知识库；进入某个知识库后显示面包屑、文件夹树、搜索/筛选和文档列表。
-- 原一级分类对应知识库，子分类对应文件夹；工作日志仍以 `logs.json` 为源，编辑器可改标题、正文和日期。
-- 笔记与日志支持 Markdown 编辑/预览（含 GFM 表格、任务列表、KaTeX 公式）；预览区图片可双击放大。
-- 导入文件只读预览正文；可为导入文件写关联笔记。文档与文件夹支持软归档与恢复。
-- 搜索支持智能/严格预设与字段筛选；`GET /api/knowledge/tree` 返回树结构与文档数量。
-- 工时、置顶、按日浏览日志等字段与 `GET/POST/PUT /api/logs` 仍保留，工作台界面不再提供日历、归档卡片或 CSV 导出。
-
-### Memory
-
-- 浏览已确认的 L2（事实）与 L3（流程）记忆；可归档不再需要的条目。
-- 「刷新记忆」会基于近期会话生成提案，需在对话或 Memory 模式中确认后才会写入。
-- **设置 → Memory** 可调整刷新扫描范围、提案/轮次上限，以及写入与 Agent 上下文注入的长度与条数（均存于 `ai-settings.json`，最小值 1，无上限；默认与原先硬编码行为一致）。L0 规则仍为内置常量。
-
-### 待办
-
-- 独立顶栏模式 `#todos`；主区域在「待办 / 倒数日」之间切换。
-- 侧栏显示分类筛选和邮件提醒设置；支持拖拽排序、优先级、重复规则、备注与清除已完成。
-- 倒数日按香港业务日期计算剩余或已过天数。
-- 每日邮件提醒汇总所有分类中当天到期且未完成的待办；详见下文「待办邮件提醒配置」。
-
-### 分类
-
-- 知识树可新建、重命名和归档知识库/文件夹。
-- `categories.json` 中的「日历显示」仍影响日志按日筛选 API，工作台无日历界面。
-
-### 文件存储
-
-- **笔记/日志内嵌图片**：`POST /api/upload` → `{dataDir}/uploads/`，Markdown 引用 `/uploads/{filename}`；编辑区工具栏「插入图片」并支持粘贴。
-- **知识库导入附件**：二进制在 `{dataDir}/knowledge-files/`，元数据在 `knowledge-documents.json`，下载走 `/api/knowledge/files/:id/content`。
-- **Agent 生图**：确认后保存到 `uploads/` 并在对话中返回本地链接。
-
-## AI 与模型
-
-AI 设置保存在当前账户的 `ai-settings.json`（Key 经 AES-256-GCM 加密），供 **Agent** 使用；不再提供独立 AI 对话页或日志内 AI 面板。
-
-- **设置 → 模型**：所有模型统一由**供应商卡片**提供（OpenAI / Anthropic 兼容 API，数量不限）。每张卡片维护自己的 Base URL、API 格式、密钥、模型列表（可用"拉取模型列表"自动发现，每供应商上限 200 个）以及能力开关（支持图片输入、思考/推理参数、ZDR）；面板内另选默认模型与思考强度。旧版内置供应商（DeepSeek / Kimi / OpenRouter）的 Key 会在首次启动时自动迁移为供应商条目。
-- **设置 → Memory**：记忆刷新轮次/提案数、近期会话扫描条数与字符预算、L2/L3 标题与内容上限、注入 Agent 上下文的 L2/L3 条数（见上节）。
-- **设置 → 联网**：Tavily、Perplexity；Agent 通过 `web.search` / `web.fetch` 等工具在确认后调用。
-- **设置 → 生图**：Seedream Key 与默认参数；Agent 通过 `image.generate` 在确认后生图。
-- **设置 → 技能**：WeStock 等工具策略（具体以 Agent 工具注册为准）。
-- 模型列表可经 `POST /api/ai/custom-providers/models` 从任意 OpenAI 兼容端点拉取（拉取后在弹窗中搜索并勾选添加，单端点单次返回上限 500 条、每供应商保存上限 200 个）；旧管理员工作区仍可使用 `.env` 中的服务端回退 Key（仅随迁移写入）。
-
-Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁后才进入 `@` 引用与知识搜索。
-
-## Configuration
-
-复制 `.env.example` 后可按需配置：
-
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `PORT` | HTTP 服务端口 | `3000` |
-| `HOST` | 监听地址；非 loopback 绑定无访问控制，请谨慎暴露 | `127.0.0.1` |
-| `DATA_DIR` | 工作区 SQLite 与附件目录 | `./data` |
-| `DEEPSEEK_API_KEY` | 旧管理员工作区可使用的服务端 DeepSeek 回退 Key | empty |
-| `DEEPSEEK_BASE_URL` | DeepSeek API 基础地址 | `https://api.deepseek.com` |
-| `DEEPSEEK_DEFAULT_MODEL` | 默认 DeepSeek 模型 | `deepseek-v4-flash` |
-| `MOONSHOT_API_KEY` | 旧管理员工作区可使用的服务端 Moonshot 回退 Key | empty |
-| `MOONSHOT_BASE_URL` | Moonshot API 基础地址 | `https://api.moonshot.cn/v1` |
-| `OPENROUTER_API_KEY` | 旧管理员工作区可使用的服务端 OpenRouter 回退 Key | empty |
-| `AI_SECRETS_KEY_FILE` | 账户 AI Key 的 AES-256-GCM 主密钥文件路径 | platform default |
-| `TAVILY_API_KEY` | 旧管理员工作区可使用的服务端 Tavily 回退 Key | empty |
-| `TAVILY_BASE_URL` | Tavily API 基础地址 | `https://api.tavily.com` |
-| `PERPLEXITY_API_KEY` | 旧管理员工作区可使用的服务端 Perplexity 回退 Key | empty |
-| `PERPLEXITY_BASE_URL` | Perplexity API 基础地址 | `https://api.perplexity.ai` |
-| `SEEDREAM_API_KEY` | 旧管理员工作区可使用的服务端 Seedream 回退 Key | empty |
-| `SEEDREAM_BASE_URL` | Seedream API 基础地址 | `https://ark.cn-beijing.volces.com/api/v3` |
-| `SEEDREAM_DEFAULT_MODEL` | 默认 Seedream 模型 | `doubao-seedream-5-0-260128` |
-| `GETOKEN_API_KEY` | 旧管理员工作区可使用的服务端 Getoken 回退 Key（`gpt-image-2`） | empty |
-| `GETOKEN_GROK_IMAGINE_API_KEY` | Getoken `grok-imagine-image` 模型回退 Key | empty |
-| `GETOKEN_NANO_BANANA_API_KEY` | Getoken `nano-banana-2` 模型回退 Key | empty |
-| `GETOKEN_BASE_URL` | Getoken API 基础地址 | `https://api.getoken.tech` |
-| `GETOKEN_DEFAULT_MODEL` | 默认 Getoken 模型 | `gpt-image-2` |
-| `WESTOCK_NPX_COMMAND` | WeStock CLI 启动命令 | `npx -y westock-data-clawhub@1.0.4` |
-| `QQ_EMAIL_ACCOUNT` | QQ 发信邮箱账号 | empty |
-| `QQ_EMAIL_AUTH_CODE` | QQ 邮箱 SMTP 授权码 | empty |
-
-### 待办邮件提醒配置
-
-1. 在 QQ 邮箱中开启 SMTP，并获取授权码。
-2. 在 `.env` 中填写 `QQ_EMAIL_ACCOUNT` 与 `QQ_EMAIL_AUTH_CODE`。
-3. 重启服务，在待办侧栏「邮件提醒」中设置启用状态、收件邮箱和发送时间（默认 `08:00`）。
-4. 服务每 60 秒检查一次；只提醒当天到期且未完成的待办；SMTP 失败会重试同一份当天快照。
-
-### 数据完整性
-
-- 启动时会检查 `{DATA_DIR}` 下 SQLite 与遗留 JSON 迁移状态；损坏的 JSON 会保留 `.corrupt-*.bak` 副本并拒绝启动。
-
-## 私密知识（日记）
-
-- 标记为 `visibility: diary` 的知识（含「日记」分类下的日志）在**未解锁**时不出现在知识列表、搜索和 Agent `@` 上下文中。
-- 顶栏 **私密知识** 按钮打开口令对话框；输入固定暗语「如意如意」（与 `server.js` 中 `DIARY_MAGIC_PHRASE` 一致）解锁，再次点击可锁定。
-- 解锁状态通过 `diary_session` Cookie 维持（24 小时）。备份/恢复与 ZIP 导出需先解锁。
-
-## Data And Privacy
-
-默认数据目录为 `data/`（`schedule.db`、`uploads/`、`knowledge-files/` 等）。
-
-| File | Content |
-| --- | --- |
-| `schedule.db` | 待办、知识、Agent、设置等 SQLite 数据 |
-| `logs.json` | 遗留工作日志；首次访问知识库时自动迁移至 `knowledge-documents.json`，原内容备份为 `logs.migrated.json` |
-| `logs.migrated.json` / `.logs-migrated.json` | 迁移备份与 id 映射 |
-| `todos.json` / `countdowns.json` | 待办与倒数日 |
-| `todo-categories.json` / `todo-reminder-*.json` | 待办分类与邮件提醒 |
-| `categories.json` | 知识库/文件夹树与日历显示设置 |
-| `knowledge-documents.json` / `knowledge-files/` | 笔记与导入文件 |
-| `agent-sessions.json` / `agent-runs.json` / `agent-memories.json` | Agent 会话、运行与长期记忆 |
-| `ai-chats.migrated.json` | 旧独立 AI 对话归档备份；有内容时 Agent 启动会自动迁入 `agent-sessions.json`（归档，`[旧AI]` 标题） |
-| `ai-settings.json` | 加密后的模型与工具 Key |
-| `uploads/` | Markdown 内嵌图与 Agent 生图 |
-| `private-uploads.json` | 私密图片保护标记 |
-
-隐私要点：工作区无登录层；`.env` 与 `data/` 已在 `.gitignore` 中；对外网暴露前请自行加访问控制。
-
-## Backup And Restore
-
-- **JSON 备份**（`GET /api/backup`）：结构数据（待办、分类、遗留 logs 等），标记 `format: structure`，不含二进制。旧备份中的 `aiChats` 在恢复时会落盘并由 Agent 自动迁移为归档会话。
-- **ZIP 工作区**（`GET /api/workspace/export`）：含知识附件、上传、Agent 数据等完整副本；恢复用 `POST /api/workspace/restore`（支持 JSON 或 ZIP，`?mode=merge` 可合并）。
-- 不含账户凭据；私密知识需解锁后才能备份/恢复。
-
-## Chrome 扩展与 Windows 原生执行
-
-- 仓库 `chrome-extension/` 为 Manifest V3 扩展，仅与 localhost 应用页通信，通过配对码绑定标签页。
-- Windows 电脑工具默认关闭；在设置 → 电脑中配置目录白名单后，Agent 才可执行文件读写、`code.run`（PowerShell/Python）与 `bash.run`（Git Bash：git、npm、node 等；需确认；非沙箱，等同当前用户权限）。
-
-## Mobile Access
-
-将 `HOST` 设为 `0.0.0.0`，手机与电脑在同一局域网访问 `http://<电脑 IP>:<PORT>`。对外网请使用 HTTPS 反向代理或隧道，不要直接暴露 HTTP。
-
-## Development Notes
-
-- 后端：Express + SQLite（`database.js` → `{DATA_DIR}/schedule.db`）。
-- 前端：原生 JS（`index.html` + `workbench.js` + `workbench.css`），无 React/CodeMirror  bundle。
-- 构建：`npm run build` 复制 vendor 到 `public/vendor/`。
-- 路由顺序：`PUT /api/logs/reorder`、`PUT /api/todos/reorder` 等须定义在对应 `/:id` 之前。
-
-## Relevant API
-
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/auth/diary` | 用暗语解锁私密知识 |
-| `POST` | `/api/auth/diary/lock` | 锁定 |
-| `GET` | `/api/auth/diary/status` | 锁定状态 |
-| `GET/PUT` | `/api/admin/agent-policy` | 电脑工具策略 |
-| `GET/POST/PUT/DELETE` | `/api/logs` … | 遗留日志 CRUD（兼容；新内容请用知识库笔记） |
-| `GET/POST/PUT/DELETE` | `/api/todos` … | 待办 |
-| `GET/POST/PUT/DELETE` | `/api/countdowns` … | 倒数日 |
-| `GET/PUT` | `/api/todo-reminder-settings` | 邮件提醒 |
-| `GET/POST/PUT/DELETE` | `/api/categories` … | 分类树 |
-| `POST` | `/api/upload` | 上传内嵌图片 |
-| `GET/POST` | `/api/backup` / `/api/restore` | JSON 备份恢复 |
-| `GET/PUT` | `/api/ai/settings` | Agent 模型设置 |
-| `GET` | `/api/ai/models` | 模型目录 |
-| `GET` | `/api/knowledge/tree` | 知识库树 |
-| `GET/POST/PATCH/DELETE` | `/api/knowledge/documents` … | 知识文档 |
-| `POST` | `/api/knowledge/documents/:id/archive` | 归档 |
-| `POST` | `/api/knowledge/documents/:id/restore` | 恢复 |
-| `POST` | `/api/knowledge/imports` | 导入文件 |
-| `GET` | `/api/knowledge/search` | 本地检索 |
-| `GET` | `/api/knowledge/files/:id/content` | 原文件 |
-| `GET/POST/PATCH/DELETE` | `/api/agent/sessions` … | Agent 会话 |
-| `POST` | `/api/agent/sessions/:id/messages` | 发起运行 |
-| `GET` | `/api/agent/runs/:id/events` | SSE 事件 |
-| `POST` | `/api/agent/runs/:id/approvals/:id` | 审批工具 |
-| `GET/DELETE` | `/api/agent/memories` … | 长期记忆 |
-| `POST` | `/api/agent/memory/refresh` | 生成记忆提案 |
-| `GET/PUT` | `/api/admin/agent-policy` | 电脑工具策略 |
-| `GET` | `/api/workspace/export` | ZIP 导出 |
-| `POST` | `/api/workspace/restore` | ZIP/JSON 恢复 |
+[MIT](LICENSE) © 2026 ranr21094-AI

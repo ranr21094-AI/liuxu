@@ -29,12 +29,12 @@ function restoreModeQuery() {
 
 export function createBackupActions({ confirmAction, reloadKnowledge }) {
   async function exportJsonBackup() {
-    await downloadApiExport('/api/backup', 'work-log-backup.json');
+    await downloadApiExport('/api/backup', 'liuxu-backup.json');
     showToast('JSON 备份已开始下载', 'success');
   }
 
   async function exportZipBackup() {
-    await downloadApiExport('/api/workspace/export', 'work-log-workspace.zip');
+    await downloadApiExport('/api/workspace/export', 'liuxu-workspace.zip');
     showToast('ZIP 工作区已开始下载', 'success');
   }
 

@@ -156,6 +156,13 @@
 - 测试总数 232；本机运行曾出现 2 例环境相关失败：GETOKEN 环境变量改变默认设置断言（CR-16 已复现）、命令超时后临时目录被占用（CR-06 已复现）。
 - `npm audit --omit=dev` 当时报 1 严重、5 高危、4 中等；直接可达且应优先处理的是 PDF.js 与 Multer，其余多为传递依赖，升级前逐项记录可达路径后决定。
 
+### v1.0.0 发布前复核（2026-08-25）
+
+- 正式桌面构建改为 `npm ci --ignore-scripts --omit=optional`，不再安装或打包 PDF.js 未使用的服务端 Canvas 原生模块；`canvas → @mapbox/node-pre-gyp → tar` 链路及其严重告警已从交付包移除。PDF 文字提取、浏览器预览和 251 项测试保持通过。
+- `npm audit --omit=dev --omit=optional` 当前结果为：0 严重、1 高危、4 中等，共 5 个依赖节点；扫描时这些节点均为 `fixAvailable: false`。剩余节点为 Nodemailer、DOMPurify、Express / body-parser / qs，继续跟踪上游修复版本。
+- 当前可达性收敛：桌面服务只监听 `127.0.0.1`；DOMPurify 以字符串结果模式清洗 Markdown，不使用公告所列的 `IN_PLACE`、`RETURN_DOM` 或自定义元素配置；邮件提醒的信封、传输名称、`raw` / `jsonTransport` 和 OAuth2 参数不接受外部请求直接控制。
+- 该结果不是“零风险”声明。发布后若上游出现兼容修复版本，应在独立依赖升级中更新锁文件、重新生成 vendor 资源，并重复 PDF、Markdown、邮件提醒和桌面打包验收。
+
 ## 已确认的默认决策（本版）
 
 - 照单修复 7 项、缩小范围 5 项、替代方案 3 项、过时关闭 1 项；不删除或隐藏相关功能来代替修复。

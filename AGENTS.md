@@ -8,7 +8,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - **Build vendor assets**: `npm run build` (copies marked / DOMPurify / KaTeX / pdf.js into `public/vendor/`; required before running `node server.js` directly)
 - **Start server**: `npm start` (builds vendor assets, then starts Express)
 - **Desktop (dev)**: `npm run desktop` (builds vendor assets, then Electron window + embedded server)
-- **Desktop (NSIS build)**: from this C-drive project, run `npm run desktop:build` → `dist/desktop/Work Log Setup 1.0.0.exe` + SHA-256/build summary (Windows x64; build caches are under `D:\Temp\work-log-build-c`)
+- **Desktop (NSIS build)**: from this C-drive project, run `npm run desktop:build` → `dist/desktop/LiuXu-Setup-1.0.0-x64.exe` + SHA-256/build summary (Windows x64; build caches are under `D:\Temp\work-log-build-c`)
 - **Tests**: `npm test` (builds vendor assets, then runs Node tests)
 - **Port**: Set `PORT` env var (default 3000). E.g. `PORT=3001 npm start`
 - Vanilla JS frontend served as static ES modules under `public/js/`. No CodeMirror/Monaco bundle.
