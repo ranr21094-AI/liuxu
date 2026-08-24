@@ -21,6 +21,7 @@ const {
 const { BUILTIN_SEEDREAM_VERSION } = require('../lib/agent/memory');
 const { createMemoryService } = require('../lib/agent/memory');
 const { createAgentStore } = require('../lib/agent/store');
+const { createTempDatabase } = require('./db-temp');
 
 test('seedream size validation is model-aware', () => {
   assert.equal(isValidSeedreamSize(SEEDREAM_PRO_MODEL, '1.5K'), true);
@@ -132,14 +133,11 @@ test('seedream settings input accepts pro model and extended fields', () => {
   assert.equal(parsed.seedreamLayerDecomposition, true);
 });
 
-test('builtin seedream memory upgrades to latest version', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'seedream-mem-'));
-  const db = {
-    dataDir: dir,
-    readMemories: () => JSON.parse(fs.readFileSync(path.join(dir, 'agent-memories.json'), 'utf8')),
-    writeMemories: data => fs.writeFileSync(path.join(dir, 'agent-memories.json'), JSON.stringify(data, null, 2)),
-  };
-  fs.writeFileSync(path.join(dir, 'agent-memories.json'), JSON.stringify({
+test('builtin seedream memory upgrades to latest version', (t) => {
+  const { db, dir } = createTempDatabase(t, 'seedream-mem-');
+  const { createAgentStore } = require('../lib/agent/store');
+  const store = createAgentStore(db);
+  store.writeMemories({
     items: [{
       id: 'builtin-seedream-generate',
       builtinId: 'seedream-generate',
@@ -151,8 +149,7 @@ test('builtin seedream memory upgrades to latest version', () => {
       status: 'active',
     }],
     proposals: [],
-  }, null, 2));
-  const store = createAgentStore(db);
+  });
   const memory = createMemoryService(store);
   const items = memory.list({ layer: 'L3' });
   const builtin = items.find(item => item.builtinId === 'seedream-generate');
@@ -160,5 +157,4 @@ test('builtin seedream memory upgrades to latest version', () => {
   assert.equal(builtin.version, BUILTIN_SEEDREAM_VERSION);
   assert.match(builtin.content, /禁止.*多次单张/);
   assert.match(builtin.content, /batch:true/);
-  fs.rmSync(dir, { recursive: true, force: true });
 });

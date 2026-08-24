@@ -11,27 +11,23 @@
 <body>
   <div class="workspace-shell" id="workspaceShell">
     <aside class="workspace-sidebar" id="workspaceSidebar" aria-label="工作区侧栏">
-      <div class="workspace-brand">
-        <a href="#agent" class="brand-home" aria-label="Agent 工作台首页">
-          <span class="brand-mark" aria-hidden="true">A</span>
-          <span>个人工作台</span>
-        </a>
-        <div class="brand-actions" id="knowledgeBrandActions" hidden>
-          <button class="icon-button brand-action" id="newNoteButton" type="button" title="新建笔记" aria-label="新建笔记">＋</button>
-          <button class="icon-button brand-action" id="importFileButton" type="button" title="导入文件" aria-label="导入文件">↑</button>
-          <input id="knowledgeFileInput" type="file" accept=".md,.txt,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
-        </div>
+      <div class="sidebar-mobile-bar">
         <button class="icon-button sidebar-close" id="sidebarClose" type="button" aria-label="关闭侧栏">×</button>
       </div>
 
       <section class="sidebar-panel" id="agentSidebarPanel" data-sidebar-mode="agent">
-        <button class="primary-action" id="newSessionButton" type="button">
-          <span aria-hidden="true">＋</span> 新建会话
-        </button>
-        <label class="search-field" for="sessionSearch">
-          <span aria-hidden="true">⌕</span>
-          <input id="sessionSearch" type="search" placeholder="搜索会话" autocomplete="off">
-        </label>
+        <div class="sidebar-toolbar-row agent-sidebar-toolbar">
+          <button class="agent-toolbar-btn" id="newSessionButton" type="button" title="新建会话" aria-label="新建会话">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 5v14"></path>
+              <path d="M5 12h14"></path>
+            </svg>
+          </button>
+          <label class="search-field agent-toolbar-search" for="sessionSearch">
+            <span aria-hidden="true">⌕</span>
+            <input id="sessionSearch" type="search" placeholder="搜索会话" autocomplete="off">
+          </label>
+        </div>
         <div class="sidebar-scroll" id="sessionList" aria-live="polite">
           <p class="empty-list">正在加载会话…</p>
         </div>
@@ -69,7 +65,21 @@
           <div class="document-list-section">
             <div class="document-list-heading-row">
               <div class="document-list-heading" id="knowledgeDocumentListHeading"></div>
-              <button class="icon-button tree-add" id="newFolderButton" type="button" title="新建文件夹" aria-label="新建文件夹">＋</button>
+              <div class="document-list-actions" id="knowledgeDocumentActions" hidden>
+                <button class="icon-button tree-add" id="newNoteButton" type="button" title="新建笔记" aria-label="新建笔记">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <path d="M14 2v6h6M8 13h8M8 17h8"></path>
+                  </svg>
+                </button>
+                <button class="icon-button tree-add" id="importFileButton" type="button" title="导入文件" aria-label="导入文件">↑</button>
+                <input id="knowledgeFileInput" type="file" accept=".md,.txt,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+                <button class="icon-button tree-add" id="newFolderButton" type="button" title="新建文件夹" aria-label="新建文件夹">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 7a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="sidebar-scroll document-list" id="knowledgeDocumentList" aria-live="polite">
               <p class="empty-list">正在读取知识库…</p>
@@ -163,7 +173,17 @@
               <rect x="5" y="11" width="14" height="10" rx="2"></rect>
             </svg>
           </button>
-          <button class="account-button" id="accountButton" type="button" aria-haspopup="menu" aria-expanded="false"><span id="accountInitial">用</span></button>
+          <button class="account-button" id="accountButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="账户菜单">
+            <svg class="account-icon-user" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="8" r="4"></circle>
+              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path>
+            </svg>
+            <svg class="account-icon-admin" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>
+              <circle cx="12" cy="11" r="2.5"></circle>
+              <path d="M8.5 17.5c1.5-1 3-1.5 3.5-1.5s2 .5 3.5 1.5"></path>
+            </svg>
+          </button>
           <div class="account-menu" id="accountMenu" role="menu" hidden>
             <div class="account-summary"><strong id="accountName">当前账户</strong><small id="accountRole"></small></div>
             <button id="accountSettings" type="button" role="menuitem">设置</button>
@@ -823,10 +843,10 @@
               <input id="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password">
             </label>
             <label class="settings-field" for="accountNewPassword">新密码
-              <input id="accountNewPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password">
+              <input id="accountNewPassword" type="password" maxlength="128" autocomplete="new-password">
             </label>
             <label class="settings-field" for="accountConfirmPassword">确认新密码
-              <input id="accountConfirmPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password">
+              <input id="accountConfirmPassword" type="password" maxlength="128" autocomplete="new-password">
             </label>
             <div class="settings-actions">
               <button type="button" class="secondary-action compact" id="btnChangeAccountPassword">修改密码</button>
@@ -876,7 +896,7 @@
           <input id="newUserDisplayName" type="text" maxlength="50" autocomplete="off" required>
         </label>
         <label class="dialog-field" for="newUserPassword">临时密码
-          <input id="newUserPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" required>
+          <input id="newUserPassword" type="password" maxlength="128" autocomplete="new-password">
         </label>
         <label class="dialog-field" for="newUserRole">角色
           <select id="newUserRole">

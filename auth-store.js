@@ -1,10 +1,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { openAuthDatabase, authDbPath } = require('./lib/db/connection');
 
 const USERNAME_PATTERN = /^[A-Za-z0-9._-]{3,32}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const PASSWORD_MIN_LENGTH = 10;
 const PASSWORD_MAX_LENGTH = 128;
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 // Precomputed scrypt hash used only to equalize login timing when a username does not
@@ -36,11 +36,13 @@ function atomicWriteJson(file, value) {
 }
 
 function failCorrupt(label, file, error) {
+  const dbFile = authDbPath(path.dirname(file));
+  const backupSource = fs.existsSync(dbFile) ? dbFile : file;
   let backup = '';
   try {
-    if (fs.existsSync(file)) {
-      backup = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
-      fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+    if (fs.existsSync(backupSource)) {
+      backup = `${backupSource}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
+      fs.copyFileSync(backupSource, backup, fs.constants.COPYFILE_EXCL);
     }
   } catch {}
   const suffix = backup ? `; preserved at ${backup}` : '';
@@ -64,7 +66,7 @@ function validateDisplayName(value, fallback = '') {
 }
 
 function validateNewPassword(value) {
-  return typeof value === 'string' && value.length >= PASSWORD_MIN_LENGTH && value.length <= PASSWORD_MAX_LENGTH;
+  return typeof value === 'string' && value.length <= PASSWORD_MAX_LENGTH;
 }
 
 function hashSecret(secret) {
@@ -138,7 +140,11 @@ function createAuthStore({
   const root = path.resolve(dataDir || path.join(__dirname, 'data'));
   const usersFile = path.join(root, 'users.json');
   const sessionsFile = path.join(root, 'auth-sessions.json');
-  const disabled = !fs.existsSync(usersFile) && !bootstrapPassword && allowInsecureNoAuth;
+  const disabled = !fs.existsSync(usersFile)
+    && !fs.existsSync(authDbPath(root))
+    && !bootstrapPassword
+    && allowInsecureNoAuth;
+  const sqlite = disabled ? null : openAuthDatabase(root);
   const localUser = {
     id: 'local-insecure-user',
     username: 'local',
@@ -155,14 +161,29 @@ function createAuthStore({
   let usersCache = null;
   let sessionsCache = null;
 
+  function rowToUser(row) {
+    return validateStoredUser({
+      id: row.id,
+      username: row.username,
+      display_name: row.display_name,
+      password_hash: row.password_hash,
+      role: row.role,
+      status: row.status,
+      must_change_password: row.must_change_password === 1,
+      storage_key: row.storage_key,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      last_login_at: row.last_login_at || '',
+    });
+  }
+
   function readUsers() {
     if (disabled) return [clone(localUser)];
     if (usersCache) return clone(usersCache);
     try {
-      const parsed = JSON.parse(fs.readFileSync(usersFile, 'utf8'));
-      const source = Array.isArray(parsed) ? parsed : parsed?.users;
-      if (!Array.isArray(source) || !source.length) throw new Error('User registry is empty');
-      const users = source.map(validateStoredUser);
+      const rows = sqlite.prepare('SELECT * FROM auth_users ORDER BY username ASC').all();
+      if (!rows.length) throw new Error('User registry is empty');
+      const users = rows.map(rowToUser);
       const ids = new Set();
       const usernames = new Set();
       const storageKeys = new Set();
@@ -184,25 +205,49 @@ function createAuthStore({
   function writeUsers(users) {
     if (disabled) throw new Error('Account management is disabled');
     const normalized = users.map(validateStoredUser);
-    atomicWriteJson(usersFile, { version: 1, users: normalized });
+    const preservedSessions = sessionsCache
+      ? sessionsCache.filter(session => normalized.some(user => user.id === session.user_id))
+      : null;
+    const tx = sqlite.transaction(list => {
+      sqlite.prepare('DELETE FROM auth_users').run();
+      const insert = sqlite.prepare(`
+        INSERT INTO auth_users (
+          id, username, display_name, password_hash, role, status,
+          must_change_password, storage_key, created_at, updated_at, last_login_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const user of list) {
+        insert.run(
+          user.id,
+          user.username,
+          user.display_name,
+          user.password_hash,
+          user.role,
+          user.status,
+          user.must_change_password ? 1 : 0,
+          user.storage_key,
+          user.created_at,
+          user.updated_at,
+          user.last_login_at || '',
+        );
+      }
+    });
+    tx(normalized);
     usersCache = clone(normalized);
+    // DELETE FROM auth_users CASCADE clears auth_sessions on disk; restore still-valid sessions.
+    if (preservedSessions) writeSessions(preservedSessions);
+    try { sqlite.pragma('wal_checkpoint(PASSIVE)'); } catch { /* ignore */ }
     return clone(normalized);
   }
 
   function readSessions() {
     if (disabled) return [];
     if (sessionsCache) return clone(sessionsCache);
-    if (!fs.existsSync(sessionsFile)) {
-      sessionsCache = [];
-      return [];
-    }
     try {
-      const parsed = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-      const source = Array.isArray(parsed) ? parsed : parsed?.sessions;
-      if (!Array.isArray(source)) throw new Error('Invalid session registry');
+      const rows = sqlite.prepare('SELECT * FROM auth_sessions ORDER BY created_at ASC').all();
       const tokenHashes = new Set();
-      sessionsCache = source.map(session => {
-        if (!session || !/^[0-9a-f]{64}$/i.test(session.token_hash || '') || !UUID_PATTERN.test(session.user_id || '')) {
+      sessionsCache = rows.map(session => {
+        if (!/^[0-9a-f]{64}$/i.test(session.token_hash || '') || !UUID_PATTERN.test(session.user_id || '')) {
           throw new Error('Invalid session record');
         }
         if (tokenHashes.has(session.token_hash)) throw new Error('Duplicate session token hash');
@@ -222,15 +267,32 @@ function createAuthStore({
 
   function writeSessions(sessions) {
     if (disabled) return [];
-    atomicWriteJson(sessionsFile, { version: 1, sessions });
+    const tx = sqlite.transaction(list => {
+      sqlite.prepare('DELETE FROM auth_sessions').run();
+      const insert = sqlite.prepare(`
+        INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at)
+        VALUES (?, ?, ?, ?)
+      `);
+      for (const session of list) {
+        insert.run(session.token_hash, session.user_id, session.created_at, session.expires_at);
+      }
+    });
+    tx(sessions);
     sessionsCache = clone(sessions);
+    try { sqlite.pragma('wal_checkpoint(PASSIVE)'); } catch { /* ignore */ }
     return clone(sessions);
   }
 
   function ensureInitialized() {
     fs.mkdirSync(root, { recursive: true });
     if (disabled) return;
-    if (!fs.existsSync(usersFile)) {
+    let hasUsers = false;
+    try {
+      hasUsers = sqlite.prepare('SELECT COUNT(*) AS count FROM auth_users').get()?.count > 0;
+    } catch (err) {
+      return failCorrupt('users.json', usersFile, err);
+    }
+    if (!hasUsers && !fs.existsSync(usersFile)) {
       if (!bootstrapPassword) throw new Error('AUTH_TOKEN is required to initialize the first administrator');
       const timestamp = new Date(now()).toISOString();
       writeUsers([{
@@ -249,7 +311,7 @@ function createAuthStore({
     } else {
       readUsers();
     }
-    if (!fs.existsSync(sessionsFile)) writeSessions([]);
+    if (!sqlite.prepare('SELECT COUNT(*) AS count FROM auth_sessions').get()?.count) writeSessions([]);
     else cleanupExpiredSessions();
   }
 
@@ -340,7 +402,7 @@ function createAuthStore({
   }
 
   function changePassword(userId, currentPassword, newPassword) {
-    if (!validateNewPassword(newPassword)) return { error: '新密码必须为 10-128 个字符' };
+    if (!validateNewPassword(newPassword)) return { error: '密码长度不能超过 128 个字符' };
     const users = readUsers();
     const user = users.find(item => item.id === userId);
     if (!user || !verifySecret(currentPassword, user.password_hash)) return { error: '当前密码错误' };
@@ -360,7 +422,7 @@ function createAuthStore({
     const role = input?.role === 'admin' ? 'admin' : 'member';
     if (!username) return { error: '用户名必须为 3-32 位字母、数字、点、下划线或短横线' };
     if (!displayName) return { error: '显示名称必须为 1-50 个字符' };
-    if (!validateNewPassword(password)) return { error: '临时密码必须为 10-128 个字符' };
+    if (!validateNewPassword(password)) return { error: '密码长度不能超过 128 个字符' };
     const users = readUsers();
     if (users.some(user => user.username === username)) return { error: '用户名已存在' };
     const timestamp = new Date(now()).toISOString();
@@ -416,7 +478,7 @@ function createAuthStore({
   }
 
   function resetPassword(userId, temporaryPassword) {
-    if (!validateNewPassword(temporaryPassword)) return { error: '临时密码必须为 10-128 个字符' };
+    if (!validateNewPassword(temporaryPassword)) return { error: '密码长度不能超过 128 个字符' };
     const users = readUsers();
     const user = users.find(item => item.id === userId);
     if (!user) return { error: '账户不存在' };

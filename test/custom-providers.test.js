@@ -415,15 +415,20 @@ test('database encrypts custom provider api keys', () => {
       }],
     });
     assert.equal(saved.customProviders[0].apiKey, 'local-secret');
-    const raw = JSON.parse(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'));
+    const row = db.sqlite.prepare('SELECT body FROM ai_settings WHERE id = 1').get();
+    const raw = JSON.parse(row.body);
     assert.notEqual(raw.customProviders[0].apiKey, 'local-secret');
     assert.match(raw.customProviders[0].apiKey, /^enc:v1:/);
     delete require.cache[require.resolve('../database.js')];
+    db.close();
     const dbReload = createDatabase(dataDir);
     assert.equal(dbReload.getAiSettings().customProviders[0].apiKey, 'local-secret');
+    dbReload.close();
   } finally {
     delete process.env.DATA_DIR;
     delete process.env.AI_SECRETS_KEY_FILE;
+    const { closeAllDatabases } = require('../lib/db/connection');
+    closeAllDatabases();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });

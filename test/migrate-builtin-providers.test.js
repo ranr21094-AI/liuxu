@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createDatabase } = require('../database');
+const { createTempDatabase, readAiSettingsRaw } = require('./db-temp');
 const { ensureBuiltinProvidersMigrated, migrateBuiltinProviderModelCapabilities } = require('../lib/agent/migrate-builtin-providers');
 const { parseCustomModelId, resolveModelCapability } = require('../lib/agent/custom-providers');
 
@@ -15,9 +16,8 @@ function markerPath(dir) {
   return path.join(dir, '.builtin-providers-migrated.json');
 }
 
-test('ensureBuiltinProvidersMigrated converts built-in keys into custom providers', () => {
-  const dir = tempDir();
-  const db = createDatabase(dir);
+test('ensureBuiltinProvidersMigrated converts built-in keys into custom providers', (t) => {
+  const { db, dir } = createTempDatabase(t, 'migrate-providers-');
   db.saveAiSettings({
     apiKey: 'sk-ds-key',
     moonshotApiKey: 'sk-ms-key',
@@ -61,7 +61,7 @@ test('ensureBuiltinProvidersMigrated converts built-in keys into custom provider
   assert.equal(kimi.apiKey, 'sk-ms-key');
   assert.equal(openrouter.apiKey, 'sk-or-key');
 
-  const raw = JSON.parse(fs.readFileSync(path.join(dir, 'ai-settings.json'), 'utf8'));
+  const raw = readAiSettingsRaw(dir);
   for (const provider of raw.customProviders) {
     assert.match(provider.apiKey, /^enc:v1:/);
   }

@@ -2,9 +2,22 @@ const fs = require('fs');
 const path = require('path');
 const { businessDateString, daysInMonth, parseDateParts, startOfWeekMonday } = require('./business-date');
 const { decryptSecret, encryptSecret, isEncryptedSecret } = require('./secret-store');
+const { openAccountDatabase, closeAccountDatabase, accountDbPath, ACCOUNT_DB_NAME } = require('./lib/db/connection');
+const {
+  parseJson,
+  readMeta,
+  writeMeta,
+  readIdTable,
+  writeIdTable,
+  readSingleton,
+  writeSingleton,
+  readStringList,
+  writeStringList,
+} = require('./lib/db/helpers');
 
 function createDatabase(dataDirectory = (process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data')), options = {}) {
 const DATA_DIR = path.resolve(dataDirectory);
+let sqlite = openAccountDatabase(DATA_DIR);
 const SECRET_SCOPE = typeof options.secretScope === 'string' && options.secretScope ? options.secretScope : DATA_DIR;
 const DATA_FILE = path.join(DATA_DIR, 'logs.json');
 const DIARY_CATEGORY = '\u65e5\u8bb0';
@@ -138,10 +151,12 @@ function atomicWriteJson(file, value) {
 
 function failCorruptData(label, file, err) {
   let backup = '';
+  const dbFile = accountDbPath(DATA_DIR);
+  const backupSource = fs.existsSync(dbFile) ? dbFile : file;
   try {
-    if (fs.existsSync(file)) {
-      backup = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
-      fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
+    if (fs.existsSync(backupSource)) {
+      backup = `${backupSource}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
+      fs.copyFileSync(backupSource, backup, fs.constants.COPYFILE_EXCL);
     }
   } catch (backupError) {
     console.error(`Failed to preserve corrupt ${label}:`, backupError.message);
@@ -358,35 +373,27 @@ function readLogs() {
   if (cache.logs !== null) return cloneLogs(cache.logs);
   ensureDataDir();
   try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('logs.json must contain an array');
+    const parsed = readIdTable(sqlite, 'logs');
     cache.logs = parsed;
-    cache.maxLogId = maxPositiveId(cache.logs);
+    syncMaxIds();
     return cloneLogs(cache.logs);
   } catch (err) {
-    return failCorruptData('logs.json', DATA_FILE, err);
+    return failCorruptData('logs.json', path.join(DATA_DIR, 'logs.json'), err);
   }
 }
 
 function writeLogs(logs) {
   const next = logs.map(log => ({ ...log }));
-  atomicWriteJson(DATA_FILE, next);
+  writeIdTable(sqlite, 'logs', next);
   cache.logs = next;
-  cache.maxLogId = maxPositiveId(next);
+  syncMaxIds();
 }
 
 function readPrivateUploads() {
   if (cache.privateUploads !== null) return [...cache.privateUploads];
   ensureDataDir();
-  if (!fs.existsSync(PRIVATE_UPLOADS_FILE)) {
-    cache.privateUploads = [];
-    return [];
-  }
   try {
-    const saved = JSON.parse(fs.readFileSync(PRIVATE_UPLOADS_FILE, 'utf-8'));
-    if (!Array.isArray(saved)) throw new Error('private-uploads.json must contain an array');
-    cache.privateUploads = [...new Set(saved.filter(isSafeUploadFilename))];
+    cache.privateUploads = [...new Set(readStringList(sqlite, 'private_uploads', 'filename').filter(isSafeUploadFilename))];
     return [...cache.privateUploads];
   } catch (err) {
     return failCorruptData('private-uploads.json', PRIVATE_UPLOADS_FILE, err);
@@ -395,7 +402,7 @@ function readPrivateUploads() {
 
 function writePrivateUploads(filenames) {
   const next = [...new Set(filenames.filter(isSafeUploadFilename))];
-  atomicWriteJson(PRIVATE_UPLOADS_FILE, next);
+  writeStringList(sqlite, 'private_uploads', 'filename', next);
   cache.privateUploads = next;
 }
 
@@ -546,15 +553,16 @@ function agentFileReadMaxBytes(value) {
 function readAiSettings() {
   if (cache.aiSettings !== null) return cloneJson(cache.aiSettings);
   ensureDataDir();
-  if (!fs.existsSync(AI_SETTINGS_FILE)) {
-    cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
-    return cloneJson(cache.aiSettings);
-  }
   try {
-    const raw = JSON.parse(fs.readFileSync(AI_SETTINGS_FILE, 'utf-8'));
+    const row = sqlite.prepare('SELECT body FROM ai_settings WHERE id = 1').get();
+    if (!row) {
+      cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
+      return cloneJson(cache.aiSettings);
+    }
+    const raw = parseJson(row.body, { ...DEFAULT_AI_SETTINGS });
     const decoded = decodeAiSettingsSecrets(raw);
     cache.aiSettings = normalizeAiSettings(decoded.source);
-    if (decoded.needsMigration) atomicWriteJson(AI_SETTINGS_FILE, serializeAiSettings(cache.aiSettings));
+    if (decoded.needsMigration) writeAiSettings(cache.aiSettings);
     return cloneJson(cache.aiSettings);
   } catch (err) {
     if (['AI_SECRET_KEY_MISSING', 'AI_SECRET_KEY_INVALID', 'AI_SECRET_DECRYPT_FAILED'].includes(err?.code)) throw err;
@@ -564,7 +572,7 @@ function readAiSettings() {
 
 function writeAiSettings(data) {
   const next = normalizeAiSettings(data);
-  atomicWriteJson(AI_SETTINGS_FILE, serializeAiSettings(next));
+  writeSingleton(sqlite, 'ai_settings', serializeAiSettings(next));
   cache.aiSettings = cloneJson(next);
   return cloneJson(next);
 }
@@ -572,12 +580,13 @@ function writeAiSettings(data) {
 function readTodoReminderSettings() {
   if (cache.todoReminderSettings !== null) return { ...cache.todoReminderSettings };
   ensureDataDir();
-  if (!fs.existsSync(TODO_REMINDER_SETTINGS_FILE)) {
-    cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
-    return { ...cache.todoReminderSettings };
-  }
   try {
-    const normalized = normalizeTodoReminderSettings(JSON.parse(fs.readFileSync(TODO_REMINDER_SETTINGS_FILE, 'utf-8')));
+    const saved = readSingleton(sqlite, 'todo_reminder_settings', null);
+    if (!saved) {
+      cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
+      return { ...cache.todoReminderSettings };
+    }
+    const normalized = normalizeTodoReminderSettings(saved);
     if (normalized.error) throw new Error(normalized.error);
     cache.todoReminderSettings = normalized;
     return { ...cache.todoReminderSettings };
@@ -590,7 +599,7 @@ function writeTodoReminderSettings(data, options = {}) {
   ensureDataDir();
   const normalized = normalizeTodoReminderSettings(data, options);
   if (normalized.error) return normalized;
-  atomicWriteJson(TODO_REMINDER_SETTINGS_FILE, normalized);
+  writeSingleton(sqlite, 'todo_reminder_settings', normalized);
   cache.todoReminderSettings = { ...normalized };
   return { ...normalized };
 }
@@ -598,12 +607,11 @@ function writeTodoReminderSettings(data, options = {}) {
 function readTodoReminderState() {
   if (cache.todoReminderState !== null) return cloneJson(cache.todoReminderState);
   ensureDataDir();
-  if (!fs.existsSync(TODO_REMINDER_STATE_FILE)) {
-    cache.todoReminderState = { ...DEFAULT_TODO_REMINDER_STATE, snapshot: [] };
-    return cloneJson(cache.todoReminderState);
-  }
   try {
-    cache.todoReminderState = normalizeTodoReminderState(JSON.parse(fs.readFileSync(TODO_REMINDER_STATE_FILE, 'utf-8')));
+    const saved = readSingleton(sqlite, 'todo_reminder_state', null);
+    cache.todoReminderState = saved
+      ? normalizeTodoReminderState(saved)
+      : { ...DEFAULT_TODO_REMINDER_STATE, snapshot: [] };
     return cloneJson(cache.todoReminderState);
   } catch (err) {
     return failCorruptData('todo-reminder-state.json', TODO_REMINDER_STATE_FILE, err);
@@ -612,7 +620,7 @@ function readTodoReminderState() {
 
 function writeTodoReminderState(data) {
   const next = normalizeTodoReminderState(data);
-  atomicWriteJson(TODO_REMINDER_STATE_FILE, next);
+  writeSingleton(sqlite, 'todo_reminder_state', next);
   cache.todoReminderState = cloneJson(next);
   return cloneJson(next);
 }
@@ -866,14 +874,9 @@ function normalizeTodoCategoryName(value, fallback = DEFAULT_TODO_CATEGORY) {
 function readTodos() {
   if (cache.todos !== null) return cloneTodos(cache.todos);
   ensureDataDir();
-  if (!fs.existsSync(TODOS_FILE)) {
-    fs.writeFileSync(TODOS_FILE, '[]', 'utf-8');
-  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(TODOS_FILE, 'utf-8'));
-    if (!Array.isArray(parsed)) throw new Error('todos.json must contain an array');
-    cache.todos = parsed;
-    cache.maxTodoId = maxPositiveId(cache.todos);
+    cache.todos = readIdTable(sqlite, 'todos');
+    syncMaxIds();
     return cloneTodos(cache.todos);
   } catch (err) {
     return failCorruptData('todos.json', TODOS_FILE, err);
@@ -882,23 +885,20 @@ function readTodos() {
 
 function writeTodos(todos) {
   const next = cloneTodos(todos);
-  atomicWriteJson(TODOS_FILE, next);
+  writeIdTable(sqlite, 'todos', next);
   cache.todos = next;
-  cache.maxTodoId = maxPositiveId(next);
+  syncMaxIds();
 }
 
 function readTodoCategories() {
   if (cache.todoCategories !== null) return [...cache.todoCategories];
   ensureDataDir();
   let categories = [];
-  if (fs.existsSync(TODO_CATEGORIES_FILE)) {
-    try {
-      const saved = JSON.parse(fs.readFileSync(TODO_CATEGORIES_FILE, 'utf-8'));
-      if (!Array.isArray(saved)) throw new Error('todo-categories.json must contain an array');
-      categories = saved;
-    } catch (err) {
-      return failCorruptData('todo-categories.json', TODO_CATEGORIES_FILE, err);
-    }
+  try {
+    categories = sqlite.prepare('SELECT name FROM todo_categories ORDER BY sort_index ASC').all()
+      .map(row => row.name);
+  } catch (err) {
+    return failCorruptData('todo-categories.json', TODO_CATEGORIES_FILE, err);
   }
   const names = new Set([DEFAULT_TODO_CATEGORY]);
   categories.forEach(name => names.add(normalizeTodoCategoryName(name)));
@@ -918,7 +918,9 @@ function writeTodoCategories(categories) {
       names.push(normalized);
     }
   });
-  atomicWriteJson(TODO_CATEGORIES_FILE, names);
+  sqlite.prepare('DELETE FROM todo_categories').run();
+  const insert = sqlite.prepare('INSERT INTO todo_categories (sort_index, name) VALUES (?, ?)');
+  names.forEach((name, index) => insert.run(index, name));
   cache.todoCategories = names;
 }
 
@@ -1138,14 +1140,9 @@ function reorderTodos(orderedIds) {
 function readCountdowns() {
   if (cache.countdowns !== null) return cloneCountdowns(cache.countdowns);
   ensureDataDir();
-  if (!fs.existsSync(COUNTDOWNS_FILE)) {
-    atomicWriteJson(COUNTDOWNS_FILE, []);
-  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(COUNTDOWNS_FILE, 'utf-8'));
-    if (!Array.isArray(parsed)) throw new Error('countdowns.json must contain an array');
-    cache.countdowns = parsed;
-    cache.maxCountdownId = maxPositiveId(parsed);
+    cache.countdowns = readIdTable(sqlite, 'countdowns');
+    syncMaxIds();
     return cloneCountdowns(cache.countdowns);
   } catch (err) {
     return failCorruptData('countdowns.json', COUNTDOWNS_FILE, err);
@@ -1154,9 +1151,9 @@ function readCountdowns() {
 
 function writeCountdowns(countdowns) {
   const next = cloneCountdowns(countdowns);
-  atomicWriteJson(COUNTDOWNS_FILE, next);
+  writeIdTable(sqlite, 'countdowns', next);
   cache.countdowns = next;
-  cache.maxCountdownId = maxPositiveId(next);
+  syncMaxIds();
 }
 
 function getAllCountdowns() {
@@ -1238,14 +1235,15 @@ function migrateToTree(cats) {
 function readCategories() {
   if (cache.categories !== null) return cloneCategories(cache.categories);
   ensureDataDir();
-  if (!fs.existsSync(CATEGORIES_FILE)) {
-    fs.writeFileSync(CATEGORIES_FILE, JSON.stringify(DEFAULT_CATEGORIES, null, 2), 'utf-8');
-    cache.categories = cloneCategories(DEFAULT_CATEGORIES);
-    return cloneCategories(cache.categories);
-  }
   try {
-    let cats = JSON.parse(fs.readFileSync(CATEGORIES_FILE, 'utf-8'));
-    if (!Array.isArray(cats)) throw new Error('categories.json must contain an array');
+    const row = sqlite.prepare('SELECT body FROM categories WHERE id = 1').get();
+    if (!row) {
+      writeSingleton(sqlite, 'categories', DEFAULT_CATEGORIES);
+      cache.categories = cloneCategories(DEFAULT_CATEGORIES);
+      return cloneCategories(cache.categories);
+    }
+    let cats = parseJson(row.body, DEFAULT_CATEGORIES);
+    if (!Array.isArray(cats)) throw new Error('categories must contain an array');
     const normalizedCats = migrateToTree(cats);
     if (JSON.stringify(normalizedCats) !== JSON.stringify(cats)) {
       cats = normalizedCats;
@@ -1260,7 +1258,7 @@ function readCategories() {
 
 function writeCategories(cats) {
   const next = cloneCategories(cats);
-  atomicWriteJson(CATEGORIES_FILE, next);
+  writeSingleton(sqlite, 'categories', next);
   cache.categories = next;
 }
 
@@ -2001,8 +1999,32 @@ function mergeCategoryTrees(existing, incoming) {
   return merged;
 }
 
+function syncMaxIds() {
+  const maxLog = sqlite.prepare('SELECT MAX(id) AS maxId FROM logs').get();
+  const maxTodo = sqlite.prepare('SELECT MAX(id) AS maxId FROM todos').get();
+  const maxCountdown = sqlite.prepare('SELECT MAX(id) AS maxId FROM countdowns').get();
+  cache.maxLogId = Number(maxLog?.maxId) || 0;
+  cache.maxTodoId = Number(maxTodo?.maxId) || 0;
+  cache.maxCountdownId = Number(maxCountdown?.maxId) || 0;
+}
+
+function closeDatabase() {
+  closeAccountDatabase(DATA_DIR);
+  resetCache();
+}
+
+function reopenDatabase() {
+  closeAccountDatabase(DATA_DIR);
+  sqlite = openAccountDatabase(DATA_DIR);
+  resetCache();
+}
+
 return {
   dataDir: DATA_DIR,
+  get sqlite() { return sqlite; },
+  close: closeDatabase,
+  reopen: reopenDatabase,
+  accountDbName: ACCOUNT_DB_NAME,
   getAll,
   getAllUnpaginated,
   getById,

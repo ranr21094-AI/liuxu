@@ -22,8 +22,7 @@ function syncAccountPanel() {
   if (adminButton) adminButton.hidden = currentUser.role !== 'admin';
   const accountName = $('#accountName');
   if (accountName) accountName.textContent = name;
-  const initial = $('#accountInitial');
-  if (initial) initial.textContent = [...name][0] || '用';
+  $('#accountButton')?.classList.toggle('is-admin', currentUser.role === 'admin');
   const role = $('#accountRole');
   if (role) role.textContent = currentUser.role === 'admin' ? '管理员账户' : '普通账户';
   window.dispatchEvent(new CustomEvent('account-updated', { detail: currentUser }));
@@ -68,7 +67,6 @@ async function saveProfile() {
 async function changePassword() {
   const currentPassword = $('#accountCurrentPassword')?.value || '';
   const newPassword = $('#accountNewPassword')?.value || '';
-  if (newPassword.length < 10) return showToast('新密码至少需要 10 个字符', 'error');
   if (newPassword !== $('#accountConfirmPassword')?.value) return showToast('两次输入的新密码不一致', 'error');
   try {
     const res = await apiFetch('/api/auth/password', {
@@ -105,7 +103,7 @@ function userCard(user) {
         <button class="secondary-action compact" type="button" data-action="toggle-reset">重置密码</button>
       </div>
       <div class="managed-user-reset" hidden>
-        <label>新的临时密码<input data-field="temporary_password" type="password" minlength="10" maxlength="128" autocomplete="new-password"></label>
+        <label>新的临时密码<input data-field="temporary_password" type="password" maxlength="128" autocomplete="new-password"></label>
         <button class="primary-action compact" type="button" data-action="reset-password">确认重置并撤销旧会话</button>
       </div>
     </article>`;
@@ -164,7 +162,6 @@ async function saveManagedUser(card) {
 
 async function resetManagedPassword(card) {
   const password = card.querySelector('[data-field="temporary_password"]').value;
-  if (password.length < 10) throw new Error('临时密码至少需要 10 个字符');
   const res = await apiFetch(`/api/admin/users/${encodeURIComponent(card.dataset.userId)}/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

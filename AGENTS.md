@@ -16,8 +16,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ### Backend (`server.js` + `database.js` + `lib/`)
 
 - Express serves `public/` statically and provides a REST API.
-- **JSON-file storage** (not SQLite). All data in `data/*.json` per account (auto-created on first write).
-- **`database.js`** exports `createDatabase(dataDir)` for isolated test/workspaces; the default export is the root `DATA_DIR` instance.
+- **SQLite storage** via `better-sqlite3`: per-account `{dataDir}/schedule.db`, global auth `{DATA_DIR}/users.db`. Binary assets remain on disk (`uploads/`, `knowledge-files/`, `agent-assets/`).
+- **`lib/db/`**: connection pool, schema migrations, one-time JSON import (`import-json.js`, marker `.sqlite-migrated.json`, backups `*.pre-sqlite-bak`).
+- **`database.js`** exports `createDatabase(dataDir)` for isolated test/workspaces; the default export is the root `DATA_DIR` instance. `backup()` / `restore()` still expose legacy JSON-shaped objects for compatibility.
 - Route modules under `lib/http/` (`mount.js` wires knowledge, workspace, backup, agent, computer).
 - Route ordering is **critical**: `PUT /api/logs/reorder` and `PUT /api/todos/reorder` must be defined **before** their `/:id` routes.
 - ID generation: simple `Math.max(...ids) + 1` — no auto-increment.
@@ -26,29 +27,24 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ### Knowledge model (notes-only in UI)
 
-- All user-facing content is **knowledge notes** (`note:<id>`) or **imported files** (`file:<id>`) in `knowledge-documents.json`.
-- Legacy `logs.json` entries are **auto-migrated** to native notes on first knowledge API access (`lib/knowledge/migrate-logs.js`); backup copy at `logs.migrated.json`, then `logs.json` is cleared.
+- All user-facing content is **knowledge notes** (`note:<id>`) or **imported files** (`file:<id>`) in the `knowledge_documents` SQLite table.
+- Legacy `logs.json` entries are **auto-migrated** to native notes on first knowledge API access (`lib/knowledge/migrate-logs.js`); backup copy at `logs.migrated.json`, then legacy logs are cleared from SQLite.
 - There is **no** `log:<id>` virtual adapter and **no** workbench UI for hours/pinned/CSV export.
 - `/api/logs` remains as a **compatibility API** (tests, old scripts); new content should use `/api/knowledge/documents`.
 
 ### Data Files (auto-created in `{dataDir}/`)
 
-| File | Purpose |
+| File / DB | Purpose |
 |------|---------|
-| `logs.json` | Legacy work logs; emptied after migration (see `logs.migrated.json`) |
+| `schedule.db` | Per-account SQLite database (todos, logs, knowledge, agent, settings, …) |
+| `users.db` | Global auth users + sessions (replaces `users.json` / `auth-sessions.json`) |
+| `.sqlite-migrated.json` | One-time JSON→SQLite migration marker |
+| `*.pre-sqlite-bak` | JSON backups taken during migration |
 | `logs.migrated.json` | One-time backup of pre-migration logs |
 | `.logs-migrated.json` | Migration marker (`log id → note id`) |
-| `knowledge-documents.json` | Notes and imported file metadata |
 | `knowledge-files/` | Imported attachment binaries |
-| `todos.json` / `countdowns.json` | Todos and countdowns |
-| `categories.json` | Knowledge base / folder tree |
-| `agent-sessions.json` / `agent-runs.json` / `agent-memories.json` | Agent runtime |
-| `ai-settings.json` | Encrypted model keys and provider cards (`customProviders[]` with `supportsMedia` / `thinking` / `zdr`) |
-| `.builtin-providers-migrated.json` | One-time marker: built-in provider keys converted into custom provider entries |
-| `ai-chats.migrated.json` | 旧独立 AI 对话一次性备份（迁移后 `ai-chats.json` 为空） |
-| `.ai-chats-migrated.json` | 旧对话 id → Agent session id 映射标记 |
 | `uploads/` | Markdown inline images; served at `/uploads/` |
-| `private-uploads.json` | Diary image protection markers |
+| `agent-assets/` | Agent-generated binaries |
 
 Removed: `photo-wall.json`, `/api/photo-wall*`, `/api/export` (CSV), standalone AI chat pages.
 
@@ -63,7 +59,7 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 - **State**: Module-local `state` in `workbench.js` — no framework.
 - **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images via `#insertImageButton` → `POST /api/upload`.
 - **Settings → 数据**: JSON/ZIP backup and restore (`workbench-backup.js`).
-- **Settings → Memory**: tunables in `ai-settings.json` via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps). L2/L3 不再全量注入 Agent；仅 L0 规则在 system prompt。Agent 通过 `memory.list` / `memory.search` / `memory.read` 按需读取（`memoryContextMaxL2/L3` 保留兼容但不再控制注入）。
+- **Settings → Memory**: tunables in the `ai_settings` SQLite row via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps). L2/L3 不再全量注入 Agent；仅 L0 规则在 system prompt。Agent 通过 `memory.list` / `memory.search` / `memory.read` 按需读取（`memoryContextMaxL2/L3` 保留兼容但不再控制注入）。
 - **Settings → 模型**: provider cards only (built-in providers removed from the UI; legacy keys auto-migrated once at startup by `lib/agent/migrate-builtin-providers.js`, marker `.builtin-providers-migrated.json`). Each card holds baseUrl / apiFormat / apiKey / models (fetch via `POST /api/ai/custom-providers/models`, cap 200) plus capability flags `supportsMedia` / `thinking` (''/deepseek/k3/optional/fixed) / `zdr`; provider count is uncapped. `resolveAiModelProfile` maps these onto the profile so thinking params / ZDR work identically for migrated providers.
 - **Settings → 模型 → 高级 Agent 限制**: `lib/agent/agent-settings.js` — `agentDelegateMaxRounds`（子 run 独立轮数/tool 预算，与父 run 脱钩），护栏（连续失败、只读并发、重复写检测），`web.fetch` 上限，以及 `knowledge.search` / `knowledge.list` / `memory.list` / `memory.search` 条数限制。`web.search` 同 session 24h 内相同 query 会缓存（最多 32 条），同 run 内重复请求直接返回缓存并跳过审批。Merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`.
 - **Diary**: Unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.

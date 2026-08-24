@@ -17,10 +17,14 @@ const express = require('express');
 
 function tempDb(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
   const { createDatabase } = require('../database.js');
-  return createDatabase(dir);
+  const db = createDatabase(dir);
+  t.after(() => {
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  return db;
 }
 
 function openKnowledge(db) {

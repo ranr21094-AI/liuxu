@@ -23,14 +23,17 @@ function validPngBlob() {
   return new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' });
 }
 
+const { cleanupTempDataDir, readAuthUsers, readAuthSessions, readAiSettingsRaw, corruptAccountDatabase, corruptAuthDatabase, closeAllDatabases, openAuthDatabase, ACCOUNT_DB_NAME, AUTH_DB_NAME, accountDbPath, authDbPath } = require('./db-temp');
+
 function makeTempDataDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'schedule-test-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => cleanupTempDataDir(dir));
   return dir;
 }
 
 function clearAppModules() {
-  for (const file of ['server.js', 'database.js', 'secret-store.js']) {
+  try { closeAllDatabases(); } catch { /* ignore */ }
+  for (const file of ['server.js', 'database.js', 'secret-store.js', 'auth-store.js', 'lib/db/connection.js']) {
     delete require.cache[require.resolve(path.join(ROOT, file))];
   }
 }
@@ -71,6 +74,7 @@ function loadFreshApp(t, { authToken, deepseekApiKey, deepseekBaseUrl, deepseekD
 
   t.after(() => new Promise(resolve => server.close(resolve)));
   t.after(() => {
+    db.close();
     delete process.env.DATA_DIR;
     delete process.env.AI_SECRETS_KEY_FILE;
     delete process.env.AUTH_TOKEN;
@@ -107,8 +111,10 @@ function loadFreshDb(t) {
   process.env.DATA_DIR = dataDir;
   process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
   clearAppModules();
-  const db = require(path.join(ROOT, 'database.js'));
+  const { createDatabase } = require(path.join(ROOT, 'database.js'));
+  const db = createDatabase(dataDir);
   t.after(() => {
+    db.close();
     delete process.env.DATA_DIR;
     delete process.env.AI_SECRETS_KEY_FILE;
     clearAppModules();
@@ -585,12 +591,12 @@ test('account registry hashes credentials, persists sessions, expires them, and 
   const session = store.createSession(admin.id);
   assert.equal(session.expires_at - clock, SESSION_TTL_MS);
 
-  const usersText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
-  const sessionsText = fs.readFileSync(path.join(dataDir, 'auth-sessions.json'), 'utf8');
-  assert.match(usersText, /scrypt\$/);
-  assert.doesNotMatch(usersText, /123456/);
-  assert.doesNotMatch(sessionsText, new RegExp(session.token));
-  assert.match(sessionsText, /token_hash/);
+  const users = readAuthUsers(dataDir);
+  assert.match(users[0].password_hash, /scrypt\$/);
+  assert.doesNotMatch(JSON.stringify(users), /123456/);
+  const sessions = readAuthSessions(dataDir);
+  assert.doesNotMatch(JSON.stringify(sessions), new RegExp(session.token));
+  assert.match(JSON.stringify(sessions), /token_hash/);
 
   const restarted = createAuthStore({ dataDir, bootstrapPassword: 'changed-env-value', now: () => clock });
   assert.equal(restarted.getSession(session.token)?.user.id, admin.id);
@@ -606,15 +612,18 @@ test('account registry hashes credentials, persists sessions, expires them, and 
     /AUTH_TOKEN is required to initialize the first administrator/,
   );
 
-  fs.writeFileSync(path.join(dataDir, 'auth-sessions.json'), '{broken', 'utf8');
-  assert.throws(() => createAuthStore({ dataDir, now: () => clock }), /Failed to read auth-sessions\.json/);
-  assert.equal(fs.readdirSync(dataDir).some(name => name.startsWith('auth-sessions.json.corrupt-')), true);
+  const { closeAllDatabases } = require('./db-temp');
+  closeAllDatabases();
+  corruptAuthDatabase(dataDir);
+  assert.throws(() => createAuthStore({ dataDir, now: () => clock }), /Failed to read users\.json/);
+  assert.equal(fs.readdirSync(dataDir).some(name => name.startsWith(`${AUTH_DB_NAME}.corrupt-`)), true);
 
   const corruptUsersDir = makeTempDataDir(t);
   createAuthStore({ dataDir: corruptUsersDir, bootstrapPassword: 'temporary-password' });
-  fs.writeFileSync(path.join(corruptUsersDir, 'users.json'), '{}', 'utf8');
+  closeAllDatabases();
+  corruptAuthDatabase(corruptUsersDir);
   assert.throws(() => createAuthStore({ dataDir: corruptUsersDir }), /Failed to read users\.json/);
-  assert.equal(fs.readdirSync(corruptUsersDir).some(name => name.startsWith('users.json.corrupt-')), true);
+  assert.equal(fs.readdirSync(corruptUsersDir).some(name => name.startsWith(`${AUTH_DB_NAME}.corrupt-`)), true);
 });
 
 test('first account migration validates existing data before creating users.json', (t) => {
@@ -639,13 +648,13 @@ test('first account migration validates existing data before creating users.json
   });
 
   assert.throws(() => require(path.join(ROOT, 'server.js')), /Failed to read todos\.json/);
-  assert.equal(fs.existsSync(path.join(dataDir, 'users.json')), false);
+  assert.equal(fs.existsSync(authDbPath(dataDir)), false);
   assert.equal(fs.readFileSync(path.join(dataDir, 'todos.json'), 'utf8'), '{broken');
   assert.equal(fs.readdirSync(dataDir).some(name => name.startsWith('todos.json.corrupt-')), true);
 });
 
 test('dedicated login and administrator-managed account lifecycle enforce forced password changes', async (t) => {
-  const { baseUrl, dataDir, server } = loadFreshApp(t, { authToken: '123456' });
+  const { baseUrl, dataDir, server, db } = loadFreshApp(t, { authToken: '123456' });
 
   const root = await fetch(`${baseUrl}/?from=calendar`, { redirect: 'manual' });
   assert.equal(root.status, 302);
@@ -737,6 +746,10 @@ test('dedicated login and administrator-managed account lifecycle enforce forced
   })).status, 200);
 
   await new Promise(resolve => server.close(resolve));
+  process.env.DATA_DIR = dataDir;
+  process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
+  openAuthDatabase(dataDir).pragma('wal_checkpoint(TRUNCATE)');
+  closeAllDatabases();
   process.env.AUTH_TOKEN = 'different-bootstrap-value';
   clearAppModules();
   const { app: restartedApp } = require(path.join(ROOT, 'server.js'));
@@ -749,8 +762,8 @@ test('dedicated login and administrator-managed account lifecycle enforce forced
   assert.equal((await loginAccount(restartedUrl, 'admin', 'different-bootstrap-value')).response.status, 401);
   assert.equal((await loginAccount(restartedUrl, 'admin', adminPassword)).response.status, 200);
 
-  const registryText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
-  assert.doesNotMatch(registryText, /123456|admin-password-2026|member-password-2026|member-reset-2026/);
+  const storedUsers = readAuthUsers(dataDir);
+  assert.doesNotMatch(JSON.stringify(storedUsers), /123456|admin-password-2026|member-password-2026|member-reset-2026/);
 });
 
 test('login is limited to five attempts per IP and uses a generic credential error', async (t) => {
@@ -836,7 +849,7 @@ test('logs, todos, countdowns, categories, AI state, reminders, uploads, and bac
     method: 'PUT', body: { enabled: false, recipientEmail: 'member@example.com', sendTime: '09:20' },
   })).status, 200);
 
-  const registry = JSON.parse(fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8')).users;
+  const registry = readAuthUsers(dataDir);
   const memberRecord = registry.find(user => user.id === member.id);
   const adminUploads = path.join(dataDir, 'uploads');
   const memberUploads = path.join(dataDir, 'accounts', memberRecord.storage_key, 'uploads');
@@ -922,7 +935,7 @@ test('logs, todos, countdowns, categories, AI state, reminders, uploads, and bac
   assert.equal(memberStillExists.status, 200);
   assert.equal((await memberStillExists.json()).title, 'member restored log');
 
-  const registryText = fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8');
+  const registryText = JSON.stringify(readAuthUsers(dataDir));
   assert.doesNotMatch(registryText, /admin workspace log|member workspace log|AI profile|AI history/);
 });
 
@@ -1130,8 +1143,8 @@ test('AI settings persist to local data storage and validate options', async (t)
     memoryContextMaxL2: 30,
     customProviders: [],
   });
-  assert.equal(fs.existsSync(path.join(dataDir, 'ai-settings.json')), true);
-  const encryptedSettings = fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8');
+  assert.equal(fs.existsSync(accountDbPath(dataDir)), true);
+  const encryptedSettings = JSON.stringify(readAiSettingsRaw(dataDir));
   assert.doesNotMatch(encryptedSettings, /sk-local-settings|sk-moonshot-settings|sk-or-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
   assert.match(encryptedSettings, /enc:v1:/);
   assert.equal(fs.existsSync(path.join(dataDir, 'ai-secrets.key')), true);
@@ -1150,7 +1163,7 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.equal(preservedBody.agentFileReadMaxMb, 64);
   assert.equal(preservedBody.memoryRefreshMaxProposals, 12);
   assert.equal(preservedBody.memoryContextMaxL2, 30);
-  assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings/);
+  assert.doesNotMatch(JSON.stringify(readAiSettingsRaw(dataDir)), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings/);
 
   const cleared = await fetch(`${baseUrl}/api/ai/settings`, {
     method: 'PUT',
@@ -1162,7 +1175,7 @@ test('AI settings persist to local data storage and validate options', async (t)
   assert.equal(clearedBody.apiKeyConfigured, false);
   assert.equal(clearedBody.moonshotApiKeyConfigured, false);
   assert.equal(clearedBody.openrouterApiKeyConfigured, false);
-  assert.doesNotMatch(fs.readFileSync(path.join(dataDir, 'ai-settings.json'), 'utf8'), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
+  assert.doesNotMatch(JSON.stringify(readAiSettingsRaw(dataDir)), /sk-local-settings|sk-moonshot-settings|sk-or-local-settings|tvly-local-settings|pplx-local-settings|seedream-local-settings/);
 
   for (const body of [
     { model: 'bad-model' },
@@ -1524,10 +1537,10 @@ test('OpenRouter discovers account models and preserves provider-specific reason
 test('AI settings migrate plaintext secrets and fail closed when the encryption key is missing or wrong', (t) => {
   const dataDir = makeTempDataDir(t);
   const keyFile = path.join(dataDir, 'ai-secrets.key');
-  const settingsFile = path.join(dataDir, 'ai-settings.json');
   process.env.DATA_DIR = dataDir;
   process.env.AI_SECRETS_KEY_FILE = keyFile;
-  fs.writeFileSync(settingsFile, JSON.stringify({
+  fs.writeFileSync(path.join(dataDir, 'logs.json'), '[]', 'utf8');
+  fs.writeFileSync(path.join(dataDir, 'ai-settings.json'), JSON.stringify({
     apiKey: 'sk-plaintext-deepseek',
     moonshotApiKey: 'sk-plaintext-moonshot',
     openrouterApiKey: 'sk-or-plaintext-openrouter',
@@ -1547,7 +1560,7 @@ test('AI settings migrate plaintext secrets and fail closed when the encryption 
   const migrated = freshDb.getAiSettings();
   assert.equal(migrated.apiKey, 'sk-plaintext-deepseek');
   assert.equal(migrated.openrouterApiKey, 'sk-or-plaintext-openrouter');
-  const encrypted = fs.readFileSync(settingsFile, 'utf8');
+  const encrypted = JSON.stringify(readAiSettingsRaw(dataDir));
   assert.match(encrypted, /enc:v1:/);
   assert.doesNotMatch(encrypted, /plaintext/);
   const validKey = fs.readFileSync(keyFile);
@@ -1649,7 +1662,7 @@ test('log pinning persists and is promoted only within category-filtered results
   assert.equal(createdPinned.status, 201);
   assert.equal((await createdPinned.json()).pinned, true);
 
-  const stored = JSON.parse(fs.readFileSync(path.join(dataDir, 'logs.json'), 'utf8'));
+  const stored = db.backup().logs;
   assert.equal(stored.find(item => item.id === firstPinned.id).pinned, true);
   assert.equal(stored.find(item => item.id === nestedPinned.id).pinned, false);
 });
@@ -1747,7 +1760,7 @@ test('diary images require unlocked cookie and remain private after reclassifica
 });
 
 test('historical diary image references are protected without a saved private marker', async (t) => {
-  const { baseUrl, dataDir } = loadFreshApp(t);
+  const { db, baseUrl } = loadFreshApp(t);
   const markdownForm = new FormData();
   markdownForm.append('image', validPngBlob(), 'markdown.png');
   const markdownImage = await (await fetch(`${baseUrl}/api/upload`, {
@@ -1761,15 +1774,13 @@ test('historical diary image references are protected without a saved private ma
     body: htmlForm,
   })).json();
 
-  fs.writeFileSync(path.join(dataDir, 'logs.json'), JSON.stringify([{
-    id: 1,
+  db.create({
     title: 'historical',
     content: `![](${markdownImage.url})\n<img src="${htmlImage.url}">`,
     category: DIARY_CATEGORY,
     hours: 0,
     log_date: '2026-05-16',
-    sort_order: 0,
-  }]), 'utf8');
+  });
 
   assert.equal((await fetch(`${baseUrl}${markdownImage.url}`)).status, 403);
   assert.equal((await fetch(`${baseUrl}${htmlImage.url}`)).status, 403);
@@ -1850,11 +1861,10 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
 
 test('corrupt JSON data fails closed and is preserved for recovery', (t) => {
   const db = loadFreshDb(t);
-  const dataFile = path.join(process.env.DATA_DIR, 'logs.json');
-  fs.writeFileSync(dataFile, '{not-json', 'utf8');
-  assert.throws(() => db.getAll(), /Failed to read logs\.json/);
-  assert.equal(fs.readFileSync(dataFile, 'utf8'), '{not-json');
-  assert.equal(fs.readdirSync(process.env.DATA_DIR).some(name => /^logs\.json\.corrupt-.*\.bak$/.test(name)), true);
+  corruptAccountDatabase(process.env.DATA_DIR);
+  db.resetCache();
+  assert.throws(() => db.reopen(), /Failed to read logs\.json/);
+  assert.equal(fs.readdirSync(process.env.DATA_DIR).some(name => /^schedule\.db\.corrupt-.*\.bak$/.test(name)), true);
 });
 
 test('countdown API validates and persists independent countdown entries', async (t) => {
@@ -1876,7 +1886,7 @@ test('countdown API validates and persists independent countdown entries', async
   assert.equal(entry.id, 1);
   assert.equal(entry.title, '旅行出发');
   assert.equal(entry.repeat_yearly, false);
-  assert.equal(fs.existsSync(path.join(dataDir, 'countdowns.json')), true);
+  assert.equal(fs.existsSync(accountDbPath(dataDir)), true);
 
   const updated = await fetch(`${baseUrl}/api/countdowns/${entry.id}`, {
     method: 'PUT',
@@ -1906,11 +1916,10 @@ test('countdown API validates and persists independent countdown entries', async
 
 test('corrupt countdown storage fails closed and preserves a recovery copy', (t) => {
   const db = loadFreshDb(t);
-  const file = path.join(process.env.DATA_DIR, 'countdowns.json');
-  fs.writeFileSync(file, '{bad-countdowns', 'utf8');
-  assert.throws(() => db.getAllCountdowns(), /Failed to read countdowns\.json/);
-  assert.equal(fs.readFileSync(file, 'utf8'), '{bad-countdowns');
-  assert.equal(fs.readdirSync(process.env.DATA_DIR).some(name => /^countdowns\.json\.corrupt-.*\.bak$/.test(name)), true);
+  corruptAccountDatabase(process.env.DATA_DIR);
+  db.resetCache();
+  assert.throws(() => db.reopen(), /Failed to read logs\.json/);
+  assert.equal(fs.readdirSync(process.env.DATA_DIR).some(name => /^schedule\.db\.corrupt-.*\.bak$/.test(name)), true);
 });
 
 test('todo API stores due date, priority, recurrence, and notes', async (t) => {
@@ -2180,10 +2189,15 @@ test('todo reminder settings API validates mail readiness and persists across re
 });
 
 test('todo reminder mail builder includes category titles due dates and notes in utf-8 text', (t) => {
+  const dataDir = makeTempDataDir(t);
+  process.env.DATA_DIR = dataDir;
+  process.env.AI_SECRETS_KEY_FILE = path.join(dataDir, 'ai-secrets.key');
   process.env.QQ_EMAIL_ACCOUNT = 'sender@qq.com';
   process.env.QQ_EMAIL_AUTH_CODE = 'auth-code';
   clearAppModules();
   t.after(() => {
+    delete process.env.DATA_DIR;
+    delete process.env.AI_SECRETS_KEY_FILE;
     delete process.env.QQ_EMAIL_ACCOUNT;
     delete process.env.QQ_EMAIL_AUTH_CODE;
     clearAppModules();
@@ -2573,7 +2587,9 @@ test('login and workbench account settings keep cookie auth and admin user manag
   const loginStyle = fs.readFileSync(path.join(ROOT, 'public', 'login.css'), 'utf8');
 
   assert.match(loginSource, /id="loginForm"[\s\S]*autocomplete="username"[\s\S]*autocomplete="current-password"/);
-  assert.match(loginSource, /id="passwordChangeForm"[\s\S]*minlength="10"[\s\S]*id="loginError" role="alert"/);
+  assert.match(loginSource, /id="passwordChangeForm"[\s\S]*id="loginError" role="alert"/);
+  assert.doesNotMatch(loginSource, /minlength="10"/);
+  assert.doesNotMatch(loginSource, /id="passwordHint"/);
   assert.doesNotMatch(indexSource, /loginOverlay|login-overlay|legacy\.html/);
   assert.match(indexSource, /data-settings-nav="account"/);
   assert.match(indexSource, /id="accountDisplayNameInput"[\s\S]*id="btnSaveAccountProfile"/);
@@ -2591,8 +2607,14 @@ test('login and workbench account settings keep cookie auth and admin user manag
   assert.match(workbenchSource, /openSettings\('account'\)/);
   assert.match(authSource, /window\.location\.assign\(`\/login\?\$\{params\.toString\(\)\}`\);/);
   assert.doesNotMatch(`${authSource}\n${workbenchSource}\n${accountsSource}`, /sessionStorage|getAuthToken|site_token|Authorization[^\n]*Bearer/);
-  assert.match(loginStyle, /\[data-theme="dark"\]/);
+  assert.match(loginSource, /Agent 工作台/);
+  assert.match(loginStyle, /html\[data-theme="dark"\]/);
   assert.match(loginStyle, /@media \(max-width: 520px\)/);
+  assert.doesNotMatch(indexSource, /id="accountInitial"/);
+  assert.match(indexSource, /id="accountButton"[\s\S]*account-icon-user/);
+  assert.match(workbenchSource, /classList\.toggle\('is-admin'/);
+  assert.match(accountsSource, /classList\.toggle\('is-admin'/);
+  assert.match(indexSource, /sidebar-toolbar-row[\s\S]*agent-sidebar-toolbar[\s\S]*id="newSessionButton"[\s\S]*<svg/);
 });
 
 test('todo UI uses drag sorting, new priorities, and hides notes previews', () => {
@@ -3156,12 +3178,15 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /loadKnowledgeTree/);
   assert.match(source, /setTimeout\(\(\) => saveDocument\(\), 800\)/);
   assert.match(styles, /grid-template-columns:\s*var\(--sidebar-width\) minmax\(0, 1fr\)/);
-  assert.match(styles, /\.brand-home[^{]*\{[^}]*flex:\s*0 0 auto/);
+  assert.match(styles, /\.document-list-actions/);
+  assert.equal(document.querySelector('#knowledgeDocumentActions') !== null, true);
+  assert.equal(document.querySelector('#newNoteButton') !== null, true);
+  assert.equal(document.querySelector('#importFileButton') !== null, true);
+  assert.match(source, /syncKnowledgeDocumentActions/);
   assert.match(styles, /\.sidebar-scroll\s*\{[\s\S]*overflow-y:\s*auto;/);
   assert.match(styles, /\.note-editor\s*\{[\s\S]*overflow-y:\s*auto;/);
   assert.match(styles, /\.document-folder-row/);
   assert.match(styles, /\.file-original-panel/);
-  assert.match(source, /brandHome\.setAttribute\('href', mode === 'knowledge' \? '#knowledge' : mode === 'memory' \? '#memory' : mode === 'todos' \? '#todos' : '#agent'\)/);
   assert.match(styles, /grid-template-columns:\s*auto auto auto auto/);
   assert.match(styles, /@media \(max-width: 840px\)[\s\S]*body\.sidebar-visible \.workspace-sidebar/);
   assert.equal(document.querySelector('#sidebarToggle') !== null, true);

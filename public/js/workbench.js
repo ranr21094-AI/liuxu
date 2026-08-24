@@ -90,6 +90,8 @@ const state = {
   sessions: [],
   archivedSessions: [],
   activeSession: null,
+  sessionDetailCache: new Map(),
+  sessionOpenPrefetch: null,
   sessionRuns: new Map(),
   memoryRefreshSource: null,
   documents: [],
@@ -196,6 +198,50 @@ function updateSessionActiveHighlight(activeId = state.activeSession?.id || '') 
   sessionRowElement(activeId)?.classList.add('active');
 }
 
+function sessionToSummary(session) {
+  const messages = Array.isArray(session.messages) ? session.messages : [];
+  const lastMessage = messages.at(-1);
+  const activeRun = session.activeRun
+    || (session.latestRun && ACTIVE_RUN_STATES.has(session.latestRun.status)
+      ? { id: session.latestRun.id, status: session.latestRun.status }
+      : null);
+  return {
+    id: session.id,
+    title: session.title || '新会话',
+    status: session.status === 'archived' ? 'archived' : 'active',
+    messageCount: Number.isFinite(Number(session.messageCount)) && session.messageCount >= 0
+      ? Number(session.messageCount)
+      : messages.length,
+    lastMessagePreview: typeof lastMessage?.content === 'string'
+      ? lastMessage.content.replace(/\s+/g, ' ').trim().slice(0, 120)
+      : (session.lastMessagePreview || ''),
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    activeRun: activeRun ? { id: activeRun.id, status: activeRun.status } : null,
+  };
+}
+
+function prependSessionSummary(session) {
+  const summary = sessionToSummary(session);
+  state.sessions = [summary, ...state.sessions.filter(item => item.id !== summary.id)];
+}
+
+function showSessionLoadingPlaceholder() {
+  const list = $('#agentMessageList');
+  list.innerHTML = `
+    <div class="agent-empty-state agent-session-loading" aria-busy="true">
+      <span class="empty-mark" aria-hidden="true">…</span>
+      <p>加载会话中</p>
+    </div>`;
+  list.dataset.sessionId = '';
+  list.dataset.messageFp = '';
+}
+
+function invalidateSessionDetailCache(sessionId = '') {
+  if (sessionId) state.sessionDetailCache.delete(sessionId);
+  else state.sessionDetailCache.clear();
+}
+
 function updateSessionRowMeta(sessionId) {
   const session = state.sessions.find(item => item.id === sessionId);
   const row = sessionRowElement(sessionId);
@@ -240,6 +286,7 @@ function patchSessionSummaryAfterUserMessage(sessionId, content) {
     state.activeSession.updatedAt = summary.updatedAt;
     applyAgentTopbar(state.activeSession);
   }
+  invalidateSessionDetailCache(sessionId);
   updateSessionRowMeta(sessionId);
 }
 
@@ -791,11 +838,7 @@ function setModeUI(mode) {
   });
   document.querySelectorAll('[data-sidebar-mode]').forEach(panel => { panel.hidden = panel.dataset.sidebarMode !== mode; });
   document.querySelectorAll('[data-main-mode]').forEach(panel => { panel.hidden = panel.dataset.mainMode !== mode; });
-  syncKnowledgeBrandActions();
-  const brandHome = document.querySelector('.brand-home');
-  if (brandHome) {
-    brandHome.setAttribute('href', mode === 'knowledge' ? '#knowledge' : mode === 'memory' ? '#memory' : mode === 'todos' ? '#todos' : '#agent');
-  }
+  syncKnowledgeDocumentActions();
   if (mode === 'agent') {
     applyAgentTopbar(state.activeSession);
   } else {
@@ -2395,7 +2438,7 @@ function buildAssistantMetaHtml(createdAt, model = '') {
   return `<div class="message-meta">${modelHtml}${MESSAGE_COPY_ACTION}${timeHtml}</div>`;
 }
 
-function addMessage(role, content, citations = [], attachments = [], { createdAt, model } = {}) {
+function addMessage(role, content, citations = [], attachments = [], { createdAt, model, scroll = true } = {}) {
   const list = $('#agentMessageList');
   list.querySelector('.agent-empty-state')?.remove();
   const article = document.createElement('article');
@@ -2420,7 +2463,7 @@ function addMessage(role, content, citations = [], attachments = [], { createdAt
     : `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>${buildAssistantMetaHtml(createdAt, model)}`;
   article.dataset.copyText = buildMessageCopyText(content, role === 'user' ? attachments : []);
   list.append(article);
-  scrollMessagesToBottom();
+  if (scroll) scrollMessagesToBottom();
   return article;
 }
 
@@ -2430,6 +2473,37 @@ function sessionMessagesFingerprint(session) {
   const last = messages.at(-1);
   const lastContent = typeof last?.content === 'string' ? last.content.length : 0;
   return `${session?.id || ''}|${messages.length}|${lastContent}|${runs.length}|${session?.latestRun?.id || ''}|${session?.latestRun?.status || ''}`;
+}
+
+const SESSION_DETAIL_CACHE_MAX = 32;
+
+function cacheSessionDetail(session) {
+  if (!session?.id) return;
+  state.sessionDetailCache.set(session.id, {
+    data: session,
+    fingerprint: sessionMessagesFingerprint(session),
+    fetchedAt: Date.now(),
+  });
+  while (state.sessionDetailCache.size > SESSION_DETAIL_CACHE_MAX) {
+    const oldest = state.sessionDetailCache.keys().next().value;
+    state.sessionDetailCache.delete(oldest);
+  }
+}
+
+function getCachedSessionDetail(id) {
+  return state.sessionDetailCache.get(id)?.data || null;
+}
+
+function applySessionDetail(session, { force = false, scroll = true } = {}) {
+  state.activeSession = session;
+  applyAgentTopbar(session);
+  renderSessionMessages(session, { force, scroll });
+  updateSessionActiveHighlight(session.id);
+  syncSessionRunBadgesFromSummaries();
+  const entry = getSessionRunState(session.id);
+  if (entry?.needsReload) entry.needsReload = false;
+  syncActiveSessionRunUi(session);
+  ensureSessionRunSubscriptions();
 }
 
 function renderSessionMessages(session, { force = false } = {}) {
@@ -2464,10 +2538,14 @@ function renderSessionMessages(session, { force = false } = {}) {
   deduped.forEach(message => {
     if (message.role === 'assistant') {
       const at = lastRun?.completedAt;
-      addMessage('assistant', message.content, [], message.attachments || [], { createdAt: at, model: lastRun?.model });
+      addMessage('assistant', message.content, [], message.attachments || [], {
+        createdAt: at,
+        model: lastRun?.model,
+        scroll: false,
+      });
       return;
     }
-    addMessage(message.role, message.content, [], message.attachments || []);
+    addMessage(message.role, message.content, [], message.attachments || [], { scroll: false });
     if (message.role === 'user' && runIndex < runs.length) {
       lastRun = runs[runIndex];
       upsertRunTrace(lastRun.id === liveId ? { id: lastRun.id, trace: [] } : lastRun, { live: lastRun.id === liveId });
@@ -2495,30 +2573,54 @@ function showEmptySessionContent() {
 async function openSession(id, serial = state.routeSerial) {
   const prevId = state.activeSession?.id;
   const local = getSessionRunState(id);
+  updateSessionActiveHighlight(id);
+
   if (prevId === id && state.activeSession?.messages && !local?.needsReload) {
     syncActiveSessionRunUi(state.activeSession);
     applyAgentTopbar(state.activeSession);
-    updateSessionActiveHighlight(id);
     return;
   }
+
   if (prevId && prevId !== id) detachSessionRunUi(prevId);
+
+  let prefetched = null;
+  if (state.sessionOpenPrefetch?.id === id) {
+    prefetched = state.sessionOpenPrefetch;
+    state.sessionOpenPrefetch = null;
+  }
+
+  const canUseCache = !local?.needsReload && !prefetched;
+  const cached = canUseCache ? getCachedSessionDetail(id) : null;
+  const instant = prefetched || cached;
+
+  if (instant) {
+    applySessionDetail(instant, { force: Boolean(local?.needsReload) });
+    cacheSessionDetail(instant);
+    if (prefetched) return;
+  } else if (prevId !== id) {
+    showSessionLoadingPlaceholder();
+  }
+
   const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
   const data = await response.json().catch(() => ({}));
   if (serial !== state.routeSerial) return;
   if (!response.ok) {
     showToast(data.error || '会话不存在', 'error');
+    invalidateSessionDetailCache(id);
     await navigate('agent', '', {}, { replace: true });
     return;
   }
-  state.activeSession = data;
-  applyAgentTopbar(data);
-  renderSessionMessages(data, { force: Boolean(local?.needsReload) });
-  updateSessionActiveHighlight(id);
-  syncSessionRunBadgesFromSummaries();
-  const entry = getSessionRunState(id);
-  if (entry?.needsReload) entry.needsReload = false;
-  syncActiveSessionRunUi(data);
-  ensureSessionRunSubscriptions();
+
+  cacheSessionDetail(data);
+  const changed = !instant
+    || sessionMessagesFingerprint(data) !== sessionMessagesFingerprint(instant)
+    || Boolean(local?.needsReload);
+  if (changed) {
+    applySessionDetail(data, { force: Boolean(local?.needsReload) });
+  } else {
+    state.activeSession = data;
+    syncActiveSessionRunUi(data);
+  }
 }
 
 async function createSession(title = '新会话') {
@@ -2529,7 +2631,9 @@ async function createSession(title = '新会话') {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || '无法创建会话');
-  await loadSessions();
+  prependSessionSummary(data);
+  renderSessions();
+  state.sessionOpenPrefetch = { ...data, runs: [], latestRun: null };
   await navigate('agent', data.id);
   $('#agentInput').focus();
   return data;
@@ -3216,6 +3320,7 @@ function finishSessionRun(sessionId, { viewing = isViewingSession(sessionId) } =
     setSessionRunStatus(sessionId, '');
   } else {
     entry.needsReload = true;
+    invalidateSessionDetailCache(sessionId);
     updateSessionRunBadge(sessionId, '');
   }
 }
@@ -3359,6 +3464,7 @@ function patchSessionSummaryAfterAssistantMessage(sessionId, content) {
     state.activeSession.updatedAt = summary.updatedAt;
     applyAgentTopbar(state.activeSession);
   }
+  invalidateSessionDetailCache(sessionId);
   updateSessionRowMeta(sessionId);
 }
 
@@ -3470,18 +3576,19 @@ function isKnowledgeRoot() {
   return state.mode === 'knowledge' && !state.selectedKnowledgeBase;
 }
 
-function shouldShowKnowledgeBrandActions() {
+function shouldShowKnowledgeDocumentActions() {
   return state.mode === 'knowledge' && Boolean(state.selectedKnowledgeBase);
 }
 
-function syncKnowledgeBrandActions() {
-  const container = $('#knowledgeBrandActions');
+function syncKnowledgeDocumentActions() {
+  const container = $('#knowledgeDocumentActions');
   if (!container) return;
-  const show = shouldShowKnowledgeBrandActions();
+  const show = shouldShowKnowledgeDocumentActions();
   container.hidden = !show;
   container.classList.toggle('is-visible', show);
   if ('inert' in container) container.inert = !show;
   container.querySelectorAll('button').forEach(button => {
+    if (button.id === 'newFolderButton') return;
     button.disabled = !show;
     button.tabIndex = show ? 0 : -1;
     button.setAttribute('aria-hidden', show ? 'false' : 'true');
@@ -3490,7 +3597,7 @@ function syncKnowledgeBrandActions() {
 
 function setKnowledgeSidebarLevel() {
   if (state.mode !== 'knowledge') {
-    syncKnowledgeBrandActions();
+    syncKnowledgeDocumentActions();
     return;
   }
   const atRoot = isKnowledgeRoot();
@@ -3498,7 +3605,7 @@ function setKnowledgeSidebarLevel() {
   const insidePanel = $('#knowledgeInsidePanel');
   if (rootPanel) rootPanel.hidden = !atRoot;
   if (insidePanel) insidePanel.hidden = atRoot;
-  syncKnowledgeBrandActions();
+  syncKnowledgeDocumentActions();
   updateKnowledgeEmptyState();
 }
 
@@ -4359,8 +4466,8 @@ async function loadAccount() {
   state.user = await response.json();
   const name = state.user.display_name || state.user.username || '用户';
   $('#diaryUsername').value = state.user.username || name;
-  $('#accountInitial').textContent = [...name][0] || '用';
   $('#accountName').textContent = name;
+  $('#accountButton')?.classList.toggle('is-admin', state.user.role === 'admin');
   $('#accountRole').textContent = state.user.role === 'admin' ? '管理员账户' : '普通账户';
   syncComputerSettingsVisibility();
 }
@@ -4406,7 +4513,10 @@ function bindEvents() {
     const open = event.target.closest('[data-session-open]');
     const rename = event.target.closest('[data-session-rename]');
     const archive = event.target.closest('[data-session-archive]');
-    if (open) navigate('agent', open.dataset.sessionOpen);
+    if (open) {
+      updateSessionActiveHighlight(open.dataset.sessionOpen);
+      navigate('agent', open.dataset.sessionOpen);
+    }
     if (rename) startSessionRename(rename.dataset.sessionRename);
     if (archive) archiveSession(archive.dataset.sessionArchive);
   });

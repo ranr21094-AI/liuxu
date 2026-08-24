@@ -17,12 +17,20 @@ function openKnowledge(db) {
   return createKnowledgeService(db);
 }
 
+const { createTempDatabase, cleanupTempDataDir } = require('./db-temp');
+
+function writeKnowledgeStore(knowledge, mutator) {
+  const store = knowledge.readStore();
+  mutator(store);
+  knowledge.writeStore(store);
+}
+
+function readKnowledgeDocument(knowledge, id) {
+  return knowledge.readStore().documents.find(item => item.id === id);
+}
+
 function tempDb(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
-  const { createDatabase } = require('../database.js');
-  const db = createDatabase(dir);
+  const { db, dir } = createTempDatabase(t, 'knowledge-');
   db.create({ title: '公开日志', content: '混合检索正文苹果香蕉', category: '开发', hours: 2, pinned: true, log_date: '2026-05-16' });
   db.create({ title: '日记秘密', content: '不应出现', category: '日记', log_date: '2026-05-16' });
   return { db, dir };
@@ -327,13 +335,12 @@ test('legacy imported files infer preview kind from filename and hydrate missing
     status: 'active',
     diaryUnlocked: false,
   }).document;
-  const storePath = path.join(dir, 'knowledge-documents.json');
-  const store = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-  const record = store.documents.find(item => item.id === saved.id);
-  record.fileMeta.previewKind = '';
-  record.fileMeta.mimeType = '';
-  delete record.previewHtml;
-  fs.writeFileSync(storePath, JSON.stringify(store, null, 2));
+  writeKnowledgeStore(knowledge, (store) => {
+    const record = store.documents.find(item => item.id === saved.id);
+    record.fileMeta.previewKind = '';
+    record.fileMeta.mimeType = '';
+    delete record.previewHtml;
+  });
 
   const stale = knowledge.getDocument(saved.id);
   assert.equal(stale.fileMeta.previewKind, '');
@@ -453,19 +460,19 @@ test('knowledge documents filter supports exact folder match', () => {
 
 test('categories sub strings migrate to nested objects on read', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-cat-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => cleanupTempDataDir(dir));
   process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
-  const categoriesPath = path.join(dir, 'categories.json');
-  fs.writeFileSync(categoriesPath, JSON.stringify([
+  fs.writeFileSync(path.join(dir, 'categories.json'), JSON.stringify([
     { name: '开发', sub: ['前端', '后端'], calendar_day_visible: true },
   ], null, 2));
   const { createDatabase } = require('../database.js');
   const db = createDatabase(dir);
+  t.after(() => db.close());
   const cats = db.getAllCategories(false, false);
   const dev = cats.find(item => item.name === '开发');
   assert.ok(dev);
   assert.deepEqual(dev.sub.map(item => item.name), ['前端', '后端']);
-  const persisted = JSON.parse(fs.readFileSync(categoriesPath, 'utf8'));
+  const persisted = db.backup().categories;
   assert.equal(typeof persisted.find(item => item.name === '开发').sub[0], 'object');
   assert.equal(persisted.find(item => item.name === '开发').sub[0].name, '前端');
 });
@@ -505,12 +512,11 @@ test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', asy
     previewKind: 'image',
     diaryUnlocked: false,
   }).document;
-  const storePath = path.join(dir, 'knowledge-documents.json');
-  const store = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-  const record = store.documents.find(item => item.id === ascii.id);
-  record.title = mojibake;
-  record.fileMeta.filename = mojibake;
-  fs.writeFileSync(storePath, JSON.stringify(store, null, 2));
+  writeKnowledgeStore(knowledge, (store) => {
+    const record = store.documents.find(item => item.id === ascii.id);
+    record.title = mojibake;
+    record.fileMeta.filename = mojibake;
+  });
 
   const loaded = knowledge.getDocument(ascii.id);
   assert.equal(loaded.title, chinese);
@@ -519,8 +525,7 @@ test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', asy
   const hydrated = await knowledge.hydrateFilePreview(loaded);
   assert.equal(hydrated.title, chinese);
   assert.equal(hydrated.fileMeta.filename, chinese);
-  const persisted = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-  const after = persisted.documents.find(item => item.id === ascii.id);
+  const after = readKnowledgeDocument(knowledge, ascii.id);
   assert.equal(after.title, chinese);
   assert.equal(after.fileMeta.filename, chinese);
 });
@@ -665,17 +670,14 @@ test('docx hydrate does not rewrite store when preview html already exists', asy
     status: 'active',
     diaryUnlocked: false,
   }).document;
-  const storePath = path.join(dir, 'knowledge-documents.json');
-  const before = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-  const record = before.documents.find(item => item.id === saved.id);
-  const updatedAt = record.updatedAt;
-  const version = record.version;
+  const before = readKnowledgeDocument(knowledge, saved.id);
+  const updatedAt = before.updatedAt;
+  const version = before.version;
 
   const hydrated = await knowledge.hydrateFilePreview(knowledge.getDocument(saved.id));
   assert.match(hydrated.previewHtml, /预览正文/);
 
-  const after = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-  const persisted = after.documents.find(item => item.id === saved.id);
+  const persisted = readKnowledgeDocument(knowledge, saved.id);
   assert.equal(persisted.updatedAt, updatedAt);
   assert.equal(persisted.version, version);
 });

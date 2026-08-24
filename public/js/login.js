@@ -45,7 +45,7 @@ $('#loginForm').addEventListener('submit', async event => {
   setError();
   const username = $('#loginUsername').value.trim();
   const password = $('#loginPassword').value;
-  if (!username || !password) return setError('请输入用户名和密码');
+  if (!username) return setError('请输入用户名');
   const button = $('#loginSubmit');
   setBusy(button, true, '登录中…');
   try {
@@ -71,7 +71,6 @@ $('#passwordChangeForm').addEventListener('submit', async event => {
   setError();
   const currentPassword = $('#currentPassword').value;
   const newPassword = $('#newPassword').value;
-  if (newPassword.length < 10) return setError('新密码至少需要 10 个字符');
   if (newPassword !== $('#confirmPassword').value) return setError('两次输入的新密码不一致');
   const button = $('#passwordChangeSubmit');
   setBusy(button, true, '保存中…');
