@@ -7,6 +7,7 @@ const { createKnowledgeService } = require('../lib/knowledge/documents');
 const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
 const { createSearchIndex } = require('../lib/knowledge/search');
 const { treeForDocuments, documentSummary } = require('../lib/knowledge/routes');
+const { filterDocuments } = require('../lib/knowledge/filters');
 const { extractText, inferPreviewKind } = require('../lib/knowledge/import');
 const { chunkDocument } = require('../lib/knowledge/chunk');
 const { decodeUploadedFilename, contentDisposition } = require('../lib/util/filename');
@@ -348,7 +349,7 @@ test('chunks keep document id and heading', () => {
   assert.ok(chunks.some(chunk => chunk.heading === '步骤'));
 });
 
-test('knowledge notes reject stale versions and imported file bodies stay read-only', (t) => {
+test('knowledge notes reject stale versions and imported file content is editable', (t) => {
   const { db } = tempDb(t);
   const knowledge = openKnowledge(db);
   const created = knowledge.createNote({ title: '方案', content: '第一版' }).document;
@@ -368,8 +369,8 @@ test('knowledge notes reject stale versions and imported file bodies stay read-o
     status: 'active',
     diaryUnlocked: false,
   }).document;
-  const rejected = knowledge.updateDocument(file.id, { content: '改写原文', baseVersion: file.version });
-  assert.equal(rejected.status, 400);
+  const edited = knowledge.updateDocument(file.id, { content: '改写原文', baseVersion: file.version }).document;
+  assert.equal(edited.content, '改写原文');
   const annotation = knowledge.upsertAnnotation(file.id, { content: '我的批注' }).document;
   assert.equal(annotation.parentDocumentId, file.id);
   assert.equal(annotation.documentRole, 'annotation');
@@ -406,32 +407,67 @@ test('knowledge bases and folders normalize legacy paths for migrated notes', (t
   assert.equal(rewrittenLegacy.collectionPath, '投资/事件');
 });
 
-test('knowledge tree maps category roots to bases and children to folders', () => {
+test('knowledge tree maps category roots to bases and nested folder children', () => {
   const db = { isDiaryCategory: value => value === '日记' || String(value).startsWith('日记/') };
   const tree = treeForDocuments([
-    { name: '投资', sub: ['行业洞悉', '事件'] },
-    { name: '日记', sub: ['人'] },
+    { name: '投资', sub: [{ name: '行业洞悉', sub: [] }, { name: '事件', sub: [] }] },
+    { name: '日记', sub: [{ name: '人', sub: [] }] },
   ], [
     { knowledgeBase: '投资', folderPath: '行业洞悉', visibility: 'standard' },
     { knowledgeBase: '投资', folderPath: '', visibility: 'standard' },
   ], db);
   assert.deepEqual(tree.map(item => item.name), ['投资', '日记']);
   assert.equal(tree[0].documentCount, 2);
-  assert.equal(tree[0].folders.find(item => item.name === '行业洞悉').documentCount, 1);
+  const folder = tree[0].folders.find(item => item.name === '行业洞悉');
+  assert.ok(folder);
+  assert.equal(folder.path, '行业洞悉');
+  assert.equal(folder.documentCount, 1);
+  assert.ok(Array.isArray(folder.children));
   assert.equal(tree[1].visibility, 'diary');
 });
 
-test('knowledge tree folder counts include nested folder paths', () => {
+test('knowledge tree folder counts distinguish direct and subtree totals', () => {
   const db = { isDiaryCategory: () => false };
   const tree = treeForDocuments([
-    { name: '投资', sub: ['行业洞悉'] },
+    { name: '投资', sub: [{ name: '行业洞悉', sub: [] }] },
   ], [
     { knowledgeBase: '投资', folderPath: '行业洞悉/子目录', visibility: 'standard' },
     { knowledgeBase: '投资', folderPath: '行业洞悉', visibility: 'standard' },
   ], db);
   const folder = tree[0].folders.find(item => item.path === '行业洞悉');
-  assert.equal(folder.documentCount, 2);
+  assert.equal(folder.documentCount, 1);
+  assert.equal(folder.totalCount, 2);
   assert.equal(tree[0].documentCount, 2);
+});
+
+test('knowledge documents filter supports exact folder match', () => {
+  const docs = [
+    { knowledgeBase: '开发', folderPath: '', title: 'root' },
+    { knowledgeBase: '开发', folderPath: '前端', title: 'fe' },
+    { knowledgeBase: '开发', folderPath: '前端/组件', title: 'nested' },
+  ];
+  assert.deepEqual(filterDocuments(docs, { folder: '' }).map(item => item.title), ['root']);
+  assert.deepEqual(filterDocuments(docs, { folder: '前端' }).map(item => item.title), ['fe']);
+  assert.deepEqual(filterDocuments(docs, { folderPath: '前端' }).map(item => item.title), ['fe', 'nested']);
+});
+
+test('categories sub strings migrate to nested objects on read', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-cat-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
+  const categoriesPath = path.join(dir, 'categories.json');
+  fs.writeFileSync(categoriesPath, JSON.stringify([
+    { name: '开发', sub: ['前端', '后端'], calendar_day_visible: true },
+  ], null, 2));
+  const { createDatabase } = require('../database.js');
+  const db = createDatabase(dir);
+  const cats = db.getAllCategories(false, false);
+  const dev = cats.find(item => item.name === '开发');
+  assert.ok(dev);
+  assert.deepEqual(dev.sub.map(item => item.name), ['前端', '后端']);
+  const persisted = JSON.parse(fs.readFileSync(categoriesPath, 'utf8'));
+  assert.equal(typeof persisted.find(item => item.name === '开发').sub[0], 'object');
+  assert.equal(persisted.find(item => item.name === '开发').sub[0].name, '前端');
 });
 
 test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', async (t) => {

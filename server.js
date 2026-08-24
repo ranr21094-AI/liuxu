@@ -2807,14 +2807,24 @@ app.post('/api/categories', (req, res) => {
   try {
     const { name, parent } = req.body;
     const cleanName = cleanCategorySegment(name);
-    const cleanParent = parent === undefined || parent === null || parent === '' ? null : cleanCategorySegment(parent);
-    if (!cleanName || (parent && !cleanParent)) return res.status(400).json({ error: 'Invalid category name' });
-    if ((isDiaryCategory(cleanName) || isDiaryCategory(cleanParent)) && !hasDiaryAccess(req)) {
+    const hasParent = parent !== undefined && parent !== null && parent !== '';
+    const cleanParent = hasParent ? String(parent) : null;
+    if (!cleanName) return res.status(400).json({ error: 'Invalid category name' });
+    let parentPath = '';
+    if (cleanParent) {
+      // parent may be a full path within a base: "开发" or "开发/前端"
+      const segments = String(cleanParent).split('/').map(segment => cleanCategorySegment(segment));
+      if (segments.some(segment => !segment)) {
+        return res.status(400).json({ error: 'Invalid category parent' });
+      }
+      parentPath = segments.join('/');
+    }
+    if ((isDiaryCategory(cleanName) || isDiaryCategory(parentPath)) && !hasDiaryAccess(req)) {
       return rejectLockedDiary(res);
     }
-    const result = db.addCategory(cleanName, cleanParent);
+    const result = db.addCategory(cleanName, parentPath || null);
     if (!result) {
-      if (parent) return res.status(404).json({ error: 'Parent category not found' });
+      if (parentPath) return res.status(404).json({ error: 'Parent category not found' });
       return res.status(409).json({ error: 'Category already exists' });
     }
     res.status(201).json(result);
@@ -2880,7 +2890,7 @@ app.put('/api/categories/:oldName', (req, res) => {
     }
     const result = db.renameCategory(oldName, newName);
     if (result.error) return res.status(400).json(result);
-    const categorySeparator = oldName.indexOf('/');
+    const categorySeparator = oldName.lastIndexOf('/');
     const rewrittenPath = categorySeparator >= 0
       ? `${oldName.slice(0, categorySeparator)}/${newName}`
       : newName;

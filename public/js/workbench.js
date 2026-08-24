@@ -16,7 +16,7 @@ import {
   normalizeUploadSrc,
   showToast,
 } from './helpers.js';
-import { destroyFilePreview, renderFilePreview, shouldCollapseExtractText } from './knowledge/filePreview.js';
+import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { renderToHtml, renderToHtmlUncached } from './markdown.js';
 import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
@@ -3569,20 +3569,34 @@ function folderDisplayName(base, folderPath) {
 function renderKnowledgeBreadcrumb(base) {
   const nav = $('#knowledgeBreadcrumb');
   if (!nav || !base) return;
-  const folderPath = state.selectedFolderPath;
-  const folderName = folderDisplayName(base, folderPath);
-  nav.innerHTML = `
+  const segments = String(state.selectedFolderPath || '').split('/').filter(Boolean);
+  let crumbs = `
     <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="root">知识库</button>
     <span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>
-    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="base">${escHtml(base.name)}</button>
-    ${folderPath ? `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span><span class="knowledge-breadcrumb-current">${escHtml(folderName)}</span>` : ''}`;
+    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="base">${escHtml(base.name)}</button>`;
+  let prefix = '';
+  segments.forEach((segment, index) => {
+    const target = prefix ? `${prefix}/${segment}` : segment;
+    prefix = target;
+    crumbs += `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>`;
+    if (index === segments.length - 1) {
+      crumbs += `<span class="knowledge-breadcrumb-current">${escHtml(segment)}</span>`;
+    } else {
+      crumbs += `<button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="folder" data-folder-path="${escHtml(target)}">${escHtml(segment)}</button>`;
+    }
+  });
+  nav.innerHTML = crumbs;
 }
 
 function documentListHeadingText() {
   const total = state.knowledgeTotal;
+  const base = findKnowledgeBase(state.selectedKnowledgeBase);
   if (state.selectedFolderPath) {
-    const base = findKnowledgeBase(state.selectedKnowledgeBase);
-    return `${folderDisplayName(base, state.selectedFolderPath)} · ${total}`;
+    const folder = findFolderNode(base?.folders, state.selectedFolderPath);
+    return `${folder?.name || state.selectedFolderPath} · ${total}`;
+  }
+  if (state.selectedKnowledgeBase) {
+    return `${base?.name || state.selectedKnowledgeBase} · ${total}`;
   }
   return `文档 · ${total}`;
 }
@@ -3596,12 +3610,11 @@ function documentRowSubtitle(document) {
     return String(document.searchSnippet).replace(/\s+/g, ' ').trim().slice(0, 120);
   }
   const date = document.documentDate || formatTime(document.updatedAt);
-  const location = [document.knowledgeBase, document.folderPath].filter(Boolean).join(' / ') || '其他';
   if (knowledgeFiltersActive()) {
+    const location = [document.knowledgeBase, document.folderPath].filter(Boolean).join(' / ') || '其他';
     return date ? `${location} · ${date}` : location;
   }
-  if (state.selectedFolderPath) return date || '';
-  if (document.folderPath) return date ? `${document.folderPath} · ${date}` : document.folderPath;
+  // 浏览态已由面包屑/列表头部体现所在文件夹，行内只留日期，减少信息量
   return date || '';
 }
 
@@ -3622,27 +3635,52 @@ function documentRowSubtitleHtml(document) {
   return q ? highlightSearch(text, q) : escHtml(text);
 }
 
+function findFolderNode(folders, fullPath) {
+  if (!fullPath) return null;
+  for (const node of folders || []) {
+    if (node.path === fullPath) return node;
+    const found = findFolderNode(node.children, fullPath);
+    if (found) return found;
+  }
+  return null;
+}
+
+function currentLevelFolders(base, folderPath) {
+  if (!base) return [];
+  if (!folderPath) return Array.isArray(base.folders) ? base.folders : [];
+  const node = findFolderNode(base.folders, folderPath);
+  return node ? (node.children || []) : [];
+}
+
 function renderKnowledgeTree() {
-  const tree = $('#knowledgeFolderTree');
-  const base = findKnowledgeBase(state.selectedKnowledgeBase);
-  if (!tree || !base) return;
-  renderKnowledgeBreadcrumb(base);
-  const baseActive = !state.selectedFolderPath;
-  const folders = Array.isArray(base.folders) ? base.folders : [];
-  tree.innerHTML = `
-    <div class="knowledge-tree-folder-row">
-      <button class="knowledge-tree-folder ${baseActive ? 'active' : ''}" type="button" data-knowledge-folder="" data-knowledge-base="${escHtml(base.name)}" aria-current="${baseActive ? 'page' : 'false'}">全部文档 <small>${Number(base.documentCount) || 0}</small></button>
-      <span class="tree-actions">
-        <button class="tree-action" type="button" data-tree-add-folder="${escHtml(base.name)}" title="新建文件夹" aria-label="在 ${escHtml(base.name)} 下新建文件夹">＋</button>
+  // 侧栏已取消文件夹树，此函数保留仅为刷新面包屑（兼容历史调用点）
+  renderKnowledgeBreadcrumb(findKnowledgeBase(state.selectedKnowledgeBase));
+}
+
+function folderRowsHtml(base) {
+  if (!base || activeKnowledgeSearchQuery()) return '';
+  const folders = currentLevelFolders(base, state.selectedFolderPath);
+  const baseName = escHtml(base.name);
+  return folders.map(folder => `
+    <div class="document-folder-row" role="button" tabindex="0" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}">
+      <span class="document-folder-mark" aria-hidden="true">▸</span>
+      <span class="document-folder-body">
+        <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong></span>
+        <small>${Number(folder.documentCount) || 0} 篇</small>
       </span>
-    </div>
-    ${folders.map(folder => {
-      const active = state.selectedFolderPath === folder.path;
-      return `<div class="knowledge-tree-folder-row knowledge-tree-folder-row-nested">
-        <button class="knowledge-tree-folder ${active ? 'active' : ''}" type="button" data-knowledge-folder="${escHtml(folder.path)}" data-knowledge-base="${escHtml(base.name)}" aria-current="${active ? 'page' : 'false'}"><span class="tree-folder-dot" aria-hidden="true"></span>${escHtml(folder.name)} <small>${Number(folder.documentCount) || 0}</small></button>
-        <span class="tree-actions"><button class="tree-action" type="button" data-tree-rename-folder="${escHtml(base.name)}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button><button class="tree-action" type="button" data-tree-delete-folder="${escHtml(base.name)}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">⌫</button></span>
-      </div>`;
-    }).join('')}`;
+      <span class="tree-actions">
+        <button class="tree-action" type="button" data-tree-rename-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button>
+        <button class="tree-action" type="button" data-tree-delete-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">⌫</button>
+      </span>
+    </div>`).join('');
+}
+
+function flattenFolderOptions(folders, depth = 0, options = []) {
+  (folders || []).forEach(node => {
+    options.push({ path: node.path, name: `${'\u3000'.repeat(depth)}${node.name}`, depth });
+    flattenFolderOptions(node.children, depth + 1, options);
+  });
+  return options;
 }
 
 async function loadKnowledgeTree() {
@@ -3691,10 +3729,11 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
       submitText: '创建',
     });
   } else if (action === 'add-folder') {
+    const parentLabel = folderPath ? `${baseName}/${folderPath}` : baseName;
     name = await promptKnowledgeName({
       title: '新建文件夹',
       label: '文件夹名称',
-      hint: `位于「${baseName}」`,
+      hint: `位于「${parentLabel}」`,
       submitText: '创建',
     });
   } else if (action === 'rename-base') {
@@ -3706,19 +3745,22 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
       selectOnOpen: true,
     });
   } else if (action === 'rename-folder') {
+    const folderName = folderPath.split('/').pop() || folderPath;
     name = await promptKnowledgeName({
       title: '重命名文件夹',
       label: '新名称',
-      defaultValue: folderPath,
+      defaultValue: folderName,
       submitText: '保存',
       selectOnOpen: true,
     });
   }
-  if (!name || name === (action === 'rename-base' ? baseName : folderPath)) return;
+  const renameFolderName = folderPath.split('/').pop() || folderPath;
+  if (!name || name === (action === 'rename-base' ? baseName : renameFolderName)) return;
+  const addFolderParent = folderPath ? `${baseName}/${folderPath}` : baseName;
   const response = action === 'add-base' || action === 'add-folder'
     ? await apiFetch('/api/categories', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(action === 'add-base' ? { name } : { name, parent: baseName }),
+      body: JSON.stringify(action === 'add-base' ? { name } : { name, parent: addFolderParent }),
     })
     : await apiFetch(`/api/categories/${encodeURIComponent(currentPath)}`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }),
@@ -3731,28 +3773,28 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
     state.selectedFolderPath = '';
   } else if (action === 'add-folder') {
     state.selectedKnowledgeBase = baseName;
-    state.selectedFolderPath = name;
+    state.selectedFolderPath = folderPath ? `${folderPath}/${name}` : name;
   } else if (action === 'rename-base') {
     if (state.selectedKnowledgeBase === baseName) state.selectedKnowledgeBase = name;
   } else if (action === 'rename-folder' && state.selectedKnowledgeBase === baseName && state.selectedFolderPath === folderPath) {
-    state.selectedFolderPath = name;
+    const parent = folderPath.includes('/') ? folderPath.split('/').slice(0, -1).join('/') : '';
+    state.selectedFolderPath = parent ? `${parent}/${name}` : name;
   }
   await navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath });
 }
 
 function knowledgeQuery(cursor = '', { includeSearchText = false } = {}) {
   const params = new URLSearchParams();
-  const values = {
-    knowledgeBase: state.selectedKnowledgeBase,
-    folderPath: state.selectedFolderPath,
-    tag: $('#knowledgeTagFilter').value.trim(),
-    date: $('#knowledgeDateFilter').value,
-  };
+  if (state.selectedKnowledgeBase) params.set('knowledgeBase', state.selectedKnowledgeBase);
+  params.set('folder', state.selectedFolderPath || '');
+  const tag = $('#knowledgeTagFilter').value.trim();
+  const date = $('#knowledgeDateFilter').value;
+  if (tag) params.set('tag', tag);
+  if (date) params.set('date', date);
   if (includeSearchText) {
     const q = $('#knowledgeSearch').value.trim();
-    if (q) values.q = q;
+    if (q) params.set('q', q);
   }
-  Object.entries(values).forEach(([key, value]) => { if (value) params.set(key, value); });
   if ($('#knowledgeArchivedFilter').checked) params.set('status', 'archived');
   params.set('limit', '60');
   if (cursor) params.set('cursor', cursor);
@@ -3777,19 +3819,26 @@ function renderDocuments() {
   const list = $('#knowledgeDocumentList');
   const heading = $('#knowledgeDocumentListHeading');
   if (heading) heading.textContent = documentListHeadingText();
-  if (!state.documents.length) {
+  const folderButton = $('#newFolderButton');
+  if (folderButton) {
+    folderButton.hidden = isKnowledgeRoot() || Boolean(activeKnowledgeSearchQuery()) || $('#knowledgeArchivedFilter')?.checked;
+  }
+  const base = findKnowledgeBase(state.selectedKnowledgeBase);
+  const folderRows = folderRowsHtml(base);
+  const docRows = state.documents.map(document => {
+    const subtitleHtml = documentRowSubtitleHtml(document);
+    return `
+      <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
+        <span class="document-row-body">
+          <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
+          ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}
+        </span>
+      </div>`;
+  }).join('');
+  if (!folderRows && !docRows) {
     list.innerHTML = '<p class="empty-list">没有符合条件的知识文档。</p>';
   } else {
-    list.innerHTML = state.documents.map(document => {
-      const subtitleHtml = documentRowSubtitleHtml(document);
-      return `
-        <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
-          <span class="document-row-body">
-            <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
-            ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}
-          </span>
-        </div>`;
-    }).join('');
+    list.innerHTML = folderRows + docRows;
   }
   $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
 }
@@ -3824,12 +3873,9 @@ async function loadDocuments({ append = false, refreshTree = true } = {}) {
 
 function showEmptyDocument() {
   state.activeDocument = null;
-  state.annotation = null;
   destroyFilePreview();
   clearTimeout(state.documentSaveTimer);
-  clearTimeout(state.annotationSaveTimer);
   state.documentDirty = false;
-  state.annotationDirty = false;
   $('#knowledgeEmptyState').hidden = false;
   $('#documentWorkspace').hidden = true;
   if (isKnowledgeRoot()) {
@@ -3855,11 +3901,11 @@ function syncDocumentSelectOptions({ knowledgeBase, folderPath } = {}) {
   const base = bases.find(item => item.name === currentKb) || bases[0];
   kbSelect.value = base?.name || '其他';
 
-  const folders = Array.isArray(base?.folders) ? base.folders : [];
+  const folders = flattenFolderOptions(Array.isArray(base?.folders) ? base.folders : []);
   const currentFolder = folderPath ?? folderSelect.value ?? '';
   folderSelect.innerHTML = [
     '<option value="">根目录</option>',
-    ...folders.map(folder => `<option value="${escHtml(folder.path)}">${escHtml(folder.name || folder.path)}</option>`),
+    ...folders.map(folder => `<option value="${escHtml(folder.path)}">${escHtml(folder.name)}</option>`),
   ].join('');
   const folderExists = !currentFolder || folders.some(item => item.path === currentFolder);
   folderSelect.value = folderExists ? currentFolder : '';
@@ -3900,7 +3946,6 @@ function setDocumentSaveState(text, className = '') {
 async function renderActiveDocument(document) {
   state.activeDocument = document;
   state.documentDirty = false;
-  state.annotationDirty = false;
   state.documentConflict = false;
   state.editorMode = 'edit';
   state.selectedKnowledgeBase = document.knowledgeBase || String(document.collectionPath || '其他').split('/')[0] || '其他';
@@ -3922,9 +3967,9 @@ async function renderActiveDocument(document) {
   $('#topbarSubtitle').textContent = document.title || '未命名';
   setDocumentSaveState('已保存');
   const isFile = document.sourceType === 'file';
-  $('#noteEditor').hidden = isFile;
-  $('#fileReader').hidden = !isFile;
-  $('#editorModeSwitch').hidden = isFile;
+  $('#noteEditor').hidden = false;
+  $('#fileOriginalPanel').hidden = !isFile;
+  $('#editorModeSwitch').hidden = false;
   $('#archiveDocumentButton').hidden = document.status === 'archived';
   $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
@@ -3933,46 +3978,22 @@ async function renderActiveDocument(document) {
   $('#documentDate').readOnly = document.status === 'archived';
   $('#documentTags').readOnly = document.status === 'archived';
   $('#documentContent').readOnly = document.status === 'archived';
-  $('#annotationTitle').readOnly = document.status === 'archived';
-  $('#annotationContent').readOnly = document.status === 'archived';
   setEditorMode('edit');
-  if (isFile) await renderFile(document);
+  if (isFile) await renderFileOriginalPanel(document);
   else destroyFilePreview();
   renderKnowledgeBaseList();
   renderKnowledgeTree();
   renderDocuments();
 }
 
-async function renderFile(document) {
+async function renderFileOriginalPanel(document) {
   const meta = document.fileMeta || {};
   $('#fileName').textContent = meta.filename || document.title || '文件';
   const metaParts = [formatBytes(meta.bytes)];
   if (document.status === 'needs_ocr') metaParts.push('扫描型 PDF');
   $('#fileMeta').textContent = metaParts.filter(Boolean).join(' · ');
-  const extractText = document.content || (document.status === 'needs_ocr'
-    ? '这是扫描型 PDF，当前版本尚未提供 OCR。'
-    : '没有提取到正文。');
-  const searchQuery = activeKnowledgeSearchQuery();
-  if (searchQuery) $('#fileContent').innerHTML = highlightSearch(extractText, searchQuery);
-  else $('#fileContent').textContent = extractText;
-  const extractDetails = $('#fileExtractDetails');
-  if (extractDetails) extractDetails.open = !shouldCollapseExtractText(document);
   $('#openOriginalFile').href = meta.url || `/api/knowledge/files/${encodeURIComponent(document.id)}/content`;
   await renderFilePreview(document, $('#filePreviewHost'));
-  $('#annotationTitle').value = `${document.title || meta.filename || '文件'} · 笔记`;
-  $('#annotationContent').value = '';
-  $('#annotationSaveState').textContent = '输入后自动保存';
-  state.annotationDirty = false;
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/annotation`);
-  const data = await response.json().catch(() => ({}));
-  if (state.activeDocument?.id !== document.id || !response.ok) return;
-  state.annotation = data.annotation || null;
-  if (state.annotation) {
-    $('#annotationTitle').value = state.annotation.title || '';
-    $('#annotationContent').value = state.annotation.content || '';
-    $('#annotationSaveState').textContent = '已保存';
-  }
-  state.annotationDirty = false;
 }
 
 async function openKnowledgeDocument(id, { block = '', offset = 0, serial = state.routeSerial } = {}) {
@@ -3998,15 +4019,6 @@ function locateDocumentPosition(offset, content) {
   const selectionEnd = q
     ? Math.min(content.length, position + q.length)
     : Math.min(content.length, position + 120);
-  if (state.activeDocument?.sourceType === 'file') {
-    const reader = $('#fileContent');
-    requestAnimationFrame(() => {
-      const mark = reader.querySelector('mark');
-      if (mark) mark.scrollIntoView({ block: 'center' });
-      else reader.scrollTop = content.length ? reader.scrollHeight * (position / content.length) : 0;
-    });
-    return;
-  }
   setEditorMode('edit');
   const editor = $('#documentContent');
   requestAnimationFrame(() => {
@@ -4043,7 +4055,7 @@ function cycleEditorMode() {
 
 function isNoteEditorActive() {
   return state.mode === 'knowledge'
-    && state.activeDocument?.sourceType === 'note'
+    && state.activeDocument
     && !$('#noteEditor')?.hidden
     && !$('#documentWorkspace')?.hidden;
 }
@@ -4055,9 +4067,9 @@ function currentDocumentPatch() {
     folderPath: $('#documentFolderPath').value.trim(),
     documentDate: $('#documentDate').value || '',
     tags: $('#documentTags').value.split(/[,，]/).map(tag => tag.trim()).filter(Boolean),
+    content: $('#documentContent').value,
     baseVersion: state.activeDocument?.version,
   };
-  if (state.activeDocument?.sourceType !== 'file') patch.content = $('#documentContent').value;
   return patch;
 }
 
@@ -4141,50 +4153,8 @@ async function saveDocument() {
   return true;
 }
 
-function scheduleAnnotationSave() {
-  if (!state.activeDocument || state.activeDocument.sourceType !== 'file') return;
-  if (state.activeDocument.status === 'archived') return;
-  if (!state.annotation && !$('#annotationTitle').value.trim() && !$('#annotationContent').value.trim()) return;
-  state.annotationDirty = true;
-  $('#annotationSaveState').textContent = '等待保存';
-  clearTimeout(state.annotationSaveTimer);
-  state.annotationSaveTimer = setTimeout(() => saveAnnotation(), 800);
-}
-
-async function saveAnnotation() {
-  clearTimeout(state.annotationSaveTimer);
-  if (!state.activeDocument || state.activeDocument.sourceType !== 'file') return true;
-  if (state.activeDocument.status === 'archived') return true;
-  if (!state.annotationDirty) return true;
-  const id = state.activeDocument.id;
-  const payload = {
-    title: $('#annotationTitle').value.trim() || `${state.activeDocument.title || '文件'} · 笔记`,
-    content: $('#annotationContent').value,
-    baseVersion: state.annotation?.version,
-  };
-  $('#annotationSaveState').textContent = '正在保存';
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}/annotation`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (state.activeDocument?.id !== id) return false;
-  if (!response.ok) {
-    $('#annotationSaveState').textContent = response.status === 409 ? '保存冲突，请重新打开文件' : '保存失败';
-    showToast(data.error || '关联笔记保存失败', 'error');
-    return false;
-  }
-  state.annotation = data;
-  state.annotationDirty = false;
-  $('#annotationSaveState').textContent = '已保存';
-  return true;
-}
-
 async function flushPendingSaves() {
-  const documentSaved = await saveDocument();
-  const annotationSaved = await saveAnnotation();
-  return documentSaved && annotationSaved;
+  return saveDocument();
 }
 
 async function createNote() {
@@ -4647,10 +4617,19 @@ function bindEvents() {
       navigate('knowledge');
       return;
     }
-    if (link.dataset.breadcrumb === 'base' && state.selectedFolderPath) {
+    if (link.dataset.breadcrumb === 'base') {
       state.selectedFolderPath = '';
       navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase });
+      return;
     }
+    if (link.dataset.breadcrumb === 'folder') {
+      state.selectedFolderPath = link.dataset.folderPath || '';
+      navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath });
+    }
+  });
+  $('#newFolderButton')?.addEventListener('click', () => {
+    if (!state.selectedKnowledgeBase) return;
+    manageKnowledgeTree('add-folder', state.selectedKnowledgeBase, state.selectedFolderPath);
   });
   $('#knowledgeBaseList').addEventListener('click', event => {
     const open = event.target.closest('[data-knowledge-base-open]');
@@ -4660,21 +4639,39 @@ function bindEvents() {
     if (deleteBase) return manageKnowledgeTree('delete-base', deleteBase.dataset.treeDeleteBase);
     if (open) navigate('knowledge', '', { knowledgeBase: open.dataset.knowledgeBaseOpen });
   });
-  $('#knowledgeFolderTree').addEventListener('click', event => {
-    const folder = event.target.closest('[data-knowledge-folder]');
-    const addFolder = event.target.closest('[data-tree-add-folder]');
+  $('#knowledgeDocumentList').addEventListener('click', event => {
     const renameFolder = event.target.closest('[data-tree-rename-folder]');
     const deleteFolder = event.target.closest('[data-tree-delete-folder]');
-    if (addFolder) return manageKnowledgeTree('add-folder', addFolder.dataset.treeAddFolder);
-    if (renameFolder) return manageKnowledgeTree('rename-folder', renameFolder.dataset.treeRenameFolder, renameFolder.dataset.treeFolder);
-    if (deleteFolder) return manageKnowledgeTree('delete-folder', deleteFolder.dataset.treeDeleteFolder, deleteFolder.dataset.treeFolder);
-    if (!folder) return;
-    const baseName = folder.dataset.knowledgeBase || state.selectedKnowledgeBase;
-    const folderPath = folder.dataset.knowledgeFolder || '';
-    state.selectedKnowledgeBase = baseName;
-    state.selectedFolderPath = folderPath;
-    renderKnowledgeTree();
-    navigate('knowledge', '', { knowledgeBase: baseName, folderPath });
+    if (renameFolder) {
+      return manageKnowledgeTree('rename-folder', renameFolder.dataset.treeRenameFolder, renameFolder.dataset.treeFolder);
+    }
+    if (deleteFolder) {
+      return manageKnowledgeTree('delete-folder', deleteFolder.dataset.treeDeleteFolder, deleteFolder.dataset.treeFolder);
+    }
+    const folderRow = event.target.closest('[data-folder-open]');
+    if (folderRow) {
+      navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: folderRow.dataset.folderOpen });
+      return;
+    }
+    const row = event.target.closest('[data-document-open]');
+    if (row) {
+      const offset = Number(row.dataset.searchOffset) || 0;
+      navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
+    }
+  });
+  $('#knowledgeDocumentList').addEventListener('keydown', event => {
+    const folderRow = event.target.closest('[data-folder-open]');
+    if (folderRow && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      navigate('knowledge', '', { knowledgeBase: state.selectedKnowledgeBase, folderPath: folderRow.dataset.folderOpen });
+      return;
+    }
+    const row = event.target.closest('[data-document-open]');
+    if (row && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      const offset = Number(row.dataset.searchOffset) || 0;
+      navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
+    }
   });
   $('#newNoteButton').addEventListener('click', createNote);
   $('#emptyNewNoteButton').addEventListener('click', createNote);
@@ -4685,21 +4682,6 @@ function bindEvents() {
     if (file) importKnowledgeFile(file);
   });
   $('#knowledgeLoadMore').addEventListener('click', () => loadDocuments({ append: true }).catch(error => showToast(error.message, 'error')));
-  $('#knowledgeDocumentList').addEventListener('click', event => {
-    const row = event.target.closest('[data-document-open]');
-    if (row) {
-      const offset = Number(row.dataset.searchOffset) || 0;
-      navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
-    }
-  });
-  $('#knowledgeDocumentList').addEventListener('keydown', event => {
-    const row = event.target.closest('[data-document-open]');
-    if (row && (event.key === 'Enter' || event.key === ' ')) {
-      event.preventDefault();
-      const offset = Number(row.dataset.searchOffset) || 0;
-      navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
-    }
-  });
   ['documentTitle', 'documentDate', 'documentTags', 'documentContent'].forEach(id => {
     $(`#${id}`).addEventListener('input', () => {
       if (id === 'documentDate' || id === 'documentTags') updateDocumentMetaSummary();
@@ -4735,7 +4717,6 @@ function bindEvents() {
   $('#archiveDocumentButton').addEventListener('click', archiveActiveDocument);
   $('#restoreDocumentButton').addEventListener('click', () => restoreActiveDocument().catch(error => showToast(error.message, 'error')));
   $('#deleteDocumentButton').addEventListener('click', deleteActiveDocument);
-  ['annotationTitle', 'annotationContent'].forEach(id => $(`#${id}`).addEventListener('input', scheduleAnnotationSave));
   document.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p' && isNoteEditorActive()) {
       event.preventDefault();
@@ -4749,7 +4730,7 @@ function bindEvents() {
     if (event.key === 'Escape') closeMobileSidebar();
   });
   window.addEventListener('beforeunload', event => {
-    if (!state.documentDirty && !state.annotationDirty) return;
+    if (!state.documentDirty) return;
     event.preventDefault();
   });
   window.addEventListener('popstate', applyRoute);

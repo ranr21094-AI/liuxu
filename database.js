@@ -171,8 +171,16 @@ function cloneCountdowns(countdowns) {
   return countdowns.map(countdown => ({ ...countdown }));
 }
 
+function cloneCategoryNode(node) {
+  if (typeof node === 'string') return { name: String(node), sub: [], calendar_day_visible: true };
+  return {
+    ...node,
+    sub: Array.isArray(node.sub) ? node.sub.map(cloneCategoryNode) : [],
+  };
+}
+
 function cloneCategories(categories) {
-  return categories.map(category => ({ ...category, sub: [...(category.sub || [])] }));
+  return categories.map(category => cloneCategoryNode(category));
 }
 
 function cloneJson(value) {
@@ -1206,18 +1214,25 @@ const DEFAULT_CATEGORIES = [
 ];
 const CATEGORIES_FILE = path.join(DATA_DIR, 'categories.json');
 
+function normalizeCategoryNode(node) {
+  if (typeof node === 'string') {
+    const name = String(node).trim();
+    return name ? { name, sub: [], calendar_day_visible: true } : null;
+  }
+  if (!node || typeof node !== 'object' || !node.name) return null;
+  return {
+    name: String(node.name).trim(),
+    sub: Array.isArray(node.sub)
+      ? node.sub.map(normalizeCategoryNode).filter(Boolean)
+      : [],
+    calendar_day_visible: node.calendar_day_visible !== false,
+  };
+}
+
 function migrateToTree(cats) {
-  return cats.map(c => {
-    if (typeof c === 'string') return { name: c, sub: [], calendar_day_visible: true };
-    if (c && typeof c === 'object' && c.name) {
-      return {
-        name: c.name,
-        sub: Array.isArray(c.sub) ? c.sub : [],
-        calendar_day_visible: c.calendar_day_visible !== false,
-      };
-    }
-    return null;
-  }).filter(Boolean);
+  return (Array.isArray(cats) ? cats : [])
+    .map(normalizeCategoryNode)
+    .filter(Boolean);
 }
 
 function readCategories() {
@@ -1274,10 +1289,10 @@ function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
     .filter(category => diaryUnlocked || category.name !== DIARY_CATEGORY)
     .map(category => ({
       name: category.name,
-      sub: [...(category.sub || [])],
+      sub: (category.sub || []).map(node => cloneCategoryNode(node)),
       log_count: counts.get(category.name) || 0,
       sub_log_counts: Object.fromEntries(
-        (category.sub || []).map(sub => [sub, subCounts.get(`${category.name}/${sub}`) || 0])
+        (category.sub || []).map(node => [node.name, subCounts.get(`${category.name}/${node.name}`) || 0])
       ),
       calendar_day_visible: category.calendar_day_visible !== false,
     }));
@@ -1291,6 +1306,21 @@ function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
     });
   }
   return categories;
+}
+
+/** Locate a category node by full path ("开发" or "开发/前端"), including the base */
+function findCategoryNode(cats, fullPath) {
+  const segments = String(fullPath || '').split('/').map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return null;
+  const base = cats.find(c => c.name === segments[0]);
+  if (!base) return null;
+  let node = base;
+  for (let i = 1; i < segments.length; i += 1) {
+    const child = (node.sub || []).find(s => s.name === segments[i]);
+    if (!child) return null;
+    node = child;
+  }
+  return node;
 }
 
 /** Split "开发/前端" into { parent: "开发", sub: "前端" } */
@@ -1309,17 +1339,18 @@ function getParentCat(cat) {
 
 function addCategory(name, parent) {
   name = name.trim();
-  if (!name) return null;
+  if (!name || name.includes('/') || name.includes('\\')) return null;
   const cats = readCategories();
   if (parent) {
-    let p = cats.find(c => c.name === parent);
+    // parent is a full path within a base: "开发" or "开发/前端"
+    let p = findCategoryNode(cats, parent);
     if (!p && parent === DIARY_CATEGORY) {
       p = { name: DIARY_CATEGORY, sub: [], calendar_day_visible: true };
       cats.push(p);
     }
     if (!p) return null;
-    if (p.sub.includes(name)) return null;
-    p.sub.push(name);
+    if ((p.sub || []).some(item => item.name === name)) return null;
+    p.sub.push({ name, sub: [], calendar_day_visible: true });
     writeCategories(cats);
     return { name, parent };
   }
@@ -1350,46 +1381,48 @@ function setCategoryCalendarDayVisible(name, visible) {
 function renameCategory(oldName, newName) {
   oldName = oldName.trim();
   newName = newName.trim();
-  if (!oldName || !newName) return { error: 'Invalid names' };
+  if (!oldName || !newName || newName.includes('/') || newName.includes('\\')) {
+    return { error: 'Invalid names' };
+  }
   if (oldName === DIARY_CATEGORY || newName === DIARY_CATEGORY) {
     return { error: 'Diary root category is protected' };
   }
   const cats = readCategories();
-  const parsed = parseCategoryPath(oldName);
+  const segments = oldName.split('/').map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return { error: 'Category not found' };
 
-  if (parsed.sub) {
-    // Renaming a subcategory: "开发/前端" → "开发/新前端"
-    const parent = cats.find(c => c.name === parsed.parent);
-    if (!parent) return { error: 'Parent category not found' };
-    const idx = parent.sub.indexOf(parsed.sub);
-    if (idx === -1) return { error: 'Subcategory not found' };
-    if (parent.sub.includes(newName)) return { error: 'New name already exists' };
-    parent.sub[idx] = newName;
-    writeCategories(cats);
-
-    // Update all logs referencing this subcategory
-    const logs = readLogs();
-    logs.forEach(l => {
-      if (l.category === oldName) l.category = parsed.parent + '/' + newName;
-    });
-    writeLogs(logs);
-    return { success: true };
+  // Walk to the target node, tracking the container list it lives in
+  const baseIndex = cats.findIndex(c => c.name === segments[0]);
+  if (baseIndex === -1) return { error: 'Category not found' };
+  let container = cats;
+  let index = baseIndex;
+  let node = cats[baseIndex];
+  for (let i = 1; i < segments.length; i += 1) {
+    const subs = node.sub || [];
+    const childIndex = subs.findIndex(s => s.name === segments[i]);
+    if (childIndex === -1) return { error: 'Subcategory not found' };
+    container = subs;
+    index = childIndex;
+    node = subs[childIndex];
   }
-
-  // Renaming a parent category: "开发" → "研发"
-  const idx = cats.findIndex(c => c.name === oldName);
-  if (idx === -1) return { error: 'Category not found' };
-  if (cats.some(c => c.name === newName)) return { error: 'New name already exists' };
-  cats[idx].name = newName;
+  if (container.some((item, i) => i !== index && item.name === newName)) {
+    return { error: 'New name already exists' };
+  }
+  node.name = newName;
   writeCategories(cats);
 
+  // Legacy logs only ever carried two-level "base/sub" paths
   const logs = readLogs();
-  logs.forEach(l => {
-    const p = parseCategoryPath(l.category);
-    if (p.parent === oldName) {
-      l.category = p.sub ? newName + '/' + p.sub : newName;
-    }
-  });
+  if (segments.length === 2) {
+    logs.forEach(l => {
+      if (l.category === oldName) l.category = `${segments[0]}/${newName}`;
+    });
+  } else if (segments.length === 1) {
+    logs.forEach(l => {
+      const p = parseCategoryPath(l.category);
+      if (p.parent === oldName) l.category = p.sub ? `${newName}/${p.sub}` : newName;
+    });
+  }
   writeLogs(logs);
   return { success: true };
 }
@@ -1398,36 +1431,40 @@ function deleteCategory(name) {
   name = name.trim();
   if (name === OTHER_CATEGORY || name === DIARY_CATEGORY) return false;
   const cats = readCategories();
-  const parsed = parseCategoryPath(name);
+  const segments = name.split('/').map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return false;
+  const baseIndex = cats.findIndex(c => c.name === segments[0]);
+  if (baseIndex === -1) return false;
 
-  if (parsed.sub) {
-    // Delete a subcategory
-    const parent = cats.find(c => c.name === parsed.parent);
-    if (!parent) return false;
-    const idx = parent.sub.indexOf(parsed.sub);
-    if (idx === -1) return false;
-    parent.sub.splice(idx, 1);
+  if (segments.length === 1) {
+    cats.splice(baseIndex, 1);
     writeCategories(cats);
-    // Reassign logs with this subcategory to parent-only
     const logs = readLogs();
     logs.forEach(l => {
-      if (l.category === name) l.category = parsed.parent;
+      if (getParentCat(l.category) === name) l.category = OTHER_CATEGORY;
     });
     writeLogs(logs);
     return true;
   }
 
-  // Delete a parent category and all its subcategories
-  const idx = cats.findIndex(c => c.name === name);
+  // Walk to the deepest segment's container
+  let container = cats[baseIndex].sub || [];
+  let idx = container.findIndex(s => s.name === segments[1]);
+  for (let i = 2; idx !== -1 && i < segments.length; i += 1) {
+    container = container[idx].sub || [];
+    idx = container.findIndex(s => s.name === segments[i]);
+  }
   if (idx === -1) return false;
-  cats.splice(idx, 1);
+  container.splice(idx, 1);
   writeCategories(cats);
 
-  const logs = readLogs();
-  logs.forEach(l => {
-    if (getParentCat(l.category) === name) l.category = '其他';
-  });
-  writeLogs(logs);
+  if (segments.length === 2) {
+    const logs = readLogs();
+    logs.forEach(l => {
+      if (l.category === name) l.category = segments[0];
+    });
+    writeLogs(logs);
+  }
   return true;
 }
 
@@ -1452,10 +1489,12 @@ function checkDataIntegrity() {
 
   // Check for orphaned categories (parent categories and subcategories)
   const validCats = new Set();
-  cats.forEach(c => {
-    validCats.add(c.name);
-    (c.sub || []).forEach(s => validCats.add(c.name + '/' + s));
-  });
+  const walkCategories = (node, prefix) => {
+    const full = prefix ? `${prefix}/${node.name}` : node.name;
+    validCats.add(full);
+    (node.sub || []).forEach(child => walkCategories(child, full));
+  };
+  cats.forEach(c => walkCategories(c, ''));
   logs.forEach(l => {
     if (!validCats.has(l.category)) issues.push(`Log #${l.id} has unknown category: "${l.category}"`);
   });
@@ -1916,45 +1955,47 @@ function reorderCategories(orderedCats) {
 
 function reorderSubcategories(parentName, orderedSubs) {
   const cats = readCategories();
-  const parent = cats.find(c => c.name === parentName);
+  const parent = findCategoryNode(cats, parentName);
   if (!parent) return null;
   const existing = Array.isArray(parent.sub) ? parent.sub : [];
   const seen = new Set();
   const ordered = [];
   orderedSubs.forEach(name => {
     if (typeof name !== 'string') return;
-    if (!existing.includes(name) || seen.has(name)) return;
+    const item = existing.find(s => s.name === name);
+    if (!item || seen.has(name)) return;
     seen.add(name);
-    ordered.push(name);
+    ordered.push(item);
   });
-  existing.forEach(name => {
-    if (!seen.has(name)) ordered.push(name);
+  existing.forEach(item => {
+    if (!seen.has(item.name)) ordered.push(item);
   });
   parent.sub = ordered;
   writeCategories(cats);
   return { name: parent.name, sub: [...parent.sub] };
 }
 
-/** Merge two category trees, deduplicating by parent name and unioning subcategories */
+/** Merge two category trees, deduplicating by parent name and unioning subcategories recursively */
 function mergeCategoryTrees(existing, incoming) {
-  const merged = existing.map(c => ({
-    name: c.name,
-    sub: [...(c.sub || [])],
-    calendar_day_visible: c.calendar_day_visible !== false,
-  }));
-  const existingNames = new Set(merged.map(c => c.name));
-  incoming.forEach(c => {
-    if (existingNames.has(c.name)) {
-      const target = merged.find(m => m.name === c.name);
-      (c.sub || []).forEach(s => {
-        if (!target.sub.includes(s)) target.sub.push(s);
-      });
+  const merged = (existing || []).map(c => cloneCategoryNode(c));
+  const source = (Array.isArray(incoming) ? incoming : []).map(normalizeCategoryNode).filter(Boolean);
+  const findNode = (list, name) => (list || []).find(item => item.name === name);
+  const unionChildren = (target, children) => {
+    (children || []).forEach(child => {
+      const existingChild = findNode(target.sub, child.name);
+      if (existingChild) {
+        unionChildren(existingChild, child.sub);
+      } else {
+        target.sub.push(cloneCategoryNode(child));
+      }
+    });
+  };
+  source.forEach(c => {
+    const existingCat = findNode(merged, c.name);
+    if (existingCat) {
+      unionChildren(existingCat, c.sub);
     } else {
-      merged.push({
-        name: c.name,
-        sub: [...(c.sub || [])],
-        calendar_day_visible: c.calendar_day_visible !== false,
-      });
+      merged.push(cloneCategoryNode(c));
     }
   });
   return merged;

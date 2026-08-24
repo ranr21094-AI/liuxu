@@ -66,9 +66,11 @@
               <label class="archive-toggle"><input id="knowledgeArchivedFilter" type="checkbox"> 查看已归档</label>
             </div>
           </details>
-          <div class="knowledge-tree knowledge-folder-tree" id="knowledgeFolderTree" aria-label="文件夹" aria-live="polite"></div>
           <div class="document-list-section">
-            <div class="document-list-heading" id="knowledgeDocumentListHeading"></div>
+            <div class="document-list-heading-row">
+              <div class="document-list-heading" id="knowledgeDocumentListHeading"></div>
+              <button class="icon-button tree-add" id="newFolderButton" type="button" title="新建文件夹" aria-label="新建文件夹">＋</button>
+            </div>
             <div class="sidebar-scroll document-list" id="knowledgeDocumentList" aria-live="polite">
               <p class="empty-list">正在读取知识库…</p>
             </div>
@@ -296,27 +298,17 @@
             <div class="markdown-preview prose" id="documentPreview" hidden></div>
           </div>
 
-          <div class="file-reader" id="fileReader" hidden>
-            <section class="file-summary">
-               <div>
-                 <h2 id="fileName">原文</h2>
-                 <p id="fileMeta"></p>
-              </div>
-              <a class="secondary-action" id="openOriginalFile" href="#" target="_blank" rel="noopener">打开原文件</a>
-            </section>
-            <section class="file-preview-section">
+          <section class="file-original-panel" id="fileOriginalPanel" hidden>
+            <div class="file-original-head">
+              <strong id="fileName">原文件</strong>
+              <span id="fileMeta"></span>
+              <a class="secondary-action compact" id="openOriginalFile" href="#" target="_blank" rel="noopener">打开原文件</a>
+            </div>
+            <details id="fileOriginalDetails">
+              <summary>文件预览</summary>
               <div id="filePreviewHost" class="file-preview-host" aria-live="polite"></div>
-            </section>
-            <details class="file-extract-details" id="fileExtractDetails">
-              <summary>提取正文</summary>
-              <div class="file-content prose" id="fileContent"></div>
             </details>
-            <section class="file-annotation-section">
-              <div class="section-heading"><h3>关联笔记</h3><span id="annotationSaveState">输入后自动保存</span></div>
-              <input id="annotationTitle" maxlength="200" placeholder="关联笔记标题">
-              <textarea id="annotationContent" placeholder="记录摘要、想法或后续行动…"></textarea>
-            </section>
-          </div>
+          </section>
         </article>
       </section>
 

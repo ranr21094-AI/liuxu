@@ -353,7 +353,7 @@ test('diary category root is reserved and subcategory details require unlock', a
   const unlockedCategories = await (await fetch(`${baseUrl}/api/categories`, {
     headers: { Cookie: cookie },
   })).json();
-  assert.deepEqual(unlockedCategories.find(c => c.name === DIARY_CATEGORY).sub, ['notes']);
+  assert.deepEqual(unlockedCategories.find(c => c.name === DIARY_CATEGORY).sub.map(item => item.name), ['notes']);
   assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(DIARY_CATEGORY)}`, {
     method: 'DELETE',
     headers: { Cookie: cookie },
@@ -392,7 +392,7 @@ test('unlocked system diary category can receive a new subcategory without prior
   const after = await (await fetch(`${baseUrl}/api/categories`, {
     headers: { Cookie: cookie },
   })).json();
-  assert.deepEqual(after.find(category => category.name === DIARY_CATEGORY).sub, ['notes']);
+  assert.deepEqual(after.find(category => category.name === DIARY_CATEGORY).sub.map(item => item.name), ['notes']);
 });
 
 test('category calendar-day visibility only hides logs from date browsing', async (t) => {
@@ -478,10 +478,10 @@ test('category API reorders subcategories while preserving omitted items', async
     body: JSON.stringify({ orderedSubs: ['Gamma', 'Alpha'] }),
   });
   assert.equal(reordered.status, 200);
-  assert.deepEqual((await reordered.json()).sub, ['Gamma', 'Alpha', 'Beta']);
+  assert.deepEqual((await reordered.json()).sub.map(item => item.name), ['Gamma', 'Alpha', 'Beta']);
 
   const categories = await (await fetch(`${baseUrl}/api/categories`)).json();
-  assert.deepEqual(categories.find(category => category.name === 'Ordered').sub, ['Gamma', 'Alpha', 'Beta']);
+  assert.deepEqual(categories.find(category => category.name === 'Ordered').sub.map(item => item.name), ['Gamma', 'Alpha', 'Beta']);
 });
 
 test('category route parameters are decoded exactly once', async (t) => {
@@ -2969,13 +2969,18 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#knowledgeRootPanel') !== null, true);
   assert.equal(document.querySelector('#knowledgeInsidePanel') !== null, true);
   assert.equal(document.querySelector('#knowledgeBaseList') !== null, true);
-  assert.equal(document.querySelector('#knowledgeFolderTree') !== null, true);
+  assert.equal(document.querySelector('#knowledgeFolderTree'), null);
   assert.equal(document.querySelector('#knowledgeBreadcrumb') !== null, true);
   assert.equal(document.querySelector('#knowledgeDocumentListHeading') !== null, true);
+  assert.equal(document.querySelector('#newFolderButton') !== null, true);
+  assert.equal(document.querySelector('#fileOriginalPanel') !== null, true);
   assert.equal(document.querySelector('#knowledgeInsideTitle'), null);
   assert.equal(document.querySelector('#knowledgeDocumentCount'), null);
   assert.equal(document.querySelector('#knowledgeBackButton'), null);
-  assert.match(source, /renderKnowledgeBreadcrumb/);
+  assert.match(source, /folderRowsHtml/);
+  assert.match(source, /params\.set\('folder'/);
+  assert.doesNotMatch(source, /#knowledgeFolderTree/);
+  assert.doesNotMatch(source, /#fileReader/);
   assert.match(source, /documentRowSubtitle/);
   assert.match(source, /knowledgeFiltersActive/);
   assert.match(styles, /\.knowledge-breadcrumb/);
@@ -2984,9 +2989,9 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#knowledgeCollectionFilter'), null);
   assert.equal(document.querySelector('#agentView') !== null, true);
   assert.equal(document.querySelector('#knowledgeView') !== null, true);
-  assert.equal(document.querySelector('#annotationContent') !== null, true);
+  assert.equal(document.querySelector('#annotationContent'), null);
   assert.equal(document.querySelector('#filePreviewHost') !== null, true);
-  assert.equal(document.querySelector('#fileExtractDetails') !== null, true);
+  assert.equal(document.querySelector('#fileOriginalDetails') !== null, true);
   assert.equal(document.querySelector('#deleteDocumentButton') !== null, true);
   assert.equal(document.querySelector('#insertImageButton') !== null, true);
   assert.equal(document.querySelector('#documentImageInput') !== null, true);
@@ -3153,7 +3158,9 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(styles, /grid-template-columns:\s*var\(--sidebar-width\) minmax\(0, 1fr\)/);
   assert.match(styles, /\.brand-home[^{]*\{[^}]*flex:\s*0 0 auto/);
   assert.match(styles, /\.sidebar-scroll\s*\{[\s\S]*overflow-y:\s*auto;/);
-  assert.match(styles, /\.note-editor,\s*\.file-reader\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styles, /\.note-editor\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styles, /\.document-folder-row/);
+  assert.match(styles, /\.file-original-panel/);
   assert.match(source, /brandHome\.setAttribute\('href', mode === 'knowledge' \? '#knowledge' : mode === 'memory' \? '#memory' : mode === 'todos' \? '#todos' : '#agent'\)/);
   assert.match(styles, /grid-template-columns:\s*auto auto auto auto/);
   assert.match(styles, /@media \(max-width: 840px\)[\s\S]*body\.sidebar-visible \.workspace-sidebar/);
@@ -3189,7 +3196,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /documentRowSubtitleHtml/);
   assert.match(source, /documentRowTitleHtml/);
   assert.match(styles, /\.document-row small mark/);
-  assert.match(styles, /\.file-reader mark/);
+  assert.match(styles, /\.file-preview-host/);
   assert.equal(fs.existsSync(path.join(ROOT, 'public', 'js', 'markdown.js')), true);
   assert.match(html, /vendor\/katex\/katex\.min\.css/);
   assert.match(html, /vendor\/katex\/katex\.min\.js/);
