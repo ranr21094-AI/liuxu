@@ -1,10 +1,8 @@
 import {
   apiFetch,
-  checkAuth,
   getDiaryStatus,
   unlockDiary,
   lockDiary,
-  logoutSite,
 } from './auth.js';
 import {
   debounce,
@@ -20,7 +18,6 @@ import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.j
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { renderToHtml, renderToHtmlUncached } from './markdown.js';
 import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
-import { fillAccountSettings, initAccounts } from './accounts.js';
 import { createBackupActions } from './workbench-backup.js';
 import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
@@ -86,7 +83,6 @@ const SEEDREAM_MODEL_IDS = Object.keys(SEEDREAM_UI_PROFILES);
 
 const state = {
   mode: 'agent',
-  user: null,
   diaryUnlocked: false,
   sessions: [],
   archivedSessions: [],
@@ -1675,9 +1671,8 @@ async function loadAgentSettingsForm() {
 }
 
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'account'];
-  let next = allowed.includes(panel) ? panel : 'appearance';
-  if (next === 'computer' && state.user?.role !== 'admin') next = 'appearance';
+  const allowed = ['appearance', 'sessions', 'model', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer'];
+  const next = allowed.includes(panel) ? panel : 'appearance';
   state.settingsPanel = next;
   document.querySelectorAll('[data-settings-nav]').forEach(button => {
     const active = button.dataset.settingsNav === next;
@@ -1688,15 +1683,12 @@ function setSettingsPanel(panel) {
     section.hidden = section.dataset.settingsPanel !== next;
   });
   const saveButton = $('#saveAgentSettings');
-  if (saveButton) saveButton.hidden = next === 'account' || next === 'knowledge' || next === 'data';
+  if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data';
   if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
-  if (next === 'account') fillAccountSettings().catch(error => showToast(error.message, 'error'));
   if (next === 'knowledge') fillKnowledgeSearchOptionsForm();
 }
 
 async function openSettings(panel = 'appearance') {
-  $('#accountMenu').hidden = true;
-  $('#accountButton').setAttribute('aria-expanded', 'false');
   setSettingsPanel(panel);
   $('#settingsDialog').showModal();
   await loadAgentSettingsForm();
@@ -1756,7 +1748,6 @@ function settingsSavePayload() {
 }
 
 async function saveAgentSettings() {
-  if (state.settingsPanel === 'account') return;
   if (!state.aiSettings) {
     showToast('模型设置尚未加载，请关闭后重试', 'error');
     return;
@@ -1788,15 +1779,9 @@ async function saveAgentSettings() {
   }
 }
 
-function isAdminUser() {
-  return state.user?.role === 'admin';
-}
-
 function syncComputerSettingsVisibility() {
   const nav = document.querySelector('[data-settings-nav="computer"]');
-  const show = isAdminUser();
-  if (nav) nav.hidden = !show;
-  if (!show && state.settingsPanel === 'computer') setSettingsPanel('appearance');
+  if (nav) nav.hidden = false;
 }
 
 function renderComputerAllowlist() {
@@ -1821,14 +1806,7 @@ async function loadComputerPolicyForm() {
   if (extensionIdInput && !extensionIdInput.value) {
     extensionIdInput.value = localStorage.getItem(CHROME_EXTENSION_ID_KEY) || '';
   }
-  if (!isAdminUser()) return;
   const response = await apiFetch('/api/admin/agent-policy');
-  if (response.status === 403) {
-    const nav = document.querySelector('[data-settings-nav="computer"]');
-    if (nav) nav.hidden = true;
-    if (state.settingsPanel === 'computer') setSettingsPanel('appearance');
-    return;
-  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || '电脑策略加载失败');
   state.computerPolicy = {
@@ -1851,7 +1829,7 @@ function addComputerAllowlistEntry() {
 }
 
 async function saveComputerPolicy() {
-  if (!isAdminUser()) return;
+  if (!state.computerPolicy) return;
   const response = await apiFetch('/api/admin/agent-policy', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -4455,18 +4433,6 @@ async function toggleDiary() {
   showToast('私密知识已锁定', 'success');
 }
 
-async function loadAccount() {
-  const response = await apiFetch('/api/auth/me');
-  if (!response.ok) return;
-  state.user = await response.json();
-  const name = state.user.display_name || state.user.username || '用户';
-  $('#diaryUsername').value = state.user.username || name;
-  $('#accountName').textContent = name;
-  $('#accountButton')?.classList.toggle('is-admin', state.user.role === 'admin');
-  $('#accountRole').textContent = state.user.role === 'admin' ? '管理员账户' : '普通账户';
-  syncComputerSettingsVisibility();
-}
-
 function applyTheme(value) {
   if (value === 'system') {
     localStorage.removeItem('theme');
@@ -4860,7 +4826,7 @@ function bindEvents() {
      await Promise.all([syncDiaryStatus(), loadKnowledgeTree(), state.selectedKnowledgeBase ? loadDocuments() : Promise.resolve()]);
     showToast('私密知识已解锁', 'success');
   });
-  $('#accountSettings').addEventListener('click', () => openSettings('account').catch(error => showToast(error.message, 'error')));
+  $('#settingsButton')?.addEventListener('click', () => openSettings('appearance').catch(error => showToast(error.message, 'error')));
   $('#agentComposerModelSelect')?.addEventListener('change', event => {
     quickSaveAgentModel(event.target.value).catch(error => showToast(error.message, 'error'));
   });
@@ -5026,37 +4992,17 @@ function bindEvents() {
     renderMemoryWorkspace();
   });
   $('#themeSelect').addEventListener('change', event => applyTheme(event.target.value));
-  $('#accountButton').addEventListener('click', event => {
-    event.stopPropagation();
-    const menu = $('#accountMenu');
-    menu.hidden = !menu.hidden;
-    $('#accountButton').setAttribute('aria-expanded', String(!menu.hidden));
-  });
-  document.addEventListener('click', event => {
-    if (!event.target.closest('#accountMenu') && !event.target.closest('#accountButton')) {
-      $('#accountMenu').hidden = true;
-      $('#accountButton').setAttribute('aria-expanded', 'false');
-    }
-  });
-  $('#logoutButton').addEventListener('click', logoutSite);
-  window.addEventListener('account-updated', event => {
-    if (!event.detail) return;
-    state.user = event.detail;
-    $('#diaryUsername').value = state.user.username || state.user.display_name || '';
-    syncComputerSettingsVisibility();
-  });
 }
 
 async function initialize() {
-  if (!(await checkAuth())) return;
   bindEvents();
-  initAccounts();
   initTodos();
   syncMobileSidebarAccessibility();
+  syncComputerSettingsVisibility();
   renderKnowledgeSearchModeHint();
   const savedTheme = localStorage.getItem('theme');
   $('#themeSelect').value = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'system';
-  await Promise.all([loadAccount(), syncDiaryStatus(), loadAgentStatus(), loadComposerModelOptions()]);
+  await Promise.all([syncDiaryStatus(), loadAgentStatus(), loadComposerModelOptions()]);
   await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();

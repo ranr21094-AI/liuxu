@@ -1,0 +1,46 @@
+appId: com.worklog.desktop
+productName: Work Log
+compression: maximum
+directories:
+  output: dist/desktop
+  buildResources: electron
+files:
+  - package.json
+  - server.js
+  - database.js
+  - business-date.js
+  - secret-store.js
+  - electron/**/*
+  - lib/**/*
+  - public/**/*
+  - scripts/build-editor.mjs
+  - "!data/**"
+  - "!dist/**"
+  - "!test/**"
+  - "!.git/**"
+  - "!.cursor/**"
+  - "!.zcode/**"
+  - "!**/*.md"
+  - "!.env"
+  - "!.env.example"
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+npmRebuild: false
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: electron/icon.png
+  requestedExecutionLevel: asInvoker
+nsis:
+  artifactName: "${productName} Setup ${version}.${ext}"
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Work Log
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false

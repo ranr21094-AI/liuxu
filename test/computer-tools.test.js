@@ -213,15 +213,18 @@ test('computer tools default to enabled and prefer the desktop allowlist', () =>
   }
 });
 
-test('computer tools are allowed for admin without loopback or reauth', (t) => {
+test('computer tools are allowed when enabled regardless of user role', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'allow-policy-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   savePolicy(dir, { computerToolsEnabled: true, allowedDirectories: [dir], chromePaired: false });
-  const allowed = computerToolsAllowed({ user: { id: 'admin-1', role: 'admin' }, ip: '10.0.0.8' }, dir);
+  const allowed = computerToolsAllowed({ user: { id: 'local', role: 'admin' }, ip: '10.0.0.8' }, dir);
   assert.equal(allowed.ok, true);
-  const denied = computerToolsAllowed({ user: { id: 'user-1', role: 'user' }, ip: '127.0.0.1' }, dir);
+  const alsoAllowed = computerToolsAllowed({ user: { id: 'local', role: 'member' }, ip: '127.0.0.1' }, dir);
+  assert.equal(alsoAllowed.ok, true);
+  savePolicy(dir, { computerToolsEnabled: false, allowedDirectories: [dir], chromePaired: false });
+  const denied = computerToolsAllowed({ user: { id: 'local', role: 'admin' }, ip: '127.0.0.1' }, dir);
   assert.equal(denied.ok, false);
-  assert.match(denied.error, /Admin/);
+  assert.match(denied.error, /disabled/);
 });
 
 test('computer facade lists and deletes files without reauth', async (t) => {

@@ -1,6 +1,6 @@
 # Work Log
 
-本地优先、支持多账户隔离的 Agent 工作台。工作日志作为知识库文档，另有待办、倒数日和可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream、WeStock 能力。数据保存在 JSON 文件中。
+本地优先的单用户 Agent 工作台。工作日志作为知识库文档，另有待办、倒数日和可选的 DeepSeek、Kimi、OpenRouter、Tavily、Perplexity、Seedream、WeStock 能力。数据保存在 `{DATA_DIR}/schedule.db` 与相关附件目录中。
 
 更新记录见 [ChangeLog.md](ChangeLog.md)。本次全量代码审查的问题说明、临时措施与分阶段修复安排见 [code-review-remediation.md](code-review-remediation.md)。
 
@@ -12,26 +12,50 @@ copy .env.example .env
 npm start
 ```
 
-macOS 或 Linux 可用 `cp .env.example .env`。首次启动前必须在 `.env` 中设置一个临时管理员密码：
-
-```dotenv
-AUTH_TOKEN=replace-with-a-temporary-password
-```
-
-首次启动会创建用户名为 `admin` 的管理员。打开 `http://localhost:3000/login`，使用 `admin` 和上述临时密码登录，然后按提示改成 10–128 个字符的新密码。
-
-`AUTH_TOKEN` 只用于第一次创建管理员；`data/users.json` 创建后，旧 Bearer Token 会失效，修改 `AUTH_TOKEN` 也不会覆盖登录密码。完成首次改密后可以从 `.env` 删除它。
+macOS 或 Linux 可用 `cp .env.example .env`。打开 `http://localhost:3000` 即可使用，无需登录。
 
 常用命令：
 
 ```bash
 npm run build
 npm test
+npm run desktop          # Electron 开发调试（窗口 + 本地服务）
+npm run desktop:build    # Windows NSIS 安装包（从当前 C 盘项目构建）
 ```
+
+### Windows 安装版
+
+安装后通过桌面或开始菜单的 **Work Log** 快捷方式一键运行，内嵌浏览器与仅监听本机的 Express 服务，无需登录。
+
+**开发调试**
+
+```bash
+npm run desktop
+```
+
+开发模式仍使用项目根目录的 `./data`，与 `npm start` 行为一致。
+
+**打包（Windows x64）**
+
+```bash
+npm run desktop:build
+```
+
+构建脚本要求项目位于 C 盘；源码和最终产物都留在项目中，仅把系统临时目录、npm、Electron 和 electron-builder 缓存切换到 `D:\Temp\work-log-build-c`。脚本依次执行锁定依赖安装、Electron 运行时下载、`better-sqlite3` Windows x64 预编译模块校验、前端构建、全量测试和 NSIS 打包；D 盘缓存不足 5 GB 或 C 盘输出空间不足 800 MB 时会提前停止。
+
+产物：`dist/desktop/Work Log Setup 1.0.0.exe`，同时生成 `.sha256` 校验文件和 `desktop-build-summary.json`。本次安装包未签名，Windows 首次运行可能显示「未知发布者」。
+
+安装向导默认使用 Windows 当前用户的标准程序目录，允许手动改路径，并创建桌面与开始菜单快捷方式。应用数据独立保存到 `%LOCALAPPDATA%\Work Log Data`，覆盖安装或卸载程序都不会删除该目录。
+
+首次启动且新数据目录为空时，客户端会从当前用户的 `OneDrive\Desktop\schedule\data` 暂存复制、核对文件数量和大小、验证 `schedule.db` / `users.db`，并把 AI 密钥的加密作用域安全迁移到新目录，成功后再原子切换；原数据不会删除。若旧服务仍在使用 `.schedule.lock`，客户端会提示先关闭旧进程。项目根目录的 `.env` 只会在目标不存在时复制到新数据目录。
+
+数据目录优先级为：显式 `DATA_DIR` 环境变量 → `%APPDATA%\work-log\desktop-config.json` → `%LOCALAPPDATA%\Work Log Data`。启动日志位于 `{DATA_DIR}\logs\desktop-main.log`。
+
+`bash.run`、Chrome 扩展等电脑工具仍依赖本机 Git Bash / Chrome，不随安装包捆绑。
 
 `npm start` 和 `npm test` 会自动把 marked、DOMPurify、KaTeX、pdf.js 拷到 `public/vendor/`；如果直接运行 `node server.js`，请先执行 `npm run build`。
 
-默认仅监听 `127.0.0.1:3000`。若已有 `users.json`，后续启动不再需要 `AUTH_TOKEN`；若既没有用户注册表又没有 `AUTH_TOKEN`，服务会拒绝启动并给出初始化提示。
+默认监听 `127.0.0.1:3000`。若将 `HOST` 设为 `0.0.0.0` 或绑定到非本机地址，**没有任何访问控制**——请仅在可信网络中使用，或通过 HTTPS 反向代理保护。
 
 待办提醒测试命令：
 
@@ -64,18 +88,9 @@ npm run todo:reminder:test -- --to your@email.com --all-open --dry-run
 
 旧链接 `#knowledge?view=todos` 会自动重定向到 `#todos`。
 
-顶栏还提供「私密知识」锁定状态、运行状态、设置（模型/Memory/联网/生图/电脑工具/归档会话/账户）和账户菜单。
+顶栏还提供「私密知识」锁定状态、运行状态，以及设置入口（模型/Memory/联网/生图/电脑工具/归档会话等）。
 
 ## Main Areas
-
-### 账户与登录
-
-- 未登录访问 `/` 或 `/index.html` 会跳转到 `/login`；API 返回 401 时前端统一回到登录页。
-- 用户名为 3–32 位字母、数字、点、下划线或短横线；登录密码使用 Node `crypto.scrypt` 和随机盐保存。
-- 会话 Cookie 为 HttpOnly、SameSite=Strict，有效期 24 小时；磁盘中只保存令牌哈希、账户 ID 和过期时间。
-- 新账户和管理员重置密码后的账户必须首次改密；修改或重置密码、停用账户都会撤销相关会话。
-- 管理员可管理账户元数据，但没有成员工作区、备份、数据量或内容的读取入口。
-- 普通成员可在设置 → 账户中修改显示名称和登录密码；管理员用户管理也在该面板。
 
 ### Agent
 
@@ -139,9 +154,8 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `PORT` | HTTP 服务端口 | `3000` |
-| `HOST` | 监听地址；对外监听时必须启用账户认证 | `127.0.0.1` |
-| `DATA_DIR` | 用户注册表、账户数据和上传目录 | `./data` |
-| `AUTH_TOKEN` | 仅在没有 `users.json` 时初始化 `admin` 的一次性密码 | required on first start |
+| `HOST` | 监听地址；非 loopback 绑定无访问控制，请谨慎暴露 | `127.0.0.1` |
+| `DATA_DIR` | 工作区 SQLite 与附件目录 | `./data` |
 | `DEEPSEEK_API_KEY` | 旧管理员工作区可使用的服务端 DeepSeek 回退 Key | empty |
 | `DEEPSEEK_BASE_URL` | DeepSeek API 基础地址 | `https://api.deepseek.com` |
 | `DEEPSEEK_DEFAULT_MODEL` | 默认 DeepSeek 模型 | `deepseek-v4-flash` |
@@ -172,27 +186,23 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 3. 重启服务，在待办侧栏「邮件提醒」中设置启用状态、收件邮箱和发送时间（默认 `08:00`）。
 4. 服务每 60 秒检查一次；只提醒当天到期且未完成的待办；SMTP 失败会重试同一份当天快照。
 
-### 首次迁移说明
+### 数据完整性
 
-- 若 `DATA_DIR` 中还没有 `users.json`，启动时必须提供 `AUTH_TOKEN`。
-- 服务会先检查现有 JSON 数据，再原子创建 `admin`；现有日志、待办、分类、上传文件不会移动。
-- 创建用户注册表后，`AUTH_TOKEN` 不再覆盖账户配置，可从 `.env` 删除。
-- `users.json` 或 `auth-sessions.json` 损坏时，服务会保留 `.corrupt-*.bak` 副本并拒绝登录。
+- 启动时会检查 `{DATA_DIR}` 下 SQLite 与遗留 JSON 迁移状态；损坏的 JSON 会保留 `.corrupt-*.bak` 副本并拒绝启动。
 
 ## 私密知识（日记）
 
 - 标记为 `visibility: diary` 的知识（含「日记」分类下的日志）在**未解锁**时不出现在知识列表、搜索和 Agent `@` 上下文中。
 - 顶栏 **私密知识** 按钮打开口令对话框；输入固定暗语「如意如意」（与 `server.js` 中 `DIARY_MAGIC_PHRASE` 一致）解锁，再次点击可锁定。
-- 解锁状态通过 `diary_session` Cookie 维持（24 小时，按账户隔离）。备份/恢复与 ZIP 导出需先解锁。
+- 解锁状态通过 `diary_session` Cookie 维持（24 小时）。备份/恢复与 ZIP 导出需先解锁。
 
 ## Data And Privacy
 
-默认数据目录为 `data/`；首次管理员使用根目录，新账户位于 `accounts/<storage_key>/`。
+默认数据目录为 `data/`（`schedule.db`、`uploads/`、`knowledge-files/` 等）。
 
 | File | Content |
 | --- | --- |
-| `users.json` | 账户、scrypt 密码哈希、存储目录键 |
-| `auth-sessions.json` | 会话令牌哈希与过期时间 |
+| `schedule.db` | 待办、知识、Agent、设置等 SQLite 数据 |
 | `logs.json` | 遗留工作日志；首次访问知识库时自动迁移至 `knowledge-documents.json`，原内容备份为 `logs.migrated.json` |
 | `logs.migrated.json` / `.logs-migrated.json` | 迁移备份与 id 映射 |
 | `todos.json` / `countdowns.json` | 待办与倒数日 |
@@ -205,18 +215,18 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 | `uploads/` | Markdown 内嵌图与 Agent 生图 |
 | `private-uploads.json` | 私密图片保护标记 |
 
-隐私要点：所有工作区 API 从 Cookie 会话解析账户；管理员不能读取成员工作区；账户 AI Key 加密存储，主密钥需单独备份迁移；`.env` 与 `data/` 已在 `.gitignore` 中。
+隐私要点：工作区无登录层；`.env` 与 `data/` 已在 `.gitignore` 中；对外网暴露前请自行加访问控制。
 
 ## Backup And Restore
 
 - **JSON 备份**（`GET /api/backup`）：结构数据（待办、分类、遗留 logs 等），标记 `format: structure`，不含二进制。旧备份中的 `aiChats` 在恢复时会落盘并由 Agent 自动迁移为归档会话。
 - **ZIP 工作区**（`GET /api/workspace/export`）：含知识附件、上传、Agent 数据等完整副本；恢复用 `POST /api/workspace/restore`（支持 JSON 或 ZIP，`?mode=merge` 可合并）。
-- 不含 `users.json` 或其它账户凭据；私密知识需解锁后才能备份/恢复。
+- 不含账户凭据；私密知识需解锁后才能备份/恢复。
 
 ## Chrome 扩展与 Windows 原生执行
 
 - 仓库 `chrome-extension/` 为 Manifest V3 扩展，仅与 localhost 应用页通信，通过配对码绑定标签页。
-- Windows 电脑工具默认关闭；管理员配置目录白名单后，Agent 才可执行文件读写、`code.run`（PowerShell/Python）与 `bash.run`（Git Bash：git、npm、node 等；需确认；非沙箱，等同当前用户权限）。
+- Windows 电脑工具默认关闭；在设置 → 电脑中配置目录白名单后，Agent 才可执行文件读写、`code.run`（PowerShell/Python）与 `bash.run`（Git Bash：git、npm、node 等；需确认；非沙箱，等同当前用户权限）。
 
 ## Mobile Access
 
@@ -224,7 +234,7 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 
 ## Development Notes
 
-- 后端：Express + JSON 文件存储（`database.js` 工厂按账户目录实例化）。
+- 后端：Express + SQLite（`database.js` → `{DATA_DIR}/schedule.db`）。
 - 前端：原生 JS（`index.html` + `workbench.js` + `workbench.css`），无 React/CodeMirror  bundle。
 - 构建：`npm run build` 复制 vendor 到 `public/vendor/`。
 - 路由顺序：`PUT /api/logs/reorder`、`PUT /api/todos/reorder` 等须定义在对应 `/:id` 之前。
@@ -233,15 +243,10 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/auth/login` | 登录 |
-| `GET` | `/api/auth/check` | 登录状态 |
-| `POST` | `/api/auth/logout` | 退出 |
-| `GET/PATCH` | `/api/auth/me` | 当前账户 / 改显示名 |
-| `PUT` | `/api/auth/password` | 改登录密码 |
 | `POST` | `/api/auth/diary` | 用暗语解锁私密知识 |
 | `POST` | `/api/auth/diary/lock` | 锁定 |
 | `GET` | `/api/auth/diary/status` | 锁定状态 |
-| `GET/POST/PATCH` | `/api/admin/users` … | 管理员账户管理 |
+| `GET/PUT` | `/api/admin/agent-policy` | 电脑工具策略 |
 | `GET/POST/PUT/DELETE` | `/api/logs` … | 遗留日志 CRUD（兼容；新内容请用知识库笔记） |
 | `GET/POST/PUT/DELETE` | `/api/todos` … | 待办 |
 | `GET/POST/PUT/DELETE` | `/api/countdowns` … | 倒数日 |
@@ -267,5 +272,3 @@ Agent 本地检索不会索引未解锁的私密知识；日记内容需解锁�
 | `GET/PUT` | `/api/admin/agent-policy` | 电脑工具策略 |
 | `GET` | `/api/workspace/export` | ZIP 导出 |
 | `POST` | `/api/workspace/restore` | ZIP/JSON 恢复 |
-
-除登录相关接口外，均需有效 `site_session` Cookie；`/api/admin/*` 需管理员角色。

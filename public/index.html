@@ -173,22 +173,12 @@
               <rect x="5" y="11" width="14" height="10" rx="2"></rect>
             </svg>
           </button>
-          <button class="account-button" id="accountButton" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="账户菜单">
-            <svg class="account-icon-user" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="8" r="4"></circle>
-              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path>
-            </svg>
-            <svg class="account-icon-admin" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"></path>
-              <circle cx="12" cy="11" r="2.5"></circle>
-              <path d="M8.5 17.5c1.5-1 3-1.5 3.5-1.5s2 .5 3.5 1.5"></path>
+          <button class="icon-button" id="settingsButton" type="button" aria-label="设置" title="设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
             </svg>
           </button>
-          <div class="account-menu" id="accountMenu" role="menu" hidden>
-            <div class="account-summary"><strong id="accountName">当前账户</strong><small id="accountRole"></small></div>
-            <button id="accountSettings" type="button" role="menuitem">设置</button>
-            <button id="logoutButton" type="button" role="menuitem">退出登录</button>
-          </div>
         </div>
       </header>
 
@@ -501,8 +491,7 @@
           <button type="button" data-settings-nav="skills">技能</button>
           <button type="button" data-settings-nav="knowledge">知识库搜索</button>
           <button type="button" data-settings-nav="data">数据</button>
-          <button type="button" data-settings-nav="computer" hidden>电脑</button>
-          <button type="button" data-settings-nav="account">账户</button>
+          <button type="button" data-settings-nav="computer">电脑</button>
         </nav>
         <div class="settings-content">
           <section class="settings-section" data-settings-panel="appearance">
@@ -831,36 +820,6 @@
             <input id="restoreJsonInput" type="file" accept="application/json,.json" hidden>
             <input id="restoreZipInput" type="file" accept="application/zip,.zip" hidden>
           </section>
-          <section class="settings-section" data-settings-panel="account" hidden>
-            <h3>个人资料</h3>
-            <p class="settings-copy" id="accountMeta"></p>
-            <label class="settings-field" for="accountDisplayNameInput">显示名称
-              <input id="accountDisplayNameInput" type="text" maxlength="50" autocomplete="name">
-            </label>
-            <div class="settings-actions">
-              <button type="button" class="secondary-action compact" id="btnSaveAccountProfile">保存资料</button>
-            </div>
-            <h3>修改登录密码</h3>
-            <label class="settings-field" for="accountCurrentPassword">当前密码
-              <input id="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password">
-            </label>
-            <label class="settings-field" for="accountNewPassword">新密码
-              <input id="accountNewPassword" type="password" maxlength="128" autocomplete="new-password">
-            </label>
-            <label class="settings-field" for="accountConfirmPassword">确认新密码
-              <input id="accountConfirmPassword" type="password" maxlength="128" autocomplete="new-password">
-            </label>
-            <div class="settings-actions">
-              <button type="button" class="secondary-action compact" id="btnChangeAccountPassword">修改密码</button>
-            </div>
-            <div id="adminUsersSection" hidden>
-              <h3>账户管理</h3>
-              <p class="settings-copy">管理员只能管理账户资料，不能查看成员工作区。</p>
-              <div class="settings-actions">
-                <button type="button" class="secondary-action compact" id="btnAdminUsers">管理账户</button>
-              </div>
-            </div>
-          </section>
         </div>
       </div>
       <div class="dialog-actions">
@@ -877,47 +836,6 @@
       <label class="dialog-field">口令<input id="diaryPassword" name="password" type="password" autocomplete="current-password" required></label>
       <div class="dialog-actions"><button class="secondary-action" id="cancelDiaryDialog" type="button">取消</button><button class="primary-action compact" type="submit">解锁</button></div>
     </form>
-  </dialog>
-
-  <dialog class="workspace-dialog user-manager-dialog" id="userManagerDialog" aria-labelledby="userManagerTitle">
-    <div class="dialog-card">
-      <header>
-        <div>
-          <span class="dialog-eyebrow">ADMIN</span>
-          <h2 id="userManagerTitle">账户管理</h2>
-        </div>
-        <button class="icon-button" id="userManagerClose" type="button" aria-label="关闭">×</button>
-      </header>
-      <p class="settings-copy">管理员只能管理账户资料，不能查看成员工作区。</p>
-      <form class="user-create-form" id="userCreateForm" autocomplete="off">
-        <h3>创建账户</h3>
-        <label class="dialog-field" for="newUserUsername">用户名
-          <input id="newUserUsername" type="text" maxlength="32" pattern="[A-Za-z0-9._-]{3,32}" autocomplete="off" required>
-        </label>
-        <label class="dialog-field" for="newUserDisplayName">显示名称
-          <input id="newUserDisplayName" type="text" maxlength="50" autocomplete="off" required>
-        </label>
-        <label class="dialog-field" for="newUserPassword">临时密码
-          <input id="newUserPassword" type="password" maxlength="128" autocomplete="new-password">
-        </label>
-        <label class="dialog-field" for="newUserRole">角色
-          <select id="newUserRole">
-            <option value="member">普通成员</option>
-            <option value="admin">管理员</option>
-          </select>
-        </label>
-        <div class="settings-actions">
-          <button class="primary-action compact" type="submit">创建并要求首次改密</button>
-        </div>
-      </form>
-      <section class="user-list-section" aria-labelledby="userListTitle">
-        <div class="user-list-heading">
-          <h3 id="userListTitle">已有账户</h3>
-          <span id="userListCount">0 个</span>
-        </div>
-        <div class="user-manager-list" id="userManagerList"><p class="empty-list">加载账户中…</p></div>
-      </section>
-    </div>
   </dialog>
 
   <dialog class="workspace-dialog" id="confirmDialog">

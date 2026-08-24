@@ -7,9 +7,19 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - **Install**: `npm install` (first-time setup)
 - **Build vendor assets**: `npm run build` (copies marked / DOMPurify / KaTeX / pdf.js into `public/vendor/`; required before running `node server.js` directly)
 - **Start server**: `npm start` (builds vendor assets, then starts Express)
+- **Desktop (dev)**: `npm run desktop` (builds vendor assets, then Electron window + embedded server)
+- **Desktop (NSIS build)**: from this C-drive project, run `npm run desktop:build` → `dist/desktop/Work Log Setup 1.0.0.exe` + SHA-256/build summary (Windows x64; build caches are under `D:\Temp\work-log-build-c`)
 - **Tests**: `npm test` (builds vendor assets, then runs Node tests)
 - **Port**: Set `PORT` env var (default 3000). E.g. `PORT=3001 npm start`
 - Vanilla JS frontend served as static ES modules under `public/js/`. No CodeMirror/Monaco bundle.
+
+### Desktop (`electron/`)
+
+- **`electron/main.js`**: Electron main process — strict single-instance restore/show/focus, packaged data resolution (`DATA_DIR` → desktop config → `%LOCALAPPDATA%\Work Log Data`), first-run migration from the current user's C-drive OneDrive Desktop workspace, then `startServer()` and a sandboxed `BrowserWindow` on `http://127.0.0.1:<random-port>/`.
+- **`electron/runtime.js`**: testable desktop config, staged data migration, SQLite/hash checks, AI-secret scope re-encryption, log writer, and navigation guards.
+- **`electron-builder.yml`**: Windows per-user NSIS x64 installer using the standard Windows install directory, output `dist/desktop/`, `asarUnpack` for `better-sqlite3`.
+- **`scripts/desktop-build.ps1`**: C-project reproducible build; puts TEMP/npm/Electron caches under `D:\Temp\work-log-build-c`, installs with third-party scripts disabled, downloads Electron explicitly, verifies the bundled SQLite native module, runs tests, and emits installer checksum/summary.
+- **`server.js`**: supports `DOTENV_PATH`; skips default `.env` when `DATA_DIR` is preset (Electron portable); `startServer()` returns a Promise resolving to the HTTP server (used by Electron and CLI).
 
 ## Architecture
 
@@ -52,9 +62,9 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 
 ### Frontend (`public/`)
 
-- **Workbench SPA**: `index.html` + `css/workbench.css` + `js/workbench.js` (+ `workbench-backup.js`, `todos.js`, `accounts.js`, …).
+- **Workbench SPA**: `index.html` + `css/workbench.css` + `js/workbench.js` (+ `workbench-backup.js`, `todos.js`, …).
 - **Modes** (top bar): Agent / 知识库 / Memory / **待办** — hash routes `#agent`, `#knowledge`, `#memory`, `#todos` (`#knowledge?view=todos` redirects to `#todos`).
-- **Login**: `login.html` + `js/login.js`. Account settings in Settings → 账户.
+- **Single-user local mode**: no login page; server always uses legacy `{DATA_DIR}/schedule.db`.
 - **Todos**: `js/todos.js`, dedicated `#todos` mode (not a knowledge sub-view).
 - **State**: Module-local `state` in `workbench.js` — no framework.
 - **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images via `#insertImageButton` → `POST /api/upload`.
@@ -75,7 +85,7 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 
 See `README.md` § Relevant API for the full table. Notable groups:
 
-- **Auth**: `/api/auth/*`, `/api/admin/users`
+- **Diary**: `/api/auth/diary*` unlock routes; unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 - **Logs (compat)**: `/api/logs`, `/api/stats` — no CSV export
 - **Knowledge**: `/api/knowledge/tree`, `/api/knowledge/documents`, `/api/knowledge/search`, `/api/knowledge/imports`, archive/restore
 - **Agent**: `/api/agent/sessions`, `/api/agent/runs`, `/api/agent/memories`, `/api/ai/settings`

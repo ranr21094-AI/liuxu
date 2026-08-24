@@ -1,4 +1,9 @@
-require('dotenv').config();
+const dotenvPath = process.env.DOTENV_PATH;
+if (dotenvPath) {
+  require('dotenv').config({ path: dotenvPath });
+} else if (!process.env.DATA_DIR) {
+  require('dotenv').config();
+}
 
 const express = require('express');
 const path = require('path');
@@ -9,7 +14,6 @@ const { AsyncLocalStorage } = require('async_hooks');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
 const database = require('./database');
-const { createAuthStore } = require('./auth-store');
 const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
 const { isPrivateIpLiteral, validateGeneratedImageUrl } = require('./lib/net/ssrf');
 const { toolResult, toProviderTools, fromProviderName } = require('./lib/agent/tools');
@@ -76,9 +80,13 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
 
-// AUTH_TOKEN is used only to bootstrap the first administrator.
-const AUTH_TOKEN = process.env.AUTH_TOKEN || null;
-const ALLOW_INSECURE_NO_AUTH = process.env.ALLOW_INSECURE_NO_AUTH === '1';
+const LOCAL_USER = Object.freeze({
+  id: 'local',
+  username: 'local',
+  display_name: '本地用户',
+  role: 'admin',
+  storage_key: 'legacy',
+});
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || '';
 const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEEPSEEK_DEFAULT_MODEL = process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-flash';
@@ -163,25 +171,7 @@ const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
 const DIARY_MAGIC_PHRASE = '如意如意';
 database.checkDataIntegrity();
 database.resetCache();
-const authStore = createAuthStore({
-  dataDir: DATA_DIR,
-  bootstrapPassword: AUTH_TOKEN || '',
-  allowInsecureNoAuth: ALLOW_INSECURE_NO_AUTH,
-});
 const databaseContext = new AsyncLocalStorage();
-const databaseInstances = new Map();
-databaseInstances.set('legacy', database);
-
-function userDataDirectory(user) {
-  if (!user || user.storage_key === 'legacy') return DATA_DIR;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(user.storage_key || '')) {
-    throw new Error('Invalid user storage key');
-  }
-  const accountsRoot = path.resolve(DATA_DIR, 'accounts');
-  const target = path.resolve(accountsRoot, user.storage_key);
-  if (!target.startsWith(accountsRoot + path.sep)) throw new Error('Invalid user data directory');
-  return target;
-}
 
 function builtinEnvSecrets() {
   return {
@@ -200,17 +190,6 @@ function runBuiltinProvidersMigration(db, { envSecrets = {} } = {}) {
   }
 }
 
-function databaseForUser(user) {
-  const storageKey = user?.storage_key || 'legacy';
-  if (!databaseInstances.has(storageKey)) {
-    const instance = database.createDatabase(userDataDirectory(user), { secretScope: storageKey });
-    databaseInstances.set(storageKey, instance);
-    runBuiltinProvidersMigration(instance);
-  }
-  return databaseInstances.get(storageKey);
-}
-
-for (const storedUser of authStore.listStoredUsers()) databaseForUser(storedUser).getAiSettings();
 runBuiltinProvidersMigration(database, { envSecrets: builtinEnvSecrets() });
 
 function currentDatabase() {
@@ -229,7 +208,6 @@ const moonshotFormulaToolCache = new Map(); // key fingerprint -> { expiresAt, t
 const openrouterModelCatalogCache = new Map(); // key fingerprint -> normalized user model catalog
 const DIARY_TOKEN_TTL = 24 * 60 * 60 * 1000; // 24h
 const DIARY_COOKIE_NAME = 'diary_session';
-const SITE_COOKIE_NAME = 'site_session';
 
 // Clean expired diary tokens every hour
 const diaryTokenCleanup = setInterval(() => {
@@ -472,33 +450,6 @@ async function readResponseTextWithLimit(response, maxBytes, errorMessage) {
   return Buffer.concat(chunks, total).toString('utf8');
 }
 
-function siteCookieOptions(req, token, maxAge) {
-  const parts = [
-    `${SITE_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Strict',
-    `Max-Age=${maxAge}`,
-  ];
-  if (req.secure) parts.push('Secure');
-  return parts.join('; ');
-}
-
-function setSiteCookie(req, res, token, expiresAt) {
-  const maxAge = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-  res.setHeader('Set-Cookie', siteCookieOptions(req, token, maxAge));
-}
-
-function clearSiteCookie(req, res) {
-  res.setHeader('Set-Cookie', siteCookieOptions(req, '', 0));
-}
-
-function getSiteSession(req) {
-  if (authStore.disabled) return authStore.getSession('');
-  const token = getCookie(req, SITE_COOKIE_NAME);
-  return authStore.getSession(token);
-}
-
 function isValidDiaryToken(req, token) {
   if (!token) return false;
   const entry = diaryTokens.get(token);
@@ -511,12 +462,6 @@ function isValidDiaryToken(req, token) {
 
 function hasDiaryAccess(req) {
   return isValidDiaryToken(req, getDiaryToken(req));
-}
-
-function revokeDiaryTokensForUser(userId) {
-  for (const [token, entry] of diaryTokens) {
-    if (entry.userId === userId) diaryTokens.delete(token);
-  }
 }
 
 function isDiaryCategory(category) {
@@ -768,24 +713,16 @@ function createTodoReminderService({
 }
 
 function createTodoReminderCoordinator({ intervalMs = TODO_REMINDER_INTERVAL_MS } = {}) {
-  const services = new Map();
+  let service = null;
   let timer = null;
   let running = false;
 
   function sync() {
-    const activeUsers = authStore.listActiveUsers();
-    const activeIds = new Set(activeUsers.map(user => user.id));
-    for (const user of activeUsers) {
-      if (!services.has(user.id)) {
-        const userDb = databaseForUser(user);
-        userDb.checkDataIntegrity();
-        services.set(user.id, createTodoReminderService({ db: userDb }));
-      }
+    if (!service) {
+      db.checkDataIntegrity();
+      service = createTodoReminderService({ db });
     }
-    for (const userId of services.keys()) {
-      if (!activeIds.has(userId)) services.delete(userId);
-    }
-    return services.size;
+    return 1;
   }
 
   async function tick() {
@@ -793,7 +730,7 @@ function createTodoReminderCoordinator({ intervalMs = TODO_REMINDER_INTERVAL_MS 
     running = true;
     try {
       sync();
-      await Promise.all([...services.values()].map(service => service.tick()));
+      await service.tick();
       return true;
     } finally {
       running = false;
@@ -841,29 +778,9 @@ function rateLimiter(maxAttempts, windowMs) {
   };
 }
 
-function authMiddleware(req, res, next) {
-  const siteToken = getCookie(req, SITE_COOKIE_NAME);
-  const authenticated = getSiteSession(req);
-  const isAppPage = req.path === '/' || req.path === '/index.html';
-  const protectedPath = isAppPage || req.path.startsWith('/api/') || req.path.startsWith('/uploads/');
-  if (!authenticated) {
-    if (!protectedPath) return next();
-    if (isAppPage) {
-      return res.redirect(302, `/login?next=${encodeURIComponent(req.originalUrl || '/')}`);
-    }
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  req.user = authenticated.user;
-  req.siteToken = siteToken;
-  const passwordChangeAllowed = ['/api/auth/me', '/api/auth/password', '/api/auth/logout'].includes(req.path);
-  if (req.user.must_change_password && !passwordChangeAllowed) {
-    if (isAppPage) return res.redirect(302, '/login?change=1');
-    if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) {
-      return res.status(403).json({ error: 'Password change required', code: 'PASSWORD_CHANGE_REQUIRED' });
-    }
-  }
-  return databaseContext.run(databaseForUser(req.user), next);
+function localUserMiddleware(req, res, next) {
+  req.user = LOCAL_USER;
+  return databaseContext.run(database, next);
 }
 
 function concurrencyLimiter(maxConcurrent, keyFn = () => 'global') {
@@ -903,32 +820,7 @@ app.use(express.json({ limit: '2mb' }));
 
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-app.get('/login', (req, res) => {
-  const authenticated = getSiteSession(req);
-  if (authenticated && !authenticated.user.must_change_password) return res.redirect(302, '/');
-  res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
-
-app.post('/api/auth/login', rateLimiter(5, 15 * 60 * 1000), (req, res) => {
-  const username = typeof req.body?.username === 'string' ? req.body.username : '';
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const user = authStore.authenticate(username, password);
-  if (!user) return res.status(401).json({ error: '用户名或密码错误' });
-  const session = authStore.createSession(user.id);
-  if (session.token) setSiteCookie(req, res, session.token, session.expires_at);
-  res.json({ authenticated: true, must_change_password: user.must_change_password === true, user: authStore.publicUser(user) });
-});
-
-app.get('/api/auth/check', (req, res) => {
-  const authenticated = getSiteSession(req);
-  res.json({
-    authenticated: Boolean(authenticated),
-    must_change_password: authenticated?.user?.must_change_password === true,
-    user: authenticated ? authStore.publicUser(authenticated.user) : null,
-  });
-});
-
-app.use(authMiddleware);
+app.use(localUserMiddleware);
 
 app.get(['/', '/index.html'], (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -968,67 +860,6 @@ function uploadedImageMatchesExtension(file) {
 function agentUploadedImageMatchesExtension(file) {
   return matchesUploadedImage(file, { allowExtended: true });
 }
-
-app.post('/api/auth/logout', (req, res) => {
-  authStore.revokeSession(req.siteToken);
-  const diaryToken = getDiaryToken(req);
-  if (diaryToken) diaryTokens.delete(diaryToken);
-  clearSiteCookie(req, res);
-  res.append('Set-Cookie', diaryCookieOptions(req, '', 0));
-  res.json({ success: true });
-});
-
-app.get('/api/auth/me', (req, res) => {
-  res.json(authStore.publicUser(req.user));
-});
-
-app.patch('/api/auth/me', (req, res) => {
-  const result = authStore.updateProfile(req.user.id, req.body?.display_name);
-  if (result.error) return res.status(400).json({ error: result.error });
-  res.json(result.user);
-});
-
-app.put('/api/auth/password', (req, res) => {
-  const result = authStore.changePassword(req.user.id, req.body?.current_password, req.body?.new_password);
-  if (result.error) return res.status(400).json({ error: result.error });
-  revokeDiaryTokensForUser(req.user.id);
-  const session = authStore.createSession(req.user.id);
-  if (session.token) setSiteCookie(req, res, session.token, session.expires_at);
-  res.json({ success: true, user: result.user });
-});
-
-function requireAdmin(req, res, next) {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Administrator access required' });
-  next();
-}
-
-app.get('/api/admin/users', requireAdmin, (_req, res) => {
-  res.json(authStore.listUsers());
-});
-
-app.post('/api/admin/users', requireAdmin, (req, res) => {
-  const result = authStore.createUser(req.body);
-  if (result.error) return res.status(400).json({ error: result.error });
-  const user = authStore.getUserById(result.user.id);
-  databaseForUser(user).checkDataIntegrity();
-  todoReminderService?.sync?.();
-  res.status(201).json(result.user);
-});
-
-app.patch('/api/admin/users/:id', requireAdmin, (req, res) => {
-  const result = authStore.updateUser(req.params.id, req.body || {});
-  if (result.error) return res.status(400).json({ error: result.error });
-  if (result.user.status === 'disabled') revokeDiaryTokensForUser(result.user.id);
-  todoReminderService?.sync?.();
-  res.json(result.user);
-});
-
-app.post('/api/admin/users/:id/reset-password', requireAdmin, (req, res) => {
-  const result = authStore.resetPassword(req.params.id, req.body?.temporary_password);
-  if (result.error) return res.status(400).json({ error: result.error });
-  revokeDiaryTokensForUser(result.user.id);
-  res.json(result.user);
-});
 
 // Diary unlock — the magic phrase replaces the old per-account password. The
 // limit is generous so unlock/lock toggling via the search box never trips it.
@@ -3437,7 +3268,7 @@ function createAgentWebSearch(req) {
 function createAgentWebFetch(req) {
   const { resolveAgentSettings } = require('./lib/agent/agent-settings');
   return async function agentWebFetch(args = {}) {
-    const userDb = req.user ? databaseForUser(req.user) : db;
+    const userDb = db;
     const settings = resolveAgentSettings(userDb.getAiSettings?.() || {});
     const WEB_FETCH_MAX_BYTES = settings.agentWebFetchMaxKb * 1024;
     const WEB_FETCH_TIMEOUT_MS = settings.agentWebFetchTimeoutSec * 1000;
@@ -3680,11 +3511,9 @@ function createAgentImageGenerate(req) {
 const { mountNewApis } = require('./lib/http/mount');
 mountNewApis(app, {
   db,
-  authStore,
   hasDiaryAccess,
   rejectLockedDiary,
   restoreRequiresDiaryAccess,
-  requireAdmin,
   modelClientFor: createAgentModelClient,
   agentStatusFor: createAgentStatus,
   webSearchFor: createAgentWebSearch,
@@ -3697,29 +3526,40 @@ mountNewApis(app, {
 });
 
 function startServer(port = PORT, host = HOST) {
-  if (!isLoopbackHost(host) && authStore.disabled) {
-    throw new Error('Account authentication is required when HOST is not loopback');
-  }
-  const processLock = acquireProcessLock();
-  todoReminderService = createTodoReminderCoordinator();
-  const server = app.listen(port, host, () => {
-    console.log(`Work Log server running at http://${host}:${port}`);
-    if (!authStore.disabled) console.log('Account authentication enabled');
-    db.checkDataIntegrity();
-    todoReminderService.start();
+  return new Promise((resolve, reject) => {
+    let processLock;
+    try {
+      processLock = acquireProcessLock();
+    } catch (err) {
+      reject(err);
+      return;
+    }
+    todoReminderService = createTodoReminderCoordinator();
+    const server = app.listen(port, host, () => {
+      console.log(`Work Log server running at http://${host}:${server.address().port}`);
+      if (!isLoopbackHost(host)) {
+        console.warn('Warning: no account authentication; binding to a non-loopback address exposes the workspace to the network.');
+      }
+      db.checkDataIntegrity();
+      todoReminderService.start();
+      resolve(server);
+    });
+    server.on('error', err => {
+      releaseProcessLock(processLock);
+      reject(err);
+    });
+    server.on('close', () => {
+      todoReminderService?.stop();
+      releaseProcessLock(processLock);
+    });
   });
-  server.on('error', () => {
-    releaseProcessLock(processLock);
-  });
-  server.on('close', () => {
-    todoReminderService?.stop();
-    releaseProcessLock(processLock);
-  });
-  return server;
 }
 
 if (require.main === module) {
-  startServer();
+  startServer().catch(err => {
+    console.error(err);
+    process.exit(1);
+  });
 }
 
 module.exports = {
