@@ -138,7 +138,7 @@ try {
   $summary = [ordered]@{
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
     productName = '留序 LiuXu'
-    artifact = $artifactInfo.FullName
+    artifact = $artifactInfo.Name
     sizeBytes = $artifactInfo.Length
     sha256 = $hash
     electron = '43.4.1'

@@ -209,6 +209,8 @@ test('NSIS uses the standard per-user installation directory', () => {
 
   const buildScript = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'desktop-build.ps1'), 'utf8');
   assert.match(buildScript, /npm ci --ignore-scripts --omit=optional/);
+  assert.match(buildScript, /artifact = \$artifactInfo\.Name/);
+  assert.doesNotMatch(buildScript, /artifact = \$artifactInfo\.FullName/);
   assert.match(builderConfig, /^\s*oneClick: false$/m);
   assert.match(builderConfig, /^\s*perMachine: false$/m);
   assert.match(builderConfig, /^\s*allowToChangeInstallationDirectory: true$/m);
