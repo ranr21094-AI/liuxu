@@ -392,8 +392,32 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   background: var(--bg);
   --spot-x: 50%;
   --spot-y: 50%;
-  --spot-r: min(16vw, 160px);
-  touch-action: none;
+  --spot-r: clamp(118px, 12vw, 150px);
+  --spot-edge: rgba(17, 17, 16, .5);
+  --spot-halo: rgba(17, 17, 16, .12);
+  touch-action: auto;
+}
+.agent-empty-hero__frame::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  visibility: hidden;
+  background: radial-gradient(
+    circle at var(--spot-x) var(--spot-y),
+    transparent calc(var(--spot-r) - 1px),
+    var(--spot-edge) var(--spot-r),
+    var(--spot-halo) calc(var(--spot-r) + 2px),
+    transparent calc(var(--spot-r) + 12px)
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, visibility 0s linear 160ms;
+}
+.agent-empty-hero__frame.is-spotlight-active::after {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 120ms ease, visibility 0s;
 }
 .agent-empty-hero__pattern {
   position: absolute;
@@ -442,10 +466,26 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .agent-empty-hero__layer--spotlight {
   z-index: 2;
+  visibility: hidden;
   background: #111110;
   color: #f7f7f5;
-  clip-path: circle(var(--spot-r) at var(--spot-x) var(--spot-y));
+  opacity: 0;
+  clip-path: circle(calc(var(--spot-r) - 10px) at var(--spot-x) var(--spot-y));
   pointer-events: none;
+  transition:
+    opacity 160ms ease,
+    clip-path 160ms cubic-bezier(.22, .72, .25, 1),
+    visibility 0s linear 160ms;
+}
+.agent-empty-hero__frame.is-spotlight-active .agent-empty-hero__layer--spotlight {
+  visibility: visible;
+  opacity: 1;
+  clip-path: circle(var(--spot-r) at var(--spot-x) var(--spot-y));
+  transition:
+    opacity 120ms ease,
+    clip-path 120ms cubic-bezier(.22, .72, .25, 1),
+    visibility 0s;
+  will-change: clip-path, opacity;
 }
 @media (max-width: 900px) {
   .agent-empty-hero__layer h1 {
@@ -463,10 +503,16 @@ html[data-theme="dark"] .agent-empty-hero__layer--spotlight {
   background: #f4f4f1;
   color: #111110;
 }
+html[data-theme="dark"] .agent-empty-hero__frame {
+  --spot-edge: rgba(244, 244, 241, .55);
+  --spot-halo: rgba(244, 244, 241, .14);
+}
 @media (prefers-reduced-motion: reduce) {
-  .agent-empty-hero__layer--spotlight {
-    clip-path: none;
-    opacity: 0;
+  .agent-empty-hero__frame::after,
+  .agent-empty-hero__layer--spotlight,
+  .agent-empty-hero__frame.is-spotlight-active::after,
+  .agent-empty-hero__frame.is-spotlight-active .agent-empty-hero__layer--spotlight {
+    transition: none;
   }
 }
 .agent-session-loading .empty-mark { opacity: .45; animation: agent-session-pulse 1.2s ease-in-out infinite; }
