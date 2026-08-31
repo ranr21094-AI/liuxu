@@ -1,24 +1,41 @@
 const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, dialog, Menu, session, shell } = require('electron');
+const { performance } = require('node:perf_hooks');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
 const {
   createFileLogger,
   defaultWindowsLegacyProjectDir,
+  desktopSecretKeyPath,
   ensureWritableDirectory,
   isAllowedAppNavigation,
   isExternalHttpUrl,
   migrateLegacyData,
+  macApplicationMenuTemplate,
   persistDesktopConfig,
   resolveDesktopDataDir,
   restoreAndFocusWindow,
+  shouldMigrateWindowsLegacyData,
+  shouldQuitAfterAllWindowsClosed,
 } = require('./runtime');
+const { createUpdateService } = require('./update-service');
 
 let mainWindow = null;
 let httpServer = null;
 let startupPromise = null;
 let shutdownPromise = null;
 let quitAllowed = false;
+let appOrigin = '';
+let updateService = null;
+let macUpdateOpened = false;
 let log = () => {};
+const startupStartedAt = performance.now();
+
+function logStartupPhase(phase) {
+  log('info', 'startup performance', {
+    phase,
+    elapsedMs: Number((performance.now() - startupStartedAt).toFixed(2)),
+  });
+}
 
 function showStartupError(error) {
   log('error', 'desktop startup failed', error);
@@ -44,16 +61,21 @@ function prepareRuntimeEnvironment() {
 
   const userDataDir = app.getPath('userData');
   const resolved = resolveDesktopDataDir({ userDataDir });
-  const legacyProjectDir = path.resolve(
-    process.env.WORK_LOG_LEGACY_PROJECT_DIR || defaultWindowsLegacyProjectDir(),
-  );
-  const legacyEnvPath = path.join(legacyProjectDir, '.env');
-  loadLegacySecretKeySetting(legacyEnvPath);
-  const migration = migrateLegacyData({
-    sourceDir: path.join(legacyProjectDir, 'data'),
-    targetDir: resolved.dataDir,
-    legacyEnvPath,
-  });
+  let migration = { migrated: false, reason: 'not-windows' };
+  if (shouldMigrateWindowsLegacyData()) {
+    const legacyProjectDir = path.resolve(
+      process.env.WORK_LOG_LEGACY_PROJECT_DIR || defaultWindowsLegacyProjectDir(),
+    );
+    const legacyEnvPath = path.join(legacyProjectDir, '.env');
+    loadLegacySecretKeySetting(legacyEnvPath);
+    migration = migrateLegacyData({
+      sourceDir: path.join(legacyProjectDir, 'data'),
+      targetDir: resolved.dataDir,
+      legacyEnvPath,
+    });
+  } else if (!process.env.AI_SECRETS_KEY_FILE) {
+    process.env.AI_SECRETS_KEY_FILE = desktopSecretKeyPath(userDataDir);
+  }
   const dataDir = ensureWritableDirectory(resolved.dataDir);
   if (resolved.source !== 'environment') persistDesktopConfig(resolved.configPath, dataDir);
 
@@ -92,16 +114,66 @@ function focusMainWindow() {
   return restoreAndFocusWindow(mainWindow);
 }
 
+function assertTrustedIpcSender(event) {
+  const senderUrl = event.senderFrame?.url || event.sender?.getURL?.() || '';
+  let senderOrigin = '';
+  try { senderOrigin = new URL(senderUrl).origin; } catch {}
+  if (!appOrigin || !senderOrigin || senderOrigin !== appOrigin) {
+    throw new Error('拒绝来自非应用页面的更新请求');
+  }
+}
+
+function configureUpdateIpc() {
+  ipcMain.removeHandler('liuxu:update:current-info');
+  ipcMain.removeHandler('liuxu:update:check');
+  ipcMain.removeHandler('liuxu:update:download');
+  ipcMain.removeHandler('liuxu:update:cancel-download');
+  ipcMain.removeHandler('liuxu:update:open-installer');
+  ipcMain.removeHandler('liuxu:update:quit-for-update');
+  ipcMain.handle('liuxu:update:current-info', (event) => {
+    assertTrustedIpcSender(event);
+    return updateService?.getCurrentInfo() || { version: app.getVersion(), platform: process.platform, arch: process.arch };
+  });
+  ipcMain.handle('liuxu:update:check', async (event) => {
+    assertTrustedIpcSender(event);
+    if (!updateService) throw new Error('桌面更新服务尚未就绪');
+    return updateService.check();
+  });
+  ipcMain.handle('liuxu:update:download', async (event) => {
+    assertTrustedIpcSender(event);
+    if (!updateService) throw new Error('桌面更新服务尚未就绪');
+    return updateService.download();
+  });
+  ipcMain.handle('liuxu:update:cancel-download', (event) => {
+    assertTrustedIpcSender(event);
+    updateService?.cancelDownload();
+    return { cancelled: true };
+  });
+  ipcMain.handle('liuxu:update:open-installer', async (event) => {
+    assertTrustedIpcSender(event);
+    if (!updateService) throw new Error('桌面更新服务尚未就绪');
+    const result = await updateService.openInstaller(shell);
+    if (process.platform === 'darwin') macUpdateOpened = true;
+    if (process.platform === 'win32') setImmediate(() => beginShutdown());
+    return result;
+  });
+  ipcMain.handle('liuxu:update:quit-for-update', (event) => {
+    assertTrustedIpcSender(event);
+    if (process.platform !== 'darwin' || !macUpdateOpened) throw new Error('当前没有待完成的 Mac 更新');
+    return beginShutdown().then(() => ({ quitting: true }));
+  });
+}
+
 async function createMainWindow(appUrl) {
   if (focusMainWindow()) return mainWindow;
-  const appOrigin = new URL(appUrl).origin;
+  appOrigin = new URL(appUrl).origin;
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 720,
     minHeight: 520,
     title: '留序 LiuXu',
-    autoHideMenuBar: true,
+    autoHideMenuBar: process.platform !== 'darwin',
     show: false,
     backgroundColor: '#f5f2ea',
     webPreferences: {
@@ -110,11 +182,13 @@ async function createMainWindow(appUrl) {
       nodeIntegration: false,
       webviewTag: false,
       spellcheck: false,
+      preload: path.join(__dirname, 'preload.js'),
     },
   });
   mainWindow = window;
   installNavigationGuards(window.webContents, appOrigin);
   window.once('ready-to-show', () => {
+    logStartupPhase('window-ready-to-show');
     if (!window.isDestroyed()) window.show();
   });
   window.webContents.on('render-process-gone', (_event, details) => {
@@ -142,14 +216,26 @@ async function createMainWindow(appUrl) {
 
 async function startDesktop() {
   prepareRuntimeEnvironment();
+  logStartupPhase('runtime-ready');
+  updateService = createUpdateService({
+    userDataPath: app.getPath('userData'),
+    currentVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    onProgress: payload => mainWindow?.webContents.send('liuxu:update:progress', payload),
+  });
+  await updateService.cleanup();
+  logStartupPhase('update-cache-cleaned');
   log('info', 'desktop startup began');
   const { startServer } = require('../server.js');
   httpServer = await startServer(0, '127.0.0.1');
   const address = httpServer.address();
   if (!address || typeof address !== 'object') throw new Error('本地服务未返回有效端口');
   const appUrl = `http://127.0.0.1:${address.port}/`;
+  logStartupPhase('local-server-ready');
   log('info', `local server ready at ${appUrl}`);
   await createMainWindow(appUrl);
+  logStartupPhase('window-loaded');
   return appUrl;
 }
 
@@ -194,6 +280,13 @@ function beginShutdown() {
   return shutdownPromise;
 }
 
+function configurePackagedUserDataPath() {
+  if (!app.isPackaged || process.platform !== 'darwin') return;
+  app.setPath('userData', path.join(app.getPath('appData'), 'work-log'));
+}
+
+configurePackagedUserDataPath();
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -223,10 +316,15 @@ if (!app.requestSingleInstanceLock()) {
     beginShutdown();
   });
 
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => {
+    if (shouldQuitAfterAllWindowsClosed()) app.quit();
+  });
   app.on('activate', () => {
     if (!focusMainWindow() && startupPromise) {
-      startupPromise.then(() => focusMainWindow()).catch(showStartupError);
+      startupPromise.then((appUrl) => {
+        if (!focusMainWindow()) return createMainWindow(appUrl);
+        return mainWindow;
+      }).catch(showStartupError);
     }
   });
   app.on('web-contents-created', (_event, contents) => {
@@ -235,9 +333,12 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     log = createFileLogger(path.join(app.getPath('userData'), 'logs', 'desktop-bootstrap.log'));
-    Menu.setApplicationMenu(null);
+    Menu.setApplicationMenu(process.platform === 'darwin'
+      ? Menu.buildFromTemplate(macApplicationMenuTemplate(app.getName()))
+      : null);
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
+    configureUpdateIpc();
     startupPromise = startDesktop();
     return startupPromise;
   }).catch((error) => {

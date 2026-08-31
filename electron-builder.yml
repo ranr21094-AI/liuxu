@@ -35,6 +35,26 @@ win:
         - x64
   icon: electron/icon.ico
   requestedExecutionLevel: asInvoker
+mac:
+  appId: ai.ranr21094.liuxu
+  category: public.app-category.productivity
+  icon: electron/icon.icns
+  minimumSystemVersion: "12.0"
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: electron/entitlements.mac.plist
+  entitlementsInherit: electron/entitlements.mac.plist
+  artifactName: "LiuXu-${version}-mac-${arch}.${ext}"
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+dmg:
+  title: "留序 LiuXu ${version}"
+  artifactName: "LiuXu-${version}-mac-${arch}.${ext}"
 nsis:
   artifactName: "LiuXu-Setup-${version}-x64.${ext}"
   oneClick: false

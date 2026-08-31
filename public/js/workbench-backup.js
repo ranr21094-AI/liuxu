@@ -86,7 +86,9 @@ export function createBackupActions({ confirmAction, reloadKnowledge }) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '恢复失败');
-    showToast('ZIP 工作区已恢复', 'success');
+    showToast(data.secretsReset
+      ? 'ZIP 工作区已恢复；跨设备加密的 API Key 已清空，请在模型设置中重新填写'
+      : 'ZIP 工作区已恢复', 'success');
     await reloadKnowledge();
   }
 

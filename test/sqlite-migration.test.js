@@ -121,3 +121,52 @@ test('backup and restore round-trip preserves SQLite-backed account data', (t) =
   assert.equal(restored.getAllTodos().length, 1);
   assert.equal(restored.getAllUnpaginated()[0].title, 'round trip');
 });
+
+test('schema v3 migration is repeatable and keeps row-level updates stable', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-v2-'));
+  process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
+  t.after(() => {
+    delete process.env.AI_SECRETS_KEY_FILE;
+    cleanupTempDataDir(dir);
+  });
+  const { createDatabase } = require('../database.js');
+  const db = createDatabase(dir);
+  const knowledge = createKnowledgeService(db);
+  const first = db.create({ title: 'first', content: 'one' });
+  const second = db.create({ title: 'second', content: 'two' });
+  const secondRow = db.sqlite.prepare('SELECT rowid FROM logs WHERE id = ?').get(second.id).rowid;
+  const note = knowledge.createNote({ title: 'note', content: 'body' }).document;
+  const noteRow = db.sqlite.prepare('SELECT rowid FROM knowledge_documents WHERE id = ?').get(note.id).rowid;
+  const agent = createAgentStore(db);
+  const session = agent.createSession('incremental');
+  agent.saveSession({ ...session, messages: [
+    { role: 'user', content: 'one' },
+    { role: 'assistant', content: 'two' },
+  ] });
+  const messageRow = db.sqlite.prepare(
+    'SELECT id FROM agent_messages WHERE session_id = ? AND sort_index = 0',
+  ).get(session.id).id;
+  agent.saveSession({ ...session, messages: [
+    { role: 'user', content: 'one' },
+    { role: 'assistant', content: 'two updated' },
+    { role: 'user', content: 'three' },
+  ] });
+  db.update(first.id, { title: 'first updated' });
+  knowledge.updateDocument(note.id, { content: 'body updated' });
+  assert.equal(db.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '3');
+  assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_link_targets LIMIT 1').get());
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM knowledge_revisions').get().count, 1);
+  assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_index_state WHERE id = 1').get());
+  assert.equal(db.sqlite.pragma('busy_timeout', { simple: true }), 5000);
+  assert.equal(String(db.sqlite.pragma('synchronous', { simple: true })).toLowerCase(), '1');
+  assert.equal(db.sqlite.prepare('SELECT rowid FROM logs WHERE id = ?').get(second.id).rowid, secondRow);
+  assert.equal(db.sqlite.prepare('SELECT rowid FROM knowledge_documents WHERE id = ?').get(note.id).rowid, noteRow);
+  assert.equal(db.sqlite.prepare(
+    'SELECT id FROM agent_messages WHERE session_id = ? AND sort_index = 0',
+  ).get(session.id).id, messageRow);
+  db.close();
+  const reopened = createDatabase(dir);
+  t.after(() => reopened.close());
+  assert.equal(reopened.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '3');
+  assert.ok(reopened.sqlite.prepare('SELECT version FROM knowledge_index_state WHERE id = 1').get().version >= 2);
+});

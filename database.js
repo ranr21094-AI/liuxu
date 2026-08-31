@@ -9,6 +9,9 @@ const {
   writeMeta,
   readIdTable,
   writeIdTable,
+  upsertIdRow,
+  deleteIdRow,
+  updateIdRows,
   readSingleton,
   writeSingleton,
   readStringList,
@@ -763,7 +766,9 @@ function create(data, referenceDate = new Date()) {
     updated_at: now,
   };
   logs.push(entry);
-  writeLogs(logs);
+  upsertIdRow(sqlite, 'logs', entry);
+  cache.logs = logs;
+  syncMaxIds();
   if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
   return entry;
 }
@@ -787,7 +792,9 @@ function update(id, data) {
   }
   entry.updated_at = now;
 
-  writeLogs(logs);
+  upsertIdRow(sqlite, 'logs', entry);
+  cache.logs = logs;
+  syncMaxIds();
   if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
   return entry;
 }
@@ -798,7 +805,9 @@ function remove(id) {
   if (index === -1) return false;
   if (isDiaryCategory(logs[index].category)) markPrivateUploadsFromContent(logs[index].content);
   logs.splice(index, 1);
-  writeLogs(logs);
+  deleteIdRow(sqlite, 'logs', id);
+  cache.logs = logs;
+  syncMaxIds();
   return true;
 }
 
@@ -1070,7 +1079,9 @@ function createTodo(data) {
   };
   todos.push(entry);
   addTodoCategory(entry.category);
-  writeTodos(todos);
+  upsertIdRow(sqlite, 'todos', entry);
+  cache.todos = todos;
+  syncMaxIds();
   return entry;
 }
 
@@ -1091,9 +1102,13 @@ function updateTodo(id, data) {
     addTodoCategory(entry.category);
   }
   if (data.notes !== undefined) entry.notes = typeof data.notes === 'string' ? data.notes : '';
-  if (!wasDone && entry.done) createNextRecurringTodo(todos, entry);
+  let recurringEntry = null;
+  if (!wasDone && entry.done) recurringEntry = createNextRecurringTodo(todos, entry);
 
-  writeTodos(todos);
+  upsertIdRow(sqlite, 'todos', entry);
+  if (recurringEntry) upsertIdRow(sqlite, 'todos', recurringEntry);
+  cache.todos = todos;
+  syncMaxIds();
   return {
     ...entry,
     notes: typeof entry.notes === 'string' ? entry.notes : '',
@@ -1109,7 +1124,9 @@ function removeTodo(id) {
   const index = todos.findIndex(t => t.id === id);
   if (index === -1) return false;
   todos.splice(index, 1);
-  writeTodos(todos);
+  deleteIdRow(sqlite, 'todos', id);
+  cache.todos = todos;
+  syncMaxIds();
   return true;
 }
 
@@ -1125,14 +1142,16 @@ function reorderLogs(orderedIds) {
   const logs = readLogs();
   const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
   logs.forEach(l => { if (orderMap.has(l.id)) l.sort_order = orderMap.get(l.id); });
-  writeLogs(logs);
+  updateIdRows(sqlite, 'logs', logs.filter(l => orderMap.has(l.id)));
+  cache.logs = logs;
 }
 
 function reorderTodos(orderedIds) {
   const todos = readTodos();
   const orderMap = new Map(orderedIds.map((id, i) => [id, i]));
   todos.forEach(t => { if (orderMap.has(t.id)) t.sort_order = orderMap.get(t.id); });
-  writeTodos(todos);
+  updateIdRows(sqlite, 'todos', todos.filter(t => orderMap.has(t.id)));
+  cache.todos = todos;
 }
 
 // Countdown CRUD
@@ -1174,7 +1193,9 @@ function createCountdown(data) {
     updated_at: now,
   };
   countdowns.push(entry);
-  writeCountdowns(countdowns);
+  upsertIdRow(sqlite, 'countdowns', entry);
+  cache.countdowns = countdowns;
+  syncMaxIds();
   return { ...entry };
 }
 
@@ -1188,7 +1209,9 @@ function updateCountdown(id, data) {
   if (data.repeat_yearly !== undefined) entry.repeat_yearly = data.repeat_yearly;
   if (data.notes !== undefined) entry.notes = data.notes;
   entry.updated_at = nowTimestamp();
-  writeCountdowns(countdowns);
+  upsertIdRow(sqlite, 'countdowns', entry);
+  cache.countdowns = countdowns;
+  syncMaxIds();
   return { ...entry };
 }
 
@@ -1197,7 +1220,9 @@ function removeCountdown(id) {
   const index = countdowns.findIndex(item => item.id === id);
   if (index === -1) return false;
   countdowns.splice(index, 1);
-  writeCountdowns(countdowns);
+  deleteIdRow(sqlite, 'countdowns', id);
+  cache.countdowns = countdowns;
+  syncMaxIds();
   return true;
 }
 

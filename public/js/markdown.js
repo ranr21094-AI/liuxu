@@ -1,6 +1,55 @@
-import { escHtml } from './helpers.js';
+import { escHtml, isSafeImageSrc, normalizeUploadSrc } from './helpers.js';
 
 let initialized = false;
+let librariesPromise = null;
+let sanitizerHookInstalled = false;
+
+function loadScript(src, globalName) {
+  if (globalThis[globalName]) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error(`无法加载 Markdown 资源：${src}`));
+    document.head.appendChild(script);
+  });
+}
+
+function installSanitizerHook() {
+  const purifier = globalThis.DOMPurify;
+  if (sanitizerHookInstalled || !purifier?.addHook) return;
+  sanitizerHookInstalled = true;
+  purifier.addHook('afterSanitizeAttributes', node => {
+    if (node.tagName !== 'IMG') return;
+    const normalized = normalizeUploadSrc(node.getAttribute('src'));
+    if (normalized && isSafeImageSrc(normalized)) node.setAttribute('src', normalized);
+    else node.removeAttribute('src');
+  });
+}
+
+export function preloadMarkdownLibraries() {
+  if (librariesPromise) return librariesPromise;
+  librariesPromise = Promise.all([
+    loadScript('/vendor/marked/marked.umd.js', 'marked'),
+    loadScript('/vendor/dompurify/purify.min.js', 'DOMPurify'),
+    loadScript('/vendor/katex/katex.min.js', 'katex'),
+  ]).then(() => {
+    const link = document.getElementById('katexStylesheet') || document.createElement('link');
+    if (!link.parentNode) {
+      link.id = 'katexStylesheet';
+      link.rel = 'stylesheet';
+      link.href = '/vendor/katex/katex.min.css';
+      document.head.appendChild(link);
+    }
+    installSanitizerHook();
+    initMarked();
+    window.dispatchEvent(new CustomEvent('liuxu:markdown-ready'));
+  }).catch(() => {
+    // Keep the escaped plain-text fallback when a vendor asset is unavailable.
+  });
+  return librariesPromise;
+}
 
 const PURIFY_OPTIONS = {
   ADD_TAGS: [
@@ -56,12 +105,13 @@ const PURIFY_OPTIONS = {
 };
 
 function initMarked() {
-  if (initialized || typeof marked === 'undefined') return;
+  const markedApi = globalThis.marked;
+  if (initialized || !markedApi) return;
   initialized = true;
 
   function renderMath(token, displayMode = false) {
-    if (typeof katex === 'undefined') return escHtml(token.raw);
-    const html = katex.renderToString(token.text, {
+    if (!globalThis.katex) return escHtml(token.raw);
+    const html = globalThis.katex.renderToString(token.text, {
       displayMode,
       throwOnError: false,
       strict: false,
@@ -136,7 +186,7 @@ function initMarked() {
     },
   };
 
-  marked.use({ breaks: true, gfm: true, extensions: [blockMath, blockMathParen, inlineMathParen, inlineMath] });
+  markedApi.use({ breaks: true, gfm: true, extensions: [blockMath, blockMathParen, inlineMathParen, inlineMath] });
 }
 
 const CACHE_MAX = 500;
@@ -152,20 +202,23 @@ function cacheSet(key, value) {
 }
 
 function parse(md) {
+  if (!globalThis.marked) preloadMarkdownLibraries();
   initMarked();
-  if (typeof marked === 'undefined' || !initialized) return null;
-  return marked.parse(md || '');
+  if (!globalThis.marked || !initialized) return null;
+  return globalThis.marked.parse(md || '');
 }
 
 function sanitize(html) {
-  if (typeof DOMPurify !== 'undefined') return DOMPurify.sanitize(html, PURIFY_OPTIONS);
+  installSanitizerHook();
+  if (globalThis.DOMPurify) return globalThis.DOMPurify.sanitize(html, PURIFY_OPTIONS);
   return escHtml(html);
 }
 
 export function renderToHtml(md) {
   if (!md) return '';
 
-  const cacheKey = (typeof katex === 'undefined' ? 'plain:' : 'katex:') + md;
+  if (!globalThis.marked) preloadMarkdownLibraries();
+  const cacheKey = (!globalThis.katex ? 'plain:' : 'katex:') + md;
   const cached = cacheGet(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -179,6 +232,8 @@ export function renderToHtml(md) {
 
 export function renderToHtmlUncached(md) {
   if (!md) return '';
+
+  if (!globalThis.marked) preloadMarkdownLibraries();
 
   const raw = parse(md);
   if (raw === null) return escHtml(md || '').replace(/\n/g, '<br>');

@@ -418,6 +418,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
   if (timer.unref) timer.unref();
   const externalSignal = options.signal;
   const abortFromExternal = () => controller.abort();
+  if (externalSignal?.aborted) controller.abort();
   externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
   try {
     return await fetch(url, { ...options, signal: controller.signal });
@@ -448,6 +449,12 @@ async function readResponseTextWithLimit(response, maxBytes, errorMessage) {
     chunks.push(Buffer.from(value));
   }
   return Buffer.concat(chunks, total).toString('utf8');
+}
+
+async function readJsonWithLimit(response, maxBytes = 8 * 1024 * 1024, errorMessage = 'Upstream response is too large') {
+  const text = await readResponseTextWithLimit(response, maxBytes, errorMessage);
+  if (!text) return {};
+  try { return JSON.parse(text); } catch { return {}; }
 }
 
 function isValidDiaryToken(req, token) {
@@ -823,12 +830,20 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.use(localUserMiddleware);
 
 app.get(['/', '/index.html'], (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // pdfjs-dist v4 ships ESM; ensure .mjs is served as JavaScript for module imports.
 express.static.mime.define({ 'application/javascript': ['mjs'] }, true);
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  index: false,
+  setHeaders: (res, filePath) => {
+    if (/\.(?:js|mjs|css|png|svg|woff2?)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    }
+  },
+}));
 
 app.use('/api/ai', rateLimiter(60, 60 * 1000));
 app.use('/api/ai', concurrencyLimiter(4, req => req.user?.id || 'anon'));
@@ -2031,7 +2046,7 @@ async function fetchPerplexitySearch(queries, apiKey) {
     },
     body: JSON.stringify({ query: queries }),
   });
-  const data = await upstream.json().catch(() => ({}));
+  const data = await readJsonWithLimit(upstream, 8 * 1024 * 1024, 'Search response is too large');
   if (!upstream.ok) {
     const err = new Error(safePerplexityError(upstream.status, data));
     err.status = 502;
@@ -2092,7 +2107,7 @@ async function runTavilySearch(query, { tavilyApiKey, webSearchDepth }) {
     },
     body: JSON.stringify(payload),
   });
-  const data = await upstream.json().catch(() => ({}));
+  const data = await readJsonWithLimit(upstream, 8 * 1024 * 1024, 'Search response is too large');
   if (!upstream.ok) {
     const err = new Error(safeTavilyError(upstream.status, data));
     err.status = 502;
@@ -2213,7 +2228,7 @@ app.post('/api/ai/custom-providers/test', async (req, res) => {
       headers: request.headers,
       body: JSON.stringify(request.body),
     }, 15000);
-    const data = await upstream.json().catch(() => ({}));
+    const data = await readJsonWithLimit(upstream, 2 * 1024 * 1024, 'Model test response is too large');
     if (!upstream.ok || data?.error) {
       return res.status(502).json({ error: safeAiProviderError('custom', upstream.status, data) });
     }
@@ -2256,7 +2271,7 @@ app.post('/api/ai/custom-providers/models', async (req, res) => {
       method: 'GET',
       headers: request.headers,
     }, 15000);
-    const data = await upstream.json().catch(() => ({}));
+    const data = await readJsonWithLimit(upstream, 4 * 1024 * 1024, 'Model list response is too large');
     if (!upstream.ok || data?.error) {
       return res.status(502).json({ error: safeAiProviderError('custom', upstream.status, data) });
     }
@@ -2812,6 +2827,12 @@ function assertAiContextCapacity(options, payload) {
 
 async function fetchAiProviderUpstream(options, payload, signal) {
   assertAiContextCapacity(options, payload);
+  const serializedPayload = JSON.stringify(payload || {});
+  if (Buffer.byteLength(serializedPayload, 'utf8') > 16 * 1024 * 1024) {
+    const error = new Error('AI request is too large');
+    error.status = 413;
+    throw error;
+  }
   try {
     if (options.provider === 'custom') {
       const request = buildCustomProviderRequest({
@@ -2836,7 +2857,7 @@ async function fetchAiProviderUpstream(options, payload, signal) {
     return await fetchWithTimeout(aiProviderChatUrl(options), {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: serializedPayload,
       signal,
     }, 120000);
   } catch (error) {
@@ -2885,7 +2906,7 @@ function mergeAiSources(...groups) {
 
 async function fetchAiProviderReply({ options, payload, signal }) {
   const upstream = await fetchAiProviderUpstream(options, payload, signal);
-  const data = await upstream.json().catch(() => ({}));
+  const data = await readJsonWithLimit(upstream, 32 * 1024 * 1024, 'AI provider response is too large');
   if (!upstream.ok || data?.error) {
     const err = new Error(safeAiProviderError(options.provider, upstream.status, data));
     err.status = 502;

@@ -12,14 +12,18 @@ const {
 const {
   defaultWindowsDataDir,
   defaultWindowsLegacyProjectDir,
+  desktopSecretKeyPath,
   ensureWritableDirectory,
   isAllowedAppNavigation,
   isExternalHttpUrl,
   migrateLegacyData,
+  macApplicationMenuTemplate,
   persistDesktopConfig,
   readDesktopConfig,
   restoreAndFocusWindow,
   resolveDesktopDataDir,
+  shouldMigrateWindowsLegacyData,
+  shouldQuitAfterAllWindowsClosed,
 } = require('../electron/runtime');
 
 function makeTempDir(t) {
@@ -48,6 +52,25 @@ test('desktop data directory precedence is environment, config, then default', (
 
   fs.unlinkSync(path.join(userDataDir, 'desktop-config.json'));
   assert.equal(resolveDesktopDataDir({ env: {}, userDataDir, platform: 'win32', defaultWindowsDataDir: defaultDir }).dataDir, defaultDir);
+  assert.equal(resolveDesktopDataDir({ env: {}, userDataDir, platform: 'darwin' }).dataDir, path.join(userDataDir, 'data'));
+});
+
+test('macOS desktop uses an independent secret key and never runs the Windows migration', (t) => {
+  const root = makeTempDir(t);
+  const userDataDir = path.join(root, 'Library', 'Application Support', 'work-log');
+  assert.equal(desktopSecretKeyPath(userDataDir, 'darwin'), path.join(userDataDir, 'ai-secrets.key'));
+  assert.equal(desktopSecretKeyPath(userDataDir, 'win32'), '');
+  assert.equal(shouldMigrateWindowsLegacyData('darwin'), false);
+  assert.equal(shouldMigrateWindowsLegacyData('win32'), true);
+});
+
+test('desktop window lifecycle and menu follow macOS conventions', () => {
+  assert.equal(shouldQuitAfterAllWindowsClosed('darwin'), false);
+  assert.equal(shouldQuitAfterAllWindowsClosed('win32'), true);
+  const template = macApplicationMenuTemplate('留序 LiuXu');
+  assert.equal(template[0].label, '留序 LiuXu');
+  assert.equal(template[0].submenu.some(item => item.role === 'quit'), true);
+  assert.equal(template.some(item => item.submenu?.some(child => child.role === 'paste')), true);
 });
 
 test('desktop config rejects a relative data directory', (t) => {
@@ -216,4 +239,32 @@ test('NSIS uses the standard per-user installation directory', () => {
   assert.match(builderConfig, /^\s*allowToChangeInstallationDirectory: true$/m);
   assert.doesNotMatch(builderConfig, /^\s*include:.*installer\.nsh$/m);
   assert.equal(fs.existsSync(path.join(__dirname, '..', 'electron', 'installer.nsh')), false);
+});
+
+test('macOS package is arm64 DMG and ZIP with a stable first-release identity', () => {
+  const root = path.join(__dirname, '..');
+  const builderConfig = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8');
+  assert.match(builderConfig, /^mac:\n\s+appId: ai\.ranr21094\.liuxu$/m);
+  assert.match(builderConfig, /^\s+minimumSystemVersion: "12\.0"$/m);
+  assert.match(builderConfig, /^\s+icon: electron\/icon\.icns$/m);
+  assert.match(builderConfig, /^\s+hardenedRuntime: true$/m);
+  assert.match(builderConfig, /^\s+artifactName: "LiuXu-\$\{version\}-mac-\$\{arch\}\.\$\{ext\}"$/m);
+  assert.match(builderConfig, /^\s+- target: dmg$/m);
+  assert.match(builderConfig, /^\s+- target: zip$/m);
+  assert.match(builderConfig, /^\s+- arm64$/m);
+
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(packageJson.engines.node, '^22.12.0 || >=24.0.0');
+  assert.equal(packageJson.scripts['desktop:build'], 'node scripts/desktop-build.mjs');
+  assert.match(packageJson.scripts['desktop:build:mac'], /--adhoc$/);
+  assert.match(packageJson.scripts['desktop:release:mac'], /--release$/);
+
+  const macScript = fs.readFileSync(path.join(root, 'scripts', 'desktop-build-mac.mjs'), 'utf8');
+  assert.match(macScript, /darwin-arm64\.node/);
+  assert.match(macScript, /electronDist=node_modules\/electron\/dist/);
+  assert.match(macScript, /codesign/);
+  assert.match(macScript, /notarizationOptions\(dmgPath, buildEnv\)/);
+  assert.match(macScript, /stapler/);
+  assert.match(macScript, /desktop-build-summary-mac\.json/);
+  assert.doesNotMatch(macScript, /artifacts:\s*\[dmgPath, zipPath\]/);
 });

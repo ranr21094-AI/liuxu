@@ -138,15 +138,18 @@ try {
   $summary = [ordered]@{
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
     productName = '留序 LiuXu'
+    version = [string]$package.version
+    platform = 'win32'
+    arch = 'x64'
     artifact = $artifactInfo.Name
     sizeBytes = $artifactInfo.Length
     sha256 = $hash
     electron = '43.4.1'
     electronBuilder = '26.15.3'
-    buildCache = $buildRoot
     optionalDependencies = 'omitted'
     tests = 'passed'
     signed = $false
+    notarized = $false
   }
   $summaryPath = Join-Path $projectRoot 'dist\desktop\desktop-build-summary.json'
   $summary | ConvertTo-Json | Set-Content -LiteralPath $summaryPath -Encoding utf8

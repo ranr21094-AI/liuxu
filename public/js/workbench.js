@@ -15,12 +15,17 @@ import {
   showToast,
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
+import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
-import { renderToHtml, renderToHtmlUncached } from './markdown.js';
+import { preloadMarkdownLibraries, renderToHtml, renderToHtmlUncached } from './markdown.js';
 import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
 import { createBackupActions } from './workbench-backup.js';
 import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
+import { scheduleRender } from './app/render-scheduler.js';
+import { getDesktopUpdates } from './desktop/bridge.js';
+import { ensureModelUiId, randomModelUiId, customModelTestKey } from './settings/model.js';
+import { formatUpdateBytes } from './settings/update.js';
 
 const $ = selector => document.querySelector(selector);
 const DOCUMENT_SELECT_IDS = ['documentKnowledgeBase', 'documentFolderPath'];
@@ -102,9 +107,15 @@ const state = {
   agentStatus: null,
   aiSettings: null,
   agentModelCatalog: [],
-  customProviderExpandIndex: null,
+  customProviderExpandedIds: new Set(),
   providerModelOverrideKey: null,
+  customProviderTestStates: new Map(),
   providerModelsPicker: null,
+  desktopUpdateInfo: null,
+  desktopUpdateStatus: 'idle',
+  desktopUpdateProgress: null,
+  desktopUpdateDownloaded: null,
+  desktopUpdateUnsubscribe: null,
   settingsPanel: 'appearance',
   documentSaveTimer: null,
   annotationSaveTimer: null,
@@ -363,32 +374,32 @@ const refreshBackgroundSessionRuns = debounce(async () => {
   }
 }, 300);
 
-if (window.DOMPurify) {
-  window.DOMPurify.addHook('afterSanitizeAttributes', node => {
-    if (node.tagName !== 'IMG') return;
-    const normalized = normalizeUploadSrc(node.getAttribute('src'));
-    if (normalized && isSafeImageSrc(normalized)) {
-      node.setAttribute('src', normalized);
-    } else {
-      node.removeAttribute('src');
-    }
-  });
-}
-
 function renderMarkdown(value) {
   return renderToHtml(String(value || ''));
 }
 
 let documentPreviewCleanup = null;
+let knowledgeLinkCleanup = null;
+let knowledgeEnhancements = null;
 
 function renderDocumentPreview() {
   const host = $('#documentPreview');
   if (!host) return;
   if (documentPreviewCleanup) documentPreviewCleanup();
+  if (knowledgeLinkCleanup) knowledgeLinkCleanup();
   documentPreviewCleanup = null;
-  host.innerHTML = renderToHtmlUncached($('#documentContent').value || '*暂无正文*');
+  knowledgeLinkCleanup = null;
+  host.innerHTML = renderKnowledgeMarkdown($('#documentContent').value || '*暂无正文*', {
+    outgoingLinks: state.activeDocument?.outgoingLinks || [],
+  });
   documentPreviewCleanup = enableMarkdownImagePreview(host, '.markdown-preview img');
+  knowledgeLinkCleanup = bindKnowledgeLinkClicks(host, navigate);
 }
+
+window.addEventListener('liuxu:markdown-ready', () => {
+  if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
+  if (state.mode === 'agent' && state.activeSession) renderSessionMessages(state.activeSession, { force: true });
+});
 
 const refreshDocumentPreview = debounce(() => {
   if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
@@ -1180,7 +1191,7 @@ function createEmptyCustomProvider() {
     supportsMedia: false,
     thinking: '',
     zdr: false,
-    models: [{ id: '', name: '' }],
+    models: [{ _uiId: randomModelUiId(), id: '', name: '' }],
   };
 }
 
@@ -1206,16 +1217,52 @@ function modelHasOverride(model) {
   return typeof model?.supportsMedia === 'boolean' || Boolean(model?.thinking) || typeof model?.zdr === 'boolean';
 }
 
+function captureCustomProviderExpandedState() {
+  document.querySelectorAll('.custom-provider-card').forEach(card => {
+    const providerId = card.dataset.providerId;
+    if (!providerId) return;
+    if (card.open) state.customProviderExpandedIds.add(providerId);
+    else state.customProviderExpandedIds.delete(providerId);
+  });
+}
+
+function customModelTestStateHtml(providerId, modelUiId) {
+  const key = customModelTestKey(providerId, modelUiId);
+  const result = state.customProviderTestStates.get(key);
+  if (!result) return '';
+  const statusLabel = result.status === 'running'
+    ? '测试中…'
+    : result.status === 'success' ? '连接成功' : '连接失败';
+  const detail = result.status === 'running'
+    ? '正在请求模型端点，请稍候。'
+    : [
+      result.message,
+      result.httpStatus ? `HTTP ${result.httpStatus}` : '',
+      Number.isFinite(result.durationMs) ? `${result.durationMs} ms` : '',
+      result.finishedAt ? new Date(result.finishedAt).toLocaleString() : '',
+    ].filter(Boolean).join(' · ');
+  const copyButton = result.status === 'error' && result.message
+    ? `<button type="button" class="secondary-action compact custom-model-test-copy" data-copy-test-result="${escHtml(key)}">复制错误</button>`
+    : '';
+  return `
+    <div class="custom-model-test-result is-${escHtml(result.status)}" data-test-result="${escHtml(key)}" aria-live="polite">
+      <span class="custom-model-test-result-status">${escHtml(statusLabel)}</span>
+      <span class="custom-model-test-result-detail">${escHtml(detail)}</span>
+      ${copyButton}
+    </div>`;
+}
+
 function triSelect(name, value) {
   // value: undefined (inherit) | true | false
   const selected = typeof value === 'boolean' ? (value ? 'on' : 'off') : '';
   return ['on', 'off', ''].map(option => `<option value="${option}" ${selected === option ? 'selected' : ''}>${option === 'on' ? '开启' : option === 'off' ? '关闭' : '继承供应商'}</option>`).join('');
 }
 
-function customModelOverrideRowHtml(providerIndex, modelIndex, model) {
+function customModelOverrideRowHtml(providerId, modelUiId, model) {
   const thinkingOptions = ['', 'none', 'deepseek', 'k3', 'optional', 'fixed'].map(option => `<option value="${escHtml(option)}" ${(model.thinking || '') === option ? 'selected' : ''}>${escHtml(option === '' ? '继承供应商' : option === 'none' ? '无' : option === 'deepseek' ? 'DeepSeek' : option)}</option>`).join('');
+  const overrideId = `custom-model-overrides-${escHtml(modelUiId)}`;
   return `
-    <div class="custom-model-overrides" data-override-for="${modelIndex}">
+    <div class="custom-model-overrides" id="${overrideId}" data-override-for="${escHtml(modelUiId)}">
       <span class="custom-model-overrides-label">覆盖</span>
       <label class="custom-model-override-field">图片
         <select class="custom-model-ov-media">${triSelect('media', model.supportsMedia)}</select>
@@ -1237,15 +1284,12 @@ function renderCustomProvidersList() {
     root.innerHTML = '<p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p>';
     return;
   }
-  const expandIndex = Number.isInteger(state.customProviderExpandIndex)
-    ? state.customProviderExpandIndex
-    : null;
   root.innerHTML = list.map((provider, index) => {
     const modelCount = (provider.models || []).filter(model => model.id).length;
     const summaryName = provider.name?.trim() || '未命名供应商';
-    const shouldOpen = expandIndex === index || list.length === 1;
+    const shouldOpen = state.customProviderExpandedIds.has(provider.id) || (list.length === 1 && !state.customProviderExpandedIds.size);
     return `
-    <details class="custom-provider-card" data-provider-index="${index}"${shouldOpen ? ' open' : ''}>
+    <details class="custom-provider-card" data-provider-index="${index}" data-provider-id="${escHtml(provider.id)}"${shouldOpen ? ' open' : ''}>
       <summary class="custom-provider-summary">
         <span class="custom-provider-summary-main">
           <span class="custom-provider-summary-name">${escHtml(summaryName)}</span>
@@ -1281,19 +1325,22 @@ function renderCustomProvidersList() {
             </span>
           </div>
           ${(provider.models || []).map((model, modelIndex) => {
-            const overrideKey = `${index}:${modelIndex}`;
+            const modelUiId = ensureModelUiId(model);
+            const overrideKey = customModelTestKey(provider.id, modelUiId);
             const showOverride = state.providerModelOverrideKey === overrideKey;
+            const testState = state.customProviderTestStates.get(overrideKey);
             return `
-            <div class="custom-provider-model-row" data-model-index="${modelIndex}">
+            <div class="custom-provider-model-row" data-model-index="${modelIndex}" data-model-ui-id="${escHtml(modelUiId)}">
               <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
               <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
               <span class="custom-provider-model-actions">
-                <button type="button" class="secondary-action compact${modelHasOverride(model) ? ' has-override' : ''}" data-model-capabilities="${index}" data-model-capabilities-id="${modelIndex}" title="模型能力覆盖">${modelHasOverride(model) ? '能力•' : '能力'}</button>
-                <button type="button" class="secondary-action compact" data-test-model="${index}" data-test-model-id="${modelIndex}">测试</button>
+                <button type="button" class="secondary-action compact${modelHasOverride(model) ? ' has-override' : ''}" data-model-capabilities="${index}" data-model-capabilities-id="${modelIndex}" data-model-capabilities-key="${escHtml(overrideKey)}" aria-expanded="${showOverride ? 'true' : 'false'}" aria-controls="custom-model-overrides-${escHtml(modelUiId)}" title="模型能力覆盖">${modelHasOverride(model) ? '能力•' : '能力'}</button>
+                <button type="button" class="secondary-action compact" data-test-model="${index}" data-test-model-id="${modelIndex}" data-test-model-key="${escHtml(overrideKey)}"${testState?.status === 'running' ? ' disabled' : ''}>${testState?.status === 'running' ? '测试中…' : '测试'}</button>
                 <button type="button" class="danger-action compact custom-provider-model-remove" data-remove-model="${index}" data-remove-model-id="${modelIndex}" aria-label="删除模型">×</button>
               </span>
             </div>
-            ${showOverride && model.id ? customModelOverrideRowHtml(index, modelIndex, model) : ''}`;
+            ${showOverride && model.id ? customModelOverrideRowHtml(provider.id, modelUiId, model) : ''}
+            ${customModelTestStateHtml(provider.id, modelUiId)}`;
           }).join('')}
         </div>
         <div class="custom-provider-capabilities">
@@ -1306,21 +1353,26 @@ function renderCustomProvidersList() {
       </div>
     </details>`;
   }).join('');
-  state.customProviderExpandIndex = null;
 }
 
 function syncCustomProvidersDraftFromDom() {
+  captureCustomProviderExpandedState();
   const list = [];
   document.querySelectorAll('.custom-provider-card').forEach(card => {
     const index = Number(card.dataset.providerIndex);
-    const prev = state.customProvidersDraft?.[index] || {};
+    const providerId = card.dataset.providerId || '';
+    const prev = state.customProvidersDraft?.find(provider => provider.id === providerId)
+      || state.customProvidersDraft?.[index]
+      || {};
     const models = [];
     card.querySelectorAll('.custom-provider-model-row').forEach(row => {
       const id = row.querySelector('.custom-model-id')?.value.trim() || '';
       const name = row.querySelector('.custom-model-name')?.value.trim() || '';
-      if (!id) return;
-      const entry = { id, name: name || id };
-      const prevModel = (prev.models || [])[models.length] || {};
+      const modelUiId = row.dataset.modelUiId || randomModelUiId();
+      const prevModel = (prev.models || []).find(model => model._uiId === modelUiId)
+        || (prev.models || []).find(model => model.id && model.id === id)
+        || {};
+      const entry = { _uiId: modelUiId, id, name: name || id };
       for (const key of ['supportsMedia', 'thinking', 'zdr']) {
         if (prevModel[key] !== undefined) entry[key] = prevModel[key];
       }
@@ -1344,7 +1396,7 @@ function syncCustomProvidersDraftFromDom() {
     });
     const apiKeyInput = card.querySelector('.custom-provider-key')?.value.trim() || '';
     list.push({
-      id: prev.id || randomProviderId(),
+      id: prev.id || providerId || randomProviderId(),
       name: card.querySelector('.custom-provider-name')?.value.trim() || '',
       baseUrl: card.querySelector('.custom-provider-base-url')?.value.trim() || '',
       apiFormat: normalizeCustomProviderApiFormat(card.querySelector('.custom-provider-format')?.value),
@@ -1469,10 +1521,10 @@ function applyProviderModelsSelection() {
   const names = new Map((provider.models || []).filter(model => model.id).map(model => [model.id, model.name && model.name !== model.id ? model.name : '']));
   const kept = (provider.models || []).filter(model => model.id);
   const keptIds = new Set(kept.map(model => model.id));
-  const additions = [...picker.selected].filter(id => !keptIds.has(id)).map(id => ({ id, name: names.get(id) || id }));
+  const additions = [...picker.selected].filter(id => !keptIds.has(id)).map(id => ({ _uiId: randomModelUiId(), id, name: names.get(id) || id }));
   const overflow = Math.max(0, kept.length + additions.length - MAX_MODELS_PER_PROVIDER);
   provider.models = [...kept, ...additions].slice(0, MAX_MODELS_PER_PROVIDER);
-  state.customProviderExpandIndex = picker.providerIndex;
+  state.customProviderExpandedIds.add(provider.id);
   closeProviderModelsPicker();
   renderCustomProvidersList();
   refreshModelSelects();
@@ -1493,12 +1545,24 @@ async function testCustomProviderModel(providerIndex, modelIndex) {
   syncCustomProvidersDraftFromDom();
   const provider = state.customProvidersDraft?.[providerIndex];
   const model = provider?.models?.[modelIndex];
+  const modelUiId = model && ensureModelUiId(model);
+  const key = provider && modelUiId ? customModelTestKey(provider.id, modelUiId) : '';
+  const updateResult = result => {
+    if (key) state.customProviderTestStates.set(key, result);
+    renderCustomProvidersList();
+  };
   if (!provider?.baseUrl || !model?.id) {
-    showToast('请先填写 Base URL 和模型 ID', 'error');
+    updateResult({
+      status: 'error',
+      message: '请先填写 Base URL 和模型 ID',
+      finishedAt: Date.now(),
+    });
     return;
   }
   const card = document.querySelector(`.custom-provider-card[data-provider-index="${providerIndex}"]`);
   const apiKey = card?.querySelector('.custom-provider-key')?.value.trim() || '';
+  const startedAt = performance.now();
+  updateResult({ status: 'running', startedAt: Date.now() });
   try {
     const response = await apiFetch('/api/ai/custom-providers/test', {
       method: 'POST',
@@ -1513,9 +1577,20 @@ async function testCustomProviderModel(providerIndex, modelIndex) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '连接测试失败');
-    showToast('连接测试成功', 'success');
+    updateResult({
+      status: 'success',
+      message: '端点已响应',
+      httpStatus: response.status,
+      durationMs: Math.round(performance.now() - startedAt),
+      finishedAt: Date.now(),
+    });
   } catch (error) {
-    showToast(error.message || '连接测试失败', 'error');
+    updateResult({
+      status: 'error',
+      message: error.message || '连接测试失败',
+      durationMs: Math.round(performance.now() - startedAt),
+      finishedAt: Date.now(),
+    });
   }
 }
 
@@ -1622,8 +1697,11 @@ async function loadAgentSettingsForm() {
     $('#agentSeedreamBackground').value = settings.seedreamBackground === 'transparent' ? 'transparent' : 'opaque';
     $('#agentSeedreamStream').checked = settings.seedreamStream !== false;
     populateAgentModelSelects(settings.model || '');
+    state.customProviderExpandedIds.clear();
+    state.customProviderTestStates.clear();
+    state.providerModelOverrideKey = null;
     state.customProvidersDraft = (settings.customProviders || []).map(provider => ({
-      id: provider.id,
+      id: provider.id || randomProviderId(),
       name: provider.name || '',
       baseUrl: provider.baseUrl || '',
       apiFormat: normalizeCustomProviderApiFormat(provider.apiFormat),
@@ -1634,6 +1712,7 @@ async function loadAgentSettingsForm() {
       zdr: provider.zdr === true,
       models: (provider.models || []).length
         ? provider.models.map(model => ({
+          _uiId: randomModelUiId(),
           id: model.id,
           name: model.name || model.id,
           ...(typeof model.supportsMedia === 'boolean' ? { supportsMedia: model.supportsMedia } : {}),
@@ -1671,7 +1750,7 @@ async function loadAgentSettingsForm() {
 }
 
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer'];
+  const allowed = ['appearance', 'sessions', 'model', 'updates', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer'];
   const next = allowed.includes(panel) ? panel : 'appearance';
   state.settingsPanel = next;
   document.querySelectorAll('[data-settings-nav]').forEach(button => {
@@ -1683,9 +1762,10 @@ function setSettingsPanel(panel) {
     section.hidden = section.dataset.settingsPanel !== next;
   });
   const saveButton = $('#saveAgentSettings');
-  if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data';
+  if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data' || next === 'updates';
   if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
   if (next === 'knowledge') fillKnowledgeSearchOptionsForm();
+  if (next === 'updates') loadDesktopUpdateInfo().catch(error => renderDesktopUpdateError(error));
 }
 
 async function openSettings(panel = 'appearance') {
@@ -2656,6 +2736,128 @@ function confirmAction({ title, message, confirmText = '确认' }) {
   });
 }
 
+function desktopUpdatesBridge() {
+  return getDesktopUpdates();
+}
+
+function renderDesktopUpdateError(error) {
+  state.desktopUpdateStatus = 'error';
+  state.desktopUpdateInfo = {
+    state: 'error',
+    reason: error?.message || String(error || '更新检查失败'),
+    currentVersion: state.desktopUpdateInfo?.currentVersion || '',
+  };
+  renderDesktopUpdatePanel();
+}
+
+function renderDesktopUpdatePanel() {
+  const root = $('#desktopUpdatePanel');
+  if (!root) return;
+  const bridge = desktopUpdatesBridge();
+  if (!bridge) {
+    root.innerHTML = `<div class="desktop-update-empty"><strong>更新仅适用于桌面客户端</strong><p>请在 macOS 或 Windows 桌面版中打开此页面。也可以前往 GitHub Releases 手动下载。</p><a class="secondary-action compact" href="https://github.com/ranr21094-AI/liuxu/releases/latest" target="_blank" rel="noreferrer">打开 GitHub Releases</a></div>`;
+    return;
+  }
+  const info = state.desktopUpdateInfo || {};
+  const checking = state.desktopUpdateStatus === 'checking';
+  const downloading = state.desktopUpdateStatus === 'downloading';
+  const available = info.state === 'available';
+  const verified = state.desktopUpdateStatus === 'verified' && state.desktopUpdateDownloaded;
+  const signature = state.desktopUpdateDownloaded?.signature || info.signature;
+  const signatureText = signature?.trusted ? signature.label : '未通过正式发布者签名检查（测试包）';
+  const progress = state.desktopUpdateProgress;
+  const progressText = progress?.totalBytes ? `${Math.round((progress.receivedBytes / progress.totalBytes) * 100)}% · ${formatUpdateBytes(progress.receivedBytes)} / ${formatUpdateBytes(progress.totalBytes)}` : '正在下载…';
+  const statusText = checking ? '正在检查…'
+    : downloading ? progressText
+      : verified ? '安装包已校验，可以打开'
+        : info.state === 'up-to-date' ? '已经是最新版本'
+          : info.state === 'unavailable' ? '暂无兼容安装包'
+            : info.state === 'unsupported' ? '当前平台暂不支持'
+              : info.state === 'incompatible' ? (info.reason || '发布版本格式不兼容')
+                : info.state === 'error' ? (info.reason || '检查失败') : '尚未检查';
+  root.innerHTML = `
+    <div class="desktop-update-head">
+      <div><strong>桌面客户端更新</strong><p>当前版本 ${escHtml(info.currentVersion || '读取中…')} · ${escHtml(info.platform || '')} ${escHtml(info.arch || '')}</p></div>
+      <button type="button" class="secondary-action compact" id="desktopUpdateCheck"${checking || downloading ? ' disabled' : ''}>${checking ? '检查中…' : '检查更新'}</button>
+    </div>
+    <div class="desktop-update-status is-${escHtml(state.desktopUpdateStatus)}" aria-live="polite">${escHtml(statusText)}</div>
+    ${available ? `<div class="desktop-update-release"><div class="desktop-update-release-title"><strong>${escHtml(info.title || `留序 LiuXu ${info.latestVersion || ''}`)}</strong><span>最新 ${escHtml(info.latestVersion || '')}</span></div><p class="desktop-update-meta">${escHtml(info.publishedAt ? new Date(info.publishedAt).toLocaleString() : '')} · ${escHtml(info.asset?.name || '')} ${formatUpdateBytes(info.asset?.sizeBytes) ? `· ${formatUpdateBytes(info.asset.sizeBytes)}` : ''}</p><pre class="desktop-update-notes">${escHtml(info.notes || '本次发布没有附加说明。')}</pre></div>` : ''}
+    ${info.reason && !available && info.state !== 'error' ? `<p class="settings-copy desktop-update-reason">${escHtml(info.reason)}</p>` : ''}
+    ${downloading ? `<div class="desktop-update-progress"><progress max="1" value="${Number(progress?.progress) || 0}"></progress><button type="button" class="secondary-action compact" id="desktopUpdateCancel">取消下载</button></div>` : ''}
+    ${available && !verified && !downloading && state.desktopUpdateStatus !== 'opened' ? `<button type="button" class="primary-action compact" id="desktopUpdateDownload">下载并校验安装包</button>` : ''}
+    ${verified ? `<div class="desktop-update-verified"><p><strong>${escHtml(state.desktopUpdateDownloaded.fileName)}</strong> · SHA-256 已校验</p><p class="desktop-update-signature ${signature?.trusted ? 'is-trusted' : 'is-warning'}">${escHtml(signatureText)}</p><div class="settings-actions"><button type="button" class="primary-action compact" id="desktopUpdateOpen">${info.platform === 'darwin' ? '打开 DMG' : '打开安装程序'}</button>${info.platform === 'darwin' ? '<button type="button" class="secondary-action compact" id="desktopUpdateQuit">退出留序</button>' : ''}</div></div>` : ''}
+    ${state.desktopUpdateStatus === 'opened' ? '<div class="desktop-update-verified"><p><strong>DMG 已打开</strong></p><p>请将留序拖入“应用程序”，完成替换后点击“退出留序”，再从应用程序重新打开。</p><button type="button" class="secondary-action compact" id="desktopUpdateQuit">退出留序</button></div>' : ''}
+    <p class="desktop-update-footnote">更新不会改变知识、待办、密钥或备份数据。安装包仅来自项目 GitHub Releases。</p>`;
+}
+
+async function loadDesktopUpdateInfo() {
+  const bridge = desktopUpdatesBridge();
+  if (!bridge) {
+    renderDesktopUpdatePanel();
+    return;
+  }
+  state.desktopUpdateStatus = 'checking';
+  renderDesktopUpdatePanel();
+  try {
+    const current = await bridge.getCurrentInfo();
+    state.desktopUpdateInfo = current || {};
+    const result = await bridge.check();
+    state.desktopUpdateInfo = result;
+    state.desktopUpdateStatus = result.state || 'error';
+    state.desktopUpdateDownloaded = null;
+    state.desktopUpdateProgress = null;
+  } catch (error) {
+    renderDesktopUpdateError(error);
+    return;
+  }
+  renderDesktopUpdatePanel();
+}
+
+async function downloadDesktopUpdate() {
+  const bridge = desktopUpdatesBridge();
+  if (!bridge || state.desktopUpdateInfo?.state !== 'available') return;
+  state.desktopUpdateStatus = 'downloading';
+  state.desktopUpdateProgress = { receivedBytes: 0, totalBytes: state.desktopUpdateInfo.asset?.sizeBytes || 0, progress: 0 };
+  renderDesktopUpdatePanel();
+  try {
+    state.desktopUpdateDownloaded = await bridge.download();
+    state.desktopUpdateStatus = 'verified';
+  } catch (error) {
+    if (error?.message === '下载已取消') {
+      state.desktopUpdateStatus = state.desktopUpdateInfo?.state || 'available';
+      state.desktopUpdateProgress = null;
+      renderDesktopUpdatePanel();
+      return;
+    }
+    renderDesktopUpdateError(error);
+    return;
+  }
+  renderDesktopUpdatePanel();
+}
+
+async function openDesktopInstaller() {
+  const bridge = desktopUpdatesBridge();
+  if (!bridge || !state.desktopUpdateDownloaded) return;
+  const untrusted = state.desktopUpdateDownloaded.signature && !state.desktopUpdateDownloaded.signature.trusted;
+  if (untrusted) {
+    const confirmed = await confirmAction({
+      title: '打开未正式签名的测试包？',
+      message: 'SHA-256 已通过，但系统没有检测到正式发布者签名。只在确认来源可靠时继续。',
+      confirmText: '继续打开',
+    });
+    if (!confirmed) return;
+  }
+  try {
+    const result = await bridge.openInstaller();
+    if (result.macInstallGuide) {
+      state.desktopUpdateStatus = 'opened';
+      renderDesktopUpdatePanel();
+    }
+  } catch (error) {
+    renderDesktopUpdateError(error);
+  }
+}
+
 let pendingKnowledgeNameResolve = null;
 
 function validateKnowledgeName(name) {
@@ -2844,21 +3046,24 @@ function upsertRunTrace(run, { live = false } = {}) {
 
 function trace(text, runId = activeRunState()?.runId) {
   if (!text || !runId || !isViewingSession(state.activeSession?.id)) return;
-  const details = runTraceHost(runId) || upsertRunTrace({ id: runId, trace: [] }, { live: true });
-  if (!details) return;
-  const eventsEl = details.querySelector('.trace-events');
-  const summaryEl = details.querySelector('.trace-summary');
-  const last = eventsEl.lastElementChild;
-  if (last && last.textContent === text) {
+  scheduleRender(`trace:${runId}`, () => {
+    if (!isViewingSession(state.activeSession?.id)) return;
+    const details = runTraceHost(runId) || upsertRunTrace({ id: runId, trace: [] }, { live: true });
+    if (!details) return;
+    const eventsEl = details.querySelector('.trace-events');
+    const summaryEl = details.querySelector('.trace-summary');
+    const last = eventsEl.lastElementChild;
+    if (last && last.textContent === text) {
+      summaryEl.textContent = text;
+      return;
+    }
+    const event = document.createElement('div');
+    event.className = 'trace-event';
+    event.textContent = text;
+    eventsEl.append(event);
+    eventsEl.scrollTop = eventsEl.scrollHeight;
     summaryEl.textContent = text;
-    return;
-  }
-  const event = document.createElement('div');
-  event.className = 'trace-event';
-  event.textContent = text;
-  eventsEl.append(event);
-  eventsEl.scrollTop = eventsEl.scrollHeight;
-  summaryEl.textContent = text;
+  });
 }
 
 function setSessionRunStatus(sessionId, status, text = '') {
@@ -3953,6 +4158,7 @@ async function loadDocuments({ append = false, refreshTree = true } = {}) {
 
 function showEmptyDocument() {
   state.activeDocument = null;
+  knowledgeEnhancements?.clear?.();
   destroyFilePreview();
   clearTimeout(state.documentSaveTimer);
   state.documentDirty = false;
@@ -4064,6 +4270,7 @@ async function renderActiveDocument(document) {
   renderKnowledgeBaseList();
   renderKnowledgeTree();
   renderDocuments();
+  knowledgeEnhancements?.setActiveDocument?.(document);
 }
 
 async function renderFileOriginalPanel(document) {
@@ -4120,7 +4327,10 @@ function setEditorMode(mode) {
   editor?.classList.toggle('is-split', next === 'split');
   textarea.hidden = next === 'preview';
   preview.hidden = next === 'edit';
-  if (next === 'preview' || next === 'split') renderDocumentPreview();
+  if (next === 'preview' || next === 'split') {
+    preloadMarkdownLibraries();
+    renderDocumentPreview();
+  }
   else if (documentPreviewCleanup) {
     documentPreviewCleanup();
     documentPreviewCleanup = null;
@@ -4200,11 +4410,13 @@ async function saveDocument() {
   clearTimeout(state.documentSaveTimer);
   if (!state.activeDocument || !state.documentDirty || state.documentConflict) return true;
   const id = state.activeDocument.id;
+  const patch = currentDocumentPatch();
+  const submittedContent = patch.content;
   setDocumentSaveState('正在保存', 'saving');
   const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(currentDocumentPatch()),
+    body: JSON.stringify(patch),
   });
   const data = await response.json().catch(() => ({}));
   if (state.activeDocument?.id !== id) return false;
@@ -4217,9 +4429,17 @@ async function saveDocument() {
     return false;
   }
   const previous = state.activeDocument;
+  if (typeof data.content === 'string' && data.content !== submittedContent && $('#documentContent').value === submittedContent) {
+    const caret = $('#documentContent').selectionStart;
+    $('#documentContent').value = data.content;
+    const delta = data.content.length - submittedContent.length;
+    const nextCaret = Math.max(0, Math.min(data.content.length, Number(caret) + delta));
+    $('#documentContent').setSelectionRange(nextCaret, nextCaret);
+  }
   state.activeDocument = data;
   state.documentDirty = false;
   setDocumentSaveState('已保存');
+  knowledgeEnhancements?.onDocumentSaved?.(data);
   $('#topbarSubtitle').textContent = data.title || '未命名';
   updateDocumentSummary(data);
   const locationChanged = previous && (
@@ -4840,10 +5060,44 @@ function bindEvents() {
     const button = event.target.closest('[data-settings-nav]');
     if (button) setSettingsPanel(button.dataset.settingsNav);
   });
+  $('#desktopUpdatePanel')?.addEventListener('click', event => {
+    if (event.target.closest('#desktopUpdateCheck')) {
+      loadDesktopUpdateInfo().catch(renderDesktopUpdateError);
+      return;
+    }
+    if (event.target.closest('#desktopUpdateDownload')) {
+      downloadDesktopUpdate();
+      return;
+    }
+    if (event.target.closest('#desktopUpdateCancel')) {
+      desktopUpdatesBridge()?.cancelDownload?.();
+      state.desktopUpdateStatus = state.desktopUpdateInfo?.state || 'idle';
+      state.desktopUpdateProgress = null;
+      renderDesktopUpdatePanel();
+      return;
+    }
+    if (event.target.closest('#desktopUpdateOpen')) {
+      openDesktopInstaller();
+      return;
+    }
+    if (event.target.closest('#desktopUpdateQuit')) {
+      Promise.resolve(desktopUpdatesBridge()?.quitForUpdate?.()).catch(renderDesktopUpdateError);
+    }
+  });
+  const updateBridge = desktopUpdatesBridge();
+  if (updateBridge?.onProgress) {
+    state.desktopUpdateUnsubscribe?.();
+    state.desktopUpdateUnsubscribe = updateBridge.onProgress(payload => {
+      if (state.desktopUpdateStatus !== 'downloading') return;
+      state.desktopUpdateProgress = payload;
+      renderDesktopUpdatePanel();
+    });
+  }
   $('#addCustomProvider')?.addEventListener('click', () => {
     syncCustomProvidersDraftFromDom();
-    state.customProvidersDraft = [...(state.customProvidersDraft || []), createEmptyCustomProvider()];
-    state.customProviderExpandIndex = state.customProvidersDraft.length - 1;
+    const provider = createEmptyCustomProvider();
+    state.customProvidersDraft = [...(state.customProvidersDraft || []), provider];
+    state.customProviderExpandedIds.add(provider.id);
     renderCustomProvidersList();
   });
   $('#customProvidersList')?.addEventListener('click', event => {
@@ -4853,7 +5107,9 @@ function bindEvents() {
       event.stopPropagation();
       syncCustomProvidersDraftFromDom();
       const index = Number(removeProvider.dataset.removeProvider);
+      const removed = state.customProvidersDraft?.[index];
       state.customProvidersDraft = (state.customProvidersDraft || []).filter((_, i) => i !== index);
+      if (removed?.id) state.customProviderExpandedIds.delete(removed.id);
       renderCustomProvidersList();
       return;
     }
@@ -4868,7 +5124,7 @@ function bindEvents() {
     if (modelCapabilities) {
       event.stopPropagation();
       syncCustomProvidersDraftFromDom();
-      const key = `${Number(modelCapabilities.dataset.modelCapabilities)}:${Number(modelCapabilities.dataset.modelCapabilitiesId)}`;
+      const key = modelCapabilities.dataset.modelCapabilitiesKey || '';
       state.providerModelOverrideKey = state.providerModelOverrideKey === key ? null : key;
       renderCustomProvidersList();
       return;
@@ -4884,7 +5140,7 @@ function bindEvents() {
         showToast(`每个供应商最多 ${MAX_MODELS_PER_PROVIDER} 个模型`, 'error');
         return;
       }
-      provider.models = [...(provider.models || []), { id: '', name: '' }];
+      provider.models = [...(provider.models || []), { _uiId: randomModelUiId(), id: '', name: '' }];
       renderCustomProvidersList();
       return;
     }
@@ -4896,8 +5152,10 @@ function bindEvents() {
       const modelIndex = Number(removeModel.dataset.removeModelId);
       const provider = state.customProvidersDraft?.[providerIndex];
       if (!provider) return;
+      const removedModel = provider.models?.[modelIndex];
       provider.models = (provider.models || []).filter((_, i) => i !== modelIndex);
-      if (!provider.models.length) provider.models = [{ id: '', name: '' }];
+      if (removedModel?._uiId) state.customProviderTestStates.delete(customModelTestKey(provider.id, removedModel._uiId));
+      if (!provider.models.length) provider.models = [{ _uiId: randomModelUiId(), id: '', name: '' }];
       renderCustomProvidersList();
       return;
     }
@@ -4906,6 +5164,17 @@ function bindEvents() {
       event.stopPropagation();
       testCustomProviderModel(Number(testModel.dataset.testModel), Number(testModel.dataset.testModelId))
         .catch(error => showToast(error.message, 'error'));
+      return;
+    }
+    const copyTestResult = event.target.closest('[data-copy-test-result]');
+    if (copyTestResult) {
+      event.stopPropagation();
+      const result = state.customProviderTestStates.get(copyTestResult.dataset.copyTestResult);
+      if (!result?.message) return;
+      const copyPromise = navigator.clipboard?.writeText?.(result.message);
+      Promise.resolve(copyPromise)
+        .then(() => copyPromise ? showToast('错误信息已复制', 'success') : showToast('当前环境无法复制错误信息', 'error'))
+        .catch(() => showToast('无法复制错误信息', 'error'));
     }
   });
   $('#providerModelsClose')?.addEventListener('click', () => closeProviderModelsPicker());
@@ -4936,6 +5205,15 @@ function bindEvents() {
   });
   $('#providerModelsDialog')?.addEventListener('close', () => {
     state.providerModelsPicker = null;
+  });
+  knowledgeEnhancements = initKnowledgeEnhancements({
+    apiFetch,
+    state,
+    navigate,
+    confirmAction,
+    onRestore: async document => {
+      await renderActiveDocument(document);
+    },
   });
   createBackupActions({
     confirmAction,

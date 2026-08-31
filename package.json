@@ -1,18 +1,24 @@
 {
   "name": "work-log",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "LiuXu is a local-first personal AI workspace for knowledge, memory, and tasks.",
   "author": "LiuXu Contributors",
   "main": "electron/main.js",
   "engines": {
-    "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
+    "node": "^22.12.0 || >=24.0.0"
   },
   "scripts": {
     "build": "node scripts/build-editor.mjs",
     "start": "npm run build && node server.js",
     "desktop": "npm run build && electron .",
-    "desktop:build": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-build.ps1",
-    "test": "npm run build && node --test",
+    "desktop:build": "node scripts/desktop-build.mjs",
+    "desktop:build:win": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-build.ps1",
+    "desktop:build:mac": "node scripts/desktop-build-mac.mjs --adhoc",
+    "desktop:release:mac": "node scripts/desktop-build-mac.mjs --release",
+    "desktop:icon:mac": "node scripts/build-mac-icon.mjs",
+    "perf:baseline": "node scripts/perf-baseline.mjs",
+    "perf:check": "node scripts/perf-check.mjs",
+    "test": "npm run build && node --test --test-concurrency=1",
     "todo:reminder:test": "node scripts/send-todo-reminder-mail.js"
   },
   "dependencies": {

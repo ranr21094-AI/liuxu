@@ -12,6 +12,64 @@ const AI_SECRET_FIELDS = Object.freeze([
   'seedreamApiKey', 'getokenApiKey', 'getokenGrokImagineApiKey', 'getokenNanoBananaApiKey',
 ]);
 
+function shouldMigrateWindowsLegacyData(platform = process.platform) {
+  return platform === 'win32';
+}
+
+function shouldQuitAfterAllWindowsClosed(platform = process.platform) {
+  return platform !== 'darwin';
+}
+
+function desktopSecretKeyPath(userDataDir, platform = process.platform) {
+  if (platform !== 'darwin') return '';
+  if (!userDataDir || !path.isAbsolute(userDataDir)) {
+    throw new Error('userDataDir 必须是绝对路径');
+  }
+  return path.join(userDataDir, 'ai-secrets.key');
+}
+
+function macApplicationMenuTemplate(appName = '留序 LiuXu') {
+  return [
+    {
+      label: appName,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'pasteAndMatchStyle' },
+        { role: 'delete' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        { role: 'front' },
+      ],
+    },
+  ];
+}
+
 function errorText(error) {
   if (error instanceof Error) return error.stack || error.message;
   return String(error);
@@ -426,10 +484,12 @@ module.exports = {
   defaultWindowsDataDir,
   defaultWindowsLegacyProjectDir,
   directoryHasEntries,
+  desktopSecretKeyPath,
   ensureWritableDirectory,
   isAllowedAppNavigation,
   isExternalHttpUrl,
   migrateLegacyData,
+  macApplicationMenuTemplate,
   persistDesktopConfig,
   quickCheckSqlite,
   readDesktopConfig,
@@ -437,5 +497,7 @@ module.exports = {
   restoreAndFocusWindow,
   resolveDesktopDataDir,
   sha256File,
+  shouldMigrateWindowsLegacyData,
+  shouldQuitAfterAllWindowsClosed,
   treeStats,
 };

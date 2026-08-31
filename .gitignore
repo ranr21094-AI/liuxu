@@ -14,3 +14,4 @@ output/
 gen_images.py
 public/generated/
 dist/desktop/
+perf-results/

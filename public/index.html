@@ -306,9 +306,30 @@
           </header>
 
           <div class="note-editor" id="noteEditor">
-            <textarea id="documentContent" aria-label="Markdown 正文" spellcheck="true"></textarea>
+            <textarea id="documentContent" aria-label="Markdown 正文" aria-controls="knowledgeLinkPicker" aria-expanded="false" spellcheck="true"></textarea>
             <div class="markdown-preview prose" id="documentPreview" hidden></div>
+            <div class="knowledge-link-picker" id="knowledgeLinkPicker" role="listbox" aria-label="插入知识链接" hidden></div>
           </div>
+          <div class="knowledge-link-issues" id="knowledgeLinkIssues" role="status" aria-live="polite" hidden></div>
+
+          <section class="knowledge-relations" id="knowledgeRelations" hidden>
+            <details id="knowledgeRelationsDetails">
+              <summary>关联与历史 <span id="knowledgeRelationsSummary">默认折叠</span></summary>
+              <div class="knowledge-relations-tabs" role="tablist" aria-label="文档关系与历史">
+                <button type="button" class="active" data-knowledge-relations-tab="backlinks" role="tab" aria-selected="true">反向引用 <span id="knowledgeBacklinkCount">0</span></button>
+                <button type="button" data-knowledge-relations-tab="revisions" role="tab" aria-selected="false">版本历史 <span id="knowledgeRevisionCount">0</span></button>
+              </div>
+              <div class="knowledge-relations-panel" id="knowledgeBacklinksPanel" role="tabpanel">
+                <div class="knowledge-relations-list" id="knowledgeBacklinksList" aria-live="polite"><p class="empty-list">展开后加载引用此文档的内容。</p></div>
+                <button class="load-more" id="knowledgeBacklinksLoadMore" type="button" hidden>加载更多引用</button>
+              </div>
+              <div class="knowledge-relations-panel" id="knowledgeRevisionsPanel" role="tabpanel" hidden>
+                <div class="knowledge-relations-list" id="knowledgeRevisionsList" aria-live="polite"><p class="empty-list">展开后加载版本历史。</p></div>
+                <div class="knowledge-revision-detail" id="knowledgeRevisionDetail" hidden></div>
+                <button class="load-more" id="knowledgeRevisionsLoadMore" type="button" hidden>加载更多版本</button>
+              </div>
+            </details>
+          </section>
 
           <section class="file-original-panel" id="fileOriginalPanel" hidden>
             <div class="file-original-head">
@@ -484,6 +505,7 @@
           <button type="button" data-settings-nav="appearance" class="active" aria-current="page">外观</button>
           <button type="button" data-settings-nav="sessions">会话</button>
           <button type="button" data-settings-nav="model">模型</button>
+          <button type="button" data-settings-nav="updates">更新</button>
           <button type="button" data-settings-nav="agent">Agent</button>
           <button type="button" data-settings-nav="memory">Memory</button>
           <button type="button" data-settings-nav="network">联网</button>
@@ -544,6 +566,11 @@
                 </select>
               </label>
             </div>
+          </section>
+          <section class="settings-section" data-settings-panel="updates" hidden>
+            <h3>更新</h3>
+            <p class="settings-copy">检查项目 GitHub Releases 中的最新桌面安装包。下载完成并校验后，再由你确认打开安装程序。</p>
+            <div id="desktopUpdatePanel" class="desktop-update-panel"></div>
           </section>
           <section class="settings-section" data-settings-panel="agent" hidden>
             <h3>Agent</h3>
@@ -787,7 +814,7 @@
           </section>
           <section class="settings-section" data-settings-panel="computer" hidden>
             <h3>电脑</h3>
-            <p class="settings-copy">开启后，管理员可让 Agent 在白名单目录里读写文件、删除文件，并运行 PowerShell / Python（code.run）或 Git Bash 命令（bash.run：git / npm / node 等，需确认）。脚本与 bash 命令在第一个白名单目录（或指定 cwd）下执行。</p>
+            <p class="settings-copy">开启后，Agent 可在白名单目录里读写或删除文件，并运行 Python（code.run）或 Bash 命令（bash.run：git / npm / node 等，需确认）；Windows 也支持 PowerShell。脚本与 Bash 命令在第一个白名单目录（或指定 cwd）下执行。</p>
             <label class="settings-row" for="computerToolsToggle"><span><strong>允许电脑工具</strong><small>file.*、code.run 与 bash.run，需管理员账户</small></span><input id="computerToolsToggle" type="checkbox"></label>
             <div class="settings-field">
               <span>目录白名单</span>
@@ -911,9 +938,8 @@
 
   <div id="toastContainer" aria-live="polite"></div>
   <div class="sr-only" id="a11yStatus" aria-live="polite"></div>
-  <script src="/vendor/marked/marked.umd.js"></script>
-  <script src="/vendor/dompurify/purify.min.js"></script>
-  <script src="/vendor/katex/katex.min.js"></script>
+  <!-- Markdown vendor assets (vendor/katex/katex.min.css, vendor/katex/katex.min.js,
+       vendor/marked/marked.umd.js, vendor/dompurify/purify.min.js) are loaded on demand by markdown.js. -->
   <script type="module" src="/js/workbench.js"></script>
 </body>
 </html>

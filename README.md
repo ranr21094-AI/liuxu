@@ -3,6 +3,7 @@
 **让重要信息留下，让下一步行动有序。**
 
 [![Windows 11 x64](https://img.shields.io/badge/Windows-11%20x64-2563eb?logo=windows11&logoColor=white)](https://github.com/ranr21094-AI/liuxu/releases/latest)
+[![macOS Apple Silicon](https://img.shields.io/badge/macOS-Apple%20Silicon-111827?logo=apple&logoColor=white)](https://github.com/ranr21094-AI/liuxu/releases/latest)
 [![Latest release](https://img.shields.io/github/v/release/ranr21094-AI/liuxu?display_name=tag&sort=semver)](https://github.com/ranr21094-AI/liuxu/releases/latest)
 [![MIT License](https://img.shields.io/badge/license-MIT-2f332f)](LICENSE)
 
@@ -14,14 +15,32 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.0.0-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.2.0-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.0.0-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.2.0-x64.exe -Algorithm SHA256
+```
+
+### macOS Apple Silicon（测试包）
+
+当前 Mac 首发包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
+
+```text
+LiuXu-1.2.0-mac-arm64.dmg
+LiuXu-1.2.0-mac-arm64.zip
+```
+
+测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
+
+可用随包提供的 `.sha256` 文件校验下载内容：
+
+```bash
+shasum -a 256 -c LiuXu-1.2.0-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.2.0-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -31,11 +50,21 @@ Get-FileHash .\LiuXu-Setup-1.0.0-x64.exe -Algorithm SHA256
 | 区域 | 用途 |
 | --- | --- |
 | **Agent** | 与自己选择的模型协作，按确认权限检索知识、维护待办、联网搜索或执行本地工具。 |
-| **知识库** | 编写 Markdown 笔记，导入 PDF、DOCX、TXT、Markdown 和图片，按知识库与文件夹整理。 |
+| **知识库** | 编写 Markdown 笔记，导入 PDF、DOCX、TXT、Markdown 和图片，按知识库与文件夹整理，并使用双链与版本历史保护长期内容。 |
 | **Memory** | 保存长期事实、习惯和流程；新记忆先以提案形式展示，经你确认后才写入。 |
 | **待办** | 管理分类、优先级、重复任务、倒数日和可选的每日邮件提醒。 |
 
 还包括私密知识锁定、Agent 会话归档、JSON/ZIP 备份恢复、模型级能力配置，以及可选的 Chrome 桥接和电脑工具。
+
+### 知识双链与版本历史（v1.2.0）
+
+知识库支持稳定 ID 双链。推荐写成 `[[显示标题|note:123]]` 或 `[[显示标题|file:4]]`；在编辑器输入 `[[` 会打开可搜索的本地文档选择器。直接输入 `[[标题]]` 时，保存会自动解析唯一匹配；重名或暂时找不到的标题会保留原文并在编辑器中提示，不会阻止保存。
+
+链接只会跳转到留序自己的知识文档路由。目标重命名后链接仍然有效；归档目标会标记为归档，永久删除后显示断链。私密日记锁定时，选择器、反向引用和历史内容均不会泄露日记信息。
+
+每篇文档底部都有默认折叠的“反向引用 / 版本历史”面板。正文、标题、标签、知识库、文件夹和文档日期发生变化时，留序会自动保存快照：5 分钟内合并，最多保留 50 个版本且最长 30 天。查看历史先显示元数据，选择版本后才加载正文；恢复旧版前会保存当前状态，并要求提交当前版本号，遇到并发编辑会拒绝覆盖。
+
+完整 ZIP“替换恢复”会保留版本历史；旧版 JSON/ZIP 可继续恢复并自动重建双链。结构 JSON 和“合并恢复”只迁移当前内容，不迁移历史快照。
 
 ## 第一次使用
 
@@ -46,6 +75,12 @@ Get-FileHash .\LiuXu-Setup-1.0.0-x64.exe -Algorithm SHA256
 3. 获取或手动添加模型，选择默认模型。
 
 API Key 会使用本机密钥加密保存。调用模型、联网搜索或生图时，相应的提示词、你明确提供的材料或工具结果会发送给所选服务商；这些服务受各自隐私政策约束。
+
+### 应用内更新
+
+桌面版进入 **设置 → 更新** 后会检查 GitHub Releases。发现新版本时，留序会下载当前平台的安装包并校验 GitHub SHA-256；确认后打开安装程序。更新只替换应用文件，不会覆盖知识、待办、密钥或备份数据。
+
+更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.0.0` 用户需要先手动安装 `1.2.0`，之后即可使用应用内更新到后续版本。
 
 ## 数据与隐私
 
@@ -74,14 +109,28 @@ Windows 安装版默认使用：
 %LOCALAPPDATA%\work-log\ai-secrets.key
 ```
 
+macOS 安装版使用：
+
+```text
+~/Library/Application Support/work-log/data
+```
+
+桌面配置和 AI 密钥分别位于：
+
+```text
+~/Library/Application Support/work-log/desktop-config.json
+~/Library/Application Support/work-log/ai-secrets.key
+```
+
 覆盖安装或卸载留序不会主动删除数据目录。正式清理电脑前，请先在 **设置 → 数据** 导出备份。
 
 ### 更换数据目录
 
-目前安装向导可以选择程序位置，但应用内还没有数据目录选择器。请先完全退出留序，再编辑：
+应用内还没有数据目录选择器。请先完全退出留序，再编辑对应平台的桌面配置：
 
 ```text
 %APPDATA%\work-log\desktop-config.json
+~/Library/Application Support/work-log/desktop-config.json
 ```
 
 例如：
@@ -95,13 +144,9 @@ Windows 安装版默认使用：
 
 如果原目录已经有数据，请先完整复制到新位置，再修改配置。也可以在启动前设置 `DATA_DIR` 环境变量；其优先级高于配置文件。
 
-### 换一台电脑
+### 换一台电脑或跨平台迁移
 
-1. 在旧电脑正常退出留序。
-2. 复制整个 `%LOCALAPPDATA%\Work Log Data`。
-3. 同时复制 `%LOCALAPPDATA%\work-log\ai-secrets.key`；缺少它时，已保存的模型 API Key 无法解密，需要重新填写。
-4. 在新电脑安装留序，并在首次启动前把上述内容放到对应位置。
-5. 如果使用自定义数据目录，在新电脑重新创建 `desktop-config.json`。
+同平台换机可以在正常退出后复制完整数据目录和 `ai-secrets.key`。Windows 与 macOS 之间不会自动搜索或迁移对方的数据目录；跨平台迁移请优先在 **设置 → 数据** 导出 ZIP 工作区，再在新电脑恢复。由于 ZIP 不包含本机主密钥，迁移后需要重新填写模型 API Key。
 
 ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`。密钥文件应单独保管，不要上传到 GitHub 或网盘公开链接。
 
@@ -128,7 +173,11 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.0.0` 安装包未签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.2.0` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+
+### macOS 提示无法验证开发者
+
+当前 ad-hoc 测试包尚未经过 Apple 公证。请先核对 SHA-256，再到“系统设置 → 隐私与安全性”确认打开。Developer ID 签名、公证完成后的正式包不需要这一步。
 
 ### 卸载后数据还在
 
@@ -142,8 +191,8 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### 环境要求
 
-- Node.js `^20.19.0`、`^22.12.0` 或 `>=24.0.0`
-- Windows 11 x64（桌面安装包）
+- Node.js `^22.12.0` 或 `>=24.0.0`
+- Windows 11 x64，或 Apple Silicon Mac（macOS 12+）
 - 从当前 C 盘项目构建时，脚本使用 `D:\Temp\work-log-build-c` 作为缓存并要求 D 盘至少 5 GB 可用空间
 
 ```bash
@@ -158,27 +207,47 @@ npm start
 ```bash
 npm run build          # 生成浏览器 vendor 资源
 npm test               # 完整测试
+npm run perf:baseline  # 在临时数据目录生成 1,000（可用 PERF_DOCS 调整）篇文档基线
+npm run perf:check     # 运行基线并输出结构化性能检查结果
 npm run desktop        # Electron 开发模式
-npm run desktop:build  # Windows NSIS 安装包
+npm run desktop:build  # 按当前系统生成 Windows 或 Mac 测试安装包
+npm run desktop:build:win      # Windows NSIS x64
+npm run desktop:build:mac      # Mac arm64 ad-hoc DMG + ZIP
+npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 ```
+
+正式发布命令不会在缺少凭据时降级为测试包。运行前需要安装完整 Xcode、在钥匙串中导入 **Developer ID Application** 证书，并配置以下任一公证方式：
+
+- App Store Connect API Key：`APPLE_API_KEY`、`APPLE_API_KEY_ID`、`APPLE_API_ISSUER`。
+- Apple ID：`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD`、`APPLE_TEAM_ID`。
+- 钥匙串 profile：先执行 `xcrun notarytool store-credentials "liuxu-notary"`，构建时设置 `APPLE_KEYCHAIN_PROFILE=liuxu-notary`。
+
+证书、密码和 API Key 只通过 macOS 钥匙串或环境变量提供，不写入仓库。正式流程会签名应用、公证并 staple 应用与 DMG，再执行 Gatekeeper、ticket、归档架构和 SHA-256 校验；任一步失败都不会生成“看似正式”的发布摘要。
 
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.0.0-x64.exe
-LiuXu-Setup-1.0.0-x64.exe.sha256
+LiuXu-Setup-1.2.0-x64.exe
+LiuXu-Setup-1.2.0-x64.exe.sha256
 desktop-build-summary.json
+LiuXu-1.2.0-mac-arm64.dmg
+LiuXu-1.2.0-mac-arm64.dmg.sha256
+LiuXu-1.2.0-mac-arm64.zip
+LiuXu-1.2.0-mac-arm64.zip.sha256
+desktop-build-summary-mac.json
 ```
 
 安装包、个人数据库、附件、`.env` 和 `.zcode/` 不会进入 Git。
+
+性能基线只使用临时 SQLite 数据库，不会读取或修改当前工作区数据。报告写入被 Git 忽略的 `perf-results/`，不包含正文、API Key 或本机数据路径；`PERF_STRICT=1 npm run perf:check` 可将目标阈值作为退出条件。
 
 ### 数据目录优先级
 
 桌面安装版按以下顺序选择数据目录：
 
 1. `DATA_DIR` 环境变量。
-2. `%APPDATA%\work-log\desktop-config.json` 的 `dataDir`。
-3. `%LOCALAPPDATA%\Work Log Data`。
+2. 平台桌面配置中保存的 `dataDir`。
+3. Windows 使用 `%LOCALAPPDATA%\Work Log Data`；macOS 使用 `~/Library/Application Support/work-log/data`。
 
 开发服务器默认使用 `./data`。可用 `PORT` 修改端口；默认只监听 `127.0.0.1`。如果把 `HOST` 改为 `0.0.0.0` 或其他非本机地址，服务本身没有账户访问控制，必须自行配置可信网络、HTTPS 和反向代理保护。
 
@@ -188,7 +257,7 @@ desktop-build-summary.json
 - SQLite 保存知识、待办、Agent、Memory 和设置，二进制附件保存在数据目录。
 - 前端使用原生 JavaScript ES Modules，没有前端框架。
 - Markdown 预览使用 marked、DOMPurify、KaTeX 和 PDF.js。
-- `better-sqlite3` 原生模块随 Windows x64 安装包分发。
+- `better-sqlite3` 原生模块随 Windows x64 或 macOS arm64 安装包分发。
 
 ### Chrome 桥接与电脑工具
 
@@ -198,7 +267,8 @@ desktop-build-summary.json
 
 - [更新日志](ChangeLog.md)
 - [代码审查与修复记录](code-review-remediation.md)
-- [v1.0.0 发布说明](docs/releases/v1.0.0.md)
+- [v1.2.0 发布说明](docs/releases/v1.2.0.md)
+- [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [贡献与仓库说明](AGENTS.md)
 
 ## 许可证

@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { resolveAllowed, isSensitivePath, recentlyReauthed, markReauth, defaultPolicy, savePolicy, computerToolsAllowed, PREFERRED_ALLOWLIST } = require('../lib/computer/policy');
-const { createCodeRunner } = require('../lib/computer/code');
+const { createCodeRunner, resolveCodeCommand, resolvePythonExecutable } = require('../lib/computer/code');
 const { createBashRunner, resolveBashExecutable } = require('../lib/computer/bash');
 const { sign } = require('../lib/computer/chrome');
 const { createComputerFacade } = require('../lib/computer/routes');
@@ -34,6 +34,23 @@ test('code runner executes python when available', async (t) => {
     return;
   }
   assert.match(result.data.output, /hi-agent/);
+});
+
+test('code runner prefers python3 on macOS and preserves Windows PowerShell', () => {
+  const seen = [];
+  const python = resolvePythonExecutable({
+    platform: 'darwin',
+    env: {},
+    canExecute(command) {
+      seen.push(command);
+      return command === 'python3';
+    },
+  });
+  assert.equal(python, 'python3');
+  assert.deepEqual(seen, ['python3']);
+  assert.equal(resolveCodeCommand('powershell', { platform: 'win32' }).cmd, 'powershell.exe');
+  assert.equal(resolveCodeCommand('powershell', { platform: 'darwin' }).cmd, 'pwsh');
+  assert.equal(resolvePythonExecutable({ platform: 'darwin', env: { PYTHON_PATH: '/custom/python' } }), '/custom/python');
 });
 
 test('bash runner rejects empty command and script', async () => {
@@ -208,8 +225,10 @@ test('computer tools default to enabled and prefer the desktop allowlist', () =>
   const policy = defaultPolicy();
   assert.equal(policy.computerToolsEnabled, true);
   const preferred = PREFERRED_ALLOWLIST[0];
-  if (fs.existsSync(preferred) && fs.statSync(preferred).isDirectory()) {
+  if (preferred && fs.existsSync(preferred) && fs.statSync(preferred).isDirectory()) {
     assert.equal(policy.allowedDirectories[0], fs.realpathSync(preferred));
+  } else {
+    assert.deepEqual(policy.allowedDirectories, []);
   }
 });
 

@@ -65,6 +65,19 @@ test('knowledge search filters diary chunks and returns citations', (t) => {
   assert.ok(open[0].id.includes('#'));
 });
 
+test('knowledge search applies document index deltas without stale hits', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-index-');
+  const knowledge = openKnowledge(db);
+  const search = createSearchIndex(knowledge);
+  const created = knowledge.createNote({ title: '旧标题', content: 'legacyalpha' }).document;
+  assert.ok(search.search('legacyalpha', { diaryUnlocked: false }).some(item => item.documentId === created.id));
+  knowledge.updateDocument(created.id, { title: '新标题', content: 'freshomega' });
+  assert.equal(search.search('legacyalpha', { diaryUnlocked: false }).length, 0);
+  assert.ok(search.search('freshomega', { diaryUnlocked: false }).some(item => item.documentId === created.id));
+  knowledge.deleteDocument(created.id);
+  assert.equal(search.search('freshomega', { diaryUnlocked: false }).length, 0);
+});
+
 test('knowledge searchDocuments applies tag and date filters before minisearch', (t) => {
   const { db } = tempDb(t);
   const knowledge = openKnowledge(db);

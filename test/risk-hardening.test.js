@@ -2499,6 +2499,9 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const source = fs.readFileSync(path.join(ROOT, 'public', 'js', 'workbench.js'), 'utf8');
   const styles = fs.readFileSync(path.join(ROOT, 'public', 'css', 'workbench.css'), 'utf8');
+  const desktopMain = fs.readFileSync(path.join(ROOT, 'electron', 'main.js'), 'utf8');
+  const desktopPreload = fs.readFileSync(path.join(ROOT, 'electron', 'preload.js'), 'utf8');
+  const updateService = fs.readFileSync(path.join(ROOT, 'electron', 'update-service.js'), 'utf8');
   const document = new JSDOM(html).window.document;
   const modes = [...document.querySelectorAll('.topbar-mode-switch [data-mode]')].map(item => item.dataset.mode);
   assert.deepEqual(modes, ['agent', 'knowledge', 'memory', 'todos']);
@@ -2586,7 +2589,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /<details class="custom-provider-card"/);
   assert.match(source, /custom-provider-summary/);
   assert.match(styles, /\.custom-provider-conn-grid/);
-  assert.match(source, /customProviderExpandIndex/);
+  assert.match(source, /customProviderExpandedIds/);
+  assert.match(source, /customProviderTestStates/);
   assert.match(source, /data-fetch-models/);
   assert.match(source, /function fetchProviderModels/);
   assert.match(source, /function openProviderModelsPicker/);
@@ -2602,6 +2606,13 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /custom-provider-thinking-select/);
   assert.match(source, /custom-provider-zdr/);
   assert.match(styles, /\.custom-provider-capabilities/);
+  assert.match(source, /data-test-result/);
+  assert.match(source, /desktopUpdatePanel/);
+  assert.match(html, /data-settings-nav="updates"/);
+  assert.match(desktopMain, /preload: path\.join\(__dirname, 'preload\.js'\)/);
+  assert.match(desktopMain, /assertTrustedIpcSender/);
+  assert.match(desktopPreload, /contextBridge\.exposeInMainWorld\('liuxuDesktop'/);
+  assert.match(updateService, /MAX_DOWNLOAD_BYTES/);
   assert.match(source, /function providerModelGroups/);
   assert.doesNotMatch(source, /DIRECT_AGENT_MODELS/);
   assert.equal(document.querySelector('#agentSeedreamKey') !== null, true);
