@@ -777,19 +777,19 @@ test('archived sessions can be listed and deleted over HTTP, but active sessions
   assert.equal(store.getRun('archived-run'), null);
 });
 
-test('memory service seeds builtin Seedream L3 workflow and does not restore after archive', (t) => {
+test('memory service seeds unified image L3 workflow and does not restore after archive', (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
   const memory = createMemoryService(store);
   const l3 = memory.list({ layer: 'L3' });
-  assert.equal(l3.length, 2);
-  const seedream = l3.find(item => item.builtinId === 'seedream-generate');
-  assert.ok(seedream);
-  assert.equal(seedream.title, 'Seedream 生图');
-  assert.ok(seedream.content.length <= MEMORY_CONTENT_MAX.L3);
-  assert.match(seedream.content, /image\.generate/);
-  memory.archive(seedream.id);
-  assert.equal(memory.list({ layer: 'L3' }).length, 1);
+  assert.equal(l3.length, 1);
+  const image = l3.find(item => item.builtinId === 'image-generate');
+  assert.ok(image);
+  assert.equal(image.title, '统一生图工作流');
+  assert.ok(image.content.length <= MEMORY_CONTENT_MAX.L3);
+  assert.match(image.content, /image\.generate/);
+  memory.archive(image.id);
+  assert.equal(memory.list({ layer: 'L3' }).length, 0);
 });
 
 test('memory proposals require evidence and filter secrets', (t) => {
@@ -1133,7 +1133,7 @@ test('memory refresh proposes drafts without exposing write tools or creating a 
   assert.equal(memories.proposals.length, 1);
   assert.equal(memories.proposals[0].title, '文风');
   assert.equal(memories.items.filter(item => !item.builtinId).length, 0);
-  assert.equal(memories.items.some(item => item.builtinId === 'seedream-generate'), true);
+  assert.equal(memories.items.some(item => item.builtinId === 'image-generate'), true);
   assert.equal((db.getAllTodos() || []).length, 0);
 
   const approved = await fetch(`${base}/api/agent/memory-proposals/${encodeURIComponent(memories.proposals[0].id)}/approve`, { method: 'POST' });
@@ -1157,7 +1157,7 @@ test('memory refresh proposes drafts without exposing write tools or creating a 
   assert.equal(archived.status, 200);
   const afterArchive = await (await fetch(`${base}/api/agent/memories`)).json();
   assert.equal(afterArchive.items.filter(item => !item.builtinId).length, 0);
-  assert.equal(afterArchive.items.some(item => item.builtinId === 'seedream-generate'), true);
+  assert.equal(afterArchive.items.some(item => item.builtinId === 'image-generate'), true);
   const missing = await fetch(`${base}/api/agent/memories/missing-id`, { method: 'DELETE' });
   assert.equal(missing.status, 404);
 });

@@ -108,6 +108,48 @@ function sha256(filePath) {
   return hash.digest('hex');
 }
 
+function findFile(root, fileName) {
+  if (!root || !fs.existsSync(root)) return '';
+  const queue = [root];
+  while (queue.length) {
+    const directory = queue.shift();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isFile() && entry.name === fileName) return absolute;
+      if (entry.isDirectory()) queue.push(absolute);
+    }
+  }
+  return '';
+}
+
+function installElectronRuntime() {
+  const electronRoot = path.join(projectRoot, 'node_modules', 'electron');
+  const electronPackage = JSON.parse(fs.readFileSync(path.join(electronRoot, 'package.json'), 'utf8'));
+  const archiveName = `electron-v${electronPackage.version}-darwin-arm64.zip`;
+  const checksums = JSON.parse(fs.readFileSync(path.join(electronRoot, 'checksums.json'), 'utf8'));
+  const expectedChecksum = String(checksums[archiveName] || '').toLowerCase();
+  const cacheRoots = [
+    process.env.ELECTRON_CACHE,
+    path.join(os.homedir(), 'Library', 'Caches', 'electron'),
+  ].filter(Boolean);
+
+  for (const cacheRoot of cacheRoots) {
+    const cachedArchive = findFile(cacheRoot, archiveName);
+    if (!cachedArchive || !expectedChecksum || sha256(cachedArchive) !== expectedChecksum) continue;
+    const distPath = path.join(electronRoot, 'dist');
+    fs.rmSync(distPath, { recursive: true, force: true });
+    fs.mkdirSync(distPath, { recursive: true });
+    run('复用已校验的 Electron 运行时缓存', 'ditto', ['-x', '-k', cachedArchive, distPath]);
+    fs.writeFileSync(path.join(electronRoot, 'path.txt'), 'Electron.app/Contents/MacOS/Electron\n', 'utf8');
+    if (!fs.existsSync(path.join(distPath, 'Electron.app', 'Contents', 'MacOS', 'Electron'))) {
+      throw new Error('Electron 缓存解压后缺少主可执行文件');
+    }
+    return;
+  }
+
+  run('下载锁定的 Electron 运行时', process.execPath, ['node_modules/electron/install.js']);
+}
+
 function verifySqliteCapabilities() {
   const Database = require('better-sqlite3');
   const probe = new Database(':memory:');
@@ -203,7 +245,7 @@ if (mode === 'release') buildEnv = releaseEnvironment();
 else buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 
 run('安装锁定依赖', npmCommand, ['ci', '--ignore-scripts', '--omit=optional']);
-run('下载锁定的 Electron 运行时', process.execPath, ['node_modules/electron/install.js']);
+installElectronRuntime();
 
 const sqlitePrebuild = path.join(projectRoot, 'node_modules', 'better-sqlite3', 'prebuilds', 'darwin-arm64.node');
 if (!fs.existsSync(sqlitePrebuild)) throw new Error(`缺少 SQLite macOS arm64 原生模块：${sqlitePrebuild}`);

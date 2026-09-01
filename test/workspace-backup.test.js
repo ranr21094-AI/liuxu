@@ -71,7 +71,9 @@ test('SQLite workspace replace does not replay incompatible compatibility JSON',
 
 test('cross-device workspace restore clears only secrets encrypted with an unavailable key', async (t) => {
   const { db } = tempDb(t);
-  db.saveAiSettings({ ...db.getAiSettings(), apiKey: 'windows-only-secret' });
+  const settings = db.getAiSettings();
+  settings.imageProviders[0].apiKey = 'image-only-secret';
+  db.saveAiSettings({ ...settings, apiKey: 'windows-only-secret' });
   const buffer = await exportWorkspace(db);
 
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-foreign-key-'));
@@ -89,5 +91,6 @@ test('cross-device workspace restore clears only secrets encrypted with an unava
   assert.equal(result.success, true);
   assert.equal(result.secretsReset, true);
   assert.equal(restored.getAiSettings().apiKey, '');
+  assert.equal(restored.getAiSettings().imageProviders.every(provider => provider.apiKey === ''), true);
   assert.equal(restored.getAllUnpaginated().some(item => item.title === 'zip log'), true);
 });

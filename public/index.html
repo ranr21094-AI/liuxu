@@ -694,7 +694,9 @@
           </section>
           <section class="settings-section" data-settings-panel="image" hidden>
             <h3>生图</h3>
-            <p class="settings-copy">Agent 通过确认工具 image.generate 生图。选择后端并配置默认参数；单次出图仍可在确认时覆盖。</p>
+            <p class="settings-copy">Agent 通过确认工具 image.generate 生图。供应商可以使用 Seedream 或 OpenAI Images 协议，并配置任意模型与能力。</p>
+            <div id="imageProvidersSettings"></div>
+            <div hidden aria-hidden="true">
             <label class="settings-row" for="agentImageProvider"><span><strong>生图后端</strong><small>Seedream 或 Getoken</small></span>
               <select id="agentImageProvider">
                 <option value="seedream">Seedream</option>
@@ -780,6 +782,7 @@
               </select>
             </label>
             <label class="settings-row seedream-advanced" data-seedream-field="stream" for="agentSeedreamStream"><span><strong>流式输出</strong><small>组图时逐张返回</small></span><input id="agentSeedreamStream" type="checkbox"></label>
+            </div>
             </div>
           </section>
           <section class="settings-section" data-settings-panel="skills" hidden>

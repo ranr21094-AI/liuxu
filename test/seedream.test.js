@@ -18,7 +18,7 @@ const {
   normalizeSeedreamSettings,
   parseSeedreamSettingsInput,
 } = require('../lib/agent/seedream');
-const { BUILTIN_SEEDREAM_VERSION } = require('../lib/agent/memory');
+const { BUILTIN_IMAGE_VERSION } = require('../lib/agent/memory');
 const { createMemoryService } = require('../lib/agent/memory');
 const { createAgentStore } = require('../lib/agent/store');
 const { createTempDatabase } = require('./db-temp');
@@ -133,7 +133,7 @@ test('seedream settings input accepts pro model and extended fields', () => {
   assert.equal(parsed.seedreamLayerDecomposition, true);
 });
 
-test('builtin seedream memory upgrades to latest version', (t) => {
+test('legacy seedream memory is superseded by unified image workflow', (t) => {
   const { db, dir } = createTempDatabase(t, 'seedream-mem-');
   const { createAgentStore } = require('../lib/agent/store');
   const store = createAgentStore(db);
@@ -152,9 +152,10 @@ test('builtin seedream memory upgrades to latest version', (t) => {
   });
   const memory = createMemoryService(store);
   const items = memory.list({ layer: 'L3' });
-  const builtin = items.find(item => item.builtinId === 'seedream-generate');
+  const builtin = items.find(item => item.builtinId === 'image-generate');
   assert.ok(builtin);
-  assert.equal(builtin.version, BUILTIN_SEEDREAM_VERSION);
-  assert.match(builtin.content, /禁止.*多次单张/);
-  assert.match(builtin.content, /batch:true/);
+  assert.equal(builtin.version, BUILTIN_IMAGE_VERSION);
+  assert.match(builtin.content, /modelRef/);
+  const legacy = store.readMemories().items.find(item => item.builtinId === 'seedream-generate');
+  assert.equal(legacy.status, 'superseded');
 });

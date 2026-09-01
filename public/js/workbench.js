@@ -26,6 +26,11 @@ import { scheduleRender } from './app/render-scheduler.js';
 import { getDesktopUpdates } from './desktop/bridge.js';
 import { ensureModelUiId, randomModelUiId, customModelTestKey } from './settings/model.js';
 import { formatUpdateBytes } from './settings/update.js';
+import {
+  describeImageSelection,
+  loadImageProviderSettings,
+  readImageProviderSettings,
+} from './settings/image-providers.js';
 
 const $ = selector => document.querySelector(selector);
 const DOCUMENT_SELECT_IDS = ['documentKnowledgeBase', 'documentFolderPath'];
@@ -1643,6 +1648,7 @@ async function loadAgentSettingsForm() {
     const settings = await settingsResponse.json().catch(() => ({}));
     if (!settingsResponse.ok) throw new Error(settings.error || '模型设置加载失败');
     state.aiSettings = settings;
+    loadImageProviderSettings(settings);
     $('#agentTavilyApiKey').value = '';
     $('#agentPerplexityKey').value = '';
     $('#agentTavilyApiKey').placeholder = keyPlaceholder(settings.tavilyApiKeyConfigured, 'tvly-...');
@@ -1824,6 +1830,7 @@ function settingsSavePayload() {
   Object.assign(payload, readMemorySettingsFromForm(current));
   Object.assign(payload, readAgentSettingsFromForm(current));
   payload.customProviders = readCustomProvidersForSave();
+  Object.assign(payload, readImageProviderSettings());
   return payload;
 }
 
@@ -3117,28 +3124,20 @@ function approvalBodyHtml(approval) {
   const args = approval.call?.arguments && typeof approval.call.arguments === 'object' ? approval.call.arguments : {};
   if (name === 'image.generate') {
     const prompt = String(args.prompt || '').trim();
-    const provider = state.aiSettings?.imageProvider === 'getoken' ? 'getoken' : 'seedream';
     const extras = [];
     if (args.size) extras.push(`尺寸 ${args.size}`);
-    if (args.model) extras.push(`模型 ${args.model}`);
-    if (provider === 'getoken') {
-      if (args.quality) extras.push(`质量 ${args.quality}`);
-      const count = Number(args.n);
-      if (Number.isFinite(count) && count > 1) extras.push(`${count} 张`);
-    } else {
-      if (typeof args.watermark === 'boolean') extras.push(args.watermark ? '含水印' : '无水印');
-      if (args.output_format) extras.push(`格式 ${args.output_format}`);
-      const batchCount = Number(args.batch_size) || Number(args.max_images) || 0;
-      if (args.batch === true || args.sequential_image_generation === 'auto') {
-        extras.push(`组图${batchCount ? ` ${batchCount} 张` : ''}`);
-      }
-      if (args.layer_decomposition) extras.push('图层拆分');
-      if (args.web_search) extras.push('联网搜索');
-      if (args.background === 'transparent') extras.push('透明背景');
-    }
-    const images = Array.isArray(args.image) ? args.image : (args.image ? [args.image] : []);
+    if (args.quality) extras.push(`质量 ${args.quality}`);
+    const count = Number(args.count ?? args.n ?? args.batch_size ?? args.max_images);
+    if (Number.isFinite(count) && count > 1) extras.push(`${count} 张`);
+    if (typeof args.watermark === 'boolean') extras.push(args.watermark ? '含水印' : '无水印');
+    if (args.outputFormat || args.output_format) extras.push(`格式 ${args.outputFormat || args.output_format}`);
+    if (args.layerDecomposition || args.layer_decomposition) extras.push('图层拆分');
+    if (args.webSearch || args.web_search) extras.push('联网搜索');
+    if (args.background === 'transparent') extras.push('透明背景');
+    const rawImages = args.images ?? args.image;
+    const images = Array.isArray(rawImages) ? rawImages : (rawImages ? [rawImages] : []);
     if (images.length) extras.push(`参考图 ${images.length} 张`);
-    const providerLabel = provider === 'getoken' ? 'Getoken' : 'Seedream';
+    const providerLabel = describeImageSelection(state.aiSettings, args);
     return `
       <p>将用 ${providerLabel} 生成图片。确认提示词无误后再允许执行。</p>
       <div class="approval-risk"><strong>提示词</strong><pre>${escHtml(prompt || '（空）')}</pre>${extras.length ? `<p>${escHtml(extras.join(' · '))}</p>` : ''}</div>`;
