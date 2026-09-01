@@ -50,6 +50,12 @@ const {
   isCustomModelId,
   isStoredCustomModel,
 } = require('./lib/agent/custom-providers');
+const {
+  IMAGE_PROVIDERS_VERSION,
+  sanitizeImageProvidersSync,
+  migrateLegacyImageProviders,
+  resolveDefaultRef,
+} = require('./lib/agent/image-providers');
 const DEFAULT_AI_SETTINGS = {
   apiKey: '',
   moonshotApiKey: '',
@@ -87,6 +93,9 @@ const DEFAULT_AI_SETTINGS = {
   agentMaxRounds: 12,
   agentFileReadMaxMb: 4,
   customProviders: [],
+  imageProvidersVersion: 0,
+  imageProviders: [],
+  defaultImageModelRef: '',
   ...DEFAULT_MEMORY_SETTINGS,
   ...DEFAULT_AGENT_SETTINGS,
 };
@@ -423,6 +432,10 @@ function customProviderSecretAad(providerId) {
   return `work-log-ai-settings:v1:${SECRET_SCOPE}:customProvider:${providerId}`;
 }
 
+function imageProviderSecretAad(providerId) {
+  return `work-log-ai-settings:v1:${SECRET_SCOPE}:imageProvider:${providerId}`;
+}
+
 function aiSecretAad(field) {
   return `work-log-ai-settings:v1:${SECRET_SCOPE}:${field}`;
 }
@@ -449,6 +462,19 @@ function decodeAiSettingsSecrets(data) {
       return next;
     });
   }
+  if (Array.isArray(source.imageProviders)) {
+    source.imageProviders = source.imageProviders.map(provider => {
+      if (!provider || typeof provider !== 'object') return provider;
+      const next = { ...provider };
+      if (typeof next.apiKey !== 'string' || !next.apiKey) return next;
+      if (isEncryptedSecret(next.apiKey)) {
+        next.apiKey = decryptSecret(next.apiKey, imageProviderSecretAad(next.id || 'unknown'));
+      } else {
+        needsMigration = true;
+      }
+      return next;
+    });
+  }
   return { source, needsMigration };
 }
 
@@ -468,12 +494,25 @@ function serializeAiSettings(data) {
       return next;
     });
   }
+  if (Array.isArray(output.imageProviders)) {
+    output.imageProviders = output.imageProviders.map(provider => {
+      if (!provider || typeof provider !== 'object') return provider;
+      const next = { ...provider };
+      next.apiKey = typeof next.apiKey === 'string' && next.apiKey
+        ? encryptSecret(next.apiKey, imageProviderSecretAad(next.id || 'unknown'))
+        : '';
+      return next;
+    });
+  }
   return output;
 }
 
 function normalizeAiSettings(data) {
   const source = isPlainObject(data) ? data : {};
   const customProviders = sanitizeCustomProvidersSync(source.customProviders, source.customProviders);
+  const migratedImages = migrateLegacyImageProviders(source);
+  const imageProviders = sanitizeImageProvidersSync(migratedImages.imageProviders, migratedImages.imageProviders);
+  const defaultImageModelRef = resolveDefaultRef(imageProviders, migratedImages.defaultImageModelRef);
   const settingsForModel = { ...source, customProviders };
   const model = isStoredAiModel(source.model, settingsForModel)
     ? source.model
@@ -532,6 +571,9 @@ function normalizeAiSettings(data) {
     agentMaxRounds: normalizeAgentMaxRounds(source.agentMaxRounds),
     agentFileReadMaxMb: normalizeAgentFileReadMaxMb(source.agentFileReadMaxMb),
     customProviders,
+    imageProvidersVersion: IMAGE_PROVIDERS_VERSION,
+    imageProviders,
+    defaultImageModelRef,
     ...resolveMemorySettings(source),
     ...resolveAgentSettings(source),
   };
@@ -559,13 +601,15 @@ function readAiSettings() {
   try {
     const row = sqlite.prepare('SELECT body FROM ai_settings WHERE id = 1').get();
     if (!row) {
-      cache.aiSettings = { ...DEFAULT_AI_SETTINGS };
+      cache.aiSettings = normalizeAiSettings(DEFAULT_AI_SETTINGS);
       return cloneJson(cache.aiSettings);
     }
     const raw = parseJson(row.body, { ...DEFAULT_AI_SETTINGS });
     const decoded = decodeAiSettingsSecrets(raw);
+    const needsImageMigration = Number(decoded.source.imageProvidersVersion) < IMAGE_PROVIDERS_VERSION
+      || !Array.isArray(decoded.source.imageProviders);
     cache.aiSettings = normalizeAiSettings(decoded.source);
-    if (decoded.needsMigration) writeAiSettings(cache.aiSettings);
+    if (decoded.needsMigration || needsImageMigration) writeAiSettings(cache.aiSettings);
     return cloneJson(cache.aiSettings);
   } catch (err) {
     if (['AI_SECRET_KEY_MISSING', 'AI_SECRET_KEY_INVALID', 'AI_SECRET_DECRYPT_FAILED'].includes(err?.code)) throw err;

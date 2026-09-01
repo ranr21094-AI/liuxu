@@ -66,6 +66,19 @@ const {
   getGetokenModelDefinition,
 } = require('./lib/agent/getoken');
 const {
+  IMAGE_PROVIDERS_VERSION,
+  normalizeImageProviders,
+  mergeImageProviderSecrets,
+  resolveDefaultRef,
+  publicImageProviders,
+  normalizeImageProviderSync,
+  imageModelRef,
+} = require('./lib/agent/image-providers');
+const {
+  normalizeUnifiedImageRequest,
+  generateUnifiedImage,
+} = require('./lib/agent/image-service');
+const {
   createImageUploader,
   uploadedImageMatchesExtension: matchesUploadedImage,
   serializeUploadedFile,
@@ -1263,6 +1276,14 @@ async function parseAiSettingsInput(body, current = {}) {
     mergeCustomProviderSecrets(body?.customProviders, current.customProviders || []),
     current.customProviders || [],
   );
+  const imageProviders = await normalizeImageProviders(
+    mergeImageProviderSecrets(body?.imageProviders, current.imageProviders || []),
+    current.imageProviders || [],
+  );
+  const defaultImageModelRef = resolveDefaultRef(
+    imageProviders,
+    body?.defaultImageModelRef ?? current.defaultImageModelRef,
+  );
   const candidateSettings = { ...current, ...body, customProviders };
   if (model !== '' && !AI_ALLOWED_MODELS.has(model) && !OPENROUTER_MODEL_ID_PATTERN.test(model) && !isStoredCustomModel(model, candidateSettings)) {
     throw new Error('Unsupported AI model');
@@ -1334,6 +1355,9 @@ async function parseAiSettingsInput(body, current = {}) {
     agentMaxRounds,
     agentFileReadMaxMb,
     customProviders,
+    imageProvidersVersion: IMAGE_PROVIDERS_VERSION,
+    imageProviders,
+    defaultImageModelRef,
     ...memorySettings,
     ...agentSettings,
   };
@@ -1380,6 +1404,18 @@ function serverGetokenEnvLookup(user) {
   return envVar => serverAiSecretForUser(user, getokenEnvSecret(envVar));
 }
 
+function serverImageEnvLookup(user) {
+  return envVar => {
+    switch (envVar) {
+      case 'SEEDREAM_API_KEY': return serverAiSecretForUser(user, SEEDREAM_API_KEY);
+      case 'GETOKEN_API_KEY': return serverAiSecretForUser(user, GETOKEN_API_KEY);
+      case 'GETOKEN_GROK_IMAGINE_API_KEY': return serverAiSecretForUser(user, GETOKEN_GROK_IMAGINE_API_KEY);
+      case 'GETOKEN_NANO_BANANA_API_KEY': return serverAiSecretForUser(user, GETOKEN_NANO_BANANA_API_KEY);
+      default: return '';
+    }
+  };
+}
+
 function publicAiSettings(settings, user) {
   const {
     stream: _stream,
@@ -1388,11 +1424,13 @@ function publicAiSettings(settings, user) {
     diaryContextEnabled: _diaryContextEnabled,
     logAccessPolicy: _logAccessPolicy,
     customProviders: rawCustomProviders,
+    imageProviders: rawImageProviders,
     ...rest
   } = settings;
   return {
     ...rest,
     customProviders: publicCustomProviders(rawCustomProviders || []),
+    imageProviders: publicImageProviders(rawImageProviders || [], serverImageEnvLookup(user)),
     apiKey: '',
     moonshotApiKey: '',
     openrouterApiKey: '',
@@ -1556,7 +1594,7 @@ async function persistSeedreamItem(item) {
   });
 }
 
-async function requestSeedreamGeneration(options) {
+async function requestSeedreamGeneration(options, signal) {
   const preferPublicUrl = process.env.SEEDREAM_PREFER_PUBLIC_URL === '1';
   const publicOrigin = options.req ? `${options.req.protocol}://${options.req.get('host')}` : '';
   let referenceImages = Array.isArray(options.images) ? options.images : [];
@@ -1570,14 +1608,16 @@ async function requestSeedreamGeneration(options) {
     publicOrigin,
   });
   const payload = buildSeedreamRequestBody(options, resolvedImages);
-  const response = await fetchWithTimeout(`${SEEDREAM_BASE_URL}/images/generations`, {
+  const response = await fetchWithTimeout(`${String(options.baseUrl || SEEDREAM_BASE_URL).replace(/\/+$/, '')}/images/generations`, {
     method: 'POST',
+    redirect: 'error',
     headers: {
       Authorization: `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
       Accept: options.stream ? 'text/event-stream' : 'application/json',
     },
     body: JSON.stringify(payload),
+    signal,
   }, 120000);
 
   if (options.stream) {
@@ -2177,6 +2217,112 @@ app.put('/api/ai/settings', async (req, res) => {
   } catch (err) {
     const status = err.status && [400, 503].includes(err.status) ? err.status : 400;
     res.status(status).json({ error: err.message || 'Failed to save AI settings' });
+  }
+});
+
+async function resolveImageProviderDraft(body, user, { requireModel = true } = {}) {
+  const rawSource = body?.provider && typeof body.provider === 'object' ? body.provider : body;
+  const source = { ...rawSource };
+  if (!requireModel && !(source.models || []).some(model => String(model?.upstreamId || '').trim())) {
+    source.models = [{ id: 'im_probe', upstreamId: 'probe', name: 'Probe', enabled: true }];
+  }
+  const savedSettings = db.getAiSettings();
+  const saved = (savedSettings.imageProviders || []).find(item => item.id === source?.id) || null;
+  const providers = await normalizeImageProviders([source], saved ? [saved] : []);
+  const provider = providers[0];
+  if (!provider) throw new Error('A valid image provider and at least one model are required');
+  const requestedModel = String(body?.modelId || body?.model || '').trim();
+  const model = provider.models.find(item => item.id === requestedModel || item.upstreamId === requestedModel)
+    || provider.models[0];
+  if (!model && requireModel) throw new Error('Image model is required');
+  if (!provider.apiKey && model.legacyEnvVar) provider.apiKey = serverImageEnvLookup(user)(model.legacyEnvVar);
+  return { provider, model };
+}
+
+function openAiModelsEndpoint(baseUrl) {
+  const root = String(baseUrl || '').replace(/\/+$/, '');
+  return `${root.endsWith('/v1') ? root : `${root}/v1`}/models`;
+}
+
+async function fetchImageProviderModels(provider, query = '') {
+  if (provider.adapter !== 'openai-images') {
+    return { models: [], supported: false, status: null };
+  }
+  const headers = provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {};
+  const response = await fetchWithTimeout(openAiModelsEndpoint(provider.baseUrl), { headers, redirect: 'error' }, 15000);
+  const data = await readJsonWithLimit(response, 4 * 1024 * 1024, 'Image model list response is too large');
+  if (!response.ok || data?.error) throw new Error(safeAiProviderError('image', response.status, data));
+  const needle = String(query || '').trim().toLowerCase().slice(0, 100);
+  const source = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.models) ? data.models : []);
+  const ids = source
+    .map(item => typeof item === 'string' ? item : String(item?.id || ''))
+    .map(item => item.trim())
+    .filter(Boolean)
+    .filter(id => !needle || id.toLowerCase().includes(needle));
+  return { models: [...new Set(ids)].slice(0, 200), supported: true, status: response.status };
+}
+
+app.post('/api/ai/image-providers/models', async (req, res) => {
+  try {
+    const { provider } = await resolveImageProviderDraft(req.body || {}, req.user, { requireModel: false });
+    const result = await fetchImageProviderModels(provider, req.body?.query);
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 502).json({ error: error.message || 'Failed to load image models' });
+  }
+});
+
+app.post('/api/ai/image-providers/test', async (req, res) => {
+  const startedAt = Date.now();
+  try {
+    const { provider, model } = await resolveImageProviderDraft(req.body || {}, req.user);
+    if (provider.adapter === 'seedream') {
+      return res.json({
+        ok: true,
+        level: 'partial',
+        adapter: provider.adapter,
+        model: model.upstreamId,
+        endpoint: `${provider.baseUrl}/images/generations`,
+        authenticated: null,
+        modelsSupported: false,
+        durationMs: Date.now() - startedAt,
+        message: '地址格式有效；Seedream 需要通过“试生图”验证鉴权和模型。',
+      });
+    }
+    const models = await fetchImageProviderModels(provider);
+    res.json({
+      ok: true,
+      level: 'full',
+      adapter: provider.adapter,
+      model: model.upstreamId,
+      endpoint: openAiModelsEndpoint(provider.baseUrl),
+      authenticated: true,
+      modelsSupported: models.supported,
+      status: models.status,
+      durationMs: Date.now() - startedAt,
+      message: '接口连接和鉴权成功。',
+    });
+  } catch (error) {
+    res.status(error.status || 502).json({ error: error.message || 'Image provider connection test failed', durationMs: Date.now() - startedAt });
+  }
+});
+
+app.post('/api/ai/image-providers/test-generation', async (req, res) => {
+  if (req.body?.confirmed !== true) return res.status(400).json({ error: 'Test generation requires explicit cost confirmation' });
+  const controller = new AbortController();
+  req.once('aborted', () => controller.abort());
+  try {
+    const { provider, model } = await resolveImageProviderDraft(req.body || {}, req.user);
+    const modelRef = imageModelRef(provider, model);
+    const result = await executeUnifiedImage({ imageProviders: [provider], defaultImageModelRef: modelRef }, {
+      prompt: String(req.body?.prompt || '').trim(),
+      modelRef,
+      count: 1,
+    }, req, controller.signal);
+    res.json({ ok: true, ...result.data });
+  } catch (error) {
+    const status = error.status || (/required|unsupported|not found|disabled|at most/i.test(error.message) ? 400 : 502);
+    res.status(status).json({ error: error.message || 'Image test generation failed' });
   }
 });
 
@@ -3384,147 +3530,103 @@ function createAgentWestock(req) {
   };
 }
 
+async function executeUnifiedImage(settings, args, req, signal) {
+  const safeArgs = { ...args };
+  const rawReferences = safeArgs.images ?? safeArgs.image;
+  if (rawReferences && typeof db.isPrivateUpload === 'function' && !(req && hasDiaryAccess(req))) {
+    const filtered = (Array.isArray(rawReferences) ? rawReferences : [rawReferences])
+      .filter(url => !db.isPrivateUpload(String(url || '').replace(/^\/uploads\//, '')));
+    if (safeArgs.images !== undefined) safeArgs.images = filtered;
+    else safeArgs.image = Array.isArray(rawReferences) ? filtered : (filtered[0] || '');
+  }
+  const request = normalizeUnifiedImageRequest(settings, safeArgs, serverImageEnvLookup(req?.user));
+  const endpointCheck = await validateProviderBaseUrl(request.provider.baseUrl);
+  if (endpointCheck.error) throw new Error(endpointCheck.error);
+  request.provider.baseUrl = endpointCheck.value;
+  const startedAt = Date.now();
+  const generation = await generateUnifiedImage(request, {
+    requestSeedream: requestSeedreamGeneration,
+    requestOpenAiGeneration: requestGetokenGeneration,
+    requestOpenAiEdit: requestGetokenEdit,
+    signal,
+    context: {
+      req,
+      dataDir: currentDatabase().dataDir,
+      isSafeUploadFilename: currentDatabase().isSafeUploadFilename.bind(currentDatabase()),
+    },
+  });
+  const savedImages = [];
+  let failed = 0;
+  let lastPersistError = '';
+  for (const item of generation.items || []) {
+    if (item.error || (!item.url && !item.b64)) {
+      failed += 1;
+      continue;
+    }
+    try {
+      const savedItem = await persistGeneratedItem(item, {
+        contentType: item.outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png',
+      });
+      savedImages.push({
+        ...savedItem,
+        ...(item.zIndex != null ? { zIndex: item.zIndex } : {}),
+        ...(item.name ? { name: item.name } : {}),
+        ...(item.description ? { description: item.description } : {}),
+        ...(item.boundingBox ? { boundingBox: item.boundingBox } : {}),
+      });
+    } catch (error) {
+      failed += 1;
+      lastPersistError = error.message || lastPersistError;
+    }
+  }
+  if (!savedImages.length) throw new Error(lastPersistError || 'Image provider did not return any downloadable images');
+  const markdown = request.provider.adapter === 'seedream'
+    ? buildSeedreamMarkdown(savedImages, { layerDecomposition: request.layerDecomposition })
+    : buildGetokenMarkdown(savedImages);
+  const alt = request.prompt.slice(0, 80).replace(/[[\]]/g, '');
+  return {
+    summary: failed
+      ? `Generated ${savedImages.length} image(s); ${failed} failed`
+      : `Generated ${savedImages.length} image(s)`,
+    data: {
+      url: savedImages[0].url,
+      filename: savedImages[0].filename,
+      images: savedImages,
+      markdown: markdown || `![${alt}](${savedImages[0].url})`,
+      prompt: request.prompt,
+      providerId: request.provider.id,
+      provider: request.provider.name,
+      adapter: request.provider.adapter,
+      modelRef: request.modelRef,
+      model: request.model.upstreamId,
+      size: request.size,
+      quality: request.quality,
+      count: request.count,
+      n: request.count,
+      failed,
+      durationMs: Date.now() - startedAt,
+    },
+  };
+}
+
 function createAgentImageGenerate(req) {
   return async function agentImageGenerate(args = {}) {
-    const saved = db.getAiSettings();
-    const provider = normalizeImageProvider(saved.imageProvider);
-    if (provider === 'getoken') {
-      let options;
-      try {
-        options = resolveGetokenOptions(args, req.user, req);
-      } catch (error) {
-        return toolResult({ ok: false, summary: error.message, errorCode: 'invalid' });
-      }
-      if (!options.apiKey) {
-        const modelLabel = getGetokenModelDefinition(options.model).id;
-        return toolResult({
-          ok: false,
-          summary: `Getoken API key for ${modelLabel} is not configured. Add it in Agent settings.`,
-          errorCode: 'unconfigured',
-        });
-      }
-      try {
-        const generation = options.images.length
-          ? await requestGetokenEdit(options, {
-            baseUrl: GETOKEN_BASE_URL,
-            dataDir: options.dataDir,
-            isSafeUploadFilename: options.isSafeUploadFilename,
-          })
-          : await requestGetokenGeneration(options, { baseUrl: GETOKEN_BASE_URL });
-        const savedImages = [];
-        let failed = 0;
-        let lastPersistError = '';
-        for (const item of generation.items) {
-          if (!item.url && !item.b64) {
-            failed += 1;
-            continue;
-          }
-          try {
-            const savedItem = await persistGeneratedItem(item, { contentType: 'image/png' });
-            savedImages.push(savedItem);
-          } catch (error) {
-            failed += 1;
-            lastPersistError = error.message || lastPersistError;
-          }
-        }
-        if (!savedImages.length) {
-          throw new Error(lastPersistError || 'Getoken did not return any downloadable images');
-        }
-        const markdown = buildGetokenMarkdown(savedImages);
-        const alt = options.prompt.slice(0, 80).replace(/[[\]]/g, '');
-        const summary = failed
-          ? `Generated ${savedImages.length} image(s); ${failed} failed`
-          : `Generated ${savedImages.length} image(s)`;
-        return toolResult({
-          ok: true,
-          summary,
-          data: {
-            url: savedImages[0].url,
-            filename: savedImages[0].filename,
-            images: savedImages,
-            markdown: markdown || `![${alt}](${savedImages[0].url})`,
-            prompt: options.prompt,
-            model: options.model,
-            size: options.size,
-            quality: options.quality,
-            n: options.n,
-            failed,
-            provider: 'getoken',
-          },
-          evidence: savedImages.map(item => ({ type: 'image', url: item.url })),
-        });
-      } catch (error) {
-        return toolResult({ ok: false, summary: error.message, errorCode: 'generate_failed', retryable: true });
-      }
-    }
-
-    let options;
     try {
-      options = resolveSeedreamOptions(args, req.user, req);
-    } catch (error) {
-      return toolResult({ ok: false, summary: error.message, errorCode: 'invalid' });
-    }
-    if (!options.apiKey) {
-      return toolResult({
-        ok: false,
-        summary: 'Seedream API key is not configured. Add it in Agent settings.',
-        errorCode: 'unconfigured',
-      });
-    }
-    try {
-      const generation = await requestSeedreamGeneration(options);
-      const savedImages = [];
-      let failed = 0;
-      for (const item of generation.items) {
-        if (item.error) {
-          failed += 1;
-          continue;
-        }
-        if (!item.url && !item.b64) {
-          failed += 1;
-          continue;
-        }
-        try {
-          const savedItem = await persistSeedreamItem(item);
-          savedImages.push({
-            ...savedItem,
-            zIndex: item.zIndex,
-            name: item.name,
-            description: item.description,
-            boundingBox: item.boundingBox,
-          });
-        } catch {
-          failed += 1;
-        }
-      }
-      if (!savedImages.length) {
-        throw new Error('Seedream did not return any downloadable images');
-      }
-      const markdown = buildSeedreamMarkdown(savedImages, {
-        layerDecomposition: options.layerDecomposition,
-      });
-      const alt = options.prompt.slice(0, 80).replace(/[[\]]/g, '');
-      const summary = failed
-        ? `Generated ${savedImages.length} image(s); ${failed} failed`
-        : `Generated ${savedImages.length} image(s)`;
+      const result = await executeUnifiedImage(db.getAiSettings(), args, req);
       return toolResult({
         ok: true,
-        summary,
-        data: {
-          url: savedImages[0].url,
-          filename: savedImages[0].filename,
-          images: savedImages,
-          markdown: markdown || `![${alt}](${savedImages[0].url})`,
-          prompt: options.prompt,
-          model: options.model,
-          size: options.size,
-          failed,
-          provider: 'seedream',
-        },
-        evidence: savedImages.map(item => ({ type: 'image', url: item.url })),
+        summary: result.summary,
+        data: result.data,
+        evidence: result.data.images.map(item => ({ type: 'image', url: item.url })),
       });
     } catch (error) {
-      return toolResult({ ok: false, summary: error.message, errorCode: 'generate_failed', retryable: true });
+      const invalid = /required|unsupported|not found|disabled|ambiguous|at most|too many|does not support/i.test(error.message);
+      return toolResult({
+        ok: false,
+        summary: error.message,
+        errorCode: invalid ? 'invalid' : 'generate_failed',
+        retryable: !invalid,
+      });
     }
   };
 }

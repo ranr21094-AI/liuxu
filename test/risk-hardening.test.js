@@ -572,7 +572,17 @@ test('AI settings persist to local data storage and validate options', async (t)
 
   const defaults = await fetch(`${baseUrl}/api/ai/settings`);
   assert.equal(defaults.status, 200);
-  assert.deepEqual(await defaults.json(), {
+  const defaultsBody = await defaults.json();
+  assert.equal(defaultsBody.imageProvidersVersion, 1);
+  assert.match(defaultsBody.defaultImageModelRef, /^image\/ip_/);
+  assert.equal(defaultsBody.imageProviders.length, 2);
+  assert.equal(defaultsBody.imageProviders.every(provider => provider.apiKey === undefined), true);
+  const imageDefaults = {
+    imageProvidersVersion: defaultsBody.imageProvidersVersion,
+    defaultImageModelRef: defaultsBody.defaultImageModelRef,
+    imageProviders: defaultsBody.imageProviders,
+  };
+  assert.deepEqual(defaultsBody, {
     apiKey: '',
     apiKeyConfigured: false,
     moonshotApiKey: '',
@@ -613,6 +623,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     ...DEFAULT_MEMORY_SETTINGS,
     ...DEFAULT_AGENT_SETTINGS,
     customProviders: [],
+    ...imageDefaults,
   });
 
   const saved = await fetch(`${baseUrl}/api/ai/settings`, {
@@ -704,6 +715,7 @@ test('AI settings persist to local data storage and validate options', async (t)
     memoryRefreshSessionLimit: 10,
     memoryContextMaxL2: 30,
     customProviders: [],
+    ...imageDefaults,
   });
   assert.equal(fs.existsSync(accountDbPath(dataDir)), true);
   const encryptedSettings = JSON.stringify(readAiSettingsRaw(dataDir));

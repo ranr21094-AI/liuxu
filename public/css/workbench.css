@@ -2183,6 +2183,53 @@ html[data-theme="dark"] .agent-empty-hero__frame {
   min-width: 28px;
   padding: 0 8px;
 }
+
+.image-provider-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.image-provider-add-toolbar { margin: 10px 0; }
+.image-provider-card .custom-provider-body { gap: 12px; }
+.image-provider-models { display: grid; gap: 10px; }
+.image-model-card {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 90%, var(--accent) 10%);
+}
+.image-model-grid,
+.image-capability-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) minmax(160px, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+}
+.image-model-grid label,
+.image-capability-grid label { display: grid; gap: 4px; color: var(--faint); font-size: 11px; }
+.image-model-grid input:not([type="checkbox"]):not([type="radio"]),
+.image-capability-grid input:not([type="checkbox"]),
+.image-capability-grid select,
+.image-model-test-row input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 8px;
+}
+.image-provider-check { display: inline-flex !important; grid-auto-flow: column; grid-template-columns: auto 1fr; align-items: center; gap: 6px !important; color: var(--muted) !important; white-space: nowrap; }
+.image-model-capabilities { border-top: 1px solid var(--line); padding-top: 8px; }
+.image-model-capabilities summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.image-capability-grid { grid-template-columns: repeat(3, minmax(130px, 1fr)); margin-top: 9px; align-items: center; }
+.image-model-test-row { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto auto; gap: 7px; align-items: center; }
+.image-provider-test-preview { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+
+@media (max-width: 760px) {
+  .image-model-grid,
+  .image-capability-grid,
+  .image-model-test-row { grid-template-columns: 1fr; }
+  .image-provider-check { justify-self: start; }
+}
 .desktop-update-panel {
   display: grid;
   gap: 12px;
