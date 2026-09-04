@@ -1,6 +1,6 @@
 {
   "name": "work-log",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "LiuXu is a local-first personal AI workspace for knowledge, memory, and tasks.",
   "author": "LiuXu Contributors",
   "main": "electron/main.js",
@@ -13,6 +13,7 @@
     "desktop": "npm run build && electron .",
     "desktop:build": "node scripts/desktop-build.mjs",
     "desktop:build:win": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/desktop-build.ps1",
+    "desktop:build:win:cross": "node scripts/desktop-build-win-cross.mjs",
     "desktop:build:mac": "node scripts/desktop-build-mac.mjs --adhoc",
     "desktop:release:mac": "node scripts/desktop-build-mac.mjs --release",
     "desktop:icon:mac": "node scripts/build-mac-icon.mjs",

@@ -24,7 +24,12 @@ import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
 import { scheduleRender } from './app/render-scheduler.js';
 import { getDesktopUpdates } from './desktop/bridge.js';
-import { ensureModelUiId, randomModelUiId, customModelTestKey } from './settings/model.js';
+import {
+  ensureModelUiId,
+  randomModelUiId,
+  customModelTestKey,
+  buildModelPickerGroups,
+} from './settings/model.js';
 import { formatUpdateBytes } from './settings/update.js';
 import {
   describeImageSelection,
@@ -113,6 +118,7 @@ const state = {
   aiSettings: null,
   agentModelCatalog: [],
   customProviderExpandedIds: new Set(),
+  customProviderSelectedId: '',
   providerModelOverrideKey: null,
   customProviderTestStates: new Map(),
   providerModelsPicker: null,
@@ -1023,15 +1029,7 @@ function providerModelGroups() {
   const providers = $('#settingsDialog')?.open && Array.isArray(state.customProvidersDraft)
     ? state.customProvidersDraft
     : (Array.isArray(state.aiSettings?.customProviders) ? state.aiSettings.customProviders : []);
-  return providers
-    .map(provider => ({
-      label: provider.name || provider.id || '未命名供应商',
-      items: (provider.models || []).map(model => ({
-        id: `custom/${provider.id}/${model.id}`,
-        name: model.name || model.id,
-      })),
-    }))
-    .filter(group => group.items.length);
+  return buildModelPickerGroups(providers);
 }
 
 function populateAgentModelSelectElement(select, selected) {
@@ -1196,6 +1194,7 @@ function createEmptyCustomProvider() {
     supportsMedia: false,
     thinking: '',
     zdr: false,
+    enabled: true,
     models: [{ _uiId: randomModelUiId(), id: '', name: '' }],
   };
 }
@@ -1223,11 +1222,13 @@ function modelHasOverride(model) {
 }
 
 function captureCustomProviderExpandedState() {
-  document.querySelectorAll('.custom-provider-card').forEach(card => {
+  document.querySelectorAll('#customProvidersList .custom-provider-card').forEach(card => {
     const providerId = card.dataset.providerId;
     if (!providerId) return;
-    if (card.open) state.customProviderExpandedIds.add(providerId);
-    else state.customProviderExpandedIds.delete(providerId);
+    if ('open' in card) {
+      if (card.open) state.customProviderExpandedIds.add(providerId);
+      else state.customProviderExpandedIds.delete(providerId);
+    }
   });
 }
 
@@ -1282,88 +1283,112 @@ function customModelOverrideRowHtml(providerId, modelUiId, model) {
 }
 
 function renderCustomProvidersList() {
+  // The previous implementation used <details class="custom-provider-card"> with
+  // a custom-provider-summary. Keep the card class on the detail pane so older
+  // extensions and saved UI snapshots can continue to identify this section.
   const root = $('#customProvidersList');
   if (!root) return;
   const list = state.customProvidersDraft || [];
-  if (!list.length) {
-    root.innerHTML = '<p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p>';
+  const selectedProvider = list.find(provider => provider.id === state.customProviderSelectedId) || list[0] || null;
+  state.customProviderSelectedId = selectedProvider?.id || '';
+  const providerLabel = provider => provider.name?.trim() || '未命名供应商';
+  const providerIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 9h8M8 13h5M8 17h8"></path></svg>';
+  const dragIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="7" r="1"></circle><circle cx="16" cy="7" r="1"></circle><circle cx="8" cy="12" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="8" cy="17" r="1"></circle><circle cx="16" cy="17" r="1"></circle></svg>';
+  const editIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17.5-.7 3.2 3.2-.7L18.9 7.6a2.1 2.1 0 0 0-3-3z"></path><path d="m14.5 6.5 3 3"></path></svg>';
+  const trashIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 4h4l1 3H9zM7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg>';
+  const eyeIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z"></path><circle cx="12" cy="12" r="2.2"></circle></svg>';
+  const sidebar = `
+    <aside class="custom-provider-sidebar" aria-label="供应商列表">
+      <div class="custom-provider-sidebar-heading">自定义供应商</div>
+      <div class="custom-provider-sidebar-list" role="listbox" aria-label="选择供应商">
+        ${list.map(provider => `
+          <button type="button" class="custom-provider-nav-item${provider.id === state.customProviderSelectedId ? ' active' : ''}" data-select-provider="${escHtml(provider.id)}" role="option" aria-selected="${provider.id === state.customProviderSelectedId}">
+            <span class="custom-provider-nav-drag" aria-hidden="true">${dragIcon}</span>
+            <span class="custom-provider-nav-icon" aria-hidden="true">${providerIcon}</span>
+            <span class="custom-provider-nav-copy"><strong>${escHtml(providerLabel(provider))}</strong><small>${escHtml(customProviderFormatLabel(provider.apiFormat))}</small></span>
+            <span class="custom-provider-status-dot${provider.enabled === false ? ' is-disabled' : ''}" aria-label="${provider.enabled === false ? '已禁用' : '已启用'}"></span>
+          </button>`).join('')}
+      </div>
+      <button type="button" class="custom-provider-add-link" data-add-provider="sidebar">＋ <span>添加供应商</span></button>
+    </aside>`;
+  if (!selectedProvider) {
+    root.innerHTML = `<div class="custom-provider-workspace">${sidebar}<section class="custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p></section></div>`;
     return;
   }
-  root.innerHTML = list.map((provider, index) => {
-    const modelCount = (provider.models || []).filter(model => model.id).length;
-    const summaryName = provider.name?.trim() || '未命名供应商';
-    const shouldOpen = state.customProviderExpandedIds.has(provider.id) || (list.length === 1 && !state.customProviderExpandedIds.size);
+  const providerIndex = list.indexOf(selectedProvider);
+  const modelCount = (selectedProvider.models || []).filter(model => model.id).length;
+  const modelRows = (selectedProvider.models || []).map((model, modelIndex) => {
+    const modelUiId = ensureModelUiId(model);
+    const overrideKey = customModelTestKey(selectedProvider.id, modelUiId);
+    const showOverride = state.providerModelOverrideKey === overrideKey;
+    const testState = state.customProviderTestStates.get(overrideKey);
     return `
-    <details class="custom-provider-card" data-provider-index="${index}" data-provider-id="${escHtml(provider.id)}"${shouldOpen ? ' open' : ''}>
-      <summary class="custom-provider-summary">
-        <span class="custom-provider-summary-main">
-          <span class="custom-provider-summary-name">${escHtml(summaryName)}</span>
-          <span class="custom-provider-summary-meta">${escHtml(customProviderFormatLabel(provider.apiFormat))} · ${modelCount} 个模型</span>
+      <div class="custom-provider-model-row" data-model-index="${modelIndex}" data-model-ui-id="${escHtml(modelUiId)}">
+        <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
+        <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
+        <span class="custom-provider-model-actions">
+          <button type="button" class="secondary-action compact${modelHasOverride(model) ? ' has-override' : ''}" data-model-capabilities="${providerIndex}" data-model-capabilities-id="${modelIndex}" data-model-capabilities-key="${escHtml(overrideKey)}" aria-expanded="${showOverride ? 'true' : 'false'}" aria-controls="custom-model-overrides-${escHtml(modelUiId)}" title="模型能力覆盖">${modelHasOverride(model) ? '能力•' : '能力'}</button>
+          <button type="button" class="secondary-action compact" data-test-model="${providerIndex}" data-test-model-id="${modelIndex}" data-test-model-key="${escHtml(overrideKey)}"${testState?.status === 'running' ? ' disabled' : ''}>${testState?.status === 'running' ? '测试中…' : '测试'}</button>
+          <button type="button" class="icon-button compact custom-provider-model-remove" data-remove-model="${providerIndex}" data-remove-model-id="${modelIndex}" aria-label="删除模型" title="删除模型">${trashIcon}</button>
         </span>
-        <button type="button" class="danger-action compact custom-provider-delete" data-remove-provider="${index}" aria-label="删除供应商">删除</button>
-      </summary>
-      <div class="custom-provider-body">
-        <label class="custom-provider-inline-field">供应商名称
-          <input type="text" class="custom-provider-name" value="${escHtml(provider.name)}" placeholder="例如 DeepSeek / Kimi / OpenRouter" maxlength="80">
-        </label>
-        <div class="custom-provider-conn-grid">
-          <label class="custom-provider-inline-field">Base URL
-            <input type="url" class="custom-provider-base-url" value="${escHtml(provider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
-          </label>
-          <label class="custom-provider-inline-field">API 格式
-            <select class="custom-provider-format">
-              <option value="openai" ${provider.apiFormat === 'openai' ? 'selected' : ''}>OpenAI Chat</option>
-              <option value="responses" ${provider.apiFormat === 'responses' ? 'selected' : ''}>OpenAI Responses</option>
-              <option value="anthropic" ${provider.apiFormat === 'anthropic' ? 'selected' : ''}>Anthropic</option>
-            </select>
-          </label>
+      </div>
+      ${showOverride && model.id ? customModelOverrideRowHtml(selectedProvider.id, modelUiId, model) : ''}
+      ${customModelTestStateHtml(selectedProvider.id, modelUiId)}`;
+  }).join('');
+  const detail = `
+    <section class="custom-provider-card custom-provider-detail" data-provider-index="${providerIndex}" data-provider-id="${escHtml(selectedProvider.id)}">
+      <header class="custom-provider-detail-header">
+        <div class="custom-provider-title-wrap">
+          <input type="text" class="custom-provider-name custom-provider-title-input" value="${escHtml(selectedProvider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称">
+          <button type="button" class="icon-button custom-provider-title-edit" aria-label="编辑供应商名称" title="编辑供应商名称">${editIcon}</button>
+          <span class="custom-provider-model-count">${modelCount} 个模型</span>
         </div>
+        <div class="custom-provider-detail-actions">
+          <button type="button" class="provider-state-button${selectedProvider.enabled !== false ? ' is-active' : ''}" data-toggle-provider="${providerIndex}" data-provider-enabled="true" aria-pressed="${selectedProvider.enabled !== false ? 'true' : 'false'}">已启用</button>
+          <button type="button" class="provider-state-button${selectedProvider.enabled === false ? ' is-active is-disabled' : ''}" data-toggle-provider="${providerIndex}" data-provider-enabled="false" aria-pressed="${selectedProvider.enabled === false ? 'true' : 'false'}">禁用</button>
+          <button type="button" class="icon-button custom-provider-delete" data-remove-provider="${providerIndex}" aria-label="删除供应商" title="删除供应商">${trashIcon}</button>
+        </div>
+      </header>
+      <div class="custom-provider-body">
+        <label class="custom-provider-inline-field custom-provider-base-field">Base URL
+          <input type="url" class="custom-provider-base-url" value="${escHtml(selectedProvider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
+        </label>
+        <label class="custom-provider-inline-field">API 格式
+          <select class="custom-provider-format">
+            <option value="openai" ${selectedProvider.apiFormat === 'openai' ? 'selected' : ''}>Chat Completions (/chat/completions)</option>
+            <option value="responses" ${selectedProvider.apiFormat === 'responses' ? 'selected' : ''}>OpenAI Responses (/responses)</option>
+            <option value="anthropic" ${selectedProvider.apiFormat === 'anthropic' ? 'selected' : ''}>Anthropic Messages (/messages)</option>
+          </select>
+        </label>
         <label class="custom-provider-inline-field">API Key
-          <input type="password" class="custom-provider-key" autocomplete="off" spellcheck="false" placeholder="${escHtml(provider.apiKeyConfigured ? '已配置；留空保持不变' : '可选（OpenAI 格式）')}" value="">
+          <div class="custom-provider-key-wrap"><input type="password" class="custom-provider-key" autocomplete="off" spellcheck="false" placeholder="${escHtml(selectedProvider.apiKeyConfigured && !selectedProvider.apiKey ? '已配置；留空保持不变' : '可选（OpenAI 格式）')}" value="${escHtml(selectedProvider.apiKey || '')}"><button type="button" class="custom-provider-key-toggle" data-toggle-key aria-label="显示 API Key">${eyeIcon}</button></div>
         </label>
         <div class="custom-provider-models">
           <div class="custom-provider-models-head">
-            <strong>模型</strong>
+            <strong>模型列表</strong>
             <span class="custom-provider-models-actions">
-              <button type="button" class="secondary-action compact" data-fetch-models="${index}">拉取模型列表</button>
-              <button type="button" class="secondary-action compact" data-add-model="${index}">添加模型</button>
+              <button type="button" class="secondary-action compact" data-fetch-models="${providerIndex}">拉取模型列表</button>
+              <button type="button" class="secondary-action compact" data-add-model="${providerIndex}">＋ 添加模型</button>
             </span>
           </div>
-          ${(provider.models || []).map((model, modelIndex) => {
-            const modelUiId = ensureModelUiId(model);
-            const overrideKey = customModelTestKey(provider.id, modelUiId);
-            const showOverride = state.providerModelOverrideKey === overrideKey;
-            const testState = state.customProviderTestStates.get(overrideKey);
-            return `
-            <div class="custom-provider-model-row" data-model-index="${modelIndex}" data-model-ui-id="${escHtml(modelUiId)}">
-              <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
-              <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
-              <span class="custom-provider-model-actions">
-                <button type="button" class="secondary-action compact${modelHasOverride(model) ? ' has-override' : ''}" data-model-capabilities="${index}" data-model-capabilities-id="${modelIndex}" data-model-capabilities-key="${escHtml(overrideKey)}" aria-expanded="${showOverride ? 'true' : 'false'}" aria-controls="custom-model-overrides-${escHtml(modelUiId)}" title="模型能力覆盖">${modelHasOverride(model) ? '能力•' : '能力'}</button>
-                <button type="button" class="secondary-action compact" data-test-model="${index}" data-test-model-id="${modelIndex}" data-test-model-key="${escHtml(overrideKey)}"${testState?.status === 'running' ? ' disabled' : ''}>${testState?.status === 'running' ? '测试中…' : '测试'}</button>
-                <button type="button" class="danger-action compact custom-provider-model-remove" data-remove-model="${index}" data-remove-model-id="${modelIndex}" aria-label="删除模型">×</button>
-              </span>
-            </div>
-            ${showOverride && model.id ? customModelOverrideRowHtml(provider.id, modelUiId, model) : ''}
-            ${customModelTestStateHtml(provider.id, modelUiId)}`;
-          }).join('')}
+          ${modelRows}
         </div>
         <div class="custom-provider-capabilities">
-          <label class="custom-provider-capability"><input type="checkbox" class="custom-provider-supports-media" ${provider.supportsMedia ? 'checked' : ''}>支持图片输入</label>
+          <label class="custom-provider-capability"><input type="checkbox" class="custom-provider-supports-media" ${selectedProvider.supportsMedia ? 'checked' : ''}>支持图片输入</label>
           <label class="custom-provider-inline-field custom-provider-thinking">思考/推理参数
-            <select class="custom-provider-thinking-select">${customProviderThinkingOptions(provider.thinking || '')}</select>
+            <select class="custom-provider-thinking-select">${customProviderThinkingOptions(selectedProvider.thinking || '')}</select>
           </label>
-          <label class="custom-provider-capability" title="仅 OpenRouter 端点生效"><input type="checkbox" class="custom-provider-zdr" ${provider.zdr ? 'checked' : ''}>ZDR 零数据保留</label>
+          <label class="custom-provider-capability" title="仅 OpenRouter 端点生效"><input type="checkbox" class="custom-provider-zdr" ${selectedProvider.zdr ? 'checked' : ''}>ZDR 零数据保留</label>
         </div>
       </div>
-    </details>`;
-  }).join('');
+    </section>`;
+  root.innerHTML = `<div class="custom-provider-workspace">${sidebar}${detail}</div>`;
 }
 
 function syncCustomProvidersDraftFromDom() {
   captureCustomProviderExpandedState();
   const list = [];
-  document.querySelectorAll('.custom-provider-card').forEach(card => {
+  document.querySelectorAll('#customProvidersList .custom-provider-card').forEach(card => {
     const index = Number(card.dataset.providerIndex);
     const providerId = card.dataset.providerId || '';
     const prev = state.customProvidersDraft?.find(provider => provider.id === providerId)
@@ -1410,6 +1435,7 @@ function syncCustomProvidersDraftFromDom() {
       supportsMedia: card.querySelector('.custom-provider-supports-media')?.checked === true,
       thinking: card.querySelector('.custom-provider-thinking-select')?.value || '',
       zdr: card.querySelector('.custom-provider-zdr')?.checked === true,
+      enabled: prev.enabled !== false,
       models: models.length ? models : [{ id: '', name: '' }],
     });
   });
@@ -1427,6 +1453,7 @@ function readCustomProvidersForSave() {
     supportsMedia: provider.supportsMedia === true,
     thinking: provider.thinking || '',
     zdr: provider.zdr === true,
+    enabled: provider.enabled !== false,
     models: (provider.models || []).filter(model => model.id).map(model => ({
       id: model.id,
       name: model.name || model.id,
@@ -1444,7 +1471,7 @@ async function fetchProviderModels(providerIndex) {
     showToast('请先填写 Base URL', 'error');
     return;
   }
-  const card = document.querySelector(`.custom-provider-card[data-provider-index="${providerIndex}"]`);
+  const card = document.querySelector(`#customProvidersList .custom-provider-card[data-provider-index="${providerIndex}"]`);
   const button = card?.querySelector(`[data-fetch-models="${providerIndex}"]`);
   if (button) button.disabled = true;
   const apiKey = card?.querySelector('.custom-provider-key')?.value.trim() || '';
@@ -1543,7 +1570,10 @@ function applyProviderModelsSelection() {
 
 function refreshModelSelects() {
   const selected = $('#agentModelSelect')?.value || state.aiSettings?.model || '';
-  populateAgentModelSelects(selected);
+  const groups = providerModelGroups();
+  const available = groups.flatMap(group => group.items || []).map(item => item.id);
+  const next = available.includes(selected) ? selected : (available[0] || '');
+  populateAgentModelSelects(next);
 }
 
 async function testCustomProviderModel(providerIndex, modelIndex) {
@@ -1564,7 +1594,7 @@ async function testCustomProviderModel(providerIndex, modelIndex) {
     });
     return;
   }
-  const card = document.querySelector(`.custom-provider-card[data-provider-index="${providerIndex}"]`);
+  const card = document.querySelector(`#customProvidersList .custom-provider-card[data-provider-index="${providerIndex}"]`);
   const apiKey = card?.querySelector('.custom-provider-key')?.value.trim() || '';
   const startedAt = performance.now();
   updateResult({ status: 'running', startedAt: Date.now() });
@@ -1702,7 +1732,6 @@ async function loadAgentSettingsForm() {
     $('#agentSeedreamLayerDecomposition').checked = Boolean(settings.seedreamLayerDecomposition);
     $('#agentSeedreamBackground').value = settings.seedreamBackground === 'transparent' ? 'transparent' : 'opaque';
     $('#agentSeedreamStream').checked = settings.seedreamStream !== false;
-    populateAgentModelSelects(settings.model || '');
     state.customProviderExpandedIds.clear();
     state.customProviderTestStates.clear();
     state.providerModelOverrideKey = null;
@@ -1716,6 +1745,7 @@ async function loadAgentSettingsForm() {
       supportsMedia: provider.supportsMedia === true,
       thinking: provider.thinking || '',
       zdr: provider.zdr === true,
+      enabled: provider.enabled !== false,
       models: (provider.models || []).length
         ? provider.models.map(model => ({
           _uiId: randomModelUiId(),
@@ -1727,7 +1757,13 @@ async function loadAgentSettingsForm() {
         }))
         : [{ id: '', name: '' }],
     }));
+    state.customProviderSelectedId = state.customProvidersDraft.some(provider => provider.id === state.customProviderSelectedId)
+      ? state.customProviderSelectedId
+      : (state.customProvidersDraft[0]?.id || '');
     renderCustomProvidersList();
+    // Rebuild after the fresh draft has replaced any previous in-memory draft.
+    // This prevents deleted/renamed providers from lingering in the picker.
+    populateAgentModelSelects(settings.model || '');
     const rounds = Number(settings.agentMaxRounds);
     $('#agentMaxRounds').value = Number.isFinite(rounds) ? Math.max(4, Math.round(rounds)) : 12;
     const fileReadMb = Number(settings.agentFileReadMaxMb);
@@ -1808,7 +1844,9 @@ function settingsSavePayload() {
   payload.seedreamLayerDecomposition = $('#agentSeedreamLayerDecomposition').checked;
   payload.seedreamBackground = $('#agentSeedreamBackground').value === 'transparent' ? 'transparent' : 'opaque';
   payload.seedreamStream = $('#agentSeedreamStream').checked;
-  payload.model = $('#agentModelSelect').value || current.model || '';
+  const selectedModel = $('#agentModelSelect').value || '';
+  const availableModels = providerModelGroups().flatMap(group => group.items || []).map(item => item.id);
+  payload.model = selectedModel || (availableModels.includes(current.model) ? current.model : '');
   payload.reasoningMode = $('#agentReasoningMode').value || current.reasoningMode || 'effort';
   payload.thinkingMode = $('#agentThinkingMode').value || current.thinkingMode || 'enabled';
   payload.reasoningEffort = $('#agentReasoningEffort').value || current.reasoningEffort || 'high';
@@ -5097,9 +5135,66 @@ function bindEvents() {
     const provider = createEmptyCustomProvider();
     state.customProvidersDraft = [...(state.customProvidersDraft || []), provider];
     state.customProviderExpandedIds.add(provider.id);
+    state.customProviderSelectedId = provider.id;
     renderCustomProvidersList();
+    refreshModelSelects();
   });
   $('#customProvidersList')?.addEventListener('click', event => {
+    const selectProvider = event.target.closest('[data-select-provider]');
+    if (selectProvider) {
+      event.preventDefault();
+      syncCustomProvidersDraftFromDom();
+      state.customProviderSelectedId = selectProvider.dataset.selectProvider || '';
+      state.providerModelOverrideKey = null;
+      renderCustomProvidersList();
+      refreshModelSelects();
+      return;
+    }
+    const addProvider = event.target.closest('[data-add-provider]');
+    if (addProvider) {
+      event.preventDefault();
+      syncCustomProvidersDraftFromDom();
+      const provider = createEmptyCustomProvider();
+      state.customProvidersDraft = [...(state.customProvidersDraft || []), provider];
+      state.customProviderExpandedIds.add(provider.id);
+      state.customProviderSelectedId = provider.id;
+      renderCustomProvidersList();
+      refreshModelSelects();
+      document.querySelector('.custom-provider-title-input')?.focus();
+      return;
+    }
+    const toggleProvider = event.target.closest('[data-toggle-provider]');
+    if (toggleProvider) {
+      event.preventDefault();
+      event.stopPropagation();
+      syncCustomProvidersDraftFromDom();
+      const index = Number(toggleProvider.dataset.toggleProvider);
+      const provider = state.customProvidersDraft?.[index];
+      if (!provider) return;
+      provider.enabled = toggleProvider.dataset.providerEnabled !== 'false';
+      state.customProviderSelectedId = provider.id;
+      renderCustomProvidersList();
+      refreshModelSelects();
+      return;
+    }
+    const toggleKey = event.target.closest('[data-toggle-key]');
+    if (toggleKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      const input = toggleKey.closest('.custom-provider-key-wrap')?.querySelector('.custom-provider-key');
+      if (!input) return;
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      toggleKey.setAttribute('aria-label', showing ? '显示 API Key' : '隐藏 API Key');
+      return;
+    }
+    const editProviderTitle = event.target.closest('[data-edit-provider-title]') || event.target.closest('.custom-provider-title-edit');
+    if (editProviderTitle) {
+      event.preventDefault();
+      event.stopPropagation();
+      editProviderTitle.closest('.custom-provider-detail')?.querySelector('.custom-provider-title-input')?.focus();
+      return;
+    }
     const removeProvider = event.target.closest('[data-remove-provider]');
     if (removeProvider) {
       event.preventDefault();
@@ -5109,7 +5204,14 @@ function bindEvents() {
       const removed = state.customProvidersDraft?.[index];
       state.customProvidersDraft = (state.customProvidersDraft || []).filter((_, i) => i !== index);
       if (removed?.id) state.customProviderExpandedIds.delete(removed.id);
+      if (removed?.id === state.customProviderSelectedId) {
+        state.customProviderSelectedId = state.customProvidersDraft[index]?.id
+          || state.customProvidersDraft[index - 1]?.id
+          || state.customProvidersDraft[0]?.id
+          || '';
+      }
       renderCustomProvidersList();
+      refreshModelSelects();
       return;
     }
     const fetchModels = event.target.closest('[data-fetch-models]');
