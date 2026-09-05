@@ -2748,7 +2748,7 @@ function renderDesktopUpdatePanel() {
       <button type="button" class="secondary-action compact" id="desktopUpdateCheck"${checking || downloading ? ' disabled' : ''}>${checking ? '检查中…' : '检查更新'}</button>
     </div>
     <div class="desktop-update-status is-${escHtml(state.desktopUpdateStatus)}" aria-live="polite">${escHtml(statusText)}</div>
-    ${available ? `<div class="desktop-update-release"><div class="desktop-update-release-title"><strong>${escHtml(info.title || `留序 LiuXu ${info.latestVersion || ''}`)}</strong><span>最新 ${escHtml(info.latestVersion || '')}</span></div><p class="desktop-update-meta">${escHtml(info.publishedAt ? new Date(info.publishedAt).toLocaleString() : '')} · ${escHtml(info.asset?.name || '')} ${formatUpdateBytes(info.asset?.sizeBytes) ? `· ${formatUpdateBytes(info.asset.sizeBytes)}` : ''}</p><pre class="desktop-update-notes">${escHtml(info.notes || '本次发布没有附加说明。')}</pre></div>` : ''}
+    ${available ? `<div class="desktop-update-release"><div class="desktop-update-release-title"><strong>${escHtml(info.title || `留序 LiuXu ${info.latestVersion || ''}`)}</strong><span>最新 ${escHtml(info.latestTag || info.latestVersion || '')}</span></div><p class="desktop-update-jump">可从当前版本直接升级到最新版，无需按顺序安装中间版本。</p><p class="desktop-update-meta">${escHtml(info.publishedAt ? new Date(info.publishedAt).toLocaleString() : '')} · ${escHtml(info.asset?.name || '')} ${formatUpdateBytes(info.asset?.sizeBytes) ? `· ${formatUpdateBytes(info.asset.sizeBytes)}` : ''}</p><pre class="desktop-update-notes">${escHtml(info.notes || '本次发布没有附加说明。')}</pre></div>` : ''}
     ${info.reason && !available && info.state !== 'error' ? `<p class="settings-copy desktop-update-reason">${escHtml(info.reason)}</p>` : ''}
     ${downloading ? `<div class="desktop-update-progress"><progress max="1" value="${Number(progress?.progress) || 0}"></progress><button type="button" class="secondary-action compact" id="desktopUpdateCancel">取消下载</button></div>` : ''}
     ${available && !verified && !downloading && state.desktopUpdateStatus !== 'opened' ? `<button type="button" class="primary-action compact" id="desktopUpdateDownload">下载并校验安装包</button>` : ''}
@@ -3967,10 +3967,10 @@ function folderRowsHtml(base) {
   const baseName = escHtml(base.name);
   return folders.map(folder => `
     <div class="document-folder-row" role="button" tabindex="0" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}">
-      <span class="document-folder-mark" aria-hidden="true">▸</span>
+      <span class="document-folder-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path></svg></span>
       <span class="document-folder-body">
         <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong></span>
-        <small>${Number(folder.documentCount) || 0} 篇</small>
+        <small class="document-folder-count">${Number(folder.documentCount) || 0} 篇</small>
       </span>
       <span class="tree-actions">
         <button class="tree-action" type="button" data-tree-rename-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button>
@@ -4129,10 +4129,14 @@ function renderDocuments() {
   }
   const base = findKnowledgeBase(state.selectedKnowledgeBase);
   const folderRows = folderRowsHtml(base);
+  const noteRowIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="3.5" width="15" height="17" rx="2"></rect><path d="M8.5 8h7M8.5 12h7M8.5 16h4.5"></path></svg>';
+  const fileRowIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h7.5L18.5 8.5V20a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 20V5A1.5 1.5 0 0 1 6 3.5z"></path><path d="M13.5 3.5V9h5"></path></svg>';
   const docRows = state.documents.map(document => {
     const subtitleHtml = documentRowSubtitleHtml(document);
+    const rowIcon = document.id.startsWith('file:') ? fileRowIcon : noteRowIcon;
     return `
       <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
+        <span class="document-row-icon" aria-hidden="true">${rowIcon}</span>
         <span class="document-row-body">
           <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
           ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}

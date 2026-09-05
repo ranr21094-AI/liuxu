@@ -2,6 +2,11 @@
 
 ## 2026-09-05
 
+### 界面调优（v1.2.6）
+
+- 生图设置详情的连接字段区：生成端点提示从根地址标签中移出为独立说明行，协议与根地址两列的标签/输入框完全对齐，消除标签悬空的错位观感。
+- 知识库侧栏：文件夹行改用文件夹图标 + 圆角计数徽章；笔记与导入文件的文档行分别显示笔记/文件图标，加强文件夹与笔记的视觉区分。
+
 ### AI 助手侧栏增强（v1.2.5）
 
 - AI 助手侧栏新增会话切换器：「历史」下拉列出当前笔记/文件的全部 AI 会话（消息数、首条消息摘要、时间），支持切换与删除；删除当前会话后回到新对话状态，有活动运行的会话删除时返回 409。新端点：`GET .../sessions`、`DELETE .../sessions/:sessionId`，`GET .../session` 支持按 `sessionId` 回读。
@@ -26,11 +31,11 @@
 
 ## 发布文件
 
-- Windows x64：`LiuXu-Setup-1.2.5-x64.exe` 及 `.sha256`
-- macOS 12+ Apple Silicon：`LiuXu-1.2.5-mac-arm64.dmg`、`LiuXu-1.2.5-mac-arm64.zip` 及对应 `.sha256`
+- Windows x64：`LiuXu-Setup-1.2.6-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.6-mac-arm64.dmg`、`LiuXu-1.2.6-mac-arm64.zip` 及对应 `.sha256`
 - `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
 
-本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。已安装 v1.2.4 的用户可直接安装 v1.2.5，应用内更新会识别本版本对应的平台安装包。
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.6，无需逐版本安装。
 
 ### 全量代码审查修复（v1.2.3）
 

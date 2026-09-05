@@ -258,9 +258,10 @@ function renderDetail(provider) {
     <div class="custom-provider-body">
       <div class="custom-provider-conn-grid">
         <label class="custom-provider-inline-field">协议<select class="image-provider-adapter" data-focus-key="${escHtml(`${focusBase}:adapter`)}"><option value="seedream" ${provider.adapter === 'seedream' ? 'selected' : ''}>Seedream</option><option value="openai-images" ${provider.adapter === 'openai-images' ? 'selected' : ''}>OpenAI Images</option></select></label>
-        <label class="custom-provider-inline-field">API 根地址<input class="image-provider-base-url" data-focus-key="${escHtml(`${focusBase}:base-url`)}" value="${escHtml(provider.baseUrl)}" spellcheck="false" placeholder="https://..."><small>生成端点：${escHtml(generationEndpoint(provider))}</small></label>
+        <label class="custom-provider-inline-field">API 根地址<input class="image-provider-base-url" data-focus-key="${escHtml(`${focusBase}:base-url`)}" value="${escHtml(provider.baseUrl)}" spellcheck="false" placeholder="https://..."></label>
         <label class="custom-provider-inline-field">API Key<input class="image-provider-key" data-focus-key="${escHtml(`${focusBase}:key`)}" type="password" autocomplete="off" value="${escHtml(provider.apiKey || '')}" placeholder="${provider.apiKeyConfigured ? '已配置；留空保持不变' : '可留空用于本地接口'}"></label>
       </div>
+      <small class="image-provider-endpoint-hint">生成端点：${escHtml(generationEndpoint(provider))}</small>
       <div class="image-provider-models-head">
         <strong>模型（${provider.models.length}）</strong>
         ${provider.adapter === 'openai-images' ? '<button type="button" class="secondary-action compact" data-image-action="fetch-models" data-provider-id="' + escHtml(provider.id) + '">获取模型</button>' : ''}
