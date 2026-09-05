@@ -48,3 +48,22 @@ test('model picker hides internal provider ids and filters stale entries', async
   ]);
 });
 
+test('provider draft updates preserve providers outside the rendered detail card', async () => {
+  const url = pathToFileURL(path.join(__dirname, '../public/js/settings/model.js'));
+  url.search = `draft=${Date.now()}`;
+  const { replaceProviderDraft } = await import(url.href);
+  const first = { id: 'p_first', name: 'First' };
+  const second = { id: 'p_second', name: 'Second' };
+  const disabledSecond = { ...second, enabled: false };
+
+  const next = replaceProviderDraft([first, second], disabledSecond, 1);
+  assert.equal(next.length, 2);
+  assert.equal(next[0], first);
+  assert.equal(next[1], disabledSecond);
+
+  // A stable ID must still win if the DOM index is stale after a reorder.
+  const reordered = replaceProviderDraft([first, second], { ...first, enabled: false }, 1);
+  assert.equal(reordered.length, 2);
+  assert.equal(reordered[0].enabled, false);
+  assert.equal(reordered[1], second);
+});

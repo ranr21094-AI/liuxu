@@ -50,8 +50,8 @@ function assertHost(winePath) {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') {
     throw new Error('Windows 交叉构建要求 Apple Silicon macOS 主机');
   }
-  if (!winePath || !fs.existsSync(winePath)) {
-    throw new Error('未找到 Wine。请设置 WINE，或先安装可运行 Windows x64 程序的 Wine 兼容层');
+  if (winePath && !fs.existsSync(winePath)) {
+    throw new Error(`WINE 指向的文件不存在：${winePath}`);
   }
   if (!fs.existsSync(sqlitePrebuild)) {
     throw new Error(`缺少 better-sqlite3 Windows x64 原生模块：${sqlitePrebuild}`);
@@ -85,16 +85,20 @@ assertHost(winePath);
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'liuxu-win-cross-tests-'));
 const buildEnv = {
   ...process.env,
-  WINE: winePath,
-  WINEPREFIX: process.env.WINEPREFIX || path.join(os.tmpdir(), `liuxu-wineprefix-${version}`),
-  WINEARCH: process.env.WINEARCH || 'win64',
-  WINEDEBUG: process.env.WINEDEBUG || '-all',
   CSC_IDENTITY_AUTO_DISCOVERY: 'false',
   WIN_CSC_LINK: '',
   WIN_CSC_KEY_PASSWORD: '',
   DATA_DIR: path.join(testRoot, 'data'),
   AI_SECRETS_KEY_FILE: path.join(testRoot, 'ai-secrets.key'),
 };
+if (winePath) {
+  buildEnv.WINE = winePath;
+  buildEnv.WINEPREFIX = process.env.WINEPREFIX || path.join(os.tmpdir(), `liuxu-wineprefix-${version}`);
+  buildEnv.WINEARCH = process.env.WINEARCH || 'win64';
+  buildEnv.WINEDEBUG = process.env.WINEDEBUG || '-all';
+} else {
+  console.log('未找到 Wine，使用 electron-builder 的本机 Windows 交叉打包器继续构建');
+}
 
 try {
   run('构建前端资源', npmCommand, ['run', 'build'], { env: buildEnv });
@@ -123,7 +127,7 @@ try {
     tests: 'passed',
     signed: false,
     notarized: false,
-    buildMethod: 'wine-cross-build',
+    buildMethod: winePath ? 'wine-cross-build' : 'electron-builder-cross-build',
   };
   fs.writeFileSync(path.join(outputDir, 'desktop-build-summary.json'), `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
   for (const name of ['win-unpacked', '.icon-ico', 'builder-debug.yml', 'latest.yml', `${artifactName}.blockmap`]) {

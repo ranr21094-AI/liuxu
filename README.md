@@ -15,14 +15,14 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.2.1-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.2.2-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.2.1-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.2.2-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（测试包）
@@ -30,8 +30,8 @@ Get-FileHash .\LiuXu-Setup-1.2.1-x64.exe -Algorithm SHA256
 当前 Mac 首发包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
 
 ```text
-LiuXu-1.2.1-mac-arm64.dmg
-LiuXu-1.2.1-mac-arm64.zip
+LiuXu-1.2.2-mac-arm64.dmg
+LiuXu-1.2.2-mac-arm64.zip
 ```
 
 测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
@@ -39,8 +39,8 @@ LiuXu-1.2.1-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.2.1-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.2.1-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.2.2-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.2.2-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -88,7 +88,13 @@ API Key 会使用本机密钥加密保存。调用模型、联网搜索或生图
 
 桌面版进入 **设置 → 更新** 后会检查 GitHub Releases。发现新版本时，留序会下载当前平台的安装包并校验 GitHub SHA-256；确认后打开安装程序。更新只替换应用文件，不会覆盖知识、待办、密钥或备份数据。
 
-更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.2.0` 用户可手动安装 `1.2.1`，之后继续使用应用内更新。
+更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.2.1` 用户可手动安装 `1.2.2`，之后继续使用应用内更新。
+
+### Agent 通用文件附件（v1.2.2）
+
+Agent 附件现支持图片、Markdown、JSON、文本/代码、PDF 和 DOCX。文件默认在本地解析后作为当前会话上下文发送，不会自动写入知识库；长资料建议先导入知识库再按需检索。输入区可选择或拖拽多个文件，图片仍支持粘贴和预览，PDF/DOCX 会标记解析状态，旧版 `.doc` 请先转换为 `.docx` 或 PDF。
+
+供应商设置中的“文件传输”默认为本地解析；仅明确支持的 OpenAI Responses 或 Anthropic PDF 场景可选择原生文件传输。所有文件仍经过类型、大小、哈希和工作区权限校验。
 
 ## 数据与隐私
 
@@ -181,7 +187,7 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.2.1` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.2.2` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
 
 ### macOS 提示无法验证开发者
 
@@ -220,7 +226,7 @@ npm run perf:check     # 运行基线并输出结构化性能检查结果
 npm run desktop        # Electron 开发模式
 npm run desktop:build  # 按当前系统生成 Windows 或 Mac 测试安装包
 npm run desktop:build:win      # Windows NSIS x64
-npm run desktop:build:win:cross # Apple Silicon Mac + Wine 交叉生成 Windows NSIS x64
+npm run desktop:build:win:cross # Apple Silicon Mac 交叉生成 Windows NSIS x64（有 Wine 时优先使用）
 npm run desktop:build:mac      # Mac arm64 ad-hoc DMG + ZIP
 npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 ```
@@ -236,13 +242,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.2.1-x64.exe
-LiuXu-Setup-1.2.1-x64.exe.sha256
+LiuXu-Setup-1.2.2-x64.exe
+LiuXu-Setup-1.2.2-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.2.1-mac-arm64.dmg
-LiuXu-1.2.1-mac-arm64.dmg.sha256
-LiuXu-1.2.1-mac-arm64.zip
-LiuXu-1.2.1-mac-arm64.zip.sha256
+LiuXu-1.2.2-mac-arm64.dmg
+LiuXu-1.2.2-mac-arm64.dmg.sha256
+LiuXu-1.2.2-mac-arm64.zip
+LiuXu-1.2.2-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -277,6 +283,7 @@ desktop-build-summary-mac.json
 - [更新日志](ChangeLog.md)
 - [代码审查与修复记录](code-review-remediation.md)
 - [v1.2.1 发布说明](docs/releases/v1.2.1.md)
+- [v1.2.2 发布说明](docs/releases/v1.2.2.md)
 - [v1.2.0 发布说明](docs/releases/v1.2.0.md)
 - [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [贡献与仓库说明](AGENTS.md)

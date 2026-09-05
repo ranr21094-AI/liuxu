@@ -2569,6 +2569,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#fileOriginalDetails') !== null, true);
   assert.equal(document.querySelector('#deleteDocumentButton') !== null, true);
   assert.equal(document.querySelector('#insertImageButton') !== null, true);
+  assert.equal(document.querySelector('#insertImageButton svg[aria-hidden="true"]') !== null, true);
+  assert.equal(document.querySelector('#insertImageButton')?.textContent.trim(), '');
   assert.equal(document.querySelector('#documentImageInput') !== null, true);
   assert.equal(document.querySelector('#knowledgeNameDialog') !== null, true);
   assert.equal(document.querySelector('#knowledgeNameInput') !== null, true);
@@ -2744,7 +2746,11 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#importFileButton') !== null, true);
   assert.match(source, /syncKnowledgeDocumentActions/);
   assert.match(styles, /\.sidebar-scroll\s*\{[\s\S]*overflow-y:\s*auto;/);
-  assert.match(styles, /\.note-editor\s*\{[\s\S]*overflow-y:\s*auto;/);
+  assert.match(styles, /\.note-editor\s*\{[\s\S]*overflow:\s*hidden;/);
+  assert.match(styles, /\.note-editor > textarea\s*\{[\s\S]*overflow:\s*auto;/);
+  assert.match(styles, /\.knowledge-view\s*\{[\s\S]*padding:\s*0;/);
+  assert.match(styles, /\.document-workspace\s*\{[\s\S]*width:\s*100%;[\s\S]*height:\s*100%;[\s\S]*margin:\s*0;[\s\S]*border:\s*0;[\s\S]*border-radius:\s*0;/);
+  assert.doesNotMatch(styles, /\.document-workspace\s*\{[^}]*width:\s*min\(1040px,\s*100%\)/);
   assert.match(styles, /\.document-folder-row/);
   assert.match(styles, /\.file-original-panel/);
   assert.match(styles, /grid-template-columns:\s*auto auto auto auto/);

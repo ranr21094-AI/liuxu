@@ -29,6 +29,7 @@ import {
   randomModelUiId,
   customModelTestKey,
   buildModelPickerGroups,
+  replaceProviderDraft,
 } from './settings/model.js';
 import { formatUpdateBytes } from './settings/update.js';
 import {
@@ -1194,6 +1195,7 @@ function createEmptyCustomProvider() {
     supportsMedia: false,
     thinking: '',
     zdr: false,
+    fileTransport: 'local',
     enabled: true,
     models: [{ _uiId: randomModelUiId(), id: '', name: '' }],
   };
@@ -1218,7 +1220,7 @@ function customProviderThinkingOptions(thinking) {
 }
 
 function modelHasOverride(model) {
-  return typeof model?.supportsMedia === 'boolean' || Boolean(model?.thinking) || typeof model?.zdr === 'boolean';
+  return typeof model?.supportsMedia === 'boolean' || Boolean(model?.thinking) || typeof model?.zdr === 'boolean' || Boolean(model?.fileTransport);
 }
 
 function captureCustomProviderExpandedState() {
@@ -1278,6 +1280,14 @@ function customModelOverrideRowHtml(providerId, modelUiId, model) {
       </label>
       <label class="custom-model-override-field">ZDR
         <select class="custom-model-ov-zdr">${triSelect('zdr', model.zdr)}</select>
+      </label>
+      <label class="custom-model-override-field">文件
+        <select class="custom-model-ov-files">
+          <option value="" ${(model.fileTransport || '') === '' ? 'selected' : ''}>继承供应商</option>
+          <option value="local" ${model.fileTransport === 'local' ? 'selected' : ''}>本地提取</option>
+          <option value="auto" ${model.fileTransport === 'auto' ? 'selected' : ''}>自动</option>
+          <option value="native" ${model.fileTransport === 'native' ? 'selected' : ''}>原生（需支持）</option>
+        </select>
       </label>
     </div>`;
 }
@@ -1378,6 +1388,13 @@ function renderCustomProvidersList() {
           <label class="custom-provider-inline-field custom-provider-thinking">思考/推理参数
             <select class="custom-provider-thinking-select">${customProviderThinkingOptions(selectedProvider.thinking || '')}</select>
           </label>
+          <label class="custom-provider-inline-field custom-provider-file-transport-field">文件传输
+            <select class="custom-provider-file-transport">
+              <option value="local" ${(selectedProvider.fileTransport || 'local') === 'local' ? 'selected' : ''}>本地提取（推荐）</option>
+              <option value="auto" ${selectedProvider.fileTransport === 'auto' ? 'selected' : ''}>自动</option>
+              <option value="native" ${selectedProvider.fileTransport === 'native' ? 'selected' : ''}>原生（需支持）</option>
+            </select>
+          </label>
           <label class="custom-provider-capability" title="仅 OpenRouter 端点生效"><input type="checkbox" class="custom-provider-zdr" ${selectedProvider.zdr ? 'checked' : ''}>ZDR 零数据保留</label>
         </div>
       </div>
@@ -1387,13 +1404,23 @@ function renderCustomProvidersList() {
 
 function syncCustomProvidersDraftFromDom() {
   captureCustomProviderExpandedState();
-  const list = [];
+  // The split settings view renders only the selected provider's detail card;
+  // the other providers remain in the sidebar and therefore have no card in
+  // the DOM.  Start with the in-memory draft so syncing a toggle or a model
+  // edit cannot accidentally replace the whole list with the selected card.
+  let list = Array.isArray(state.customProvidersDraft)
+    ? state.customProvidersDraft.slice()
+    : [];
   document.querySelectorAll('#customProvidersList .custom-provider-card').forEach(card => {
     const index = Number(card.dataset.providerIndex);
     const providerId = card.dataset.providerId || '';
-    const prev = state.customProvidersDraft?.find(provider => provider.id === providerId)
-      || state.customProvidersDraft?.[index]
-      || {};
+    const targetIndex = providerId
+      ? list.findIndex(provider => provider?.id === providerId)
+      : -1;
+    const sourceIndex = targetIndex >= 0
+      ? targetIndex
+      : (Number.isInteger(index) && index >= 0 && index < list.length ? index : -1);
+    const prev = sourceIndex >= 0 ? list[sourceIndex] : {};
     const models = [];
     card.querySelectorAll('.custom-provider-model-row').forEach(row => {
       const id = row.querySelector('.custom-model-id')?.value.trim() || '';
@@ -1403,7 +1430,7 @@ function syncCustomProvidersDraftFromDom() {
         || (prev.models || []).find(model => model.id && model.id === id)
         || {};
       const entry = { _uiId: modelUiId, id, name: name || id };
-      for (const key of ['supportsMedia', 'thinking', 'zdr']) {
+      for (const key of ['supportsMedia', 'thinking', 'zdr', 'fileTransport']) {
         if (prevModel[key] !== undefined) entry[key] = prevModel[key];
       }
       const overrideRow = row.nextElementSibling?.classList?.contains('custom-model-overrides')
@@ -1421,11 +1448,14 @@ function syncCustomProvidersDraftFromDom() {
         if (zdr === 'on') entry.zdr = true;
         else if (zdr === 'off') entry.zdr = false;
         else delete entry.zdr;
+        const fileTransport = overrideRow.querySelector('.custom-model-ov-files')?.value || '';
+        if (fileTransport) entry.fileTransport = fileTransport;
+        else delete entry.fileTransport;
       }
       models.push(entry);
     });
     const apiKeyInput = card.querySelector('.custom-provider-key')?.value.trim() || '';
-    list.push({
+    const next = {
       id: prev.id || providerId || randomProviderId(),
       name: card.querySelector('.custom-provider-name')?.value.trim() || '',
       baseUrl: card.querySelector('.custom-provider-base-url')?.value.trim() || '',
@@ -1435,9 +1465,11 @@ function syncCustomProvidersDraftFromDom() {
       supportsMedia: card.querySelector('.custom-provider-supports-media')?.checked === true,
       thinking: card.querySelector('.custom-provider-thinking-select')?.value || '',
       zdr: card.querySelector('.custom-provider-zdr')?.checked === true,
+      fileTransport: card.querySelector('.custom-provider-file-transport')?.value || 'local',
       enabled: prev.enabled !== false,
       models: models.length ? models : [{ id: '', name: '' }],
-    });
+    };
+    list = replaceProviderDraft(list, next, index);
   });
   state.customProvidersDraft = list;
 }
@@ -1453,6 +1485,7 @@ function readCustomProvidersForSave() {
     supportsMedia: provider.supportsMedia === true,
     thinking: provider.thinking || '',
     zdr: provider.zdr === true,
+    fileTransport: provider.fileTransport || 'local',
     enabled: provider.enabled !== false,
     models: (provider.models || []).filter(model => model.id).map(model => ({
       id: model.id,
@@ -1460,6 +1493,7 @@ function readCustomProvidersForSave() {
       ...(typeof model.supportsMedia === 'boolean' ? { supportsMedia: model.supportsMedia } : {}),
       ...(model.thinking ? { thinking: model.thinking } : {}),
       ...(typeof model.zdr === 'boolean' ? { zdr: model.zdr } : {}),
+      ...(model.fileTransport ? { fileTransport: model.fileTransport } : {}),
     })),
   })).filter(provider => provider.name && provider.baseUrl);
 }
@@ -1745,6 +1779,7 @@ async function loadAgentSettingsForm() {
       supportsMedia: provider.supportsMedia === true,
       thinking: provider.thinking || '',
       zdr: provider.zdr === true,
+      fileTransport: provider.fileTransport || 'local',
       enabled: provider.enabled !== false,
       models: (provider.models || []).length
         ? provider.models.map(model => ({
@@ -1754,6 +1789,7 @@ async function loadAgentSettingsForm() {
           ...(typeof model.supportsMedia === 'boolean' ? { supportsMedia: model.supportsMedia } : {}),
           ...(model.thinking ? { thinking: model.thinking } : {}),
           ...(typeof model.zdr === 'boolean' ? { zdr: model.zdr } : {}),
+          ...(model.fileTransport ? { fileTransport: model.fileTransport } : {}),
         }))
         : [{ id: '', name: '' }],
     }));
@@ -2422,15 +2458,45 @@ function renderAttachmentPreview() {
   host.hidden = false;
   host.innerHTML = state.pendingAttachments.map((item, index) => {
     const url = normalizeUploadSrc(item.url || '');
-    if (!url || !isSafeImageSrc(url)) return '';
+    const isImage = item.kind === 'image' || /\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$/i.test(String(item.displayName || item.filename || ''));
+    const status = item.extractionStatus && item.extractionStatus !== 'active'
+      ? `<span class="agent-attachment-status">${escHtml(item.extractionStatus === 'needs_ocr' ? '需 OCR' : item.extractionStatus === 'parse_error' ? '解析失败' : item.extractionStatus === 'pending' ? '解析中' : item.extractionStatus === 'truncated' ? '已截断' : item.extractionStatus)}</span>`
+      : '';
+    const label = item.displayName || item.filename || '附件';
+    const size = Number.isFinite(Number(item.size)) && Number(item.size) > 0 ? ` · ${formatAttachmentSize(item.size)}` : '';
+    const icon = attachmentTypeIcon(item);
+    if (!url || !url.startsWith('/uploads/')) return '';
+    if (!isImage) {
+      return `<div class="agent-attachment-chip agent-attachment-file" title="${escHtml(label)}">
+        <span class="agent-attachment-file-icon" aria-hidden="true">${icon}</span>
+        <span class="agent-attachment-file-name">${escHtml(label)}${escHtml(size)}</span>
+        ${status}
+        <button type="button" data-remove-attachment="${index}" aria-label="移除附件">×</button>
+      </div>`;
+    }
     return `
     <figure class="agent-attachment-chip">
       <button type="button" class="agent-attachment-thumb" data-preview-src="${escHtml(url)}" aria-label="预览附件">
         <img src="${escHtml(url)}" alt="${escHtml(item.filename || 'attachment')}">
       </button>
+      ${status}
       <button type="button" data-remove-attachment="${index}" aria-label="移除附件">×</button>
     </figure>`;
   }).join('');
+}
+
+function formatAttachmentSize(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (value < 1024) return `${Math.round(value)}B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)}KB`;
+  return `${(value / (1024 * 1024)).toFixed(value >= 10 * 1024 * 1024 ? 0 : 1)}MB`;
+}
+
+function attachmentTypeIcon(item) {
+  const kind = item?.kind || '';
+  const label = kind === 'pdf' ? 'PDF' : kind === 'docx' ? 'DOC' : kind === 'code' ? '</>' : 'TXT';
+  return `<span class="attachment-type-glyph">${label}</span>`;
 }
 
 function collectClipboardImageFiles(event) {
@@ -2443,15 +2509,15 @@ function collectClipboardImageFiles(event) {
 async function uploadAgentAttachments(files) {
   const list = [...files].slice(0, 14 - state.pendingAttachments.length);
   if (!list.length) {
-    showToast('最多附加 14 张图片', 'error');
+    showToast('最多附加 14 个附件', 'error');
     return;
   }
   for (const file of list) {
     const body = new FormData();
-    body.append('image', file);
+    body.append('files', file);
     const response = await apiFetch('/api/agent/uploads', { method: 'POST', body });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || '图片上传失败');
+    if (!response.ok) throw new Error(data.error || '附件上传失败');
     const item = Array.isArray(data.items) ? data.items[0] : null;
     if (item?.url) state.pendingAttachments.push(item);
   }
@@ -2557,8 +2623,13 @@ function addMessage(role, content, citations = [], attachments = [], { createdAt
   const attachmentHtml = role === 'user' && attachments.length
     ? `<div class="message-attachments">${attachments.map(item => {
       const url = normalizeUploadSrc(item.url || '');
-      if (!url || !isSafeImageSrc(url)) return '';
-      return `<button type="button" class="message-attachment-thumb" data-preview-src="${escHtml(url)}"><img src="${escHtml(url)}" alt="${escHtml(item.filename || 'attachment')}"></button>`;
+      if (!url || !url.startsWith('/uploads/')) return '';
+      const label = item.displayName || item.filename || '附件';
+      const isImage = item.kind === 'image' || /\.(?:png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$/i.test(String(label));
+      if (isImage && isSafeImageSrc(url)) {
+        return `<button type="button" class="message-attachment-thumb" data-preview-src="${escHtml(url)}"><img src="${escHtml(url)}" alt="${escHtml(label)}"></button>`;
+      }
+      return `<span class="message-attachment-file"><span class="attachment-type-glyph">${attachmentTypeIcon(item).replace(/<[^>]+>/g, '')}</span><span>${escHtml(label)}</span></span>`;
     }).join('')}</div>`
     : '';
   article.innerHTML = role === 'user'
@@ -3746,6 +3817,13 @@ async function sendAgentMessage(content) {
   const attachments = state.pendingAttachments.map(item => ({
     url: item.url,
     filename: item.filename,
+    ...(item.displayName ? { displayName: item.displayName } : {}),
+    ...(item.kind ? { kind: item.kind } : {}),
+    ...(item.mimeType ? { mimeType: item.mimeType } : {}),
+    ...(Number.isFinite(Number(item.size)) ? { size: Number(item.size) } : {}),
+    ...(item.sha256 ? { sha256: item.sha256 } : {}),
+    ...(item.extractionStatus ? { extractionStatus: item.extractionStatus } : {}),
+    ...(item.truncated ? { truncated: true } : {}),
   }));
   const resuming = entry.status === 'waiting_user' && entry.runId;
   addMessage('user', content, [], attachments);
@@ -4759,6 +4837,21 @@ function bindEvents() {
       event.target.value = '';
     }
   });
+  const agentComposer = $('#agentComposer');
+  if (agentComposer) {
+    ['dragenter', 'dragover'].forEach(type => agentComposer.addEventListener(type, event => {
+      if (!event.dataTransfer?.types?.includes('Files')) return;
+      event.preventDefault();
+      agentComposer.classList.add('is-dragging');
+    }));
+    ['dragleave', 'drop'].forEach(type => agentComposer.addEventListener(type, async event => {
+      if (!event.dataTransfer?.types?.includes('Files')) return;
+      event.preventDefault();
+      agentComposer.classList.remove('is-dragging');
+      if (type !== 'drop') return;
+      try { await uploadAgentAttachments(event.dataTransfer.files || []); } catch (error) { showToast(error.message, 'error'); }
+    }));
+  }
   $('#agentAttachmentPreview')?.addEventListener('click', event => {
     const remove = event.target.closest('[data-remove-attachment]');
     if (remove) {

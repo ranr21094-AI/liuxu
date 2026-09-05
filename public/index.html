@@ -221,8 +221,8 @@
                 <span class="composer-hint">Enter 发送 · @ 引用知识</span>
               </div>
               <div class="composer-actions">
-                <button class="icon-button" id="agentAttachButton" type="button" aria-label="添加图片">＋</button>
-                <input id="agentAttachmentInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff,image/heic,image/heif" multiple hidden>
+                <button class="icon-button" id="agentAttachButton" type="button" aria-label="添加附件" title="添加附件">＋</button>
+                <input id="agentAttachmentInput" type="file" accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.html,.htm,.xml,.toml,.js,.mjs,.cjs,.ts,.mts,.cts,.jsx,.tsx,.vue,.svelte,.py,.pyw,.java,.kt,.kts,.go,.rs,.c,.h,.cc,.cpp,.cxx,.hpp,.cs,.rb,.php,.swift,.m,.mm,.sh,.bash,.zsh,.fish,.ps1,.bat,.cmd,.sql,.graphql,.gql,.css,.scss,.less,.ini,.conf,.dockerfile,.makefile,.pdf,.docx" multiple hidden>
                 <button class="stop-button" id="stopRunButton" type="button" hidden>停止</button>
                 <button class="send-button" id="sendAgentButton" type="submit" aria-label="发送消息">↑</button>
               </div>
@@ -252,7 +252,13 @@
                   <button type="button" data-editor-mode="split" title="分屏 (Ctrl+Shift+P 切换)">分屏</button>
                   <button type="button" data-editor-mode="preview" title="预览 (Ctrl+Shift+P 切换)">预览</button>
                 </div>
-                <button class="icon-button" id="insertImageButton" type="button" title="插入图片" aria-label="插入图片" hidden>图</button>
+                <button class="icon-button" id="insertImageButton" type="button" title="插入图片" aria-label="插入图片" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                    <circle cx="8.5" cy="9" r="1.5"></circle>
+                    <path d="m5 18 4.5-4.5 3 3 2.5-2.5 4 4"></path>
+                  </svg>
+                </button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
                 <button class="icon-button" id="archiveDocumentButton" type="button" title="归档文档" aria-label="归档文档">⌁</button>
                 <button class="secondary-action compact" id="restoreDocumentButton" type="button" hidden>恢复</button>

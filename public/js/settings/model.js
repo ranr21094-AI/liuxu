@@ -16,6 +16,27 @@ export function customModelTestKey(providerId, modelUiId) {
   return `${providerId}:${modelUiId}`;
 }
 
+/**
+ * Replace one provider in an in-memory settings draft without dropping
+ * providers whose detail panels are not currently rendered.  The stable ID
+ * wins over the fallback index so a reordered sidebar cannot update the wrong
+ * provider.
+ */
+export function replaceProviderDraft(providers, provider, fallbackIndex = -1) {
+  const list = Array.isArray(providers) ? providers.slice() : [];
+  if (!provider || typeof provider !== 'object') return list;
+  const providerId = typeof provider.id === 'string' ? provider.id : '';
+  const byId = providerId ? list.findIndex(item => item?.id === providerId) : -1;
+  const targetIndex = byId >= 0
+    ? byId
+    : (Number.isInteger(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < list.length
+      ? fallbackIndex
+      : -1);
+  if (targetIndex >= 0) list[targetIndex] = provider;
+  else list.push(provider);
+  return list;
+}
+
 const PROVIDER_ID_PATTERN = /^p_[a-z0-9_-]{1,32}$/i;
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9._:+/-]{1,160}$/;
 
