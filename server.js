@@ -3331,7 +3331,7 @@ function releaseProcessLock(lock) {
   } catch {}
 }
 
-function createAgentModelClient(req) {
+function createAgentModelClient(req, { systemPreset = 'agent', systemAddition = '' } = {}) {
   return {
     async complete({ goal, messages, tools, memories, checkpoint }) {
       const options = await resolveAiChatOptions({}, req.user);
@@ -3344,7 +3344,23 @@ function createAgentModelClient(req) {
       const checkpointBlock = checkpoint && typeof checkpoint === 'object'
         ? `Working checkpoint:\n${JSON.stringify(checkpoint)}`
         : '';
-      const system = [
+      const system = systemPreset === 'note_assist' ? [
+        'You are the AI assistant embedded in the LiuXu knowledge editor, helping with the one document the user has open (note or imported file).',
+        'Work only from note.read results (the current document), knowledge tool results, and the user message.',
+        'Prefer native function tools. When you need a tool, call it instead of chatting.',
+        'You may also return exactly one JSON object with no Markdown fences.',
+        'For a tool call: {"action":"tool","tools":[{"name":"note.read","arguments":{}}]} .',
+        'For a final answer: {"action":"final","answer":"..."} .',
+        'For a clarifying question: {"action":"ask","question":"..."} .',
+        'Call note.read first to see the current document content and metadata before answering questions about it.',
+        'To change the document, use note.propose_edit and keep each proposal minimal: {find, replace} where find matches exactly one location (copy the existing text exactly, including whitespace and punctuation), or {append: true, content} to add text at the end.',
+        'Proposals are previews the user applies manually — never claim an edit is already applied. In the final answer, briefly list the proposals you delivered.',
+        'Use knowledge.search / knowledge.read to reference the user\'s other notes when the question benefits from them.',
+        'Answer in the user\'s language. Be concise.',
+        systemAddition,
+        checkpointBlock,
+        `Available tools:\n${toolList}`,
+      ] : [
         'You are the local LiuXu Agent. Work only from @ injected local knowledge, tool results, and the user goal.',
         'Prefer native function tools. When you need a tool, call it instead of chatting.',
         'You may also return exactly one JSON object with no Markdown fences.',
@@ -3657,6 +3673,7 @@ mountNewApis(app, {
   rejectLockedDiary,
   restoreRequiresDiaryAccess,
   modelClientFor: createAgentModelClient,
+  noteAssistModelClientFor: (req) => createAgentModelClient(req, { systemPreset: 'note_assist' }),
   agentStatusFor: createAgentStatus,
   webSearchFor: createAgentWebSearch,
   webFetchFor: createAgentWebFetch,

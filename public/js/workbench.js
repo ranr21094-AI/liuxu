@@ -13,8 +13,10 @@ import {
   isSafeImageSrc,
   normalizeUploadSrc,
   showToast,
+  renderPreservingFocus,
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
+import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument } from './knowledge/note-assistant.js';
 import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { preloadMarkdownLibraries, renderToHtml, renderToHtmlUncached } from './markdown.js';
@@ -44,59 +46,6 @@ const TERMINAL_RUN_STATES = new Set(['completed', 'failed', 'cancelled']);
 const ACTIVE_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool', 'waiting_user']);
 const BLOCKING_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool']);
 
-const SEEDREAM_UI_PROFILES = {
-  'doubao-seedream-5-0-pro-260628': {
-    sizes: ['1K', '1.5K', '2K', '2048x2048', '2048x1024', '2816x1584'],
-    hint: 'Pro: 1K / 1.5K / 2K，或 1280x720–2048x2048',
-    outputFormat: true,
-    optimizeFast: true,
-    sequential: false,
-    maxImages: false,
-    webSearch: false,
-    layerDecomposition: true,
-    background: true,
-    stream: false,
-  },
-  'doubao-seedream-5-0-260128': {
-    sizes: ['2K', '3K', '4K', '2848x1600', '1600x2848', '2048x2048'],
-    hint: 'Lite: 2K / 3K / 4K，或对应宽x高像素',
-    outputFormat: true,
-    optimizeFast: false,
-    sequential: true,
-    maxImages: true,
-    webSearch: true,
-    layerDecomposition: false,
-    background: false,
-    stream: true,
-  },
-  'doubao-seedream-4-5-251128': {
-    sizes: ['2K', '4K', '2848x1600', '1600x2848', '2048x2048'],
-    hint: '4.5: 2K / 4K，或宽x高像素',
-    outputFormat: false,
-    optimizeFast: false,
-    sequential: true,
-    maxImages: true,
-    webSearch: false,
-    layerDecomposition: false,
-    background: false,
-    stream: true,
-  },
-  'doubao-seedream-4-0-250828': {
-    sizes: ['1K', '2K', '4K', '1280x720', '2048x2048', '2848x1600'],
-    hint: '4.0: 1K / 2K / 4K，或宽x高像素',
-    outputFormat: false,
-    optimizeFast: true,
-    sequential: true,
-    maxImages: true,
-    webSearch: false,
-    layerDecomposition: false,
-    background: false,
-    stream: true,
-  },
-};
-
-const SEEDREAM_MODEL_IDS = Object.keys(SEEDREAM_UI_PROFILES);
-
 const state = {
   mode: 'agent',
   diaryUnlocked: false,
@@ -118,7 +67,6 @@ const state = {
   agentStatus: null,
   aiSettings: null,
   agentModelCatalog: [],
-  customProviderExpandedIds: new Set(),
   customProviderSelectedId: '',
   providerModelOverrideKey: null,
   customProviderTestStates: new Map(),
@@ -1224,19 +1172,14 @@ function modelHasOverride(model) {
   return typeof model?.supportsMedia === 'boolean' || Boolean(model?.thinking) || typeof model?.zdr === 'boolean' || Boolean(model?.fileTransport);
 }
 
-function captureCustomProviderExpandedState() {
-  document.querySelectorAll('#customProvidersList .custom-provider-card').forEach(card => {
-    const providerId = card.dataset.providerId;
-    if (!providerId) return;
-    if ('open' in card) {
-      if (card.open) state.customProviderExpandedIds.add(providerId);
-      else state.customProviderExpandedIds.delete(providerId);
-    }
-  });
-}
-
 function customModelTestStateHtml(providerId, modelUiId) {
   const key = customModelTestKey(providerId, modelUiId);
+  // The slot always exists so async test outcomes can be patched in place
+  // instead of re-rendering the whole workspace and clearing user input.
+  return `<div data-test-state="${escHtml(key)}">${customModelTestStateInner(key)}</div>`;
+}
+
+function customModelTestStateInner(key) {
   const result = state.customProviderTestStates.get(key);
   if (!result) return '';
   const statusLabel = result.status === 'running'
@@ -1261,6 +1204,21 @@ function customModelTestStateHtml(providerId, modelUiId) {
     </div>`;
 }
 
+// Patch a single model's test state (and its button label) in place.
+function updateCustomModelTestState(key) {
+  const root = $('#customProvidersList');
+  const slot = root?.querySelector(`[data-test-state="${CSS.escape(key)}"]`);
+  if (!slot) return renderCustomProvidersList();
+  slot.innerHTML = customModelTestStateInner(key);
+  const testButton = slot.closest('.custom-provider-model-row')?.querySelector('[data-test-model]');
+  const result = state.customProviderTestStates.get(key);
+  if (testButton) {
+    const running = result?.status === 'running';
+    testButton.disabled = running;
+    testButton.textContent = running ? '测试中…' : '测试';
+  }
+}
+
 function triSelect(name, value) {
   // value: undefined (inherit) | true | false
   const selected = typeof value === 'boolean' ? (value ? 'on' : 'off') : '';
@@ -1274,16 +1232,16 @@ function customModelOverrideRowHtml(providerId, modelUiId, model) {
     <div class="custom-model-overrides" id="${overrideId}" data-override-for="${escHtml(modelUiId)}">
       <span class="custom-model-overrides-label">覆盖</span>
       <label class="custom-model-override-field">图片
-        <select class="custom-model-ov-media">${triSelect('media', model.supportsMedia)}</select>
+        <select class="custom-model-ov-media" data-focus-key="model:model:${escHtml(modelUiId)}:ov-media">${triSelect('media', model.supportsMedia)}</select>
       </label>
       <label class="custom-model-override-field">思考
-        <select class="custom-model-ov-thinking">${thinkingOptions}</select>
+        <select class="custom-model-ov-thinking" data-focus-key="model:model:${escHtml(modelUiId)}:ov-thinking">${thinkingOptions}</select>
       </label>
       <label class="custom-model-override-field">ZDR
-        <select class="custom-model-ov-zdr">${triSelect('zdr', model.zdr)}</select>
+        <select class="custom-model-ov-zdr" data-focus-key="model:model:${escHtml(modelUiId)}:ov-zdr">${triSelect('zdr', model.zdr)}</select>
       </label>
       <label class="custom-model-override-field">文件
-        <select class="custom-model-ov-files">
+        <select class="custom-model-ov-files" data-focus-key="model:model:${escHtml(modelUiId)}:ov-files">
           <option value="" ${(model.fileTransport || '') === '' ? 'selected' : ''}>继承供应商</option>
           <option value="local" ${model.fileTransport === 'local' ? 'selected' : ''}>本地提取</option>
           <option value="auto" ${model.fileTransport === 'auto' ? 'selected' : ''}>自动</option>
@@ -1323,7 +1281,9 @@ function renderCustomProvidersList() {
       <button type="button" class="custom-provider-add-link" data-add-provider="sidebar">＋ <span>添加供应商</span></button>
     </aside>`;
   if (!selectedProvider) {
-    root.innerHTML = `<div class="custom-provider-workspace">${sidebar}<section class="custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p></section></div>`;
+    renderPreservingFocus(root, () => {
+      root.innerHTML = `<div class="custom-provider-workspace">${sidebar}<section class="custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p></section></div>`;
+    });
     return;
   }
   const providerIndex = list.indexOf(selectedProvider);
@@ -1335,8 +1295,8 @@ function renderCustomProvidersList() {
     const testState = state.customProviderTestStates.get(overrideKey);
     return `
       <div class="custom-provider-model-row" data-model-index="${modelIndex}" data-model-ui-id="${escHtml(modelUiId)}">
-        <input type="text" class="custom-model-id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
-        <input type="text" class="custom-model-name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
+        <input type="text" class="custom-model-id" data-focus-key="model:model:${escHtml(modelUiId)}:id" value="${escHtml(model.id || '')}" placeholder="model-id" maxlength="160" aria-label="模型 ID">
+        <input type="text" class="custom-model-name" data-focus-key="model:model:${escHtml(modelUiId)}:name" value="${escHtml(model.name || '')}" placeholder="显示名称" maxlength="160" aria-label="显示名称">
         <span class="custom-provider-model-actions">
           <button type="button" class="secondary-action compact${modelHasOverride(model) ? ' has-override' : ''}" data-model-capabilities="${providerIndex}" data-model-capabilities-id="${modelIndex}" data-model-capabilities-key="${escHtml(overrideKey)}" aria-expanded="${showOverride ? 'true' : 'false'}" aria-controls="custom-model-overrides-${escHtml(modelUiId)}" title="模型能力覆盖">${modelHasOverride(model) ? '能力•' : '能力'}</button>
           <button type="button" class="secondary-action compact" data-test-model="${providerIndex}" data-test-model-id="${modelIndex}" data-test-model-key="${escHtml(overrideKey)}"${testState?.status === 'running' ? ' disabled' : ''}>${testState?.status === 'running' ? '测试中…' : '测试'}</button>
@@ -1350,7 +1310,7 @@ function renderCustomProvidersList() {
     <section class="custom-provider-card custom-provider-detail" data-provider-index="${providerIndex}" data-provider-id="${escHtml(selectedProvider.id)}">
       <header class="custom-provider-detail-header">
         <div class="custom-provider-title-wrap">
-          <input type="text" class="custom-provider-name custom-provider-title-input" value="${escHtml(selectedProvider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称">
+          <input type="text" class="custom-provider-name custom-provider-title-input" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:name" value="${escHtml(selectedProvider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称">
           <button type="button" class="icon-button custom-provider-title-edit" aria-label="编辑供应商名称" title="编辑供应商名称">${editIcon}</button>
           <span class="custom-provider-model-count">${modelCount} 个模型</span>
         </div>
@@ -1362,17 +1322,17 @@ function renderCustomProvidersList() {
       </header>
       <div class="custom-provider-body">
         <label class="custom-provider-inline-field custom-provider-base-field">Base URL
-          <input type="url" class="custom-provider-base-url" value="${escHtml(selectedProvider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
+          <input type="url" class="custom-provider-base-url" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:base-url" value="${escHtml(selectedProvider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
         </label>
         <label class="custom-provider-inline-field">API 格式
-          <select class="custom-provider-format">
+          <select class="custom-provider-format" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:format">
             <option value="openai" ${selectedProvider.apiFormat === 'openai' ? 'selected' : ''}>Chat Completions (/chat/completions)</option>
             <option value="responses" ${selectedProvider.apiFormat === 'responses' ? 'selected' : ''}>OpenAI Responses (/responses)</option>
             <option value="anthropic" ${selectedProvider.apiFormat === 'anthropic' ? 'selected' : ''}>Anthropic Messages (/messages)</option>
           </select>
         </label>
         <label class="custom-provider-inline-field">API Key
-          <div class="custom-provider-key-wrap"><input type="password" class="custom-provider-key" autocomplete="off" spellcheck="false" placeholder="${escHtml(selectedProvider.apiKeyConfigured && !selectedProvider.apiKey ? '已配置；留空保持不变' : '可选（OpenAI 格式）')}" value="${escHtml(selectedProvider.apiKey || '')}"><button type="button" class="custom-provider-key-toggle" data-toggle-key aria-label="显示 API Key">${eyeIcon}</button></div>
+          <div class="custom-provider-key-wrap"><input type="password" class="custom-provider-key" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:key" autocomplete="off" spellcheck="false" placeholder="${escHtml(selectedProvider.apiKeyConfigured && !selectedProvider.apiKey ? '已配置；留空保持不变' : '可选（OpenAI 格式）')}" value="${escHtml(selectedProvider.apiKey || '')}"><button type="button" class="custom-provider-key-toggle" data-toggle-key aria-label="显示 API Key">${eyeIcon}</button></div>
         </label>
         <div class="custom-provider-models">
           <div class="custom-provider-models-head">
@@ -1400,11 +1360,12 @@ function renderCustomProvidersList() {
         </div>
       </div>
     </section>`;
-  root.innerHTML = `<div class="custom-provider-workspace">${sidebar}${detail}</div>`;
+  renderPreservingFocus(root, () => {
+    root.innerHTML = `<div class="custom-provider-workspace">${sidebar}${detail}</div>`;
+  });
 }
 
 function syncCustomProvidersDraftFromDom() {
-  captureCustomProviderExpandedState();
   // The split settings view renders only the selected provider's detail card;
   // the other providers remain in the sidebar and therefore have no card in
   // the DOM.  Start with the in-memory draft so syncing a toggle or a model
@@ -1591,7 +1552,6 @@ function applyProviderModelsSelection() {
   const additions = [...picker.selected].filter(id => !keptIds.has(id)).map(id => ({ _uiId: randomModelUiId(), id, name: names.get(id) || id }));
   const overflow = Math.max(0, kept.length + additions.length - MAX_MODELS_PER_PROVIDER);
   provider.models = [...kept, ...additions].slice(0, MAX_MODELS_PER_PROVIDER);
-  state.customProviderExpandedIds.add(provider.id);
   closeProviderModelsPicker();
   renderCustomProvidersList();
   refreshModelSelects();
@@ -1617,9 +1577,11 @@ async function testCustomProviderModel(providerIndex, modelIndex) {
   const model = provider?.models?.[modelIndex];
   const modelUiId = model && ensureModelUiId(model);
   const key = provider && modelUiId ? customModelTestKey(provider.id, modelUiId) : '';
+  // Patch only the affected test-state slot: a full re-render here would wipe
+  // whatever the user is typing while the request is in flight.
   const updateResult = result => {
     if (key) state.customProviderTestStates.set(key, result);
-    renderCustomProvidersList();
+    updateCustomModelTestState(key);
   };
   if (!provider?.baseUrl || !model?.id) {
     updateResult({
@@ -1664,48 +1626,6 @@ async function testCustomProviderModel(providerIndex, modelIndex) {
   }
 }
 
-function syncImageProviderSettingsUi(provider = 'seedream') {
-  const active = provider === 'getoken' ? 'getoken' : 'seedream';
-  document.querySelectorAll('[data-image-provider]').forEach(section => {
-    section.hidden = section.dataset.imageProvider !== active;
-  });
-}
-
-function seedreamUiProfile(model) {
-  return SEEDREAM_UI_PROFILES[model] || SEEDREAM_UI_PROFILES['doubao-seedream-5-0-260128'];
-}
-
-function syncSeedreamSettingsUi(model) {
-  const profile = seedreamUiProfile(model);
-  const datalist = $('#agentSeedreamSizeOptions');
-  if (datalist) {
-    datalist.innerHTML = profile.sizes.map(size => `<option value="${escHtml(size)}"></option>`).join('');
-  }
-  const hint = $('#agentSeedreamSizeHint');
-  if (hint) hint.textContent = profile.hint;
-  document.querySelectorAll('[data-seedream-field]').forEach(row => {
-    const field = row.dataset.seedreamField;
-    let visible = true;
-    if (field === 'outputFormat') visible = profile.outputFormat;
-    if (field === 'optimizePrompt') visible = profile.optimizeFast || true;
-    if (field === 'sequential') visible = profile.sequential;
-    if (field === 'maxImages') visible = profile.maxImages;
-    if (field === 'webSearch') visible = profile.webSearch;
-    if (field === 'layerDecomposition') visible = profile.layerDecomposition;
-    if (field === 'background') visible = profile.background;
-    if (field === 'stream') visible = profile.stream;
-    row.hidden = !visible;
-    row.querySelectorAll('input, select').forEach(control => {
-      control.disabled = !visible;
-    });
-  });
-  const optimize = $('#agentSeedreamOptimizePrompt');
-  if (optimize) {
-    optimize.querySelector('option[value="fast"]').hidden = !profile.optimizeFast;
-    if (!profile.optimizeFast && optimize.value === 'fast') optimize.value = 'standard';
-  }
-}
-
 async function loadAgentSettingsForm() {
   $('#saveAgentSettings').disabled = true;
   try {
@@ -1718,56 +1638,6 @@ async function loadAgentSettingsForm() {
     $('#agentPerplexityKey').value = '';
     $('#agentTavilyApiKey').placeholder = keyPlaceholder(settings.tavilyApiKeyConfigured, 'tvly-...');
     $('#agentPerplexityKey').placeholder = keyPlaceholder(settings.perplexityApiKeyConfigured, 'pplx-...');
-    $('#agentSeedreamKey').value = '';
-    $('#agentSeedreamKey').placeholder = keyPlaceholder(settings.seedreamApiKeyConfigured, 'ARK API Key');
-    $('#agentGetokenKey').value = '';
-    const grokKeyInput = $('#agentGetokenGrokImagineKey');
-    const nanoKeyInput = $('#agentGetokenNanoBananaKey');
-    if (grokKeyInput) grokKeyInput.value = '';
-    if (nanoKeyInput) nanoKeyInput.value = '';
-    $('#agentGetokenKey').placeholder = keyPlaceholder(settings.getokenApiKeyConfigured, 'GETOKEN API Key');
-    if (grokKeyInput) {
-      grokKeyInput.placeholder = keyPlaceholder(
-        settings.getokenGrokImagineApiKeyConfigured,
-        'GETOKEN API Key',
-      );
-    }
-    if (nanoKeyInput) {
-      nanoKeyInput.placeholder = keyPlaceholder(
-        settings.getokenNanoBananaApiKeyConfigured,
-        'GETOKEN API Key',
-      );
-    }
-    const imageProvider = settings.imageProvider === 'getoken' ? 'getoken' : 'seedream';
-    $('#agentImageProvider').value = imageProvider;
-    syncImageProviderSettingsUi(imageProvider);
-    const getokenModel = ['gpt-image-2', 'grok-imagine-image', 'nano-banana-2'].includes(settings.getokenModel)
-      ? settings.getokenModel
-      : 'gpt-image-2';
-    $('#agentGetokenModel').value = getokenModel;
-    $('#agentGetokenSize').value = settings.getokenSize || 'auto';
-    $('#agentGetokenQuality').value = settings.getokenQuality === 'standard' ? 'standard' : 'high';
-    $('#agentGetokenN').value = Number.isFinite(Number(settings.getokenN))
-      ? Math.min(4, Math.max(1, Math.round(Number(settings.getokenN))))
-      : 1;
-    const seedreamModel = SEEDREAM_MODEL_IDS.includes(settings.seedreamModel)
-      ? settings.seedreamModel
-      : 'doubao-seedream-5-0-260128';
-    $('#agentSeedreamModel').value = seedreamModel;
-    syncSeedreamSettingsUi(seedreamModel);
-    $('#agentSeedreamSize').value = settings.seedreamSize || '2K';
-    $('#agentSeedreamWatermark').checked = settings.seedreamWatermark !== false;
-    $('#agentSeedreamOutputFormat').value = settings.seedreamOutputFormat === 'png' ? 'png' : 'jpeg';
-    $('#agentSeedreamOptimizePrompt').value = settings.seedreamOptimizePromptMode === 'fast' ? 'fast' : 'standard';
-    $('#agentSeedreamSequential').value = settings.seedreamSequential === 'auto' ? 'auto' : 'disabled';
-    $('#agentSeedreamMaxImages').value = Number.isFinite(Number(settings.seedreamMaxImages))
-      ? Math.min(15, Math.max(1, Math.round(Number(settings.seedreamMaxImages))))
-      : 15;
-    $('#agentSeedreamWebSearch').checked = Boolean(settings.seedreamWebSearch);
-    $('#agentSeedreamLayerDecomposition').checked = Boolean(settings.seedreamLayerDecomposition);
-    $('#agentSeedreamBackground').value = settings.seedreamBackground === 'transparent' ? 'transparent' : 'opaque';
-    $('#agentSeedreamStream').checked = settings.seedreamStream !== false;
-    state.customProviderExpandedIds.clear();
     state.customProviderTestStates.clear();
     state.providerModelOverrideKey = null;
     state.customProvidersDraft = (settings.customProviders || []).map(provider => ({
@@ -1861,26 +1731,6 @@ function settingsSavePayload() {
   });
   payload.tavilyApiKey = $('#agentTavilyApiKey').value.trim();
   payload.perplexityApiKey = $('#agentPerplexityKey').value.trim();
-  payload.seedreamApiKey = $('#agentSeedreamKey').value.trim();
-  payload.getokenApiKey = $('#agentGetokenKey').value.trim();
-  payload.getokenGrokImagineApiKey = ($('#agentGetokenGrokImagineKey')?.value || '').trim();
-  payload.getokenNanoBananaApiKey = ($('#agentGetokenNanoBananaKey')?.value || '').trim();
-  payload.imageProvider = $('#agentImageProvider').value === 'getoken' ? 'getoken' : 'seedream';
-  payload.getokenModel = $('#agentGetokenModel').value || current.getokenModel || 'gpt-image-2';
-  payload.getokenSize = $('#agentGetokenSize').value || current.getokenSize || 'auto';
-  payload.getokenQuality = $('#agentGetokenQuality').value === 'standard' ? 'standard' : 'high';
-  payload.getokenN = Math.min(4, Math.max(1, Math.round(Number($('#agentGetokenN').value) || 1)));
-  payload.seedreamModel = $('#agentSeedreamModel').value || current.seedreamModel || 'doubao-seedream-5-0-260128';
-  payload.seedreamSize = $('#agentSeedreamSize').value.trim() || current.seedreamSize || '2K';
-  payload.seedreamWatermark = $('#agentSeedreamWatermark').checked;
-  payload.seedreamOutputFormat = $('#agentSeedreamOutputFormat').value === 'png' ? 'png' : 'jpeg';
-  payload.seedreamOptimizePromptMode = $('#agentSeedreamOptimizePrompt').value === 'fast' ? 'fast' : 'standard';
-  payload.seedreamSequential = $('#agentSeedreamSequential').value === 'auto' ? 'auto' : 'disabled';
-  payload.seedreamMaxImages = Math.min(15, Math.max(1, Math.round(Number($('#agentSeedreamMaxImages').value) || 15)));
-  payload.seedreamWebSearch = $('#agentSeedreamWebSearch').checked;
-  payload.seedreamLayerDecomposition = $('#agentSeedreamLayerDecomposition').checked;
-  payload.seedreamBackground = $('#agentSeedreamBackground').value === 'transparent' ? 'transparent' : 'opaque';
-  payload.seedreamStream = $('#agentSeedreamStream').checked;
   const selectedModel = $('#agentModelSelect').value || '';
   const availableModels = providerModelGroups().flatMap(group => group.items || []).map(item => item.id);
   payload.model = selectedModel || (availableModels.includes(current.model) ? current.model : '');
@@ -4328,6 +4178,7 @@ async function loadDocuments({ append = false, refreshTree = true } = {}) {
 function showEmptyDocument() {
   state.activeDocument = null;
   knowledgeEnhancements?.clear?.();
+  noteAssistantClear();
   destroyFilePreview();
   clearTimeout(state.documentSaveTimer);
   state.documentDirty = false;
@@ -4440,6 +4291,7 @@ async function renderActiveDocument(document) {
   renderKnowledgeTree();
   renderDocuments();
   knowledgeEnhancements?.setActiveDocument?.(document);
+  noteAssistantSetActiveDocument(document);
 }
 
 async function renderFileOriginalPanel(document) {
@@ -4686,6 +4538,33 @@ async function importKnowledgeFile(file) {
     $('#importFileButton').disabled = false;
     $('#importFileButton').textContent = '↑';
   }
+}
+
+function applyNoteAssistantEdit({ find, replace, append, content }) {
+  const editor = $('#documentContent');
+  if (!editor || state.documentConflict) return;
+  if (append) {
+    const addition = String(content || '');
+    const start = editor.value.length;
+    editor.value = `${editor.value}${editor.value ? '\n\n' : ''}${addition}`;
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    editor.focus();
+    state.documentDirty = true;
+    scheduleDocumentSave();
+    refreshDocumentPreview();
+    editor.setSelectionRange(start, start);
+    return;
+  }
+  const needle = String(find || '');
+  const start = needle ? editor.value.indexOf(needle) : -1;
+  if (start < 0) return;
+  editor.value = editor.value.slice(0, start) + String(replace ?? '') + editor.value.slice(start + needle.length);
+  const caret = start + String(replace ?? '').length;
+  editor.focus();
+  editor.setSelectionRange(caret, caret);
+  state.documentDirty = true;
+  scheduleDocumentSave();
+  refreshDocumentPreview();
 }
 
 function insertTextAtCursor(textarea, text) {
@@ -4940,12 +4819,6 @@ function bindEvents() {
     if (!preview) return;
     const img = preview.querySelector('img');
     openMarkdownImagePreview(img || preview.dataset.previewSrc);
-  });
-  $('#agentSeedreamModel')?.addEventListener('change', event => {
-    syncSeedreamSettingsUi(event.target.value);
-  });
-  $('#agentImageProvider')?.addEventListener('change', event => {
-    syncImageProviderSettingsUi(event.target.value);
   });
   $('#agentInput').addEventListener('input', () => {
     autoResizeComposer();
@@ -5298,15 +5171,6 @@ function bindEvents() {
       renderDesktopUpdatePanel();
     });
   }
-  $('#addCustomProvider')?.addEventListener('click', () => {
-    syncCustomProvidersDraftFromDom();
-    const provider = createEmptyCustomProvider();
-    state.customProvidersDraft = [...(state.customProvidersDraft || []), provider];
-    state.customProviderExpandedIds.add(provider.id);
-    state.customProviderSelectedId = provider.id;
-    renderCustomProvidersList();
-    refreshModelSelects();
-  });
   $('#customProvidersList')?.addEventListener('click', event => {
     const selectProvider = event.target.closest('[data-select-provider]');
     if (selectProvider) {
@@ -5324,7 +5188,6 @@ function bindEvents() {
       syncCustomProvidersDraftFromDom();
       const provider = createEmptyCustomProvider();
       state.customProvidersDraft = [...(state.customProvidersDraft || []), provider];
-      state.customProviderExpandedIds.add(provider.id);
       state.customProviderSelectedId = provider.id;
       renderCustomProvidersList();
       refreshModelSelects();
@@ -5371,7 +5234,6 @@ function bindEvents() {
       const index = Number(removeProvider.dataset.removeProvider);
       const removed = state.customProvidersDraft?.[index];
       state.customProvidersDraft = (state.customProvidersDraft || []).filter((_, i) => i !== index);
-      if (removed?.id) state.customProviderExpandedIds.delete(removed.id);
       if (removed?.id === state.customProviderSelectedId) {
         state.customProviderSelectedId = state.customProvidersDraft[index]?.id
           || state.customProvidersDraft[index - 1]?.id
@@ -5484,6 +5346,7 @@ function bindEvents() {
       await renderActiveDocument(document);
     },
   });
+  initNoteAssistant({ applyEdit: applyNoteAssistantEdit });
   createBackupActions({
     confirmAction,
     reloadKnowledge: async () => {

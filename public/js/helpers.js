@@ -387,3 +387,26 @@ export function setupDragAndDrop({ container, itemSelector, getId, onReorder }) 
     }
   });
 }
+
+// Full re-render of a settings workspace that keeps focus, caret position and
+// detail-pane scroll across structural changes (add/remove/move/select).
+// Inputs opt in via data-focus-key; render() must replace root's contents.
+export function renderPreservingFocus(root, render) {
+  if (!root) return;
+  const active = document.activeElement;
+  const focusKey = active?.dataset?.focusKey || '';
+  const caret = typeof active?.selectionStart === 'number' ? active.selectionStart : null;
+  const scrollTop = root.querySelector('.custom-provider-detail')?.scrollTop || 0;
+  render();
+  if (focusKey) {
+    const next = root.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`);
+    if (next) {
+      next.focus({ preventScroll: true });
+      if (caret != null && typeof next.setSelectionRange === 'function') {
+        try { next.setSelectionRange(caret, caret); } catch { /* selects and password fields */ }
+      }
+    }
+  }
+  const nextDetail = root.querySelector('.custom-provider-detail');
+  if (nextDetail && scrollTop) nextDetail.scrollTop = scrollTop;
+}

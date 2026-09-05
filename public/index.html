@@ -260,6 +260,12 @@
                   </svg>
                 </button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
+                <button class="icon-button" id="assistantToggleButton" type="button" title="AI 助手" aria-label="AI 助手" aria-expanded="false" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.3l-1.8-5.7L4.5 10.8 10.2 9z"></path>
+                    <path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"></path>
+                  </svg>
+                </button>
                 <button class="icon-button" id="archiveDocumentButton" type="button" title="归档文档" aria-label="归档文档">⌁</button>
                 <button class="secondary-action compact" id="restoreDocumentButton" type="button" hidden>恢复</button>
                 <button class="icon-button danger" id="deleteDocumentButton" type="button" title="删除文档" aria-label="删除文档">⌫</button>
@@ -348,6 +354,24 @@
               <div id="filePreviewHost" class="file-preview-host" aria-live="polite"></div>
             </details>
           </section>
+
+          <aside class="note-assistant-panel" id="noteAssistantPanel" hidden aria-label="AI 助手">
+            <div class="note-assistant-head">
+              <strong>AI 助手</strong>
+              <span class="note-assistant-head-spacer"></span>
+              <button type="button" class="secondary-action compact" data-note-assistant-action="new">新对话</button>
+              <button type="button" class="icon-button" data-note-assistant-action="close" aria-label="关闭 AI 助手" title="关闭">✕</button>
+            </div>
+            <div class="note-assistant-messages" id="noteAssistantMessages"></div>
+            <div class="note-assistant-status" id="noteAssistantStatus" hidden></div>
+            <div class="note-assistant-composer">
+              <textarea id="noteAssistantInput" rows="2" placeholder="询问本篇内容，或让 AI 修改…" aria-label="向 AI 助手提问"></textarea>
+              <div class="note-assistant-composer-actions">
+                <button type="button" id="noteAssistantSend" class="primary-action compact" data-note-assistant-action="send">发送</button>
+                <button type="button" id="noteAssistantStop" class="secondary-action compact" data-note-assistant-action="stop" hidden>停止</button>
+              </div>
+            </div>
+          </aside>
         </article>
       </section>
 
@@ -535,11 +559,6 @@
             <h3>模型</h3>
             <p class="settings-copy">所有模型统一由供应商卡片提供（OpenAI / Anthropic 兼容 API）。留空密钥可保持已保存的值。</p>
             <div class="settings-subsection">
-              <div class="settings-subhead-row">
-                <h4>供应商</h4>
-                <button type="button" class="secondary-action compact" id="addCustomProvider">添加供应商</button>
-              </div>
-              <p class="settings-copy">每个供应商维护自己的地址、密钥与模型列表；可用"拉取模型列表"自动发现。</p>
               <div id="customProvidersList" class="custom-providers-list"></div>
             </div>
             <div class="settings-subsection">
@@ -702,94 +721,6 @@
             <h3>生图</h3>
             <p class="settings-copy">Agent 通过确认工具 image.generate 生图。供应商可以使用 Seedream 或 OpenAI Images 协议，并配置任意模型与能力。</p>
             <div id="imageProvidersSettings"></div>
-            <div hidden aria-hidden="true">
-            <label class="settings-row" for="agentImageProvider"><span><strong>生图后端</strong><small>Seedream 或 Getoken</small></span>
-              <select id="agentImageProvider">
-                <option value="seedream">Seedream</option>
-                <option value="getoken">Getoken</option>
-              </select>
-            </label>
-            <div data-image-provider="getoken">
-              <label class="settings-row" for="agentGetokenModel"><span><strong>Getoken 模型</strong><small>默认生图模型</small></span>
-                <select id="agentGetokenModel">
-                  <option value="gpt-image-2">GPT Image 2</option>
-                  <option value="grok-imagine-image">Grok Imagine</option>
-                  <option value="nano-banana-2">Nano Banana 2</option>
-                </select>
-              </label>
-              <label class="settings-field" for="agentGetokenKey">GPT Image 2 Key<input id="agentGetokenKey" type="password" autocomplete="off" spellcheck="false" placeholder="GETOKEN API Key"></label>
-              <label class="settings-field" for="agentGetokenGrokImagineKey">Grok Imagine Key<input id="agentGetokenGrokImagineKey" type="password" autocomplete="off" spellcheck="false" placeholder="GETOKEN API Key"></label>
-              <label class="settings-field" for="agentGetokenNanoBananaKey">Nano Banana 2 Key<input id="agentGetokenNanoBananaKey" type="password" autocomplete="off" spellcheck="false" placeholder="GETOKEN API Key"></label>
-              <label class="settings-row" for="agentGetokenSize"><span><strong>尺寸</strong><small>默认 auto</small></span>
-                <select id="agentGetokenSize">
-                  <option value="auto">auto</option>
-                  <option value="1024x1024">1024x1024</option>
-                  <option value="1536x1024">1536x1024</option>
-                  <option value="1024x1536">1024x1536</option>
-                  <option value="1792x1024">1792x1024</option>
-                  <option value="1024x1792">1024x1792</option>
-                </select>
-              </label>
-              <label class="settings-row" for="agentGetokenQuality"><span><strong>质量</strong></span>
-                <select id="agentGetokenQuality">
-                  <option value="high">high</option>
-                  <option value="standard">standard</option>
-                </select>
-              </label>
-              <label class="settings-field" for="agentGetokenN">单次数量 n
-                <input id="agentGetokenN" type="number" min="1" max="4" step="1" value="1">
-                <small>1–4 张；有参考图时走 edits 接口</small>
-              </label>
-            </div>
-            <div data-image-provider="seedream">
-            <label class="settings-field" for="agentSeedreamKey">Seedream API Key<input id="agentSeedreamKey" type="password" autocomplete="off" spellcheck="false" placeholder="ARK API Key"></label>
-            <label class="settings-row" for="agentSeedreamModel"><span><strong>模型</strong><small>Pro / Lite / 4.5 / 4.0</small></span>
-              <select id="agentSeedreamModel">
-                <option value="doubao-seedream-5-0-pro-260628">Seedream 5.0 Pro</option>
-                <option value="doubao-seedream-5-0-260128">Seedream 5.0 Lite</option>
-                <option value="doubao-seedream-4-5-251128">Seedream 4.5</option>
-                <option value="doubao-seedream-4-0-250828">Seedream 4.0</option>
-              </select>
-            </label>
-            <label class="settings-field" for="agentSeedreamSize">尺寸
-              <input id="agentSeedreamSize" list="agentSeedreamSizeOptions" spellcheck="false" placeholder="2K">
-              <small id="agentSeedreamSizeHint">Lite: 2K / 3K / 4K，或宽x高像素</small>
-            </label>
-            <datalist id="agentSeedreamSizeOptions"></datalist>
-            <label class="settings-row" for="agentSeedreamWatermark"><span><strong>水印</strong><small>在生成图上添加 AI 生成标识</small></span><input id="agentSeedreamWatermark" type="checkbox"></label>
-            <label class="settings-row seedream-advanced" data-seedream-field="outputFormat" for="agentSeedreamOutputFormat"><span><strong>输出格式</strong><small>Pro / Lite</small></span>
-              <select id="agentSeedreamOutputFormat">
-                <option value="jpeg">JPEG</option>
-                <option value="png">PNG</option>
-              </select>
-            </label>
-            <label class="settings-row seedream-advanced" data-seedream-field="optimizePrompt" for="agentSeedreamOptimizePrompt"><span><strong>提示词优化</strong><small>standard 质量更高；fast 更快</small></span>
-              <select id="agentSeedreamOptimizePrompt">
-                <option value="standard">Standard</option>
-                <option value="fast">Fast</option>
-              </select>
-            </label>
-            <label class="settings-row seedream-advanced" data-seedream-field="sequential" for="agentSeedreamSequential"><span><strong>组图模式</strong><small>auto 可生成一组关联图片</small></span>
-              <select id="agentSeedreamSequential">
-                <option value="disabled">单图 (disabled)</option>
-                <option value="auto">组图 (auto)</option>
-              </select>
-            </label>
-            <label class="settings-field seedream-advanced" data-seedream-field="maxImages" for="agentSeedreamMaxImages">组图上限
-              <input id="agentSeedreamMaxImages" type="number" min="1" max="15" step="1" value="15">
-              <small>参考图数量 + 生成数量 ≤ 15</small>
-            </label>
-            <label class="settings-row seedream-advanced" data-seedream-field="webSearch" for="agentSeedreamWebSearch"><span><strong>联网搜索</strong><small>仅 Lite：按提示词搜索后再生图</small></span><input id="agentSeedreamWebSearch" type="checkbox"></label>
-            <label class="settings-row seedream-advanced" data-seedream-field="layerDecomposition" for="agentSeedreamLayerDecomposition"><span><strong>默认图层拆分</strong><small>仅 Pro：拆成底图 + 图层</small></span><input id="agentSeedreamLayerDecomposition" type="checkbox"></label>
-            <label class="settings-row seedream-advanced" data-seedream-field="background" for="agentSeedreamBackground"><span><strong>透明背景</strong><small>仅 Pro 图生图</small></span>
-              <select id="agentSeedreamBackground">
-                <option value="opaque">不透明</option>
-                <option value="transparent">透明</option>
-              </select>
-            </label>
-            <label class="settings-row seedream-advanced" data-seedream-field="stream" for="agentSeedreamStream"><span><strong>流式输出</strong><small>组图时逐张返回</small></span><input id="agentSeedreamStream" type="checkbox"></label>
-            </div>
-            </div>
           </section>
           <section class="settings-section" data-settings-panel="skills" hidden>
             <h3>技能</h3>

@@ -5,7 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
 const { createAgentStore } = require('../lib/agent/store');
-const { accountDbPath, closeAllDatabases } = require('../lib/db/connection');
+const { SCHEMA_VERSION, accountDbPath, closeAllDatabases } = require('../lib/db/connection');
 const { cleanupTempDataDir } = require('./db-temp');
 
 function seedJsonAccount(dir) {
@@ -153,7 +153,7 @@ test('schema v3 migration is repeatable and keeps row-level updates stable', (t)
   ] });
   db.update(first.id, { title: 'first updated' });
   knowledge.updateDocument(note.id, { content: 'body updated' });
-  assert.equal(db.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '3');
+  assert.equal(db.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
   assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_link_targets LIMIT 1').get());
   assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM knowledge_revisions').get().count, 1);
   assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_index_state WHERE id = 1').get());
@@ -167,6 +167,6 @@ test('schema v3 migration is repeatable and keeps row-level updates stable', (t)
   db.close();
   const reopened = createDatabase(dir);
   t.after(() => reopened.close());
-  assert.equal(reopened.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, '3');
+  assert.equal(reopened.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
   assert.ok(reopened.sqlite.prepare('SELECT version FROM knowledge_index_state WHERE id = 1').get().version >= 2);
 });

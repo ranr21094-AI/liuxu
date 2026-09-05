@@ -93,14 +93,14 @@ See `README.md` § Relevant API for the full table. Notable groups:
 - **Diary**: `/api/auth/diary*` unlock routes; unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 - **Logs (compat)**: `/api/logs`, `/api/stats` — no CSV export
 - **Knowledge**: `/api/knowledge/tree`, `/api/knowledge/documents`, `/api/knowledge/search`, `/api/knowledge/imports`, `/api/knowledge/link-targets`, backlinks/revisions/restore, archive/restore
-- **Agent**: `/api/agent/sessions`, `/api/agent/runs`, `/api/agent/memories`, `/api/ai/settings`
+- **Agent**: `/api/agent/sessions`, `/api/agent/runs`, `/api/agent/memories`, `/api/agent/note-assist/:documentId/session|messages` (per-document assistant, `kind: note_assist`), `/api/ai/settings`
 - **Backup**: `GET /api/backup`, `POST /api/restore`, `GET /api/workspace/export`, `POST /api/workspace/restore`
 - **Todos / countdowns / categories**: `/api/todos`, `/api/countdowns`, `/api/categories`, …
 
 ### Notable Files
 
 - `lib/knowledge/` — documents, search, migrate-logs, routes, stable wiki links and revision history
-- `lib/agent/` — runtime, routes, tools, `memory-settings.js` and `agent-settings.js` (tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.list` / `memory.read` / `memory.search` (L2/L3 on-demand; only L0 rules auto-injected), `agent.delegate` (one-level sub-run; approval / ask_user / browser / memory.propose bubble to parent), `web.fetch`, `code.run` (Python on macOS; PowerShell/Python on Windows), `bash.run` (Git Bash on Windows or `/bin/bash` elsewhere, with cwd confined to allowlisted dirs — not a sandbox, same user privileges; requires confirmation), `ask_user`, `update_working_checkpoint`. 需用户确认的工具在一轮内进入 `queuedApprovals` 队列，仅逐条暴露给前端嵌入 `#agentComposer` 顶部的交互区（`#agentApprovalDock`，textarea 上方），并显示进度；长参数在 UI 中摘要展示，内容区限高可滚动，操作按钮固定可见。`ask_user` 的问题同样显示在该 dock，用户在下方输入框直接回复。
+- `lib/agent/` — runtime, routes, tools, `memory-settings.js` and `agent-settings.js` (tunables merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`); Agent tools include `knowledge.search` / `knowledge.tree` / `knowledge.list` (MiniSearch/list, same as UI), `memory.list` / `memory.read` / `memory.search` (L2/L3 on-demand; only L0 rules auto-injected), `agent.delegate` (one-level sub-run; approval / ask_user / browser / memory.propose bubble to parent), `web.fetch`, `note.read` / `note.propose_edit` (note_assist runs only; proposals are previews applied manually in the editor, never written server-side), `code.run` (Python on macOS; PowerShell/Python on Windows), `bash.run` (Git Bash on Windows or `/bin/bash` elsewhere, with cwd confined to allowlisted dirs — not a sandbox, same user privileges; requires confirmation), `ask_user`, `update_working_checkpoint`. 需用户确认的工具在一轮内进入 `queuedApprovals` 队列，仅逐条暴露给前端嵌入 `#agentComposer` 顶部的交互区（`#agentApprovalDock`，textarea 上方），并显示进度；长参数在 UI 中摘要展示，内容区限高可滚动，操作按钮固定可见。`ask_user` 的问题同样显示在该 dock，用户在下方输入框直接回复。
 - `lib/workspace/` — ZIP export/restore
 - `lib/http/backup-routes.js` — JSON backup/restore HTTP handlers
 - `gen_images.py` — standalone script, unrelated to the web app
