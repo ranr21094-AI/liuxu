@@ -359,8 +359,17 @@
             <div class="note-assistant-head">
               <strong>AI 助手</strong>
               <span class="note-assistant-head-spacer"></span>
+              <button type="button" class="secondary-action compact" data-note-assistant-action="sessions" aria-expanded="false">历史</button>
               <button type="button" class="secondary-action compact" data-note-assistant-action="new">新对话</button>
               <button type="button" class="icon-button" data-note-assistant-action="close" aria-label="关闭 AI 助手" title="关闭">✕</button>
+            </div>
+            <div class="note-assistant-session-list" id="noteAssistantSessionList" hidden></div>
+            <div class="note-assistant-batch" id="noteAssistantBatch" hidden>
+              <span><strong id="noteAssistantBatchCount">0</strong> 条提案待应用</span>
+              <span class="note-assistant-batch-actions">
+                <button type="button" class="primary-action compact" data-note-assistant-action="apply-all">全部应用</button>
+                <button type="button" class="secondary-action compact" data-note-assistant-action="ignore-all">全部忽略</button>
+              </span>
             </div>
             <div class="note-assistant-messages" id="noteAssistantMessages"></div>
             <div class="note-assistant-status" id="noteAssistantStatus" hidden></div>

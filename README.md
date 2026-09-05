@@ -15,14 +15,14 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.2.4-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.2.5-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.2.4-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.2.5-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（测试包）
@@ -30,8 +30,8 @@ Get-FileHash .\LiuXu-Setup-1.2.4-x64.exe -Algorithm SHA256
 当前 Mac 首发包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
 
 ```text
-LiuXu-1.2.4-mac-arm64.dmg
-LiuXu-1.2.4-mac-arm64.zip
+LiuXu-1.2.5-mac-arm64.dmg
+LiuXu-1.2.5-mac-arm64.zip
 ```
 
 测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
@@ -39,8 +39,8 @@ LiuXu-1.2.4-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.2.4-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.2.4-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.2.5-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.2.5-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -88,12 +88,22 @@ API Key 会使用本机密钥加密保存。调用模型、联网搜索或生图
 
 桌面版进入 **设置 → 更新** 后会检查 GitHub Releases。发现新版本时，留序会下载当前平台的安装包并校验 GitHub SHA-256；确认后打开安装程序。更新只替换应用文件，不会覆盖知识、待办、密钥或备份数据。
 
-更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.2.2` 用户可手动安装 `1.2.3`，之后继续使用应用内更新。
+更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.2.4` 用户可手动安装 `1.2.5`，之后继续使用应用内更新。
 
-### 知识库每条笔记的 AI 助手（未发布）
+### 知识库每条笔记的 AI 助手（v1.2.4）
 
 - 在知识库打开任意笔记或导入文件后，工具栏的 AI 按钮可打开本篇专属的 AI 助手侧栏：针对本篇内容提问、检索其他知识、并让 AI 提出修改提案。
 - 修改提案以「原文 → 改为」卡片预览，手动应用到笔记后走自动保存与版本历史；服务端不直接改写文档。
+
+### 模型设置 / 生图设置界面优化（v1.2.4）
+
+- 生图设置对齐模型设置的双栏工作区布局；连接测试结果在模型卡内定点更新，不再打断输入。
+- 主题状态色收束为统一 token；移除旧版 Getoken/Seedream 隐藏配置的遗留代码。
+
+### AI 助手侧栏增强（v1.2.5）
+
+- 「历史」下拉管理本篇的全部 AI 会话：切换、删除，会话按文档持久化。
+- 多条提案支持一键批量应用：按提案顺序逐条套用，每条保留唯一匹配校验，失配的单条自动跳过；也支持全部忽略。
 
 ### 全量代码审查修复（v1.2.3）
 
@@ -203,7 +213,7 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.2.4` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.2.5` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
 
 ### macOS 提示无法验证开发者
 
@@ -258,13 +268,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.2.4-x64.exe
-LiuXu-Setup-1.2.4-x64.exe.sha256
+LiuXu-Setup-1.2.5-x64.exe
+LiuXu-Setup-1.2.5-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.2.4-mac-arm64.dmg
-LiuXu-1.2.4-mac-arm64.dmg.sha256
-LiuXu-1.2.4-mac-arm64.zip
-LiuXu-1.2.4-mac-arm64.zip.sha256
+LiuXu-1.2.5-mac-arm64.dmg
+LiuXu-1.2.5-mac-arm64.dmg.sha256
+LiuXu-1.2.5-mac-arm64.zip
+LiuXu-1.2.5-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -301,6 +311,8 @@ desktop-build-summary-mac.json
 - [v1.2.1 发布说明](docs/releases/v1.2.1.md)
 - [v1.2.2 发布说明](docs/releases/v1.2.2.md)
 - [v1.2.3 发布说明](docs/releases/v1.2.3.md)
+- [v1.2.4 发布说明](docs/releases/v1.2.4.md)
+- [v1.2.5 发布说明](docs/releases/v1.2.5.md)
 - [v1.2.0 发布说明](docs/releases/v1.2.0.md)
 - [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [贡献与仓库说明](AGENTS.md)

@@ -2,6 +2,12 @@
 
 ## 2026-09-05
 
+### AI 助手侧栏增强（v1.2.5）
+
+- AI 助手侧栏新增会话切换器：「历史」下拉列出当前笔记/文件的全部 AI 会话（消息数、首条消息摘要、时间），支持切换与删除；删除当前会话后回到新对话状态，有活动运行的会话删除时返回 409。新端点：`GET .../sessions`、`DELETE .../sessions/:sessionId`，`GET .../session` 支持按 `sessionId` 回读。
+- 多提案批量应用：待应用提案 ≥ 2 时出现批量条「全部应用 / 全部忽略」，按提案到达顺序逐条套用并保留 find 唯一匹配校验，失配的单条自动跳过不阻塞其余，结束后汇总提示。
+- 测试：新增后端会话列表/回读/硬删除用例与前端 jsdom 批量应用、会话切换用例，全量 309 项测试通过。
+
 ### 知识库每条笔记/文件的 AI 助手（v1.2.4）
 
 - 知识编辑器工具栏新增 AI 助手按钮：每条笔记和导入文件都有独立的对话式 AI 侧栏，与 Agent 共用运行时但只开放只读工具（读取本篇、检索/阅读其他知识）。
@@ -20,11 +26,11 @@
 
 ## 发布文件
 
-- Windows x64：`LiuXu-Setup-1.2.4-x64.exe` 及 `.sha256`
-- macOS 12+ Apple Silicon：`LiuXu-1.2.4-mac-arm64.dmg`、`LiuXu-1.2.4-mac-arm64.zip` 及对应 `.sha256`
+- Windows x64：`LiuXu-Setup-1.2.5-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.5-mac-arm64.dmg`、`LiuXu-1.2.5-mac-arm64.zip` 及对应 `.sha256`
 - `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
 
-本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。已安装 v1.2.3 的用户可直接安装 v1.2.4，应用内更新会识别本版本对应的平台安装包。
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。已安装 v1.2.4 的用户可直接安装 v1.2.5，应用内更新会识别本版本对应的平台安装包。
 
 ### 全量代码审查修复（v1.2.3）
 

@@ -1,5 +1,5 @@
 import { apiFetch } from '../auth.js';
-import { escHtml, showToast } from '../helpers.js';
+import { escHtml, showToast, confirmDialog } from '../helpers.js';
 
 // Per-document AI assistant sidebar (kind: note_assist). The assistant shares
 // the agent runtime with restricted tools; edit proposals arrive as
@@ -119,39 +119,79 @@ function renderProposal(payload) {
 
 function markProposal(proposalId, applied, note = '') {
   const card = messagesHost()?.querySelector(`.note-assistant-proposal[data-proposal-id="${CSS.escape(proposalId)}"]`);
-  if (!card) return;
-  card.classList.add(applied ? 'is-applied' : 'is-ignored');
-  card.querySelectorAll('button').forEach(button => { button.disabled = true; });
-  const head = card.querySelector('.note-assistant-proposal-head span');
-  if (head) head.textContent = note || head.textContent;
+  if (card) {
+    card.classList.add(applied ? 'is-applied' : 'is-ignored');
+    card.querySelectorAll('button').forEach(button => { button.disabled = true; });
+    const head = card.querySelector('.note-assistant-proposal-head span');
+    if (head) head.textContent = note || head.textContent;
+  }
+  state.proposalState.set(proposalId, applied ? 'applied' : 'ignored');
+  updateBatchBar();
 }
 
-async function applyProposal(payload) {
+function pendingProposals() {
+  const pending = [];
+  for (const [id, status] of state.proposalState) {
+    if (status === 'pending' && state.proposals.has(id)) pending.push(state.proposals.get(id));
+  }
+  return pending;
+}
+
+function updateBatchBar() {
+  const bar = document.querySelector('#noteAssistantBatch');
+  if (!bar) return;
+  const pending = pendingProposals();
+  const count = document.querySelector('#noteAssistantBatchCount');
+  if (count) count.textContent = String(pending.length);
+  bar.hidden = pending.length < 2;
+}
+
+async function applyProposal(payload, { silent = false } = {}) {
   const editor = document.querySelector('#documentContent');
-  if (!editor) return;
+  if (!editor) return { ok: false };
   if (payload.append) {
     state.applyEdit({
       append: true,
       content: String(payload.content || ''),
     });
     markProposal(payload.id, true, '已追加到文末');
-    return;
+    return { ok: true };
   }
   const current = editor.value;
   const find = String(payload.find || '');
   const occurrences = find ? current.split(find).length - 1 : 0;
   if (occurrences === 0) {
     markProposal(payload.id, false, '笔记已修改，无法定位原文');
-    showToast('笔记内容已变化，无法定位提案原文；可从提案卡复制内容手动处理', 'error');
-    return;
+    if (!silent) showToast('笔记内容已变化，无法定位提案原文；可从提案卡复制内容手动处理', 'error');
+    return { ok: false };
   }
   if (occurrences > 1) {
     markProposal(payload.id, false, '原文出现多次，已跳过');
-    showToast('提案原文在笔记中出现多次，为避免误改已跳过', 'error');
-    return;
+    if (!silent) showToast('提案原文在笔记中出现多次，为避免误改已跳过', 'error');
+    return { ok: false };
   }
   state.applyEdit({ find, replace: String(payload.replace ?? '') });
   markProposal(payload.id, true, '已应用');
+  return { ok: true };
+}
+
+async function applyAllProposals() {
+  const pending = pendingProposals();
+  if (!pending.length) return;
+  let applied = 0;
+  let failed = 0;
+  for (const payload of pending) {
+    const result = await applyProposal(payload, { silent: true });
+    if (result?.ok) applied += 1;
+    else failed += 1;
+  }
+  if (failed) showToast(`已应用 ${applied} 条，${failed} 条未能应用`, applied ? 'info' : 'error');
+  else showToast(`已应用 ${applied} 条提案`, 'success');
+}
+
+function ignoreAllProposals() {
+  const pending = pendingProposals();
+  for (const payload of pending) markProposal(payload.id, false, '已忽略');
 }
 
 async function loadSession(documentId) {
@@ -193,10 +233,11 @@ function handleRunEvent(event) {
   if (type === 'note.edit_proposed') {
     renderStatusLine('');
     if (event.payload?.id) {
-      state.proposals = state.proposals || new Map();
       state.proposals.set(event.payload.id, event.payload);
+      state.proposalState.set(event.payload.id, 'pending');
     }
     renderProposal(event.payload);
+    updateBatchBar();
     return;
   }
   if (type === 'run.completed') {
@@ -293,6 +334,122 @@ async function stop() {
   } catch { /* the SSE run.failed event resolves the UI */ }
 }
 
+async function loadSessionList() {
+  if (!state.activeDocumentId) return;
+  try {
+    const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/sessions`);
+    const data = await response.json().catch(() => ({}));
+    state.sessions = response.ok ? (data.sessions || []) : [];
+  } catch {
+    state.sessions = [];
+  }
+  renderSessionList();
+}
+
+function renderSessionList() {
+  const host = document.querySelector('#noteAssistantSessionList');
+  if (!host) return;
+  host.hidden = !state.sessionListOpen;
+  if (!state.sessionListOpen) return;
+  const sessions = state.sessions || [];
+  if (!sessions.length) {
+    host.innerHTML = '<p class="note-assistant-sessions-empty">还没有历史会话。</p>';
+    return;
+  }
+  host.innerHTML = sessions.map(session => {
+    const active = session.id === state.sessionId;
+    const title = escHtml(session.title || '文档助手');
+    const preview = escHtml(session.preview || `${session.messageCount} 条消息`);
+    return `<div class="note-assistant-session-row${active ? ' is-active' : ''}" data-note-assistant-action="switch-session" data-session-id="${escHtml(session.id)}" role="button" tabindex="0">
+      <div class="note-assistant-session-copy">
+        <strong>${title}</strong>
+        <small>${preview}</small>
+        <small>${session.messageCount} 条消息 · ${escHtml(new Date(session.updatedAt).toLocaleString())}</small>
+      </div>
+      <button type="button" class="icon-button note-assistant-session-delete" data-note-assistant-action="delete-session" data-session-id="${escHtml(session.id)}" aria-label="删除该会话" title="删除该会话">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function toggleSessionList() {
+  state.sessionListOpen = !state.sessionListOpen;
+  if (state.sessionListOpen) loadSessionList();
+  else renderSessionList();
+}
+
+async function switchSession(sessionId) {
+  if (!sessionId || sessionId === state.sessionId) {
+    state.sessionListOpen = false;
+    renderSessionList();
+    return;
+  }
+  // Detach the current stream first — an in-flight run keeps going server-side.
+  state.eventSource?.close();
+  state.eventSource = null;
+  state.runId = '';
+  state.proposals = new Map();
+  state.proposalState = new Map();
+  state.sessionId = sessionId;
+  try {
+    const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/session?sessionId=${encodeURIComponent(sessionId)}`);
+    if (!response.ok) throw new Error('会话不存在');
+    const data = await response.json().catch(() => ({}));
+    messagesHost().innerHTML = '';
+    for (const message of data.session?.messages || []) {
+      if (message.role === 'user' || message.role === 'assistant') {
+        renderMessage(message.role, String(message.content || ''));
+      }
+    }
+    if (data.activeRun && ACTIVE_RUN_STATES.has(data.activeRun.status)) {
+      state.runId = data.activeRun.id;
+      subscribeRun(data.activeRun.id);
+    } else {
+      syncComposer();
+    }
+  } catch (error) {
+    showToast(error.message || '会话加载失败', 'error');
+  }
+  state.sessionListOpen = false;
+  renderSessionList();
+  updateBatchBar();
+}
+
+async function deleteSession(sessionId) {
+  const confirmed = await confirmDialog({
+    title: '删除会话',
+    message: '删除该 AI 会话及其全部运行记录？此操作不可撤销。',
+    confirmText: '删除',
+    danger: true,
+  });
+  if (!confirmed) return;
+  try {
+    const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || '删除失败');
+    }
+    if (sessionId === state.sessionId) {
+      // Removed the conversation currently on screen: fall back to an empty
+      // new-conversation state.
+      state.eventSource?.close();
+      state.eventSource = null;
+      state.runId = '';
+      state.sessionId = '';
+      state.proposals = new Map();
+      state.proposalState = new Map();
+      messagesHost().innerHTML = '';
+      renderStatusLine('新对话已就绪。');
+      syncComposer();
+    }
+    await loadSessionList();
+    showToast('会话已删除', 'success');
+  } catch (error) {
+    showToast(error.message || '删除失败', 'error');
+  }
+}
+
 async function toggle() {
   if (isOpen()) {
     setOpen(false);
@@ -311,9 +468,13 @@ function newConversation() {
   state.eventSource?.close();
   state.eventSource = null;
   state.runId = '';
+  state.proposals = new Map();
+  state.proposalState = new Map();
   messagesHost().innerHTML = '';
   renderStatusLine('新对话已就绪。');
+  updateBatchBar();
   syncComposer();
+  if (state.sessionListOpen) loadSessionList();
 }
 
 export function initNoteAssistant({ applyEdit }) {
@@ -327,17 +488,39 @@ export function initNoteAssistant({ applyEdit }) {
     sessionId: '',
     runId: '',
     eventSource: null,
+    proposals: new Map(),
+    proposalState: new Map(),
+    sessionListOpen: false,
+    newSessionRequested: false,
     applyEdit: typeof applyEdit === 'function' ? applyEdit : () => {},
   };
 
   host.addEventListener('click', event => {
     const action = event.target.closest('[data-note-assistant-action]');
-    if (!action) return;
+    if (!action) {
+      // Clicks outside the session dropdown close it.
+      if (state.sessionListOpen && !event.target.closest('#noteAssistantSessionList') && !event.target.closest('[data-note-assistant-action="sessions"]')) {
+        state.sessionListOpen = false;
+        renderSessionList();
+      }
+      return;
+    }
     const kind = action.dataset.noteAssistantAction;
     if (kind === 'close') setOpen(false);
     if (kind === 'new') newConversation();
     if (kind === 'send') send();
     if (kind === 'stop') stop();
+    if (kind === 'sessions') toggleSessionList();
+    if (kind === 'apply-all') applyAllProposals();
+    if (kind === 'ignore-all') ignoreAllProposals();
+    if (kind === 'switch-session' || kind === 'delete-session') {
+      const sessionId = action.dataset.sessionId
+        || action.closest('[data-session-id]')?.dataset.sessionId
+        || '';
+      if (kind === 'delete-session') deleteSession(sessionId);
+      else switchSession(sessionId);
+      return;
+    }
     if (kind === 'apply' || kind === 'ignore') {
       const card = action.closest('.note-assistant-proposal');
       const proposalId = card?.dataset.proposalId || '';
@@ -366,6 +549,8 @@ export function noteAssistantSetActiveDocument(doc) {
   state.sessionId = '';
   state.sessionLoaded = false;
   state.proposals = new Map();
+  state.proposalState = new Map();
+  state.sessionListOpen = false;
   state.activeDocumentId = doc?.id || '';
   messagesHost().innerHTML = '';
   setOpen(false);
@@ -386,8 +571,11 @@ export function noteAssistantClear() {
   state.sessionId = '';
   state.sessionLoaded = false;
   state.proposals = new Map();
+  state.proposalState = new Map();
+  state.sessionListOpen = false;
   messagesHost().innerHTML = '';
   setOpen(false);
   document.querySelector('#assistantToggleButton')?.setAttribute('hidden', '');
   root()?.classList.remove('assistant-open');
+  updateBatchBar();
 }

@@ -188,3 +188,66 @@ test('note-assist routes serve sessions and gate locked documents', async (t) =>
   const unknownSession = await fetch(`${base}/api/agent/note-assist/note:99999/session`);
   assert.equal(unknownSession.status, 404);
 });
+
+test('note-assist sessions list, explicit fetch, and hard delete', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const { document } = knowledge.createNote({ title: '多会话', content: '正文' }, { diaryUnlocked: true });
+
+  const app = express();
+  app.use(express.json());
+  registerAgentRoutes(app, {
+    db,
+    hasDiaryAccess: () => true,
+    noteAssistModelClientFor: async () => ({ async complete() { return { text: '好', toolCalls: [] }; } }),
+  });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  // 两条会话
+  const first = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/messages`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '第一个问题' }),
+  });
+  const firstData = await first.json();
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const second = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/messages`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '第二个问题', newSession: true }),
+  });
+  const secondData = await second.json();
+  assert.ok(secondData.sessionId && secondData.sessionId !== firstData.sessionId);
+
+  // 列表：两条、新会话在前
+  const list = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/sessions`);
+  assert.equal(list.status, 200);
+  const listData = await list.json();
+  assert.equal(listData.sessions.length, 2);
+  assert.equal(listData.sessions[0].id, secondData.sessionId);
+  assert.equal(listData.sessions[0].messageCount, 2, 'user + assistant messages');
+  assert.match(listData.sessions[0].preview, /第二个问题/);
+
+  // 按显式 sessionId 回读；绑定失配 → 404
+  const explicit = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/session?sessionId=${encodeURIComponent(firstData.sessionId)}`);
+  assert.equal(explicit.status, 200);
+  const explicitData = await explicit.json();
+  assert.equal(explicitData.session.id, firstData.sessionId);
+  assert.match(explicitData.session.messages[0].content, /第一个问题/);
+  const foreign = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/session?sessionId=nope`);
+  assert.equal(foreign.status, 404);
+
+  // 删除：不存在 404；成功后 runs/messages 一并清理
+  const removed = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/sessions/${encodeURIComponent(firstData.sessionId)}`, { method: 'DELETE' });
+  assert.equal(removed.status, 200);
+  const after = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/sessions`);
+  const afterData = await after.json();
+  assert.equal(afterData.sessions.length, 1);
+  assert.equal(afterData.sessions[0].id, secondData.sessionId);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM agent_runs WHERE session_id = ?').get(firstData.sessionId).count, 0);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM agent_messages WHERE session_id = ?').get(firstData.sessionId).count, 0);
+  const removedAgain = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/sessions/${encodeURIComponent(firstData.sessionId)}`, { method: 'DELETE' });
+  assert.equal(removedAgain.status, 404);
+});

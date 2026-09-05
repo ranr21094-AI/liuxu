@@ -2629,6 +2629,52 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 }
 .note-assistant-head strong { font-size: 13px; }
 .note-assistant-head-spacer { flex: 1; }
+.note-assistant-session-list {
+  position: absolute;
+  top: 49px;
+  left: 10px;
+  right: 10px;
+  z-index: 8;
+  max-height: min(320px, 60%);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+}
+.note-assistant-sessions-empty { margin: 6px; color: var(--faint); font-size: 12px; }
+.note-assistant-session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 7px 8px;
+  cursor: pointer;
+}
+.note-assistant-session-row:hover { background: var(--surface-active); }
+.note-assistant-session-row.is-active { background: var(--accent-soft); }
+.note-assistant-session-copy { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.note-assistant-session-copy strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-assistant-session-copy small { color: var(--faint); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-assistant-session-delete { width: 24px; height: 24px; padding: 3px; flex: none; }
+.note-assistant-batch {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--success) 45%, var(--line));
+  background: color-mix(in srgb, var(--success) 10%, var(--panel));
+  font-size: 12px;
+  color: var(--text);
+}
+.note-assistant-batch[hidden] { display: none !important; }
+.note-assistant-batch strong { color: var(--success); }
+.note-assistant-batch-actions { display: inline-flex; gap: 8px; }
 .note-assistant-messages {
   flex: 1 1 auto;
   min-height: 0;
