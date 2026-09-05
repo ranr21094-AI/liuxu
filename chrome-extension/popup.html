@@ -7,6 +7,10 @@
     body { font: 13px/1.4 sans-serif; width: 280px; margin: 12px; }
     button { margin: 4px 0; }
     .banner { background: #111; color: #fff; padding: 6px 8px; margin-bottom: 8px; }
+    .pairing { border-top: 1px solid #ddd; margin-top: 10px; padding-top: 8px; }
+    .pairing input { width: 100%; box-sizing: border-box; font: 12px/1.4 monospace; }
+    .pairing .hint { color: #666; margin: 4px 0; }
+    .pairing .status { margin-top: 4px; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -14,6 +18,13 @@
   <p>只允许与本机 127.0.0.1 / localhost 上的留序应用通信。</p>
   <button id="scan">扫描标签页</button>
   <pre id="out"></pre>
+  <div class="pairing">
+    <div class="hint">配对密钥（在留序 设置 → 电脑 完成配对后获得；保存后仅执行带有效签名的浏览器命令）</div>
+    <input id="pairingKey" type="password" placeholder="64 位十六进制密钥" autocomplete="off">
+    <button id="saveKey">保存密钥</button>
+    <button id="clearKey">清除</button>
+    <div class="status" id="keyStatus"></div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

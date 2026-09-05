@@ -1,5 +1,52 @@
 # 更新日志
 
+## 2026-09-05
+
+### 全量代码审查修复（v1.2.3）
+
+本轮对 2026-08-22 两轮审查之后新增与遗漏的问题做了系统复审，以下修复已全部实施并通过自动化测试（302 项，含 9 项新增针对性用例）。
+
+**严重**
+
+- `POST /api/agent/runs/:id/client-tools/:requestId/result` 缺少 `await`：404 分支永不生效，且内部 `driveRun` 的模型调用抛错时会成为未处理 rejection 直接终止服务进程（`lib/agent/routes.js`）。
+
+**数据正确性与功能失效**
+
+- Windows 旧数据迁移重加密遗漏 `imageProviders[].apiKey`，迁移后 AI 设置整体解密失败且报告成功；补齐重加密并加"解密回读"自检，同时旧 `.env` 自定义过 `DATA_DIR` 时改用其实际路径作为旧 scope（`electron/runtime.js`）。
+- 知识分类重命名/删除批量改写路径时不重算 `visibility`，解锁态把普通分类移入"日记"后锁定日记仍可读出；`rewriteCollectionPath` 现按新路径做 promote-only 重算（`lib/knowledge/documents.js`）。
+- Chrome 扩展命令执行路径无任何认证：扩展端新增 HMAC 签名校验（配对密钥经弹窗保存），未配置密钥时保持原行为；`onMessageExternal` 收窄到 `agent.command` 与 `tabs.scan`；服务端 `confirmPairing` 返回密钥供粘贴，设置 → 电脑 增加配对 UI（`chrome-extension/`、`lib/computer/chrome.js`、`workbench.js`）。
+- docx 预览在 DOMPurify 未加载时注入未消毒 HTML，改为 fail closed 显示占位提示（`public/js/knowledge/filePreview.js`）。
+- 知识文档自动保存竞态：在途 PATCH 期间继续输入会触发伪 409 冲突、且响应后无条件清 dirty 可静默丢失最新输入；加在-flight 互斥并在响应后比对编辑器内容再清 dirty（`public/js/workbench.js`）。
+- `bash.run` 超时杀进程在 macOS/Linux 无效（缺 `detached` 进程组），超时后命令继续后台运行；补齐并与 `code.run` 一致，`killTree` 增加直接信号兜底（`lib/computer/bash.js`、`code.js`）。
+- `active-runs.js` 仍读取 SQLite 时代之前的 `agent-runs.json`，恢复前的"活动 run 拦截"形同虚设；改为查询 `agent_runs` 表并保留 JSON 兜底（`lib/agent/active-runs.js`）。
+- 旧 ai-chats 迁移写进 `agent-sessions.json` 但该文件只在首次建库时被导入，旧对话永远不可见；改为直接经 store 写入 SQLite 并保留原时间戳（`lib/agent/migrate-ai-chats.js`、`lib/agent/store.js`）。
+
+**资源与状态机**
+
+- `liveRuns`/`emitters` 只增不减：run 进入终态后从 Map 清除，`findRun` 不再回填终态 run（`lib/agent/runtime.js`）。
+- `cancel()` 与进行中轮次竞态：模型调用与工具执行期间取消会照常执行本轮工具、甚至把已取消 run 改写回 `waiting_approval` 复活；在各 await 边界补检查，`enqueueApprovals`/`pauseForUserInput`/`bubbleWaitingState` 拒绝覆盖取消态，`cancel` 对终态 run 直接返回（`lib/agent/runtime.js`）。
+- ZIP 恢复的体积限额信任中央目录声明值，可被 zip 炸弹绕过；改为流式解压 + 全局字节预算，`schedule.db` 替换改临时文件 + 原子 rename 并清理 WAL/SHM 残留，`closeAccountDatabase` 失败即中止恢复（`lib/workspace/zip.js`、`lib/db/connection.js`）。
+- 重复写检测的 create/delete 循环分支因与同名判断互斥而永假；修正布尔逻辑（`lib/agent/guards.js`）。
+- Agent run 200 条保留策略不再淘汰 `waiting_*`/`running` 状态的 run，避免长期等待的审批被挤出后 "Run not found"（`lib/agent/store.js`）。
+
+**加固与低危**
+
+- SSRF 校验识别 `::ffff:c0a8:101` 等十六进制 IPv4-mapped IPv6 内网形式（`lib/net/ssrf.js`）。
+- 导入的 SVG 以 `attachment` 回源，杜绝同源 XSS 面；PDF 导入解析页数上限 500；知识导入路由加并发闸（最多 2）；docx 空预览记录"已尝试"标记避免每次读取重复全文转换；`knowledge_index_changes` 表在索引文件同步后按版本裁剪，不再无限膨胀（`lib/knowledge/`）。
+- 知识笔记创建收紧 annotation 父类型校验，笔记删除级联清理子 annotation；`knowledgeBase/folderPath/documentDate` 加显式长度上限、正文超 500k 字符返回 413（`lib/knowledge/documents.js`）。
+- 浏览器结果回传签名校验改 `timingSafeEqual` 常数时间比较，nonce 集合加上限（`lib/computer/chrome.js`）。
+- 更新检查加 15 秒超时、下载防重入；preload `onProgress` 重复注册不再泄漏监听器；`second-instance` 对已失败的启动 Promise 补 catch（`electron/`）。
+- 生图供应商设置页渲染回填本次会话输入的 API Key，修复"测试后再保存静默清空 Key"；markdown 渲染保留 `style`（KaTeX 需要）但经 DOMPurify hook 剥离 `position:fixed/absolute`、`z-index` 等遮挡属性，并给审批区建立独立 stacking context；todos 个别插值补 `escHtml`，toggle/delete 检查响应状态。
+- 构建脚本：`build-editor.mjs` 复制前清理 vendor 子目录；Windows 交叉构建对 win32 预编译 SQLite 模块做内嵌 SQLite 版本与本机 better-sqlite3 的交叉校验并记录到构建摘要。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.3-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.3-mac-arm64.dmg`、`LiuXu-1.2.3-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。已安装 v1.2.2 的用户可直接安装 v1.2.3，应用内更新会识别本版本对应的平台安装包。
+
 ## 2026-09-04
 
 ### Agent 通用文件附件与模型配置改进（v1.2.2）

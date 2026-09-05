@@ -3,8 +3,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
+const require = createRequire(import.meta.url);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
 const outputDir = path.join(projectRoot, 'dist', 'desktop');
@@ -46,6 +48,24 @@ function findWine() {
   try { return run('查找 Wine', 'which', ['wine'], { capture: true }).trim(); } catch { return ''; }
 }
 
+// The Windows prebuild never executes on this host, so at minimum verify that
+// its embedded SQLite version matches the locally loaded better-sqlite3 — a
+// mismatch would mean the staged binary comes from a different release.
+function hostSqliteVersion() {
+  const Database = require('better-sqlite3');
+  const db = new Database(':memory:');
+  try {
+    return db.prepare('select sqlite_version() as v').get().v;
+  } finally {
+    db.close();
+  }
+}
+
+function binaryContains(filePath, needle) {
+  const haystack = fs.readFileSync(filePath);
+  return haystack.includes(Buffer.from(needle, 'ascii'));
+}
+
 function assertHost(winePath) {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') {
     throw new Error('Windows 交叉构建要求 Apple Silicon macOS 主机');
@@ -60,6 +80,11 @@ function assertHost(winePath) {
   if (!/x86-64|x86_64|PE32\+/.test(sqliteArchitecture)) {
     throw new Error(`SQLite 原生模块架构错误：${sqliteArchitecture.trim()}`);
   }
+  const sqliteVersion = hostSqliteVersion();
+  if (!binaryContains(sqlitePrebuild, sqliteVersion)) {
+    throw new Error(`Windows 预编译模块内嵌 SQLite 版本与本机 better-sqlite3（${sqliteVersion}）不一致，可能来源错误`);
+  }
+  console.log(`SQLite 版本交叉校验通过：${sqliteVersion}`);
 }
 
 function removeGeneratedWindowsFiles() {
@@ -123,6 +148,7 @@ try {
     sha256: digest,
     electron: packageJson.devDependencies.electron,
     electronBuilder: packageJson.devDependencies['electron-builder'],
+    betterSqlite3: packageJson.dependencies['better-sqlite3'],
     optionalDependencies: 'omitted',
     tests: 'passed',
     signed: false,

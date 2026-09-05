@@ -206,14 +206,14 @@ function dueHtml(todo) {
   const isOverdue = !todo.done && todo.due_date < today;
   const isToday = todo.due_date === today;
   const cls = isOverdue ? 'due-overdue' : (isToday ? 'due-today' : 'due-future');
-  return `<span class="todo-due ${cls}">${todo.due_date.substring(5)}</span>`;
+  return `<span class="todo-due ${cls}">${escHtml(todo.due_date.substring(5))}</span>`;
 }
 
 function priorityBadge(todo) {
   const labels = { normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' };
   const codes = { normal: 'P2', important: 'P1', urgent: 'P0' };
   return todo.priority && todo.priority !== 'none'
-    ? `<span class="todo-priority prio-${todo.priority}" title="${labels[todo.priority] || todo.priority}">${codes[todo.priority] || ''}</span>`
+    ? `<span class="todo-priority prio-${escHtml(todo.priority)}" title="${escHtml(labels[todo.priority] || todo.priority)}">${escHtml(codes[todo.priority] || '')}</span>`
     : '';
 }
 
@@ -234,7 +234,7 @@ function todoItemHtml(todo, { full = false } = {}) {
     : '';
   const meta = [priorityBadge(todo), recurrenceBadge(todo), category, dueHtml(todo)].filter(Boolean).join('');
   return `
-    <div class="todo-item${selected}" data-id="${todo.id}" draggable="true">
+    <div class="todo-item${selected}" data-id="${escHtml(todo.id)}" draggable="true">
       <div class="todo-drag" data-action="drag" title="拖动排序">⠿</div>
       <button type="button" class="todo-checkbox ${todo.done ? 'done' : ''}" data-action="toggle" role="checkbox" aria-checked="${todo.done}" aria-label="${todo.done ? '标记为未完成' : '标记为已完成'}：${title}"></button>
       <div class="todo-item-body">
@@ -709,11 +709,19 @@ async function deleteTodoCategory(name) {
 async function toggleTodo(id) {
   const todo = allTodos.find(t => t.id === id);
   if (!todo) return;
-  await apiFetch(`/api/todos/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ done: !todo.done }),
-  });
+  try {
+    const response = await apiFetch(`/api/todos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done: !todo.done }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+  } catch (err) {
+    showToast('更新待办失败: ' + err.message, 'error');
+  }
   await loadTodos();
 }
 
@@ -725,7 +733,15 @@ async function deleteTodo(id) {
     confirmText: '删除',
   });
   if (!confirmed) return;
-  await apiFetch(`/api/todos/${id}`, { method: 'DELETE' });
+  try {
+    const response = await apiFetch(`/api/todos/${id}`, { method: 'DELETE' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+  } catch (err) {
+    showToast('删除待办失败: ' + err.message, 'error');
+  }
   if (selectedTodoId === id) resetTodoForm();
   await loadTodos();
 }

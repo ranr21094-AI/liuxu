@@ -835,6 +835,16 @@
               <small>只允许已存在的目录。敏感路径（如 .ssh）无法加入。</small>
             </div>
             <label class="settings-row" for="chromeExtensionId"><span><strong>Chrome 扩展 ID</strong><small>浏览器工具（browser.*）经扩展执行；填入扩展的 ID 后自动转发，30 秒无响应自动失败</small></span><input id="chromeExtensionId" type="text" spellcheck="false" autocomplete="off" placeholder="例如 lkndcdefghejkmnop…"></label>
+            <div class="settings-field">
+              <span>扩展配对（推荐）</span>
+              <div class="settings-actions">
+                <button type="button" class="secondary-action compact" id="btnChromePairingStart">开始配对</button>
+                <button type="button" class="secondary-action compact" id="btnChromePairingConfirm" hidden>输入配对码并确认</button>
+              </div>
+              <input id="chromePairingCode" type="text" spellcheck="false" autocomplete="off" placeholder="配对码（10 分钟内有效）" hidden>
+              <div id="chromePairingResult" class="computer-allowlist" hidden></div>
+              <small>配对成功后把显示的密钥粘贴到扩展弹窗保存；此后扩展只执行带本应用签名的浏览器命令。</small>
+            </div>
           </section>
           <section class="settings-section" data-settings-panel="data" hidden>
             <h3>备份与恢复</h3>

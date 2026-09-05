@@ -39,6 +39,55 @@ function scrub(value) {
   return output;
 }
 
+const PAIRING_KEY_STORAGE = 'liuxuPairingKey';
+
+function hexToBytes(hex) {
+  const value = String(hex || '').trim().toLowerCase();
+  if (!/^[0-9a-f]*$/.test(value) || value.length % 2 !== 0) return null;
+  const bytes = new Uint8Array(value.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+// Mirrors the server's chrome.js sign(): HMAC-SHA256 over
+// `${nonce}.${JSON.stringify({ name, args })}`, hex encoded.
+async function verifyAgentCommand(message) {
+  let stored = null;
+  try {
+    stored = (await chrome.storage.local.get(PAIRING_KEY_STORAGE))[PAIRING_KEY_STORAGE] || '';
+  } catch {
+    stored = '';
+  }
+  const keyBytes = hexToBytes(stored);
+  // No key configured: keep the pre-pairing behavior so the browser tools
+  // stay usable; a paired setup always enforces the signature.
+  if (!keyBytes || !keyBytes.length) return true;
+  const nonce = typeof message?.nonce === 'string' ? message.nonce : '';
+  const signatureHex = typeof message?.signature === 'string' ? message.signature : '';
+  const signatureBytes = hexToBytes(signatureHex);
+  if (!nonce || !signatureBytes) return false;
+  try {
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify'],
+    );
+    const payload = JSON.stringify({ name: message.name, args: message.args });
+    return await crypto.subtle.verify(
+      'HMAC',
+      cryptoKey,
+      signatureBytes,
+      new TextEncoder().encode(`${nonce}.${payload}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function detachTab(tabId) {
   try { await chrome.debugger.detach({ tabId }); } catch {}
   attached.delete(tabId);
@@ -135,6 +184,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
     if (message.type === 'agent.command') {
+      // When a pairing key has been configured, only server-signed commands
+      // are executed. Any loopback page can reach this extension, so the
+      // signature is what separates the paired LiuXu app from everything else.
+      if (!(await verifyAgentCommand(message))) {
+        sendResponse({ ok: false, error: 'Command signature is missing or invalid' });
+        return;
+      }
       const result = await executeAgentCommand(message);
       sendResponse({ ok: true, result: scrub(result) });
     }
@@ -142,9 +198,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Only the paired command path and the read-only tab scan are reachable from
+// external loopback pages; debugger attach/detach stay popup-internal.
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
   if (!isAppSender(sender)) {
     sendResponse({ ok: false, error: 'Origin is not allowed' });
+    return false;
+  }
+  if (message?.type !== 'agent.command' && message?.type !== 'tabs.scan') {
+    sendResponse({ ok: false, error: 'Message type is not allowed from external senders' });
     return false;
   }
   chrome.runtime.sendMessage(message, sendResponse);

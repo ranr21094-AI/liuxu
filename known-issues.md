@@ -32,7 +32,7 @@
 
 ---
 
-## 2. 大输出写入 agent-runs.json 的写放大
+## 2. 大输出写入 agent_runs 的写放大
 
 **严重度**：中低（性能与磁盘磨损，非正确性问题；单用户本地部署下影响有限）
 
@@ -40,16 +40,14 @@
 
 **成因**（三段逻辑叠加）：
 
-1. 工具结果（最多 1MB 输出）被 JSON 序列化后存入 `run.messages`（`lib/agent/runtime.js:674`），且 `tool.completed` 事件的 payload 又携带完整 result 存入 `run.events`（`lib/agent/runtime.js:154`、`437`）——同一份输出持久化两份。
-2. run 执行期间每个事件都调用 `emit()`（`lib/agent/runtime.js:163-169`）→ `store.saveRun(run)`。
-3. `saveRun`（`lib/agent/store.js:141-149`）是"读整个 `agent-runs.json`（最多 200 个 run）→ 替换该 run → 整文件重写"。
-
-即：run 里一旦嵌有 1MB 输出，之后**每发一个事件**都把含这 1MB 的整个文件重写一遍。例：文件已 5MB、一轮 30 个事件 → 约 150MB 磁盘写入。一轮多工具调用时事件数更多。
+1. 工具结果（最多 1MB 输出）被 JSON 序列化后存入 `run.messages`，且 `tool.completed` 事件的 payload 又携带完整 result 存入 `run.events`——同一份输出持久化两份。
+2. run 执行期间每个事件都调用 `emit()` → `store.saveRun(run)`。
+3. `saveRun`（`lib/agent/store.js`）每次把整个 run（含全部 messages/events 的 body）UPSERT 重写进 `agent_runs` 表。SQLite 迁移后不再是"整文件重写"，但单行 body 可达 1MB+，每个事件仍重写整行。
 
 **现有缓解**：
 
 - 单次工具输出硬上限 1MB（`lib/computer/code.js` 的 `MAX_OUTPUT`，`bash.js` 同步引用）；
-- `agent-runs.json` 最多保留 200 个 run；
+- `agent_runs` 表最多保留 200 个终态 run（活动 run 不淘汰，2026-09-05 修正）；
 - 2026-08-22 修复了输出超限后的无限缓冲（超 1MB 即停止拼接并杀进程，结果带 `outputTruncated` 标记），单次调用内不再膨胀。
 
 **为什么暂不修**：像样的修法都要动持久化格式或事件语义，牵连 SSE 重放、备份恢复（`lib/workspace/`）、会话历史 API，属于一次独立重构，不适合搭车小改。
@@ -62,4 +60,4 @@
 
 ---
 
-*最后更新：2026-08-22*
+*最后更新：2026-09-05*

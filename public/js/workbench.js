@@ -130,6 +130,7 @@ const state = {
   desktopUpdateUnsubscribe: null,
   settingsPanel: 'appearance',
   documentSaveTimer: null,
+  savingDocument: false,
   annotationSaveTimer: null,
   documentDirty: false,
   annotationDirty: false,
@@ -3563,6 +3564,59 @@ function runEventKey(event) {
 }
 
 const CHROME_EXTENSION_ID_KEY = 'worklogChromeExtensionId';
+const CHROME_PAIRING_CODE_RE = /^[0-9a-f]{6}$/;
+
+function chromePairingResultNode() {
+  return $('#chromePairingResult');
+}
+
+async function startChromePairing() {
+  const button = $('#btnChromePairingStart');
+  try {
+    if (button) button.disabled = true;
+    const response = await apiFetch('/api/agent/chrome/pairing', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '配对码生成失败');
+    const codeInput = $('#chromePairingCode');
+    codeInput.value = data.pairingCode || '';
+    codeInput.hidden = false;
+    $('#btnChromePairingConfirm').hidden = false;
+    const resultNode = chromePairingResultNode();
+    resultNode.hidden = false;
+    resultNode.innerHTML = '<code>配对码已生成：在扩展弹窗保存密钥前，先点击“输入配对码并确认”。</code>';
+  } catch (err) {
+    showToast(err.message || '配对失败', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function confirmChromePairing() {
+  const button = $('#btnChromePairingConfirm');
+  const pairingCode = String($('#chromePairingCode')?.value || '').trim();
+  if (!CHROME_PAIRING_CODE_RE.test(pairingCode)) {
+    showToast('请输入 6 位十六进制配对码', 'error');
+    return;
+  }
+  try {
+    if (button) button.disabled = true;
+    const response = await apiFetch('/api/agent/chrome/pairing/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pairingCode }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '配对确认失败');
+    const resultNode = chromePairingResultNode();
+    resultNode.hidden = false;
+    resultNode.innerHTML = `<code title="${escHtml(data.key || '')}">${escHtml(data.key || '')}</code><small>把这段密钥粘贴到扩展弹窗并保存。请勿分享给他人。</small>`;
+    showToast('配对成功，请将密钥保存到扩展', 'success');
+  } catch (err) {
+    showToast(err.message || '配对失败', 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
 
 function relayClientToolRequest(entry, payload) {
   const extensionId = localStorage.getItem(CHROME_EXTENSION_ID_KEY) || '';
@@ -4524,15 +4578,28 @@ async function resolveDocumentConflict(current) {
 async function saveDocument() {
   clearTimeout(state.documentSaveTimer);
   if (!state.activeDocument || !state.documentDirty || state.documentConflict) return true;
+  if (state.savingDocument) {
+    // A PATCH is already in flight; the debounce meanwhile captured newer
+    // input, so run once more after the current request settles instead of
+    // firing a conflicting second PATCH with the same baseVersion.
+    state.documentSaveTimer = setTimeout(() => saveDocument(), 400);
+    return true;
+  }
   const id = state.activeDocument.id;
   const patch = currentDocumentPatch();
   const submittedContent = patch.content;
+  state.savingDocument = true;
   setDocumentSaveState('正在保存', 'saving');
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
+  let response;
+  try {
+    response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } finally {
+    state.savingDocument = false;
+  }
   const data = await response.json().catch(() => ({}));
   if (state.activeDocument?.id !== id) return false;
   if (response.status === 409) {
@@ -4552,8 +4619,16 @@ async function saveDocument() {
     $('#documentContent').setSelectionRange(nextCaret, nextCaret);
   }
   state.activeDocument = data;
-  state.documentDirty = false;
-  setDocumentSaveState('已保存');
+  // Only clear the dirty flag when the editor still holds exactly what was
+  // submitted; otherwise edits made during the round trip would be silently
+  // reported as saved while never reaching the server.
+  if ($('#documentContent').value === submittedContent) {
+    state.documentDirty = false;
+    setDocumentSaveState('已保存');
+  } else {
+    setDocumentSaveState('等待保存', 'saving');
+    scheduleDocumentSave();
+  }
   knowledgeEnhancements?.onDocumentSaved?.(data);
   $('#topbarSubtitle').textContent = data.title || '未命名';
   updateDocumentSummary(data);
@@ -5417,6 +5492,8 @@ function bindEvents() {
     },
   }).bindBackupEvents();
   $('#btnComputerAllowlistAdd').addEventListener('click', addComputerAllowlistEntry);
+  $('#btnChromePairingStart')?.addEventListener('click', startChromePairing);
+  $('#btnChromePairingConfirm')?.addEventListener('click', confirmChromePairing);
   $('#chromeExtensionId')?.addEventListener('change', event => {
     const value = String(event.target?.value || '').trim();
     if (value) localStorage.setItem(CHROME_EXTENSION_ID_KEY, value);

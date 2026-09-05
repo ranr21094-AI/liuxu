@@ -65,8 +65,12 @@ test('ensureAiChatsMigrated converts legacy conversations into archived agent se
     conversations: [],
     activeConversationId: '',
   });
-
-  const sessions = JSON.parse(fs.readFileSync(path.join(dir, 'agent-sessions.json'), 'utf8')).sessions;
+  // Sessions must land in SQLite (agent_sessions), not in a legacy JSON file
+  // that nothing imports once the database exists.
+  assert.equal(fs.existsSync(path.join(dir, 'agent-sessions.json')), false);
+  const { createAgentStore } = require('../lib/agent/store');
+  const store = createAgentStore(db);
+  const sessions = store.listSessions({ includeArchived: true });
   assert.equal(sessions.length, 2);
   assert.match(sessions[0].title, /^\[旧AI·日志\]/);
   assert.equal(sessions[0].status, 'archived');
@@ -74,6 +78,10 @@ test('ensureAiChatsMigrated converts legacy conversations into archived agent se
   assert.match(sessions[1].messages.at(-1).content, /uploads\/test\.png/);
   assert.match(sessions[1].messages.at(-1).content, /example\.com/);
   assert.equal(sessions[0].messages.some(item => item.role === 'tool' && item.name === 'logs.create'), true);
+  // Archived legacy sessions must not claim the active-session pointer.
+  const { readMeta } = require('../lib/db/helpers');
+  const activeSessionId = readMeta(db.sqlite, 'active_session_id', '');
+  assert.equal(sessions.some(item => item.id === activeSessionId), false);
 
   const second = ensureAiChatsMigrated(db);
   assert.equal(second.migrated, 0);

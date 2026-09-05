@@ -58,7 +58,7 @@ function escapeAttr(value) {
 function renderImagePreview(host, doc) {
   host.innerHTML = `
     <div class="file-preview-image-wrap">
-      <img class="file-preview-image" src="${fileContentUrl(doc)}" alt="${escapeAttr(doc.title || doc.fileMeta?.filename || '图片')}" loading="lazy">
+      <img class="file-preview-image" src="${escapeAttr(fileContentUrl(doc))}" alt="${escapeAttr(doc.title || doc.fileMeta?.filename || '图片')}" loading="lazy">
       <p class="file-preview-hint">双击图片可放大查看</p>
     </div>`;
   return enableMarkdownImagePreview(host, '.file-preview-image');
@@ -70,13 +70,17 @@ function renderDocxPreview(host, doc) {
     host.innerHTML = '<p class="file-preview-empty">暂时无法生成 Word 预览，请打开原文件查看。</p>';
     return () => {};
   }
-  const sanitized = window.DOMPurify
-    ? window.DOMPurify.sanitize(html, {
-      ADD_TAGS: ['img'],
-      ADD_ATTR: ['src', 'alt', 'title'],
-      ADD_DATA_URI_TAGS: ['img'],
-    })
-    : html;
+  // Fail closed: without DOMPurify the extracted docx HTML must never touch
+  // the DOM un-sanitized.
+  if (!window.DOMPurify) {
+    host.innerHTML = '<p class="file-preview-empty">安全组件未就绪，Word 预览不可用，请打开原文件查看。</p>';
+    return () => {};
+  }
+  const sanitized = window.DOMPurify.sanitize(html, {
+    ADD_TAGS: ['img'],
+    ADD_ATTR: ['src', 'alt', 'title'],
+    ADD_DATA_URI_TAGS: ['img'],
+  });
   host.innerHTML = `<div class="file-preview-docx prose">${sanitized}</div>`;
   return enableMarkdownImagePreview(host, '.file-preview-docx img');
 }

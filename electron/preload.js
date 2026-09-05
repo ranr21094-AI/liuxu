@@ -15,6 +15,10 @@ const updates = {
   quitForUpdate: () => invoke('quit-for-update'),
   onProgress(callback) {
     if (typeof callback !== 'function') return () => {};
+    // Re-registering the same callback replaces the entry; remove the old
+    // listener first or it leaks on ipcRenderer forever.
+    const existing = updateProgressListeners.get(callback);
+    if (existing) ipcRenderer.removeListener('liuxu:update:progress', existing);
     const listener = (_event, payload) => callback(payload);
     updateProgressListeners.set(callback, listener);
     ipcRenderer.on('liuxu:update:progress', listener);

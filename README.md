@@ -15,14 +15,14 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.2.2-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.2.3-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.2.2-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.2.3-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（测试包）
@@ -30,8 +30,8 @@ Get-FileHash .\LiuXu-Setup-1.2.2-x64.exe -Algorithm SHA256
 当前 Mac 首发包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
 
 ```text
-LiuXu-1.2.2-mac-arm64.dmg
-LiuXu-1.2.2-mac-arm64.zip
+LiuXu-1.2.3-mac-arm64.dmg
+LiuXu-1.2.3-mac-arm64.zip
 ```
 
 测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
@@ -39,8 +39,8 @@ LiuXu-1.2.2-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.2.2-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.2.2-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.2.3-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.2.3-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -88,7 +88,18 @@ API Key 会使用本机密钥加密保存。调用模型、联网搜索或生图
 
 桌面版进入 **设置 → 更新** 后会检查 GitHub Releases。发现新版本时，留序会下载当前平台的安装包并校验 GitHub SHA-256；确认后打开安装程序。更新只替换应用文件，不会覆盖知识、待办、密钥或备份数据。
 
-更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.2.1` 用户可手动安装 `1.2.2`，之后继续使用应用内更新。
+更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。`1.2.2` 用户可手动安装 `1.2.3`，之后继续使用应用内更新。
+
+### 全量代码审查修复（v1.2.3）
+
+本版本是对此前两轮代码审查后新增代码与历史遗漏的第三轮系统复审，共修复 30 项问题，全部通过 302 项自动化测试。重点包括：
+
+- 修复浏览器工具结果提交缺少 `await` 导致的进程崩溃风险；修复 `bash.run` 超时后命令在 macOS/Linux 继续后台运行的问题。
+- 修复 Windows 旧数据迁移遗漏生图供应商密钥重加密的问题，迁移收尾增加解密自检。
+- 收紧日记锁不变量：分类批量移动到“日记”下的文档自动锁定，移出也不会静默解锁。
+- Chrome 扩展命令执行路径增加可选的签名校验（设置 → 电脑 中配对后生效）；`onMessageExternal` 收窄到配对命令与只读扫描。
+- 修复知识文档自动保存的竞态（伪冲突提示与静默丢失输入）；修复 Agent 运行内存泄漏与取消竞态；ZIP 恢复改为流式限额并原子替换数据库。
+- 加固：导入 SVG 强制下载、SSRF 识别十六进制 IPv4-mapped 内网形式、更新检查超时与下载防重入、生图供应商 Key 不再被设置页误清空等。
 
 ### Agent 通用文件附件（v1.2.2）
 
@@ -187,7 +198,7 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.2.2` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.2.3` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
 
 ### macOS 提示无法验证开发者
 
@@ -242,13 +253,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.2.2-x64.exe
-LiuXu-Setup-1.2.2-x64.exe.sha256
+LiuXu-Setup-1.2.3-x64.exe
+LiuXu-Setup-1.2.3-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.2.2-mac-arm64.dmg
-LiuXu-1.2.2-mac-arm64.dmg.sha256
-LiuXu-1.2.2-mac-arm64.zip
-LiuXu-1.2.2-mac-arm64.zip.sha256
+LiuXu-1.2.3-mac-arm64.dmg
+LiuXu-1.2.3-mac-arm64.dmg.sha256
+LiuXu-1.2.3-mac-arm64.zip
+LiuXu-1.2.3-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -284,6 +295,7 @@ desktop-build-summary-mac.json
 - [代码审查与修复记录](code-review-remediation.md)
 - [v1.2.1 发布说明](docs/releases/v1.2.1.md)
 - [v1.2.2 发布说明](docs/releases/v1.2.2.md)
+- [v1.2.3 发布说明](docs/releases/v1.2.3.md)
 - [v1.2.0 发布说明](docs/releases/v1.2.0.md)
 - [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [贡献与仓库说明](AGENTS.md)

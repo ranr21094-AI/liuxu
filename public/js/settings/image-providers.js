@@ -187,7 +187,7 @@ function renderProvider(provider, index) {
         <label class="custom-provider-inline-field">名称<input class="image-provider-name" value="${escHtml(provider.name)}"></label>
         <label class="custom-provider-inline-field">协议<select class="image-provider-adapter"><option value="seedream" ${provider.adapter === 'seedream' ? 'selected' : ''}>Seedream</option><option value="openai-images" ${provider.adapter === 'openai-images' ? 'selected' : ''}>OpenAI Images</option></select></label>
         <label class="custom-provider-inline-field">API 根地址<input class="image-provider-base-url" value="${escHtml(provider.baseUrl)}" spellcheck="false" placeholder="https://..."><small>生成端点：${escHtml(generationEndpoint(provider))}</small></label>
-        <label class="custom-provider-inline-field">API Key<input class="image-provider-key" type="password" autocomplete="off" placeholder="${provider.apiKeyConfigured ? '已配置；留空保持不变' : '可留空用于本地接口'}"></label>
+        <label class="custom-provider-inline-field">API Key<input class="image-provider-key" type="password" autocomplete="off" value="${escHtml(provider.apiKey || '')}" placeholder="${provider.apiKeyConfigured ? '已配置；留空保持不变' : '可留空用于本地接口'}"></label>
       </div>
       <div class="image-provider-toolbar">
         <label class="image-provider-check"><input class="image-provider-enabled" type="checkbox" ${provider.enabled !== false ? 'checked' : ''}>启用供应商</label>

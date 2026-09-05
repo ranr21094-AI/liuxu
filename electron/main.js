@@ -300,6 +300,8 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('second-instance', () => {
+    // A rejected startupPromise was already reported via whenReady().catch;
+    // re-observing it here must not raise a second unhandledRejection.
     Promise.resolve(startupPromise).then(() => {
       if (!focusMainWindow() && app.isReady() && httpServer) {
         const address = httpServer.address();
@@ -307,7 +309,7 @@ if (!app.requestSingleInstanceLock()) {
           createMainWindow(`http://127.0.0.1:${address.port}/`).catch(showStartupError);
         }
       }
-    });
+    }).catch(() => {});
   });
 
   app.on('before-quit', (event) => {

@@ -625,6 +625,11 @@ html[data-theme="dark"] .agent-empty-hero__frame {
   margin: 0 0 8px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--line);
+  /* Isolation + explicit stacking so sanitized-but-unfriendly markdown
+     (position/z-index are stripped anyway) can never paint over the approval
+     controls that gate agent tool execution. */
+  isolation: isolate;
+  z-index: 5;
 }
 .agent-approval-dock[hidden] { display: none !important; }
 .agent-approval-dock .approval-card {

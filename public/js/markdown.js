@@ -21,10 +21,26 @@ function installSanitizerHook() {
   if (sanitizerHookInstalled || !purifier?.addHook) return;
   sanitizerHookInstalled = true;
   purifier.addHook('afterSanitizeAttributes', node => {
-    if (node.tagName !== 'IMG') return;
-    const normalized = normalizeUploadSrc(node.getAttribute('src'));
-    if (normalized && isSafeImageSrc(normalized)) node.setAttribute('src', normalized);
-    else node.removeAttribute('src');
+    if (node.tagName === 'IMG') {
+      const normalized = normalizeUploadSrc(node.getAttribute('src'));
+      if (normalized && isSafeImageSrc(normalized)) node.setAttribute('src', normalized);
+      else node.removeAttribute('src');
+    }
+    // `style` stays allowed for KaTeX math output, but page-covering or
+    // stacked positioning could hide the approval dock and fake the UI.
+    if (node.hasAttribute?.('style')) {
+      const style = node.getAttribute('style') || '';
+      const cleaned = style
+        .replace(/(?:^|;)\s*(?:top|left|right|bottom|inset|z-index|transform)\s*:[^;]*/gi, '')
+        .replace(/(?:^|;)\s*position\s*:[^;]*/gi, match => (
+          /^(?:\s*;)?\s*position\s*:\s*(?:static|relative)\s*(?:;|$)?$/i.test(`${match};`) ? match : ''
+        ));
+      if (cleaned !== style) {
+        const next = cleaned.replace(/^;+|;+$/g, '').replace(/;\s*;/g, ';');
+        if (next) node.setAttribute('style', next);
+        else node.removeAttribute('style');
+      }
+    }
   });
 }
 

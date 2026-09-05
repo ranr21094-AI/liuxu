@@ -273,12 +273,69 @@ function copyLegacyEnv(legacyEnvPath, targetDir) {
   return true;
 }
 
+// The legacy install encrypted AI secrets with its resolved DATA_DIR as the
+// scope. When the old .env pointed DATA_DIR somewhere else than <project>/data,
+// that path — not the default source directory — is the scope the ciphertexts
+// are bound to.
+function resolveLegacySecretScope(sourceDir, legacyEnvPath) {
+  if (legacyEnvPath && fs.existsSync(legacyEnvPath)) {
+    try {
+      const parsed = require('dotenv').parse(fs.readFileSync(legacyEnvPath));
+      const configured = typeof parsed.DATA_DIR === 'string' ? parsed.DATA_DIR.trim() : '';
+      if (configured) {
+        const projectRoot = path.dirname(path.resolve(legacyEnvPath));
+        return path.isAbsolute(configured)
+          ? path.resolve(configured)
+          : path.resolve(projectRoot, configured);
+      }
+    } catch { /* fall through to the default scope */ }
+  }
+  return path.resolve(sourceDir);
+}
+
 function aiSecretAad(scope, field) {
   return `work-log-ai-settings:v1:${scope}:${field}`;
 }
 
 function customProviderSecretAad(scope, providerId) {
   return `work-log-ai-settings:v1:${scope}:customProvider:${providerId}`;
+}
+
+function imageProviderSecretAad(scope, providerId) {
+  return `work-log-ai-settings:v1:${scope}:imageProvider:${providerId}`;
+}
+
+// Reads every encrypted AI secret under the given scope. Any value that fails
+// to decrypt is a hard error — the caller must not commit a database whose
+// secrets the target installation would be unable to read.
+function assertAiSettingsDecodable(settings, scope) {
+  const problems = [];
+  for (const field of AI_SECRET_FIELDS) {
+    const value = settings?.[field];
+    if (!isEncryptedSecret(value)) continue;
+    try {
+      decryptSecret(value, aiSecretAad(scope, field));
+    } catch {
+      problems.push(field);
+    }
+  }
+  const providerLists = [
+    ['customProviders', customProviderSecretAad],
+    ['imageProviders', imageProviderSecretAad],
+  ];
+  for (const [listKey, aadFor] of providerLists) {
+    (Array.isArray(settings?.[listKey]) ? settings[listKey] : []).forEach((provider, index) => {
+      if (!provider || typeof provider !== 'object' || !isEncryptedSecret(provider.apiKey)) return;
+      try {
+        decryptSecret(provider.apiKey, aadFor(scope, provider.id || 'unknown'));
+      } catch {
+        problems.push(`${listKey}[${index}]`);
+      }
+    });
+  }
+  if (problems.length) {
+    throw new Error(`AI 密钥无法用目标 scope 解密：${problems.join(', ')}`);
+  }
 }
 
 function reencryptAiSettingsScope(databasePath, sourceScope, targetScope, Database = require('better-sqlite3')) {
@@ -312,10 +369,26 @@ function reencryptAiSettingsScope(databasePath, sourceScope, targetScope, Databa
         };
       });
     }
+    if (Array.isArray(settings?.imageProviders)) {
+      settings.imageProviders = settings.imageProviders.map((provider) => {
+        if (!provider || typeof provider !== 'object' || !isEncryptedSecret(provider.apiKey)) return provider;
+        const providerId = provider.id || 'unknown';
+        const plaintext = decryptSecret(provider.apiKey, imageProviderSecretAad(source, providerId));
+        secrets += 1;
+        return {
+          ...provider,
+          apiKey: encryptSecret(plaintext, imageProviderSecretAad(target, providerId)),
+        };
+      });
+    }
     if (!secrets) return { changed: false, secrets: 0 };
     database.transaction(() => {
       database.prepare('UPDATE ai_settings SET body = ? WHERE id = 1').run(JSON.stringify(settings));
     })();
+    // Read the row back from the database and decode every secret under the
+    // target scope before the caller commits the migration.
+    const stored = JSON.parse(database.prepare('SELECT body FROM ai_settings WHERE id = 1').get().body);
+    assertAiSettingsDecodable(stored, target);
     return { changed: true, secrets };
   } finally {
     database.close();
@@ -379,7 +452,7 @@ function migrateLegacyData({
 
     const secretMigration = reencryptAiSettingsScope(
       path.join(staging, 'schedule.db'),
-      source,
+      resolveLegacySecretScope(source, legacyEnvPath),
       target,
       Database,
     );

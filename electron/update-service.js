@@ -268,9 +268,12 @@ function createUpdateService({
   let candidate = null;
   let downloaded = null;
   let controller = null;
+  let downloadInFlight = null;
 
   async function check() {
-    const response = await fetchWithRedirects(fetchImpl, UPDATE_API_URL, { validateUrl: assertSafeApiUrl });
+    // A hung GitHub connection must not leave the renderer waiting forever.
+    const timeout = AbortSignal.timeout(15000);
+    const response = await fetchWithRedirects(fetchImpl, UPDATE_API_URL, { validateUrl: assertSafeApiUrl, signal: timeout.signal });
     if (!response.ok) throw new Error(`GitHub 更新检查失败（HTTP ${response.status}）`);
     const release = await response.json();
     const summary = summarizeRelease(release, { currentVersion, platform, arch });
@@ -279,7 +282,17 @@ function createUpdateService({
     return summary;
   }
 
-  async function download() {
+  function download() {
+    // Re-entrant calls would overwrite `controller` and write the same .part
+    // file concurrently; collapse them onto the single in-flight download.
+    if (downloadInFlight) return downloadInFlight;
+    downloadInFlight = performDownload().finally(() => {
+      downloadInFlight = null;
+    });
+    return downloadInFlight;
+  }
+
+  async function performDownload() {
     if (!candidate) throw new Error('请先检查更新');
     fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
     const target = safeCachePath(cacheDir, candidate.name);

@@ -8,6 +8,11 @@ const vendorDir = path.join(rootDir, 'public', 'vendor');
 
 await rm(generatedDir, { recursive: true, force: true });
 
+// Rebuild vendor dirs from scratch: stale or hand-dropped files would keep
+// being served by express.static and packaged into the desktop installers.
+for (const vendorSub of ['marked', 'dompurify', 'katex', 'pdfjs']) {
+  await rm(path.join(vendorDir, vendorSub), { recursive: true, force: true });
+}
 await mkdir(path.join(vendorDir, 'marked'), { recursive: true });
 await mkdir(path.join(vendorDir, 'dompurify'), { recursive: true });
 await mkdir(path.join(vendorDir, 'katex'), { recursive: true });
