@@ -59,7 +59,7 @@ test('raw duplicate upstream ids require a stable modelRef', () => {
   assert.equal(selected.provider.id, 'ip_two');
 });
 
-test('custom provider keeps its secret only when endpoint identity is unchanged', async () => {
+test('custom provider keeps its secret when endpoint identity changes', async () => {
   const current = [{
     id: 'ip_saved', name: 'Saved', adapter: 'openai-images', baseUrl: 'http://127.0.0.1:1234', apiKey: 'secret', enabled: true,
     models: [{ id: 'im_saved', upstreamId: 'custom-image', name: 'Custom', enabled: true, capabilities: {}, defaults: {} }],
@@ -67,7 +67,7 @@ test('custom provider keeps its secret only when endpoint identity is unchanged'
   const same = await normalizeImageProviders([{ ...current[0], apiKey: '' }], current);
   assert.equal(same[0].apiKey, 'secret');
   const changed = await normalizeImageProviders([{ ...current[0], baseUrl: 'http://127.0.0.1:4321', apiKey: '' }], current);
-  assert.equal(changed[0].apiKey, '');
+  assert.equal(changed[0].apiKey, 'secret');
 });
 
 test('unified request maps legacy count and applies provider defaults', () => {

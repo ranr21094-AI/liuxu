@@ -77,6 +77,25 @@ test('image provider settings, model test, catalog, and explicit test generation
   assert.equal(connection.status, 200);
   assert.equal((await connection.json()).level, 'full');
 
+  const connectionWithoutModel = await fetch(`${base}/api/ai/image-providers/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: publicProvider }),
+  });
+  assert.equal(connectionWithoutModel.status, 200);
+  assert.equal((await connectionWithoutModel.json()).level, 'full');
+
+  const blankConnection = await fetch(`${base}/api/ai/image-providers/test`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      provider: {
+        ...publicProvider,
+        models: [{ id: 'im_empty', upstreamId: '', name: '' }],
+      },
+    }),
+  });
+  assert.equal(blankConnection.status, 200);
+  assert.equal((await blankConnection.json()).level, 'full');
+
   const unconfirmed = await fetch(`${base}/api/ai/image-providers/test-generation`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ provider: publicProvider, modelId: 'im_custom', prompt: 'blue dot' }),

@@ -38,6 +38,7 @@ import {
   describeImageSelection,
   loadImageProviderSettings,
   readImageProviderSettings,
+  imageProviderSaveError,
 } from './settings/image-providers.js';
 
 const $ = selector => document.querySelector(selector);
@@ -1055,20 +1056,20 @@ const MEMORY_SETTING_FIELDS = Object.freeze([
 ]);
 
 const AGENT_SETTING_FIELDS = Object.freeze([
-  { key: 'agentDelegateMaxRounds', min: 1, fallback: 8 },
-  { key: 'agentMaxToolFailures', min: 1, fallback: 3 },
-  { key: 'agentReadConcurrency', min: 1, fallback: 4 },
-  { key: 'agentRepeatMutationLimit', min: 1, fallback: 3 },
-  { key: 'agentWebFetchMaxKb', min: 1, fallback: 512 },
-  { key: 'agentWebFetchTimeoutSec', min: 1, fallback: 15 },
-  { key: 'agentKnowledgeSearchLimit', min: 1, fallback: 20 },
-  { key: 'agentKnowledgeSearchMaxLimit', min: 1, fallback: 60 },
-  { key: 'agentKnowledgeListLimit', min: 1, fallback: 40 },
-  { key: 'agentKnowledgeListMaxLimit', min: 1, fallback: 100 },
-  { key: 'agentMemorySearchLimit', min: 1, fallback: 20 },
-  { key: 'agentMemorySearchMaxLimit', min: 1, fallback: 40 },
-  { key: 'agentMemoryListLimit', min: 1, fallback: 40 },
-  { key: 'agentMemoryListMaxLimit', min: 1, fallback: 100 },
+  { key: 'agentDelegateMaxRounds', min: 1, max: 32, fallback: 8 },
+  { key: 'agentMaxToolFailures', min: 1, max: 20, fallback: 3 },
+  { key: 'agentReadConcurrency', min: 1, max: 16, fallback: 4 },
+  { key: 'agentRepeatMutationLimit', min: 1, max: 20, fallback: 3 },
+  { key: 'agentWebFetchMaxKb', min: 1, max: 4096, fallback: 512 },
+  { key: 'agentWebFetchTimeoutSec', min: 1, max: 120, fallback: 15 },
+  { key: 'agentKnowledgeSearchLimit', min: 1, max: 200, fallback: 20 },
+  { key: 'agentKnowledgeSearchMaxLimit', min: 1, max: 200, fallback: 60 },
+  { key: 'agentKnowledgeListLimit', min: 1, max: 200, fallback: 40 },
+  { key: 'agentKnowledgeListMaxLimit', min: 1, max: 200, fallback: 100 },
+  { key: 'agentMemorySearchLimit', min: 1, max: 200, fallback: 20 },
+  { key: 'agentMemorySearchMaxLimit', min: 1, max: 200, fallback: 40 },
+  { key: 'agentMemoryListLimit', min: 1, max: 200, fallback: 40 },
+  { key: 'agentMemoryListMaxLimit', min: 1, max: 200, fallback: 100 },
 ]);
 
 function fillMemorySettingsForm(settings = {}) {
@@ -1085,7 +1086,10 @@ function fillAgentSettingsForm(settings = {}) {
     const input = $(`#${field.key}`);
     if (!input) continue;
     const value = Number(settings[field.key]);
-    input.value = Number.isFinite(value) ? Math.max(field.min, Math.round(value)) : field.fallback;
+    const bounded = Number.isFinite(value)
+      ? Math.min(field.max || Number.MAX_SAFE_INTEGER, Math.max(field.min, Math.round(value)))
+      : field.fallback;
+    input.value = bounded;
   }
 }
 
@@ -1108,7 +1112,7 @@ function readAgentSettingsFromForm(current = {}) {
     const input = $(`#${field.key}`);
     const parsed = Number(input?.value);
     const currentValue = Number(current[field.key]);
-    values[field.key] = Number.isInteger(parsed) && parsed >= field.min
+    values[field.key] = Number.isInteger(parsed) && parsed >= field.min && parsed <= (field.max || Number.MAX_SAFE_INTEGER)
       ? parsed
       : (Number.isInteger(currentValue) ? currentValue : field.fallback);
   }
@@ -1207,8 +1211,14 @@ function customModelTestStateInner(key) {
 // Patch a single model's test state (and its button label) in place.
 function updateCustomModelTestState(key) {
   const root = $('#customProvidersList');
-  const slot = root?.querySelector(`[data-test-state="${CSS.escape(key)}"]`);
-  if (!slot) return renderCustomProvidersList();
+  if (!root) return;
+  const slot = root.querySelector(`[data-test-state="${CSS.escape(key)}"]`);
+  if (!slot) {
+    const providerId = String(key || '').split(':')[0];
+    if (providerId && providerId !== state.customProviderSelectedId) return;
+    syncCustomProvidersDraftFromDom();
+    return renderCustomProvidersList();
+  }
   slot.innerHTML = customModelTestStateInner(key);
   const testButton = slot.closest('.custom-provider-model-row')?.querySelector('[data-test-model]');
   const result = state.customProviderTestStates.get(key);
@@ -1262,7 +1272,6 @@ function renderCustomProvidersList() {
   state.customProviderSelectedId = selectedProvider?.id || '';
   const providerLabel = provider => provider.name?.trim() || '未命名供应商';
   const providerIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 9h8M8 13h5M8 17h8"></path></svg>';
-  const dragIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="7" r="1"></circle><circle cx="16" cy="7" r="1"></circle><circle cx="8" cy="12" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="8" cy="17" r="1"></circle><circle cx="16" cy="17" r="1"></circle></svg>';
   const editIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17.5-.7 3.2 3.2-.7L18.9 7.6a2.1 2.1 0 0 0-3-3z"></path><path d="m14.5 6.5 3 3"></path></svg>';
   const trashIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 4h4l1 3H9zM7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg>';
   const eyeIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z"></path><circle cx="12" cy="12" r="2.2"></circle></svg>';
@@ -1272,7 +1281,6 @@ function renderCustomProvidersList() {
       <div class="custom-provider-sidebar-list" role="listbox" aria-label="选择供应商">
         ${list.map(provider => `
           <button type="button" class="custom-provider-nav-item${provider.id === state.customProviderSelectedId ? ' active' : ''}" data-select-provider="${escHtml(provider.id)}" role="option" aria-selected="${provider.id === state.customProviderSelectedId}">
-            <span class="custom-provider-nav-drag" aria-hidden="true">${dragIcon}</span>
             <span class="custom-provider-nav-icon" aria-hidden="true">${providerIcon}</span>
             <span class="custom-provider-nav-copy"><strong>${escHtml(providerLabel(provider))}</strong><small>${escHtml(customProviderFormatLabel(provider.apiFormat))}</small></span>
             <span class="custom-provider-status-dot${provider.enabled === false ? ' is-disabled' : ''}" aria-label="${provider.enabled === false ? '已禁用' : '已启用'}"></span>
@@ -1315,8 +1323,11 @@ function renderCustomProvidersList() {
           <span class="custom-provider-model-count">${modelCount} 个模型</span>
         </div>
         <div class="custom-provider-detail-actions">
-          <button type="button" class="provider-state-button${selectedProvider.enabled !== false ? ' is-active' : ''}" data-toggle-provider="${providerIndex}" data-provider-enabled="true" aria-pressed="${selectedProvider.enabled !== false ? 'true' : 'false'}">已启用</button>
-          <button type="button" class="provider-state-button${selectedProvider.enabled === false ? ' is-active is-disabled' : ''}" data-toggle-provider="${providerIndex}" data-provider-enabled="false" aria-pressed="${selectedProvider.enabled === false ? 'true' : 'false'}">禁用</button>
+          <label class="provider-enabled-switch">
+            <input type="checkbox" role="switch" data-toggle-provider="${providerIndex}" ${selectedProvider.enabled !== false ? 'checked' : ''} aria-label="启用供应商">
+            <span class="provider-enabled-track" aria-hidden="true"></span>
+            <span class="provider-enabled-label">${selectedProvider.enabled !== false ? '已启用' : '已禁用'}</span>
+          </label>
           <button type="button" class="icon-button custom-provider-delete" data-remove-provider="${providerIndex}" aria-label="删除供应商" title="删除供应商">${trashIcon}</button>
         </div>
       </header>
@@ -1436,28 +1447,46 @@ function syncCustomProvidersDraftFromDom() {
   state.customProvidersDraft = list;
 }
 
-function readCustomProvidersForSave() {
+function collectCustomProvidersForSave() {
   syncCustomProvidersDraftFromDom();
-  return (state.customProvidersDraft || []).map(provider => ({
-    id: provider.id,
-    name: provider.name,
-    baseUrl: provider.baseUrl,
-    apiFormat: provider.apiFormat || 'openai',
-    apiKey: provider.apiKey || '',
-    supportsMedia: provider.supportsMedia === true,
-    thinking: provider.thinking || '',
-    zdr: provider.zdr === true,
-    fileTransport: provider.fileTransport || 'local',
-    enabled: provider.enabled !== false,
-    models: (provider.models || []).filter(model => model.id).map(model => ({
+  const savedIds = new Set((state.aiSettings?.customProviders || []).map(provider => provider.id));
+  const ready = [];
+  for (const provider of state.customProvidersDraft || []) {
+    const models = (provider.models || []).filter(model => model.id).map(model => ({
       id: model.id,
       name: model.name || model.id,
       ...(typeof model.supportsMedia === 'boolean' ? { supportsMedia: model.supportsMedia } : {}),
       ...(model.thinking ? { thinking: model.thinking } : {}),
       ...(typeof model.zdr === 'boolean' ? { zdr: model.zdr } : {}),
       ...(model.fileTransport ? { fileTransport: model.fileTransport } : {}),
-    })),
-  })).filter(provider => provider.name && provider.baseUrl);
+    }));
+    const name = String(provider.name || '').trim();
+    const baseUrl = String(provider.baseUrl || '').trim();
+    const blank = !name && !baseUrl && !models.length;
+    if (blank && !savedIds.has(provider.id)) continue;
+    if (!name || !baseUrl) {
+      return { error: `请先填写供应商「${name || '未命名'}」的名称和 Base URL 再保存` };
+    }
+    ready.push({
+      id: provider.id,
+      name: provider.name,
+      baseUrl: provider.baseUrl,
+      apiFormat: provider.apiFormat || 'openai',
+      apiKey: provider.apiKey || '',
+      supportsMedia: provider.supportsMedia === true,
+      thinking: provider.thinking || '',
+      zdr: provider.zdr === true,
+      fileTransport: provider.fileTransport || 'local',
+      enabled: provider.enabled !== false,
+      models,
+    });
+  }
+  return { providers: ready };
+}
+
+function readCustomProvidersForSave() {
+  const collected = collectCustomProvidersForSave();
+  return collected.providers || [];
 }
 
 async function fetchProviderModels(providerIndex) {
@@ -1546,20 +1575,31 @@ function applyProviderModelsSelection() {
   const picker = state.providerModelsPicker;
   const provider = picker ? state.customProvidersDraft?.[picker.providerIndex] : null;
   if (!picker || !provider) return;
+  const beforeIds = new Set((provider.models || []).filter(model => model.id).map(model => model.id));
   const names = new Map((provider.models || []).filter(model => model.id).map(model => [model.id, model.name && model.name !== model.id ? model.name : '']));
-  const kept = (provider.models || []).filter(model => model.id);
-  const keptIds = new Set(kept.map(model => model.id));
-  const additions = [...picker.selected].filter(id => !keptIds.has(id)).map(id => ({ _uiId: randomModelUiId(), id, name: names.get(id) || id }));
-  const overflow = Math.max(0, kept.length + additions.length - MAX_MODELS_PER_PROVIDER);
-  provider.models = [...kept, ...additions].slice(0, MAX_MODELS_PER_PROVIDER);
+  const existingById = new Map((provider.models || []).filter(model => model.id).map(model => [model.id, model]));
+  const catalog = new Set(picker.ids);
+  const outsideCatalog = (provider.models || []).filter(model => model.id && !catalog.has(model.id));
+  const fromCatalog = picker.ids
+    .filter(id => picker.selected.has(id))
+    .map(id => existingById.get(id) || { _uiId: randomModelUiId(), id, name: names.get(id) || id });
+  const overflow = Math.max(0, outsideCatalog.length + fromCatalog.length - MAX_MODELS_PER_PROVIDER);
+  provider.models = [...outsideCatalog, ...fromCatalog].slice(0, MAX_MODELS_PER_PROVIDER);
+  const afterIds = new Set(provider.models.filter(model => model.id).map(model => model.id));
+  const added = [...afterIds].filter(id => !beforeIds.has(id)).length;
+  const removed = [...beforeIds].filter(id => !afterIds.has(id)).length;
   closeProviderModelsPicker();
   renderCustomProvidersList();
   refreshModelSelects();
-  if (additions.length) {
+  if (added || removed) {
     const note = overflow ? `（超出每供应商 ${MAX_MODELS_PER_PROVIDER} 上限，已截断 ${overflow} 个）` : '';
-    showToast(`已添加 ${additions.length} 个模型${note}`, 'success');
+    const parts = [
+      added ? `已添加 ${added} 个` : '',
+      removed ? `已移除 ${removed} 个` : '',
+    ].filter(Boolean);
+    showToast(`${parts.join('，')}模型${note}`, 'success');
   } else {
-    showToast('没有选择新的模型', 'success');
+    showToast('模型选择未变化', 'success');
   }
 }
 
@@ -1754,7 +1794,11 @@ function settingsSavePayload() {
     : (Number.isInteger(Number(current.agentFileReadMaxMb)) ? Number(current.agentFileReadMaxMb) : 4);
   Object.assign(payload, readMemorySettingsFromForm(current));
   Object.assign(payload, readAgentSettingsFromForm(current));
-  payload.customProviders = readCustomProvidersForSave();
+  const custom = collectCustomProvidersForSave();
+  if (custom.error) return { error: custom.error };
+  payload.customProviders = custom.providers;
+  const imageError = imageProviderSaveError((current.imageProviders || []).map(provider => provider.id));
+  if (imageError) return { error: imageError };
   Object.assign(payload, readImageProviderSettings());
   return payload;
 }
@@ -1767,10 +1811,16 @@ async function saveAgentSettings() {
   const button = $('#saveAgentSettings');
   button.disabled = true;
   try {
+    const payload = settingsSavePayload();
+    if (payload.error) {
+      showToast(payload.error, 'error');
+      button.disabled = false;
+      return;
+    }
     const response = await apiFetch('/api/ai/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settingsSavePayload()),
+      body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '模型设置保存失败');
@@ -4388,6 +4438,16 @@ function currentDocumentPatch() {
   return patch;
 }
 
+function editorMatchesSubmitted(submitted) {
+  const now = currentDocumentPatch();
+  return now.title === submitted.title
+    && now.content === submitted.content
+    && now.knowledgeBase === submitted.knowledgeBase
+    && now.folderPath === submitted.folderPath
+    && now.documentDate === submitted.documentDate
+    && JSON.stringify(now.tags) === JSON.stringify(submitted.tags);
+}
+
 function updateDocumentSummary(document) {
   const index = state.documents.findIndex(item => item.id === document.id);
   if (index < 0) return;
@@ -4478,7 +4538,7 @@ async function saveDocument() {
   // Only clear the dirty flag when the editor still holds exactly what was
   // submitted; otherwise edits made during the round trip would be silently
   // reported as saved while never reaching the server.
-  if ($('#documentContent').value === submittedContent) {
+  if (editorMatchesSubmitted(patch)) {
     state.documentDirty = false;
     setDocumentSaveState('已保存');
   } else {
@@ -4592,6 +4652,7 @@ function noteImageAltFromFile(file) {
 async function uploadNoteImage(file) {
   const body = new FormData();
   body.append('image', file);
+  if (state.activeDocument?.visibility === 'diary') body.append('private', 'true');
   const response = await apiFetch('/api/upload', { method: 'POST', body });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || '图片上传失败');
@@ -5098,7 +5159,7 @@ function bindEvents() {
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && state.mode === 'knowledge') {
       event.preventDefault();
-      flushPendingSaves();
+      flushPendingSaves().catch(error => showToast(error.message || '文档保存失败', 'error'));
     }
     if (event.key === 'Escape') closeMobileSidebar();
   });
@@ -5175,7 +5236,19 @@ function bindEvents() {
       renderDesktopUpdatePanel();
     });
   }
-  $('#customProvidersList')?.addEventListener('click', event => {
+  $('#customProvidersList')?.addEventListener('change', event => {
+    const toggleProvider = event.target.closest('[data-toggle-provider]');
+    if (!toggleProvider) return;
+    syncCustomProvidersDraftFromDom();
+    const index = Number(toggleProvider.dataset.toggleProvider);
+    const provider = state.customProvidersDraft?.[index];
+    if (!provider) return;
+    provider.enabled = toggleProvider.checked;
+    state.customProviderSelectedId = provider.id;
+    renderCustomProvidersList();
+    refreshModelSelects();
+  });
+  $('#customProvidersList')?.addEventListener('click', async event => {
     const selectProvider = event.target.closest('[data-select-provider]');
     if (selectProvider) {
       event.preventDefault();
@@ -5196,20 +5269,6 @@ function bindEvents() {
       renderCustomProvidersList();
       refreshModelSelects();
       document.querySelector('.custom-provider-title-input')?.focus();
-      return;
-    }
-    const toggleProvider = event.target.closest('[data-toggle-provider]');
-    if (toggleProvider) {
-      event.preventDefault();
-      event.stopPropagation();
-      syncCustomProvidersDraftFromDom();
-      const index = Number(toggleProvider.dataset.toggleProvider);
-      const provider = state.customProvidersDraft?.[index];
-      if (!provider) return;
-      provider.enabled = toggleProvider.dataset.providerEnabled !== 'false';
-      state.customProviderSelectedId = provider.id;
-      renderCustomProvidersList();
-      refreshModelSelects();
       return;
     }
     const toggleKey = event.target.closest('[data-toggle-key]');
@@ -5237,6 +5296,12 @@ function bindEvents() {
       syncCustomProvidersDraftFromDom();
       const index = Number(removeProvider.dataset.removeProvider);
       const removed = state.customProvidersDraft?.[index];
+      const confirmed = await confirmAction({
+        title: '删除供应商',
+        message: `确定删除「${removed?.name || '未命名供应商'}」？未保存前仍可关闭设置放弃此次删除。`,
+        confirmText: '删除',
+      });
+      if (!confirmed) return;
       state.customProvidersDraft = (state.customProvidersDraft || []).filter((_, i) => i !== index);
       if (removed?.id === state.customProviderSelectedId) {
         state.customProviderSelectedId = state.customProvidersDraft[index]?.id
@@ -5288,6 +5353,12 @@ function bindEvents() {
       const provider = state.customProvidersDraft?.[providerIndex];
       if (!provider) return;
       const removedModel = provider.models?.[modelIndex];
+      const confirmed = await confirmAction({
+        title: '删除模型',
+        message: `确定删除模型「${removedModel?.name || removedModel?.id || '未命名'}」？`,
+        confirmText: '删除',
+      });
+      if (!confirmed) return;
       provider.models = (provider.models || []).filter((_, i) => i !== modelIndex);
       if (removedModel?._uiId) state.customProviderTestStates.delete(customModelTestKey(provider.id, removedModel._uiId));
       if (!provider.models.length) provider.models = [{ _uiId: randomModelUiId(), id: '', name: '' }];

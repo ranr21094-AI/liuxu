@@ -3,6 +3,7 @@ import { escHtml, showToast, renderPreservingFocus } from '../helpers.js';
 
 const MAX_PROVIDERS = 32;
 const MAX_MODELS = 200;
+const SEEDREAM_DEFAULT_BASE = 'https://ark.cn-beijing.volces.com/api/v3';
 const capabilityExpanded = new Set();
 const testStates = new Map();
 const testControllers = new Map();
@@ -24,8 +25,10 @@ const adapterLabels = {
 };
 
 const imageProviderIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><circle cx="9" cy="10.2" r="1.6"></circle><path d="m5.5 17 4.2-4.2 3 3 2.6-2.6 3.2 3.8"></path></svg>';
-const dragIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="7" r="1"></circle><circle cx="16" cy="7" r="1"></circle><circle cx="8" cy="12" r="1"></circle><circle cx="16" cy="12" r="1"></circle><circle cx="8" cy="17" r="1"></circle><circle cx="16" cy="17" r="1"></circle></svg>';
+const editIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17.5-.7 3.2 3.2-.7L18.9 7.6a2.1 2.1 0 0 0-3-3z"></path><path d="m14.5 6.5 3 3"></path></svg>';
+const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M7 15H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"></path></svg>';
 const trashIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 4h4l1 3H9zM7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg>';
+const eyeIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z"></path><circle cx="12" cy="12" r="2.2"></circle></svg>';
 
 function uid(prefix) {
   const value = globalThis.crypto?.randomUUID?.().replace(/-/g, '').slice(0, 12)
@@ -73,19 +76,54 @@ function blankModel(adapter, upstreamId = '', name = '') {
   };
 }
 
-function providerTemplate(adapter) {
-  if (adapter === 'seedream') {
-    return {
-      id: uid('ip'), name: 'Seedream', adapter, baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-      apiKey: '', apiKeyConfigured: false, enabled: true,
-      models: seedreamModels.map(([id, name]) => blankModel(adapter, id, name)),
-    };
-  }
+function providerTemplate() {
   return {
-    id: uid('ip'), name: 'OpenAI Images', adapter: 'openai-images', baseUrl: '',
+    id: uid('ip'), name: adapterLabels['openai-images'], adapter: 'openai-images', baseUrl: '',
     apiKey: '', apiKeyConfigured: false, enabled: true,
     models: [blankModel('openai-images')],
   };
+}
+
+function modelsAreBlank(models) {
+  return (models || []).every(model => !String(model.upstreamId || '').trim());
+}
+
+function modelsMatchSeedreamPresets(models) {
+  const ids = (models || []).map(model => String(model.upstreamId || '').trim()).filter(Boolean);
+  if (ids.length !== seedreamModels.length) return false;
+  const expected = new Set(seedreamModels.map(([id]) => id));
+  return ids.every(id => expected.has(id)) && new Set(ids).size === expected.size;
+}
+
+function syncAdapterDefaultName(provider) {
+  const next = adapterLabels[provider.adapter];
+  if (!next) return;
+  const otherDefaults = Object.values(adapterLabels).filter(label => label !== next);
+  if (otherDefaults.includes(String(provider.name || '').trim())) provider.name = next;
+}
+
+function seedSeedreamPresets(provider) {
+  provider.models = seedreamModels.map(([id, name]) => blankModel('seedream', id, name));
+  if (!String(provider.baseUrl || '').trim()) provider.baseUrl = SEEDREAM_DEFAULT_BASE;
+}
+
+function resetSeedreamPresetsForOpenAi(provider) {
+  provider.models = [blankModel('openai-images')];
+  if (String(provider.baseUrl || '').trim() === SEEDREAM_DEFAULT_BASE) provider.baseUrl = '';
+}
+
+function applyAdapterChange(provider) {
+  syncAdapterDefaultName(provider);
+  if (provider.adapter === 'seedream' && modelsAreBlank(provider.models)) {
+    seedSeedreamPresets(provider);
+  } else if (provider.adapter === 'openai-images' && modelsMatchSeedreamPresets(provider.models)) {
+    resetSeedreamPresetsForOpenAi(provider);
+  } else {
+    provider.models.forEach(model => {
+      model.capabilities = conservativeCaps(provider.adapter, model.upstreamId);
+    });
+  }
+  ensureDefaultModelRef();
 }
 
 function cloneSettingsProvider(provider) {
@@ -126,6 +164,10 @@ function testKey(providerId, modelId, kind) {
   return `${providerId}:${modelId || 'provider'}:${kind}`;
 }
 
+function connectionKey(provider) {
+  return testKey(provider.id, '', 'connection');
+}
+
 function renderTestState(key) {
   const item = testStates.get(key);
   if (!item) return '';
@@ -141,32 +183,36 @@ function renderTestStateSlot(key) {
   return `<div class="image-model-test-states" data-test-state="${escHtml(key)}">${renderTestState(key)}</div>`;
 }
 
-// Replace one test-state slot in place; used by async test flows so a
+// Replace test-state slots in place; used by async test flows so a
 // finished request never rebuilds the whole editor under the user's cursor.
 function updateTestState(provider, model) {
-  const connectionKey = testKey(provider.id, model.id, 'connection');
-  const generationKey = testKey(provider.id, model.id, 'generation');
-  const root = document.querySelector('#imageProvidersSettings');
-  const slots = [
-    [connectionKey, root?.querySelector(`[data-test-state="${CSS.escape(connectionKey)}"]`)],
-    [generationKey, root?.querySelector(`[data-test-state="${CSS.escape(generationKey)}"]`)],
-  ];
-  if (slots.some(([, slot]) => !slot)) return render();
-  for (const [key, slot] of slots) {
-    if (slot) slot.innerHTML = renderTestState(key);
+  const connKey = connectionKey(provider);
+  const generationKey = model ? testKey(provider.id, model.id, 'generation') : '';
+  const root = globalThis.document?.querySelector?.('#imageProvidersSettings');
+  if (!root) return;
+  const connSlot = root.querySelector(`[data-test-state="${CSS.escape(connKey)}"]`);
+  const generationSlot = generationKey
+    ? root?.querySelector(`[data-test-state="${CSS.escape(generationKey)}"]`)
+    : null;
+  if (!connSlot || (model && !generationSlot)) {
+    // A finished request for a provider that is no longer on screen must not
+    // rebuild the editor and wipe whatever the user is typing on the selected card.
+    if (provider.id !== selectedProviderId) return;
+    syncFromDom();
+    return render();
   }
-  const modelCard = root?.querySelector(`.image-model-card[data-model-id="${CSS.escape(model.id)}"]`);
-  if (modelCard) {
-    const testButton = modelCard.querySelector('[data-image-action="test"]');
-    if (testButton) {
-      const testing = testStates.get(connectionKey)?.status === 'running';
-      testButton.disabled = testing;
-      testButton.textContent = testing ? '测试中…' : '连接测试';
-    }
-    const generateButton = modelCard.querySelector('[data-image-action="generate"]');
+  connSlot.innerHTML = renderTestState(connKey);
+  if (generationSlot) generationSlot.innerHTML = renderTestState(generationKey);
+  const testButton = root?.querySelector('[data-image-action="test"]');
+  if (testButton) {
+    const testing = testStates.get(connKey)?.status === 'running';
+    testButton.disabled = testing;
+    testButton.textContent = testing ? '测试中…' : '连接测试';
+  }
+  if (model) {
+    const generateButton = root?.querySelector(`.image-model-card[data-model-id="${CSS.escape(model.id)}"] [data-image-action="generate"]`);
     if (generateButton) {
-      const generating = testControllers.has(generationKey);
-      generateButton.textContent = generating ? '取消试生图' : '试生图';
+      generateButton.textContent = testControllers.has(generationKey) ? '取消试生图' : '试生图';
     }
   }
 }
@@ -179,7 +225,6 @@ function rerenderSettings() {
 function renderSidebar() {
   const items = providers.map(provider => `
     <button type="button" class="custom-provider-nav-item${provider.id === selectedProviderId ? ' active' : ''}" data-select-image-provider="${escHtml(provider.id)}" role="option" aria-selected="${provider.id === selectedProviderId}">
-      <span class="custom-provider-nav-drag" aria-hidden="true">${dragIcon}</span>
       <span class="custom-provider-nav-icon" aria-hidden="true">${imageProviderIcon}</span>
       <span class="custom-provider-nav-copy"><strong>${escHtml(provider.name?.trim() || '未命名供应商')}</strong><small>${escHtml(adapterLabels[provider.adapter] || provider.adapter)} · ${provider.models.length} 个模型</small></span>
       <span class="custom-provider-status-dot${provider.enabled === false ? ' is-disabled' : ''}" aria-label="${provider.enabled === false ? '已禁用' : '已启用'}"></span>
@@ -187,10 +232,7 @@ function renderSidebar() {
   return `<aside class="custom-provider-sidebar" aria-label="生图供应商列表">
     <div class="custom-provider-sidebar-heading">生图供应商</div>
     <div class="custom-provider-sidebar-list" role="listbox" aria-label="选择生图供应商">${items || '<p class="empty-list">还没有生图供应商。</p>'}</div>
-    <div class="custom-provider-add-group">
-      <button type="button" class="custom-provider-add-link" data-image-add="seedream">＋ <span>Seedream</span></button>
-      <button type="button" class="custom-provider-add-link" data-image-add="openai-images">＋ <span>OpenAI Images</span></button>
-    </div>
+    <button type="button" class="custom-provider-add-link" data-image-add="provider">＋ <span>添加供应商</span></button>
   </aside>`;
 }
 
@@ -198,9 +240,7 @@ function renderModel(provider, model) {
   const caps = model.capabilities || conservativeCaps(provider.adapter, model.upstreamId);
   const defaults = model.defaults || {};
   const ref = modelRef(provider, model);
-  const connectionKey = testKey(provider.id, model.id, 'connection');
   const generationKey = testKey(provider.id, model.id, 'generation');
-  const connectionRunning = testStates.get(connectionKey)?.status === 'running';
   const generating = testControllers.has(generationKey);
   const checks = [
     ['textToImage', '文生图'], ['imageEdit', '参考图编辑'], ['customSize', '自定义尺寸'], ['transparentBackground', '透明背景'],
@@ -236,32 +276,48 @@ function renderModel(provider, model) {
       </div>
     </details>
     <div class="image-model-test-row">
-      <button type="button" class="secondary-action compact" data-image-action="test" data-provider-id="${escHtml(provider.id)}" data-model-id="${escHtml(model.id)}" ${connectionRunning ? 'disabled' : ''}>${connectionRunning ? '测试中…' : '连接测试'}</button>
       <input class="image-test-prompt" data-focus-key="${escHtml(`${focusBase}:prompt`)}" value="${escHtml(model.testPrompt || '极简蓝色圆点，白色背景')}" aria-label="试生图提示词">
       <button type="button" class="secondary-action compact" data-image-action="generate" data-provider-id="${escHtml(provider.id)}" data-model-id="${escHtml(model.id)}">${generating ? '取消试生图' : '试生图'}</button>
     </div>
-    ${renderTestStateSlot(connectionKey)}${renderTestStateSlot(generationKey)}
+    ${renderTestStateSlot(generationKey)}
   </article>`;
 }
 
 function renderDetail(provider) {
   const focusBase = `image:provider:${provider.id}`;
+  const connKey = connectionKey(provider);
+  const connectionRunning = testStates.get(connKey)?.status === 'running';
+  const enabled = provider.enabled !== false;
   return `<section class="custom-provider-card custom-provider-detail image-provider-detail" data-provider-id="${escHtml(provider.id)}">
-    <div class="custom-provider-detail-header">
-      <input class="custom-provider-title-input image-provider-name" data-focus-key="${escHtml(`${focusBase}:name`)}" value="${escHtml(provider.name)}" placeholder="供应商名称" aria-label="供应商名称">
-      <div class="custom-provider-detail-actions">
-        <button type="button" class="provider-state-button${provider.enabled === false ? ' is-disabled' : ''}" data-image-action="toggle-provider" data-provider-id="${escHtml(provider.id)}">${provider.enabled === false ? '已禁用' : '已启用'}</button>
-        <button type="button" class="secondary-action compact" data-image-action="duplicate-provider" data-provider-id="${escHtml(provider.id)}">复制</button>
-        <button type="button" class="danger-action compact" data-image-action="remove-provider" data-provider-id="${escHtml(provider.id)}">删除</button>
+    <header class="custom-provider-detail-header">
+      <div class="custom-provider-title-wrap">
+        <input type="text" class="custom-provider-title-input image-provider-name" data-focus-key="${escHtml(`${focusBase}:name`)}" value="${escHtml(provider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称">
+        <button type="button" class="icon-button custom-provider-title-edit" aria-label="编辑供应商名称" title="编辑供应商名称">${editIcon}</button>
+        <span class="custom-provider-model-count">${provider.models.length} 个模型</span>
       </div>
-    </div>
+      <div class="custom-provider-detail-actions">
+        <label class="provider-enabled-switch">
+          <input type="checkbox" role="switch" data-image-action="toggle-provider" data-provider-id="${escHtml(provider.id)}" ${enabled ? 'checked' : ''} aria-label="启用供应商">
+          <span class="provider-enabled-track" aria-hidden="true"></span>
+          <span class="provider-enabled-label">${enabled ? '已启用' : '已禁用'}</span>
+        </label>
+        <button type="button" class="icon-button custom-provider-duplicate" data-image-action="duplicate-provider" data-provider-id="${escHtml(provider.id)}" aria-label="复制供应商" title="复制供应商">${copyIcon}</button>
+        <button type="button" class="icon-button custom-provider-delete" data-image-action="remove-provider" data-provider-id="${escHtml(provider.id)}" aria-label="删除供应商" title="删除供应商">${trashIcon}</button>
+      </div>
+    </header>
     <div class="custom-provider-body">
       <div class="custom-provider-conn-grid">
         <label class="custom-provider-inline-field">协议<select class="image-provider-adapter" data-focus-key="${escHtml(`${focusBase}:adapter`)}"><option value="seedream" ${provider.adapter === 'seedream' ? 'selected' : ''}>Seedream</option><option value="openai-images" ${provider.adapter === 'openai-images' ? 'selected' : ''}>OpenAI Images</option></select></label>
         <label class="custom-provider-inline-field">API 根地址<input class="image-provider-base-url" data-focus-key="${escHtml(`${focusBase}:base-url`)}" value="${escHtml(provider.baseUrl)}" spellcheck="false" placeholder="https://..."></label>
-        <label class="custom-provider-inline-field">API Key<input class="image-provider-key" data-focus-key="${escHtml(`${focusBase}:key`)}" type="password" autocomplete="off" value="${escHtml(provider.apiKey || '')}" placeholder="${provider.apiKeyConfigured ? '已配置；留空保持不变' : '可留空用于本地接口'}"></label>
+        <label class="custom-provider-inline-field">API Key
+          <div class="custom-provider-key-wrap"><input class="image-provider-key custom-provider-key" data-focus-key="${escHtml(`${focusBase}:key`)}" type="password" autocomplete="off" spellcheck="false" value="${escHtml(provider.apiKey || '')}" placeholder="${provider.apiKeyConfigured ? '已配置；留空保持不变' : '可留空用于本地接口'}"><button type="button" class="custom-provider-key-toggle" data-toggle-key aria-label="显示 API Key">${eyeIcon}</button></div>
+        </label>
       </div>
       <small class="image-provider-endpoint-hint">生成端点：${escHtml(generationEndpoint(provider))}</small>
+      <div class="image-provider-connection-row">
+        <button type="button" class="secondary-action compact" data-image-action="test" data-provider-id="${escHtml(provider.id)}" ${connectionRunning ? 'disabled' : ''}>${connectionRunning ? '测试中…' : '连接测试'}</button>
+      </div>
+      ${renderTestStateSlot(connKey)}
       <div class="image-provider-models-head">
         <strong>模型（${provider.models.length}）</strong>
         ${provider.adapter === 'openai-images' ? '<button type="button" class="secondary-action compact" data-image-action="fetch-models" data-provider-id="' + escHtml(provider.id) + '">获取模型</button>' : ''}
@@ -279,7 +335,7 @@ function render() {
   selectedProviderId = selected?.id || '';
   const detail = selected
     ? renderDetail(selected)
-    : '<section class="custom-provider-card custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有生图供应商。从左侧添加 Seedream 或 OpenAI Images。</p></section>';
+    : '<section class="custom-provider-card custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有生图供应商。从左侧添加供应商。</p></section>';
   root.innerHTML = `<div class="custom-provider-workspace image-provider-workspace">${renderSidebar()}${detail}</div>`;
 }
 
@@ -323,15 +379,15 @@ function draftProvider(provider) {
   };
 }
 
-async function connectionTest(provider, model) {
-  const key = testKey(provider.id, model.id, 'connection');
+async function connectionTest(provider) {
+  const key = connectionKey(provider);
   if (testStates.get(key)?.status === 'running') return;
   testStates.set(key, { status: 'running', message: '正在测试…' });
-  updateTestState(provider, model);
+  updateTestState(provider);
   try {
     const response = await apiFetch('/api/ai/image-providers/test', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: draftProvider(provider), modelId: model.id }),
+      body: JSON.stringify({ provider: draftProvider(provider) }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '连接测试失败');
@@ -339,7 +395,7 @@ async function connectionTest(provider, model) {
   } catch (error) {
     testStates.set(key, { status: 'error', message: error.message || '连接测试失败' });
   }
-  updateTestState(provider, model);
+  updateTestState(provider);
 }
 
 async function testGeneration(provider, model, prompt) {
@@ -414,11 +470,13 @@ async function handleAction(button) {
     return rerenderSettings();
   }
   if (action === 'remove-model' && model) {
+    if (!globalThis.confirm(`确定删除模型「${model.name || model.upstreamId || '未命名'}」？`)) return;
     provider.models = provider.models.filter(item => item.id !== model.id);
     ensureDefaultModelRef();
     return rerenderSettings();
   }
   if (action === 'remove-provider') {
+    if (!globalThis.confirm(`确定删除供应商「${provider.name || '未命名供应商'}」？`)) return;
     providers.splice(index, 1);
     if (selectedProviderId === provider.id) selectedProviderId = providers[0]?.id || '';
     ensureDefaultModelRef();
@@ -440,12 +498,8 @@ async function handleAction(button) {
     [providers[index + 1], providers[index]] = [providers[index], providers[index + 1]];
     return rerenderSettings();
   }
-  if (action === 'toggle-provider') {
-    provider.enabled = provider.enabled === false;
-    return rerenderSettings();
-  }
   if (action === 'fetch-models') return fetchModels(provider);
-  if (action === 'test' && model) return connectionTest(provider, model);
+  if (action === 'test') return connectionTest(provider);
   if (action === 'generate' && model) {
     const prompt = document.querySelector(`.image-model-card[data-model-id="${CSS.escape(model.id)}"] .image-test-prompt`)?.value.trim() || '';
     if (!prompt) return showToast('请填写试生图提示词', 'error');
@@ -475,27 +529,49 @@ export function bindImageProviderSettings() {
   root.addEventListener('click', event => {
     const selectItem = event.target.closest('[data-select-image-provider]');
     if (selectItem) return selectProvider(selectItem.dataset.selectImageProvider);
+    const toggleKey = event.target.closest('[data-toggle-key]');
+    if (toggleKey) {
+      event.preventDefault();
+      const input = toggleKey.closest('.custom-provider-key-wrap')?.querySelector('.custom-provider-key');
+      if (!input) return;
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      toggleKey.setAttribute('aria-label', showing ? '显示 API Key' : '隐藏 API Key');
+      return;
+    }
+    const editTitle = event.target.closest('.custom-provider-title-edit');
+    if (editTitle) {
+      event.preventDefault();
+      editTitle.closest('.custom-provider-detail')?.querySelector('.custom-provider-title-input')?.focus();
+      return;
+    }
     const add = event.target.closest('[data-image-add]');
     if (add) {
       syncFromDom();
       if (providers.length >= MAX_PROVIDERS) return showToast(`最多 ${MAX_PROVIDERS} 个生图供应商`, 'error');
-      const provider = providerTemplate(add.dataset.imageAdd);
+      const provider = providerTemplate();
       providers.push(provider);
       selectedProviderId = provider.id;
       if (!defaultModelRef && provider.models[0]) defaultModelRef = modelRef(provider, provider.models[0]);
       render();
+      document.querySelector('.image-provider-detail .custom-provider-title-input')?.focus();
       return;
     }
     const button = event.target.closest('[data-image-action]');
-    if (button) handleAction(button);
+    if (button && button.dataset.imageAction !== 'toggle-provider') handleAction(button);
   });
   root.addEventListener('change', event => {
     if (!event.target.closest('.image-provider-detail')) return;
     syncFromDom();
     const provider = providers.find(item => item.id === selectedProviderId);
     if (!provider) return;
+    if (event.target.matches('[data-image-action="toggle-provider"]')) {
+      provider.enabled = event.target.checked;
+      rerenderSettings();
+      return;
+    }
     if (event.target.matches('.image-provider-adapter')) {
-      provider.models.forEach(model => { model.capabilities = conservativeCaps(provider.adapter, model.upstreamId); });
+      applyAdapterChange(provider);
       rerenderSettings();
       return;
     }
@@ -521,12 +597,31 @@ export function loadImageProviderSettings(settings = {}) {
   bindImageProviderSettings();
 }
 
+export function imageProviderSaveError(savedIds = []) {
+  syncFromDom();
+  const saved = new Set(savedIds);
+  for (const provider of providers.map(draftProvider)) {
+    const models = provider.models.filter(model => model.upstreamId && model.name);
+    const blank = !String(provider.name || '').trim() && !provider.baseUrl && !models.length;
+    if (blank && !saved.has(provider.id)) continue;
+    if (!provider.name || !provider.baseUrl || !models.length) {
+      return `请先完成供应商「${provider.name || '未命名'}」的名称、根地址和模型后再保存`;
+    }
+  }
+  return '';
+}
+
 export function readImageProviderSettings() {
   syncFromDom();
   const clean = providers.map(draftProvider)
     .map(provider => ({ ...provider, models: provider.models.filter(model => model.upstreamId && model.name) }))
     .filter(provider => provider.name && provider.baseUrl && provider.models.length);
-  return { imageProvidersVersion: 1, imageProviders: clean, defaultImageModelRef: defaultModelRef };
+  let ref = defaultModelRef;
+  if (!clean.some(provider => provider.models.some(model => modelRef(provider, model) === ref))) {
+    const first = clean.find(provider => provider.enabled !== false && provider.models.length) || clean[0];
+    ref = first && first.models[0] ? modelRef(first, first.models[0]) : '';
+  }
+  return { imageProvidersVersion: 1, imageProviders: clean, defaultImageModelRef: ref };
 }
 
 export function describeImageSelection(settings = {}, args = {}) {

@@ -15,7 +15,7 @@ const multer = require('multer');
 const nodemailer = require('nodemailer');
 const database = require('./database');
 const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
-const { isPrivateIpLiteral, validateGeneratedImageUrl } = require('./lib/net/ssrf');
+const { isPrivateIpLiteral, validateGeneratedImageUrl, createAgentWebFetchValidator, fetchFollowingRedirects } = require('./lib/net/ssrf');
 const { toolResult, toProviderTools, fromProviderName } = require('./lib/agent/tools');
 const { buildAiProviderMessages } = require('./lib/agent/provider-messages');
 const {
@@ -381,6 +381,13 @@ function validateTodoInput(body, { partial = false } = {}) {
       return { error: 'Unsupported recurrence' };
     }
     payload.recurrence = body.recurrence;
+  }
+  if (!partial) {
+    const recurrence = payload.recurrence || 'none';
+    const dueDate = payload.due_date || null;
+    if (recurrence !== 'none' && !dueDate) {
+      return { error: 'Recurring todos require a due_date' };
+    }
   }
   if (body.category !== undefined) {
     if (typeof body.category !== 'string' || !body.category.trim() || body.category.length > 24) {
@@ -1505,20 +1512,10 @@ function extensionFromContentType(contentType, fallbackUrl = '') {
 // Fetch the generated image with redirect: 'manual' and re-validate every hop,
 // so a 3xx redirect to an internal/loopback address cannot bypass SSRF guards.
 async function fetchGeneratedImageWithRedirectGuard(url, timeoutMs) {
-  let current = url;
-  for (let hop = 0; hop < 4; hop++) {
-    const safeUrl = await validateGeneratedImageUrl(current);
-    const response = await fetchWithTimeout(safeUrl, { redirect: 'manual' }, timeoutMs);
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location');
-      await response.body?.cancel().catch(() => {});
-      if (!location) throw new Error('Generated image redirect has no location');
-      current = new URL(location, safeUrl).toString();
-      continue;
-    }
-    return response;
-  }
-  throw new Error('Generated image redirect limit exceeded');
+  return fetchFollowingRedirects(url, {
+    validate: validateGeneratedImageUrl,
+    fetchFn: (safeUrl, init) => fetchWithTimeout(safeUrl, init, timeoutMs),
+  });
 }
 
 async function saveGeneratedImageBuffer(buffer, contentType = '', fallbackUrl = '') {
@@ -2289,13 +2286,13 @@ app.post('/api/ai/image-providers/models', async (req, res) => {
 app.post('/api/ai/image-providers/test', async (req, res) => {
   const startedAt = Date.now();
   try {
-    const { provider, model } = await resolveImageProviderDraft(req.body || {}, req.user);
+    const { provider, model } = await resolveImageProviderDraft(req.body || {}, req.user, { requireModel: false });
     if (provider.adapter === 'seedream') {
       return res.json({
         ok: true,
         level: 'partial',
         adapter: provider.adapter,
-        model: model.upstreamId,
+        model: model?.upstreamId || '',
         endpoint: `${provider.baseUrl}/images/generations`,
         authenticated: null,
         modelsSupported: false,
@@ -2308,7 +2305,7 @@ app.post('/api/ai/image-providers/test', async (req, res) => {
       ok: true,
       level: 'full',
       adapter: provider.adapter,
-      model: model.upstreamId,
+      model: model?.upstreamId || '',
       endpoint: openAiModelsEndpoint(provider.baseUrl),
       authenticated: true,
       modelsSupported: models.supported,
@@ -3488,10 +3485,10 @@ function createAgentWebFetch(req) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), WEB_FETCH_TIMEOUT_MS);
     try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        redirect: 'follow',
-        headers: { 'User-Agent': 'WorkLog-Agent/1.0' },
+      const response = await fetchFollowingRedirects(url, {
+        validate: createAgentWebFetchValidator(url),
+        fetchFn: (safeUrl, init) => fetch(safeUrl, { ...init, signal: controller.signal }),
+        init: { headers: { 'User-Agent': 'WorkLog-Agent/1.0' } },
       });
       // Stream the body and abort as soon as the size cap is exceeded instead
       // of buffering the whole response before checking.

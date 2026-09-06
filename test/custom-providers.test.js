@@ -13,6 +13,7 @@ const {
   isStoredCustomModel,
   publicCustomProviders,
   resolveModelCapability,
+  validateProviderBaseUrl,
 } = require('../lib/agent/custom-providers');
 const {
   buildCustomProviderRequest,
@@ -431,4 +432,15 @@ test('database encrypts custom provider api keys', () => {
     closeAllDatabases();
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
+});
+
+test('public HTTPS provider URLs that resolve to private addresses are rejected', async () => {
+  const privateLookup = async () => [{ address: '127.0.0.1', family: 4 }];
+  const blocked = await validateProviderBaseUrl('https://evil.example/v1', privateLookup);
+  assert.match(blocked.error, /private or local/);
+  const publicLookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  const allowed = await validateProviderBaseUrl('https://api.example.com/v1', publicLookup);
+  assert.equal(allowed.value, 'https://api.example.com/v1');
+  const local = await validateProviderBaseUrl('http://127.0.0.1:11434/v1');
+  assert.equal(local.value, 'http://127.0.0.1:11434/v1');
 });

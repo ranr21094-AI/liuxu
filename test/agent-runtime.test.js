@@ -973,7 +973,7 @@ async function waitForRun(store, id, timeout = 500) {
   const started = Date.now();
   while (Date.now() - started < timeout) {
     const run = store.getRun(id);
-    if (run && ['completed', 'failed', 'cancelled', 'waiting_approval'].includes(run.status)) return run;
+    if (run && ['completed', 'failed', 'cancelled', 'waiting_approval', 'waiting_user', 'waiting_client_tool'].includes(run.status)) return run;
     await new Promise(resolve => setTimeout(resolve, 10));
   }
   return store.getRun(id);
@@ -1380,6 +1380,102 @@ test('ask_user pauses the run until the user replies', async (t) => {
   assert.equal(resumed.run.status, 'completed');
   assert.equal(resumed.run.finalText, '已按你的选择处理');
   assert.ok(resumed.run.messages.some(item => item.role === 'user' && item.content === '改 note:123'));
+});
+
+test('ask_user in the same turn still queues confirm tools', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [
+              { name: 'ask_user', arguments: { question: '用哪个标题？' } },
+              { name: 'task.create', arguments: { title: '同轮任务' } },
+            ],
+          };
+        }
+        return { text: '完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('ask-and-confirm');
+  const run = await runtime.start({ session, goal: '提问并创建', userMessage: '提问并创建' });
+  const paused = await waitForRun(store, run.id);
+  assert.equal(paused.status, 'waiting_user');
+  assert.equal((paused.pendingApprovals || []).length + (paused.queuedApprovals || []).length, 1);
+  const resumed = await runtime.resumeUserInput(run.id, '就用这个');
+  assert.equal(resumed.run.status, 'waiting_approval');
+  await runtime.resolveApproval(run.id, resumed.run.pendingApprovals[0].id, { approved: true });
+  const done = await waitForRun(store, run.id);
+  assert.equal(done.status, 'completed');
+  assert.equal(db.getAllTodos()[0].title, '同轮任务');
+});
+
+test('concurrent approval of the same item only runs the tool once', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '只创建一次' } }] };
+        }
+        return { text: '好了', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('double-approve');
+  const run = await runtime.start({ session, goal: '创建任务', userMessage: '创建任务' });
+  const waiting = await waitForRun(store, run.id);
+  assert.equal(waiting.status, 'waiting_approval');
+  const approvalId = waiting.pendingApprovals[0].id;
+  const [first, second] = await Promise.all([
+    runtime.resolveApproval(run.id, approvalId, { approved: true }),
+    runtime.resolveApproval(run.id, approvalId, { approved: true }),
+  ]);
+  assert.equal([first, second].filter(item => item.error).length, 1);
+  assert.equal(db.getAllTodos().filter(todo => todo.title === '只创建一次').length, 1);
+});
+
+test('repeated tool failures pause for user input instead of a dead approval', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  db.saveAiSettings({ ...db.getAiSettings(), agentMaxToolFailures: 2 });
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        return { text: '', toolCalls: [{ name: 'knowledge.read', arguments: { id: 'note:missing' } }] };
+      },
+    },
+  });
+  const session = store.createSession('repeated-fail');
+  const run = await runtime.start({ session, goal: '读取', userMessage: '读取' });
+  const paused = await waitForRun(store, run.id, 1500);
+  assert.equal(paused.status, 'waiting_user');
+  assert.equal((paused.pendingApprovals || []).length, 0);
+  assert.match(paused.pendingQuestion || '', /失败/);
 });
 
 test('action envelope ask pauses the run for user input', async (t) => {

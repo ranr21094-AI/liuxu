@@ -706,3 +706,39 @@ test('workbench settings include backup and restore controls', () => {
   assert.match(source, /createBackupActions/);
   assert.match(source, /\/api\/workspace\/restore/);
 });
+
+test('diary knowledge notes mark embedded uploads as private', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-diary-upload-');
+  const knowledge = openKnowledge(db);
+  knowledge.createNote({
+    title: '日记图',
+    content: '![secret](/uploads/diary-note.png)',
+    knowledgeBase: '日记',
+  }, { diaryUnlocked: true });
+  assert.equal(db.isPrivateUpload('diary-note.png'), true);
+});
+
+test('restoring a revision outside diary demotes visibility', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-restore-vis-');
+  const knowledge = openKnowledge(db);
+  const note = knowledge.createNote({
+    title: '公开稿',
+    content: '第一版',
+    knowledgeBase: '开发',
+  }).document;
+  const moved = knowledge.updateDocument(note.id, {
+    knowledgeBase: '日记',
+    content: '日记版',
+    baseVersion: note.version,
+  }, { diaryUnlocked: true }).document;
+  assert.equal(moved.visibility, 'diary');
+  const listed = knowledge.listRevisions(note.id, { diaryUnlocked: true });
+  assert.ok(listed.revisions && listed.revisions.length >= 1);
+  const restored = knowledge.restoreRevision(note.id, listed.revisions[0].id, {
+    baseVersion: moved.version,
+    diaryUnlocked: true,
+  });
+  assert.equal(restored.document.knowledgeBase, '开发');
+  assert.equal(restored.document.visibility, 'standard');
+  assert.equal(restored.document.content, '第一版');
+});

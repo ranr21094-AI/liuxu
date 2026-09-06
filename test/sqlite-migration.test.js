@@ -122,6 +122,35 @@ test('backup and restore round-trip preserves SQLite-backed account data', (t) =
   assert.equal(restored.getAllUnpaginated()[0].title, 'round trip');
 });
 
+test('JSON backup round-trips nested category objects', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-cat-backup-'));
+  process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');
+  t.after(() => {
+    delete process.env.AI_SECRETS_KEY_FILE;
+    cleanupTempDataDir(dir);
+  });
+  const { createDatabase } = require('../database.js');
+  const db = createDatabase(dir);
+  t.after(() => db.close());
+  assert.ok(db.addCategory('前端', '开发'));
+  const backup = db.backup();
+  const nested = backup.categories.find(item => item.name === '开发');
+  assert.equal(typeof nested.sub[0], 'object');
+  assert.equal(nested.sub[0].name, '前端');
+
+  const restoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-cat-restore-'));
+  t.after(() => {
+    closeAllDatabases();
+    fs.rmSync(restoreDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+  });
+  const restored = createDatabase(restoreDir);
+  t.after(() => restored.close());
+  const result = restored.restore(backup);
+  assert.equal(result.success, true, result.error || 'restore failed');
+  const restoredDev = restored.backup().categories.find(item => item.name === '开发');
+  assert.equal(restoredDev.sub[0].name, '前端');
+});
+
 test('schema v3 migration is repeatable and keeps row-level updates stable', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-v2-'));
   process.env.AI_SECRETS_KEY_FILE = path.join(dir, 'ai-secrets.key');

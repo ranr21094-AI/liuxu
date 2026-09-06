@@ -13,3 +13,31 @@ test('generated image URL validation blocks local and unresolved hosts', async (
   const publicLookup = async () => [{ address: '1.1.1.1', family: 4 }];
   assert.equal(await validateGeneratedImageUrl('https://cdn.example/a.png', publicLookup), 'https://cdn.example/a.png');
 });
+
+test('web.fetch validator allows literal localhost but blocks public-to-private hops', async () => {
+  const { createAgentWebFetchValidator, fetchFollowingRedirects } = require('../lib/net/ssrf');
+  const publicLookup = async () => [{ address: '1.1.1.1', family: 4 }];
+  const local = createAgentWebFetchValidator('http://127.0.0.1:3001/page');
+  assert.equal(await local('http://127.0.0.1:3001/next'), 'http://127.0.0.1:3001/next');
+  await assert.rejects(() => local('http://169.254.169.254/latest'), /same host/);
+
+  const publicOrigin = createAgentWebFetchValidator('https://cdn.example/doc');
+  assert.equal(await publicOrigin('https://cdn.example/doc', publicLookup), 'https://cdn.example/doc');
+  await assert.rejects(() => publicOrigin('http://127.0.0.1/secret', publicLookup), /not allowed/);
+
+  const hops = [];
+  const fetchFn = async (url) => {
+    hops.push(url);
+    if (url === 'https://cdn.example/start') {
+      return { status: 302, headers: { get: key => key === 'location' ? 'https://cdn.example/end' : null }, body: { cancel: async () => {} } };
+    }
+    return { status: 200, headers: { get: () => '' }, body: null };
+  };
+  const response = await fetchFollowingRedirects('https://cdn.example/start', {
+    validate: publicOrigin,
+    lookupFn: publicLookup,
+    fetchFn,
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(hops, ['https://cdn.example/start', 'https://cdn.example/end']);
+});

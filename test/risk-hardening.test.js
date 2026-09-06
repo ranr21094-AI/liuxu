@@ -790,7 +790,7 @@ test('fetched slash model ids survive the full settings save cycle', async (t) =
   const provider = {
     id: 'p_or0001',
     name: 'OpenRouter',
-    baseUrl: 'https://openrouter.ai/api/v1',
+    baseUrl: 'http://127.0.0.1:11434/v1',
     apiFormat: 'openai',
     apiKey: 'sk-or-test',
     supportsMedia: false,
@@ -1364,6 +1364,27 @@ test('historical diary image references are protected without a saved private ma
   })).status, 200);
 });
 
+test('diary knowledge notes protect images even without the private upload flag', async (t) => {
+  const { baseUrl } = loadFreshApp(t);
+  const cookie = await unlockDiary(baseUrl);
+  const form = new FormData();
+  form.append('image', validPngBlob(), 'note-diary.png');
+  const uploaded = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', body: form })).json();
+  assert.equal((await fetch(`${baseUrl}${uploaded.url}`)).status, 200);
+  const created = await fetch(`${baseUrl}/api/knowledge/documents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({
+      title: '日记笔记图',
+      content: `![secret](${uploaded.url})`,
+      knowledgeBase: DIARY_CATEGORY,
+    }),
+  });
+  assert.equal(created.status, 201, await created.text());
+  await fetch(`${baseUrl}/api/auth/diary/lock`, { method: 'POST', headers: { Cookie: cookie } });
+  assert.equal((await fetch(`${baseUrl}${uploaded.url}`)).status, 403);
+});
+
 test('restore validation rejects unsafe or malformed backup data', (t) => {
   const db = loadFreshDb(t);
   const base = {
@@ -1575,7 +1596,10 @@ test('recurring todos generate the next pending occurrence only once when comple
 
   const undated = db.createTodo({ title: 'undated recurrence', recurrence: 'daily' });
   db.updateTodo(undated.id, { done: true });
-  assert.equal(db.getAllTodos().filter(todo => todo.title === 'undated recurrence').length, 1);
+  const generatedUndated = db.getAllTodos().filter(todo => todo.title === 'undated recurrence' && !todo.done);
+  assert.equal(generatedUndated.length, 1);
+  assert.equal(generatedUndated[0].recurrence, 'daily');
+  assert.match(generatedUndated[0].due_date, /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test('todo categories can be added and deleted while preserving tasks under default', async (t) => {
@@ -2579,6 +2603,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /initKnowledgeNameDialog/);
   assert.doesNotMatch(source, /window\.prompt/);
   assert.match(source, /uploadNoteImage/);
+  assert.match(source, /visibility === 'diary'/);
+  assert.match(source, /body.append\('private', 'true'\)/);
   assert.match(source, /handleDocumentImageUpload/);
   assert.match(html, /image\/png/);
   assert.match(source, /renderFilePreview/);
@@ -2605,6 +2631,9 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /data-select-provider=/);
   assert.match(styles, /\.custom-provider-conn-grid/);
   assert.match(source, /customProviderTestStates/);
+  assert.match(source, /providerId !== state\.customProviderSelectedId/);
+  assert.match(source, /function collectCustomProvidersForSave/);
+  assert.match(source, /function editorMatchesSubmitted/);
   assert.match(source, /renderPreservingFocus/);
   assert.match(source, /data-fetch-models/);
   assert.match(source, /function fetchProviderModels/);

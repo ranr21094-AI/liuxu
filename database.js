@@ -115,6 +115,7 @@ const cache = {
   maxTodoId: 0,
   maxCountdownId: 0,
 };
+let diaryUploadIndexHealed = false;
 const AI_SECRET_FIELDS = Object.freeze([
   'apiKey', 'moonshotApiKey', 'openrouterApiKey', 'tavilyApiKey', 'perplexityApiKey', 'seedreamApiKey', 'getokenApiKey', 'getokenGrokImagineApiKey', 'getokenNanoBananaApiKey',
 ]);
@@ -132,6 +133,7 @@ function resetCache() {
   cache.maxLogId = 0;
   cache.maxTodoId = 0;
   cache.maxCountdownId = 0;
+  diaryUploadIndexHealed = false;
 }
 
 function maxPositiveId(items) {
@@ -697,14 +699,50 @@ function unmarkPrivateUpload(filename) {
   }
 }
 
+function healDiaryKnowledgeUploads() {
+  if (diaryUploadIndexHealed) return;
+  diaryUploadIndexHealed = true;
+  try {
+    const rows = sqlite.prepare(`
+      SELECT body FROM knowledge_documents
+      WHERE json_extract(body, '$.visibility') = 'diary'
+    `).all();
+    for (const row of rows) {
+      markPrivateUploadsFromContent(parseJson(row.body, {}).content);
+    }
+  } catch {
+    diaryUploadIndexHealed = false;
+  }
+}
+
+function diaryKnowledgeContainsUpload(filename) {
+  try {
+    const needle = `/uploads/${filename}`;
+    const rows = sqlite.prepare(`
+      SELECT body FROM knowledge_documents
+      WHERE json_extract(body, '$.visibility') = 'diary'
+        AND instr(body, ?) > 0
+    `).all(needle);
+    return rows.some(row => extractLocalUploadFilenames(parseJson(row.body, {}).content).includes(filename));
+  } catch {
+    return false;
+  }
+}
+
 function isPrivateUpload(filename) {
   const normalized = normalizeUploadFilename(filename);
   if (!normalized) return false;
+  healDiaryKnowledgeUploads();
   if (readPrivateUploads().includes(normalized)) return true;
-  return readLogs().some(log =>
+  if (readLogs().some(log =>
     isDiaryCategory(log.category) &&
     extractLocalUploadFilenames(log.content).includes(normalized)
-  );
+  )) return true;
+  if (diaryKnowledgeContainsUpload(normalized)) {
+    markPrivateUpload(normalized);
+    return true;
+  }
+  return false;
 }
 
 // CRUD operations
@@ -1084,7 +1122,8 @@ function addTodoRecurrenceDate(dueDate, recurrence) {
 function createNextRecurringTodo(todos, source) {
   const recurrence = normalizeTodoRecurrence(source.recurrence);
   if (recurrence === 'none') return null;
-  const nextDueDate = addTodoRecurrenceDate(source.due_date, recurrence);
+  const dueDate = source.due_date || formatTodoDate(new Date());
+  const nextDueDate = addTodoRecurrenceDate(dueDate, recurrence);
   if (!nextDueDate) return null;
 
   cache.maxTodoId++;
@@ -1609,47 +1648,61 @@ function normalizePrivateUploadsForRestore(privateUploads) {
   return { privateUploads: normalized };
 }
 
+function duplicateSubcategoryPath(node, prefix = '') {
+  const seen = new Set();
+  for (const child of node.sub || []) {
+    const pathLabel = prefix ? `${prefix}/${child.name}` : `${node.name}/${child.name}`;
+    if (seen.has(child.name)) return pathLabel;
+    seen.add(child.name);
+    const nested = duplicateSubcategoryPath(child, pathLabel);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function normalizeCategoryNodeForRestore(node, parentName = '') {
+  if (typeof node === 'string') {
+    const name = node.trim();
+    if (!name) {
+      return { error: parentName ? `Invalid subcategory under "${parentName}"` : 'Invalid category name' };
+    }
+    return { node: { name, sub: [], calendar_day_visible: true } };
+  }
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return { error: parentName ? `Invalid subcategory under "${parentName}"` : 'Invalid category name' };
+  }
+  if (typeof node.name !== 'string' || !node.name.trim()) {
+    return { error: parentName ? `Invalid subcategory under "${parentName}"` : 'Invalid category name' };
+  }
+  if (node.sub !== undefined && !Array.isArray(node.sub)) {
+    return { error: `Invalid subcategories for category "${node.name.trim()}"` };
+  }
+  if (node.calendar_day_visible !== undefined && typeof node.calendar_day_visible !== 'boolean') {
+    return { error: `Invalid calendar day visibility for category "${node.name.trim()}"` };
+  }
+  const name = node.name.trim();
+  const sub = [];
+  for (const item of node.sub || []) {
+    const child = normalizeCategoryNodeForRestore(item, name);
+    if (child.error) return child;
+    sub.push(child.node);
+  }
+  return { node: { name, sub, calendar_day_visible: node.calendar_day_visible !== false } };
+}
+
 function normalizeCategoriesForRestore(categories) {
   const seenParents = new Set();
   const normalized = [];
 
   for (const cat of categories) {
-    const normalizedCat = typeof cat === 'string'
-      ? { name: cat, sub: [] }
-      : cat;
-
-    if (!normalizedCat || typeof normalizedCat.name !== 'string' || !normalizedCat.name.trim()) {
-      return { error: 'Invalid category name' };
-    }
-    if (normalizedCat.sub !== undefined && !Array.isArray(normalizedCat.sub)) {
-      return { error: `Invalid subcategories for category "${normalizedCat.name}"` };
-    }
-    if (normalizedCat.calendar_day_visible !== undefined &&
-        typeof normalizedCat.calendar_day_visible !== 'boolean') {
-      return { error: `Invalid calendar day visibility for category "${normalizedCat.name}"` };
-    }
-
-    const name = normalizedCat.name.trim();
-    if (seenParents.has(name)) return { error: `Duplicate category: ${name}` };
-    seenParents.add(name);
-
-    const seenSubs = new Set();
-    const sub = [];
-    for (const item of normalizedCat.sub || []) {
-      if (typeof item !== 'string' || !item.trim()) {
-        return { error: `Invalid subcategory under "${name}"` };
-      }
-      const subName = item.trim();
-      if (seenSubs.has(subName)) return { error: `Duplicate subcategory: ${name}/${subName}` };
-      seenSubs.add(subName);
-      sub.push(subName);
-    }
-
-    normalized.push({
-      name,
-      sub,
-      calendar_day_visible: normalizedCat.calendar_day_visible !== false,
-    });
+    const result = normalizeCategoryNodeForRestore(cat);
+    if (result.error) return result;
+    const node = result.node;
+    if (seenParents.has(node.name)) return { error: `Duplicate category: ${node.name}` };
+    seenParents.add(node.name);
+    const duplicate = duplicateSubcategoryPath(node);
+    if (duplicate) return { error: `Duplicate subcategory: ${duplicate}` };
+    normalized.push(node);
   }
 
   return { categories: normalized };
@@ -2138,6 +2191,7 @@ return {
   isSafeUploadFilename,
   isPrivateUpload,
   markPrivateUpload,
+  markPrivateUploadsFromContent,
   unmarkPrivateUpload,
   extractLocalUploadFilenames,
 };
