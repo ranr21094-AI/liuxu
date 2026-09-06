@@ -65,6 +65,7 @@ const state = {
   knowledgeBases: [],
   selectedKnowledgeBase: '',
   selectedFolderPath: '',
+  knowledgeResume: { id: '', knowledgeBase: '', folderPath: '' },
   agentStatus: null,
   aiSettings: null,
   agentModelCatalog: [],
@@ -435,8 +436,8 @@ function formatBytes(value) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function autoResizeComposer() {
-  const input = $('#agentInput');
+function autoResizeComposer(input = $('#agentInput')) {
+  if (!input) return;
   input.style.height = 'auto';
   input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
 }
@@ -829,6 +830,21 @@ function setModeUI(mode) {
   closeMobileSidebar();
 }
 
+function rememberKnowledgeResume({ id = '', knowledgeBase = '', folderPath = '' } = {}) {
+  state.knowledgeResume = { id, knowledgeBase, folderPath };
+}
+
+function knowledgeSwitchTarget() {
+  const id = state.activeDocument?.id || state.knowledgeResume?.id || '';
+  if (id) return { id, options: {} };
+  const knowledgeBase = state.selectedKnowledgeBase || state.knowledgeResume?.knowledgeBase || '';
+  if (!knowledgeBase) return { id: '', options: {} };
+  const folderPath = state.selectedKnowledgeBase
+    ? state.selectedFolderPath
+    : (state.knowledgeResume?.folderPath || '');
+  return { id: '', options: { knowledgeBase, folderPath } };
+}
+
 async function applyRoute() {
   const route = parseRoute();
   if (route.legacyTodos) history.replaceState(null, '', '#todos');
@@ -844,6 +860,11 @@ async function applyRoute() {
   if (route.mode === 'knowledge' && !route.id) {
     state.selectedKnowledgeBase = route.knowledgeBase;
     state.selectedFolderPath = route.folderPath;
+    rememberKnowledgeResume({
+      id: '',
+      knowledgeBase: state.selectedKnowledgeBase,
+      folderPath: state.selectedFolderPath,
+    });
   }
   setModeUI(route.mode);
   if (route.mode === 'agent') {
@@ -852,7 +873,6 @@ async function applyRoute() {
   } else if (route.mode === 'memory') {
     await loadMemoriesPanel();
   } else if (route.mode === 'todos') {
-    showEmptyDocument();
     await loadTodos();
     showTodoView();
     if (serial === state.routeSerial) $('#topbarSubtitle').textContent = getTodoSubtitle();
@@ -968,10 +988,13 @@ function applyAgentStatus() {
   if (!entry || !sessionHasActiveRunStatus(entry.status)) setSessionRunStatus(state.activeSession?.id || '', '');
 }
 
+function composerModelSelects() {
+  return [$('#agentComposerModelSelect'), $('#noteAssistantModelSelect')].filter(Boolean);
+}
+
 function syncComposerModelSelectState() {
-  const select = $('#agentComposerModelSelect');
-  if (!select) return;
-  select.disabled = state.agentStatus?.configured === false;
+  const disabled = state.agentStatus?.configured === false;
+  composerModelSelects().forEach(select => { select.disabled = disabled; });
 }
 
 function providerModelGroups() {
@@ -995,7 +1018,7 @@ function populateAgentModelSelectElement(select, selected) {
 
 function populateAgentModelSelects(selected) {
   populateAgentModelSelectElement($('#agentModelSelect'), selected);
-  populateAgentModelSelectElement($('#agentComposerModelSelect'), selected);
+  composerModelSelects().forEach(select => populateAgentModelSelectElement(select, selected));
 }
 
 function populateAgentModelSelect(selected) {
@@ -1015,11 +1038,11 @@ async function loadComposerModelOptions() {
 }
 
 async function quickSaveAgentModel(modelId) {
-  const select = $('#agentComposerModelSelect');
-  if (!select || !state.aiSettings) return;
-  const previous = state.aiSettings.model || select.value;
+  const selects = composerModelSelects();
+  if (!selects.length || !state.aiSettings) return;
+  const previous = state.aiSettings.model || selects[0].value;
   if (modelId === previous) return;
-  select.disabled = true;
+  selects.forEach(select => { select.disabled = true; });
   try {
     const response = await apiFetch('/api/ai/settings', {
       method: 'PUT',
@@ -4274,20 +4297,35 @@ function syncDocumentSelectOptions({ knowledgeBase, folderPath } = {}) {
   updateDocumentMetaSummary();
 }
 
+function formatDocumentMetaDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+  if (!match) return String(value || '').trim();
+  return `${Number(match[2])}/${Number(match[3])}`;
+}
+
+function syncDocumentMetaExpanded() {
+  const chips = $('#documentMetaChips');
+  const panel = $('#documentMetaPanel');
+  if (chips) chips.setAttribute('aria-expanded', panel?.open ? 'true' : 'false');
+}
+
 function updateDocumentMetaSummary() {
-  const summary = $('#documentMetaSummary');
-  if (!summary) return;
+  const host = $('#documentMetaSummary');
+  if (!host) return;
   const kbSelect = $('#documentKnowledgeBase');
   const folderSelect = $('#documentFolderPath');
   const kb = kbSelect?.selectedOptions?.[0]?.textContent?.trim() || '其他';
-  const folder = folderSelect?.selectedOptions?.[0]?.textContent?.trim() || '根目录';
+  const folder = folderSelect?.selectedOptions?.[0]?.textContent?.trim() || '';
   const date = $('#documentDate')?.value || '';
   const tagsRaw = $('#documentTags')?.value.trim() || '';
-  const dateLabel = date || '无日期';
-  const tagsLabel = tagsRaw
-    ? (tagsRaw.length > 28 ? `${tagsRaw.slice(0, 28)}…` : tagsRaw)
-    : '无标签';
-  summary.textContent = `${kb} · ${folder} · ${dateLabel} · ${tagsLabel}`;
+  const chips = [kb];
+  if (folder && folder !== '根目录') chips.push(folder);
+  if (date) chips.push(formatDocumentMetaDate(date));
+  if (tagsRaw) chips.push(tagsRaw.length > 28 ? `${tagsRaw.slice(0, 28)}…` : tagsRaw);
+  host.innerHTML = chips.map(text => `<span class="document-meta-chip">${escHtml(text)}</span>`).join('');
+  const chipsButton = $('#documentMetaChips');
+  if (chipsButton) chipsButton.hidden = chips.length === 0;
+  syncDocumentMetaExpanded();
 }
 
 function setDocumentFormDisabled(disabled) {
@@ -4346,6 +4384,11 @@ async function renderActiveDocument(document) {
   renderDocuments();
   knowledgeEnhancements?.setActiveDocument?.(document);
   noteAssistantSetActiveDocument(document);
+  rememberKnowledgeResume({
+    id: document.id,
+    knowledgeBase: state.selectedKnowledgeBase,
+    folderPath: state.selectedFolderPath,
+  });
 }
 
 async function renderFileOriginalPanel(document) {
@@ -4805,14 +4848,11 @@ function bindEvents() {
     const targetMode = button.dataset.mode;
     let id = '';
     let options = {};
-    if (targetMode === state.mode) {
-      if (targetMode === 'agent') id = state.activeSession?.id || '';
-      else if (targetMode === 'knowledge') {
-        id = state.activeDocument?.id || '';
-        if (!id && state.selectedKnowledgeBase) {
-          options = { knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath };
-        }
-      }
+    if (targetMode === 'agent') id = state.activeSession?.id || '';
+    else if (targetMode === 'knowledge') {
+      const resume = knowledgeSwitchTarget();
+      id = resume.id;
+      options = resume.options;
     }
     if (targetMode === 'knowledge') await loadKnowledgeTree();
     navigate(targetMode, id, options);
@@ -5134,6 +5174,13 @@ function bindEvents() {
     updateDocumentMetaSummary();
     scheduleDocumentSave();
   });
+  $('#documentMetaChips')?.addEventListener('click', () => {
+    const panel = $('#documentMetaPanel');
+    if (!panel) return;
+    panel.open = !panel.open;
+    syncDocumentMetaExpanded();
+  });
+  $('#documentMetaPanel')?.addEventListener('toggle', syncDocumentMetaExpanded);
   initSelectControls({ ids: DOCUMENT_SELECT_IDS });
   $('#documentContent').addEventListener('input', refreshDocumentPreview);
   $('#editorModeSwitch').addEventListener('click', event => {
@@ -5190,8 +5237,10 @@ function bindEvents() {
     showToast('私密知识已解锁', 'success');
   });
   $('#settingsButton')?.addEventListener('click', () => openSettings('appearance').catch(error => showToast(error.message, 'error')));
-  $('#agentComposerModelSelect')?.addEventListener('change', event => {
-    quickSaveAgentModel(event.target.value).catch(error => showToast(error.message, 'error'));
+  composerModelSelects().forEach(select => {
+    select.addEventListener('change', event => {
+      quickSaveAgentModel(event.target.value).catch(error => showToast(error.message, 'error'));
+    });
   });
   $('#agentSidebarStatus').addEventListener('click', () => openSettings('model').catch(error => showToast(error.message, 'error')));
   $('#closeSettingsDialog').addEventListener('click', () => $('#settingsDialog').close());

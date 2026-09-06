@@ -7,9 +7,9 @@ const { JSDOM } = require('jsdom');
 const PANEL_HTML = `
 <div id="documentWorkspace"><textarea id="documentContent"></textarea></div>
 <button id="assistantToggleButton"></button>
-<aside class="note-assistant-panel" id="noteAssistantPanel" hidden>
-  <div class="note-assistant-head">
-    <strong>AI 助手</strong>
+<aside class="note-assistant-panel" id="noteAssistantPanel" hidden role="dialog" aria-modal="false" aria-labelledby="noteAssistantTitle">
+  <div class="note-assistant-head" data-note-assistant-drag>
+    <strong id="noteAssistantTitle">留序 LiuXu</strong>
     <button type="button" data-note-assistant-action="sessions">历史</button>
     <button type="button" data-note-assistant-action="new">新对话</button>
     <button type="button" data-note-assistant-action="close">✕</button>
@@ -26,9 +26,13 @@ const PANEL_HTML = `
   <div class="note-assistant-status" id="noteAssistantStatus" hidden></div>
   <div class="note-assistant-composer">
     <textarea id="noteAssistantInput"></textarea>
-    <button type="button" id="noteAssistantSend" data-note-assistant-action="send">发送</button>
-    <button type="button" id="noteAssistantStop" data-note-assistant-action="stop" hidden>停止</button>
+    <div class="composer-footer">
+      <select id="noteAssistantModelSelect" class="composer-model-select"></select>
+      <button type="button" id="noteAssistantStop" data-note-assistant-action="stop" hidden>停止</button>
+      <button type="button" id="noteAssistantSend" data-note-assistant-action="send">↑</button>
+    </div>
   </div>
+  <div class="note-assistant-resize" data-note-assistant-resize aria-hidden="true"></div>
 </aside>
 <div id="toast"></div>
 `;
@@ -174,8 +178,8 @@ test('session switcher lists, switches, and deletes document sessions', async ()
   const { dom, previous } = stubDom();
   try {
     const sessions = [
-      { id: 'sess-2', title: '文档助手', documentId: 'note:1', messageCount: 2, preview: '第二个问题', updatedAt: 200 },
-      { id: 'sess-1', title: '文档助手', documentId: 'note:1', messageCount: 2, preview: '第一个问题', updatedAt: 100 },
+      { id: 'sess-2', title: '留序 LiuXu', documentId: 'note:1', messageCount: 2, preview: '第二个问题', updatedAt: 200 },
+      { id: 'sess-1', title: '留序 LiuXu', documentId: 'note:1', messageCount: 2, preview: '第一个问题', updatedAt: 100 },
     ];
     global.fetch = async (url, options = {}) => {
       const target = String(url);
@@ -191,7 +195,7 @@ test('session switcher lists, switches, and deletes document sessions', async ()
       }
       if (target.includes('/session?sessionId=sess-1')) {
         response.json = async () => ({
-          session: { id: 'sess-1', title: '文档助手', documentId: 'note:1', messages: [
+          session: { id: 'sess-1', title: '留序 LiuXu', documentId: 'note:1', messages: [
             { role: 'user', content: '第一个问题' },
             { role: 'assistant', content: '第一个回答' },
           ] },
@@ -202,7 +206,7 @@ test('session switcher lists, switches, and deletes document sessions', async ()
       if (target.includes('/session')) {
         // 无参：返回最新会话 sess-2
         response.json = async () => ({
-          session: { id: 'sess-2', title: '文档助手', documentId: 'note:1', messages: [
+          session: { id: 'sess-2', title: '留序 LiuXu', documentId: 'note:1', messages: [
             { role: 'user', content: '第二个问题' },
             { role: 'assistant', content: '第二个回答' },
           ] },
@@ -243,6 +247,7 @@ test('session switcher lists, switches, and deletes document sessions', async ()
     assert.equal(document.querySelector('#noteAssistantSessionList').hidden, false);
     assert.equal(document.querySelectorAll('.note-assistant-session-row').length, 2);
     assert.ok(document.querySelector('.note-assistant-session-row.is-active[data-session-id="sess-2"]'), 'active session is highlighted');
+    assert.match(document.querySelector('.note-assistant-session-row.is-active').textContent, /留序 LiuXu/);
 
     // 切换到 sess-1：消息被替换为该会话内容
     document.querySelector('.note-assistant-session-row[data-session-id="sess-1"]').click();
@@ -262,6 +267,36 @@ test('session switcher lists, switches, and deletes document sessions', async ()
     assert.equal(sessions[0].id, 'sess-2');
   } finally {
     dom.window.close();
+    restore(previous);
+  }
+});
+
+test('clampNoteAssistantBounds keeps the window inside the viewport', async () => {
+  const { previous } = stubDom();
+  try {
+    const url = pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js'));
+    url.search = `clamp=${Date.now()}`;
+    const ui = await import(url.href);
+    const viewport = { width: 1000, height: 700 };
+
+    const tiny = ui.clampNoteAssistantBounds({ x: 10, y: 10, w: 40, h: 40 }, viewport);
+    assert.equal(tiny.w, 320);
+    assert.equal(tiny.h, 280);
+
+    const overflow = ui.clampNoteAssistantBounds({ x: 900, y: 650, w: 400, h: 400 }, viewport);
+    assert.equal(overflow.w, 400);
+    assert.equal(overflow.h, 400);
+    assert.equal(overflow.x, 600);
+    assert.equal(overflow.y, 300);
+
+    const shrunk = ui.clampNoteAssistantBounds({ x: 50, y: 40, w: 400, h: 400 }, { width: 360, height: 300 });
+    assert.equal(shrunk.w, 360);
+    assert.equal(shrunk.h, 300);
+    assert.equal(shrunk.x, 0);
+    assert.equal(shrunk.y, 0);
+    assert.equal(shrunk.x + shrunk.w <= 360, true);
+    assert.equal(shrunk.y + shrunk.h <= 300, true);
+  } finally {
     restore(previous);
   }
 });

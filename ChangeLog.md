@@ -2,6 +2,21 @@
 
 ## 2026-09-06
 
+### 知识库留序弹窗与紧凑标题栏（v1.2.8）
+
+- 笔记/文件工具栏的 AI 助手更名为「留序 LiuXu」，改为可拖动、可缩放的浮动窗口；位置与尺寸会记住，切换 Agent / Memory / 待办时窗口不自动关闭。
+- 留序输入区对齐 Agent 作曲栏：多行输入、附件与发送，并与顶栏共用全局模型选择。
+- 从知识库切到其他模式再回来时，会回到刚才打开的笔记或文件夹。
+- 笔记标题栏压成一行：圆角标题、淡色保存状态、可点属性 chips；空日期/空标签不再占一整条灰底，点 chips 才展开四列表单。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.8-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.8-mac-arm64.dmg`、`LiuXu-1.2.8-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.8，无需逐版本安装。
+
 ### 全量代码审查修复（v1.2.7）
 
 本轮对 v1.2.3 之后新增与遗漏的问题做系统复审，以下修复已全部实施并通过自动化测试（322 项中 321 项通过，1 项既有跳过）。
@@ -37,14 +52,6 @@
 **界面**
 
 - 模型/生图供应商侧栏去掉拖动手柄，启用改为开关，支持复制供应商；选择框宽度对齐。
-
-## 发布文件
-
-- Windows x64：`LiuXu-Setup-1.2.7-x64.exe` 及 `.sha256`
-- macOS 12+ Apple Silicon：`LiuXu-1.2.7-mac-arm64.dmg`、`LiuXu-1.2.7-mac-arm64.zip` 及对应 `.sha256`
-- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
-
-本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.7，无需逐版本安装。
 
 ## 2026-09-05
 

@@ -1,20 +1,115 @@
 import { apiFetch } from '../auth.js';
 import { escHtml, showToast, confirmDialog } from '../helpers.js';
 
-// Per-document AI assistant sidebar (kind: note_assist). The assistant shares
-// the agent runtime with restricted tools; edit proposals arrive as
+// Per-document AI assistant floating window (kind: note_assist). The assistant
+// shares the agent runtime with restricted tools; edit proposals arrive as
 // note.edit_proposed events and are applied manually by the user in the editor.
 const ACTIVE_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool', 'waiting_user']);
+const BOUNDS_KEY = 'liuxu.noteAssistant.bounds';
+const MIN_WIDTH = 320;
+const MIN_HEIGHT = 280;
+const DEFAULT_WIDTH = 400;
+const DEFAULT_HEIGHT = 560;
 
 let state = null;
 let bound = false;
+let chromeGesture = null;
 
 function panel() { return document.querySelector('#noteAssistantPanel'); }
 function messagesHost() { return document.querySelector('#noteAssistantMessages'); }
 function input() { return document.querySelector('#noteAssistantInput'); }
 
-function root() {
-  return document.querySelector('#documentWorkspace');
+function viewportSize(viewport = {}) {
+  const fallbackWidth = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280;
+  const fallbackHeight = typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 800;
+  const width = Number(viewport.width);
+  const height = Number(viewport.height);
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : fallbackWidth,
+    height: Number.isFinite(height) && height > 0 ? height : fallbackHeight,
+  };
+}
+
+export function clampNoteAssistantBounds(bounds = {}, viewport) {
+  const { width: vw, height: vh } = viewportSize(viewport);
+  const minW = Math.min(MIN_WIDTH, vw);
+  const minH = Math.min(MIN_HEIGHT, vh);
+  const w = Math.min(Math.max(Number(bounds.w) || 0, minW), vw);
+  const h = Math.min(Math.max(Number(bounds.h) || 0, minH), vh);
+  const x = Math.min(Math.max(Number(bounds.x) || 0, 0), Math.max(0, vw - w));
+  const y = Math.min(Math.max(Number(bounds.y) || 0, 0), Math.max(0, vh - h));
+  return { x, y, w, h };
+}
+
+function defaultNoteAssistantBounds(viewport) {
+  const { width: vw, height: vh } = viewportSize(viewport);
+  const w = Math.min(DEFAULT_WIDTH, Math.max(0, vw - 24));
+  const h = Math.min(DEFAULT_HEIGHT, Math.max(0, vh - 24));
+  return clampNoteAssistantBounds({
+    x: Math.max(0, vw - w - 16),
+    y: Math.max(12, Math.round((vh - h) / 2)),
+    w,
+    h,
+  }, viewport);
+}
+
+function readStoredBounds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(BOUNDS_KEY) || 'null');
+    if (!raw || typeof raw !== 'object') return null;
+    const x = Number(raw.x);
+    const y = Number(raw.y);
+    const w = Number(raw.w);
+    const h = Number(raw.h);
+    if (![x, y, w, h].every(Number.isFinite)) return null;
+    return { x, y, w, h };
+  } catch {
+    return null;
+  }
+}
+
+function persistBounds(bounds) {
+  try {
+    localStorage.setItem(BOUNDS_KEY, JSON.stringify(bounds));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function applyBounds(bounds) {
+  const host = panel();
+  if (!host) return clampNoteAssistantBounds(bounds);
+  const next = clampNoteAssistantBounds(bounds);
+  host.style.position = 'fixed';
+  host.style.zIndex = '40';
+  host.style.left = `${next.x}px`;
+  host.style.top = `${next.y}px`;
+  host.style.width = `${next.w}px`;
+  host.style.height = `${next.h}px`;
+  host.style.right = 'auto';
+  host.style.bottom = 'auto';
+  return next;
+}
+
+function boundsFromPanel() {
+  const host = panel();
+  if (!host) return defaultNoteAssistantBounds();
+  const rect = host.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    return clampNoteAssistantBounds({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+  }
+  return clampNoteAssistantBounds(readStoredBounds() || defaultNoteAssistantBounds());
+}
+
+function restoreBounds() {
+  persistBounds(applyBounds(readStoredBounds() || defaultNoteAssistantBounds()));
+}
+
+function autoResizeNoteComposer() {
+  const field = input();
+  if (!field) return;
+  field.style.height = 'auto';
+  field.style.height = `${Math.min(field.scrollHeight, 180)}px`;
 }
 
 function isOpen() {
@@ -25,12 +120,77 @@ function setOpen(open) {
   const host = panel();
   if (!host) return;
   host.hidden = !open;
-  root()?.classList.toggle('assistant-open', open);
   document.querySelector('#assistantToggleButton')?.setAttribute('aria-expanded', open ? 'true' : 'false');
   if (open) {
+    restoreBounds();
     input()?.focus();
+    autoResizeNoteComposer();
     scrollMessagesToBottom();
   }
+}
+
+function endChromeGesture() {
+  const host = panel();
+  host?.classList.remove('is-dragging', 'is-resizing');
+  if (!chromeGesture) return;
+  chromeGesture = null;
+  if (isOpen()) persistBounds(boundsFromPanel());
+}
+
+function onChromePointerMove(event) {
+  if (!chromeGesture || event.pointerId !== chromeGesture.pointerId) return;
+  const dx = event.clientX - chromeGesture.startX;
+  const dy = event.clientY - chromeGesture.startY;
+  if (chromeGesture.kind === 'move') {
+    applyBounds({
+      ...chromeGesture.start,
+      x: chromeGesture.start.x + dx,
+      y: chromeGesture.start.y + dy,
+    });
+    return;
+  }
+  applyBounds({
+    ...chromeGesture.start,
+    w: chromeGesture.start.w + dx,
+    h: chromeGesture.start.h + dy,
+  });
+}
+
+function startChromeGesture(event, kind) {
+  const host = panel();
+  if (!host) return;
+  chromeGesture = {
+    kind,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    start: boundsFromPanel(),
+  };
+  host.classList.toggle('is-dragging', kind === 'move');
+  host.classList.toggle('is-resizing', kind === 'resize');
+  host.setPointerCapture?.(event.pointerId);
+}
+
+function bindWindowChrome(host) {
+  host.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    if (event.target.closest('[data-note-assistant-resize]')) {
+      event.preventDefault();
+      startChromeGesture(event, 'resize');
+      return;
+    }
+    if (!event.target.closest('[data-note-assistant-drag]')) return;
+    if (event.target.closest('button, a, input, select, textarea')) return;
+    event.preventDefault();
+    startChromeGesture(event, 'move');
+  });
+  window.addEventListener('pointermove', onChromePointerMove);
+  window.addEventListener('pointerup', endChromeGesture);
+  window.addEventListener('pointercancel', endChromeGesture);
+  window.addEventListener('resize', () => {
+    if (!isOpen()) return;
+    persistBounds(applyBounds(boundsFromPanel()));
+  });
 }
 
 function scrollMessagesToBottom() {
@@ -210,7 +370,7 @@ async function loadSession(documentId) {
         renderMessage(message.role, String(message.content || ''));
       }
     }
-    if (!state.sessionId) renderStatusLine('还没有对话，向 AI 提问或让它修改本篇内容。');
+    if (!state.sessionId) renderStatusLine('还没有对话，向留序 LiuXu 提问或让它修改本篇内容。');
     if (data.activeRun && ACTIVE_RUN_STATES.has(data.activeRun.status)) {
       // A run is still in flight server-side; resubscribe to its events.
       state.runId = data.activeRun.id;
@@ -301,6 +461,7 @@ async function send() {
   const text = String(input()?.value || '').trim();
   if (!text || state.runId || !state.activeDocumentId) return;
   input().value = '';
+  autoResizeNoteComposer();
   renderMessage('user', text);
   try {
     const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/messages`, {
@@ -315,7 +476,7 @@ async function send() {
     state.newSessionRequested = false;
     const data = await response.json().catch(() => ({}));
     if (response.status === 403) {
-      renderMessage('assistant', '日记已锁定，无法使用助手。');
+      renderMessage('assistant', '日记已锁定，无法使用留序 LiuXu。');
       return;
     }
     if (!response.ok) throw new Error(data.error || '发送失败');
@@ -323,7 +484,7 @@ async function send() {
     state.runId = data.runId;
     subscribeRun(data.runId);
   } catch (error) {
-    showToast(error.message || '助手发送失败', 'error');
+    showToast(error.message || '留序 LiuXu 发送失败', 'error');
   }
 }
 
@@ -358,7 +519,7 @@ function renderSessionList() {
   }
   host.innerHTML = sessions.map(session => {
     const active = session.id === state.sessionId;
-    const title = escHtml(session.title || '文档助手');
+    const title = escHtml(session.title || '留序 LiuXu');
     const preview = escHtml(session.preview || `${session.messageCount} 条消息`);
     return `<div class="note-assistant-session-row${active ? ' is-active' : ''}" data-note-assistant-action="switch-session" data-session-id="${escHtml(session.id)}" role="button" tabindex="0">
       <div class="note-assistant-session-copy">
@@ -417,7 +578,7 @@ async function switchSession(sessionId) {
 async function deleteSession(sessionId) {
   const confirmed = await confirmDialog({
     title: '删除会话',
-    message: '删除该 AI 会话及其全部运行记录？此操作不可撤销。',
+    message: '删除该留序 LiuXu 会话及其全部运行记录？此操作不可撤销。',
     confirmText: '删除',
     danger: true,
   });
@@ -530,12 +691,16 @@ export function initNoteAssistant({ applyEdit }) {
       else markProposal(proposalId, false, '已忽略');
     }
   });
+  host.addEventListener('input', event => {
+    if (event.target === input()) autoResizeNoteComposer();
+  });
   host.addEventListener('keydown', event => {
     if (event.target === input() && event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       send();
     }
   });
+  bindWindowChrome(host);
   document.querySelector('#assistantToggleButton')?.addEventListener('click', toggle);
 }
 
@@ -554,7 +719,6 @@ export function noteAssistantSetActiveDocument(doc) {
   state.activeDocumentId = doc?.id || '';
   messagesHost().innerHTML = '';
   setOpen(false);
-  root()?.classList.remove('assistant-open');
   const toggleButton = document.querySelector('#assistantToggleButton');
   if (!toggleButton) return;
   if (doc?.id && doc?.status !== 'archived') toggleButton.removeAttribute('hidden');
@@ -576,6 +740,5 @@ export function noteAssistantClear() {
   messagesHost().innerHTML = '';
   setOpen(false);
   document.querySelector('#assistantToggleButton')?.setAttribute('hidden', '');
-  root()?.classList.remove('assistant-open');
   updateBatchBar();
 }

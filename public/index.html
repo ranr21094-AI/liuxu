@@ -246,6 +246,10 @@
                 <input class="document-title-input" id="documentTitle" maxlength="200" aria-label="文档标题">
                 <span class="save-state saved" id="documentSaveState">已保存</span>
               </div>
+              <button type="button" class="document-meta-chips" id="documentMetaChips" aria-expanded="false" aria-controls="documentMetaPanel" title="文档属性">
+                <span class="document-meta-chips-list" id="documentMetaSummary"></span>
+                <span class="document-meta-summary-caret" aria-hidden="true">⌄</span>
+              </button>
               <div class="document-toolbar-actions">
                 <div class="editor-mode-switch" id="editorModeSwitch">
                   <button type="button" data-editor-mode="edit" class="active" title="编辑 (Ctrl+Shift+P 切换)">编辑</button>
@@ -260,7 +264,7 @@
                   </svg>
                 </button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
-                <button class="icon-button" id="assistantToggleButton" type="button" title="AI 助手" aria-label="AI 助手" aria-expanded="false" hidden>
+                <button class="icon-button" id="assistantToggleButton" type="button" title="留序 LiuXu" aria-label="留序 LiuXu" aria-expanded="false" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.3l-1.8-5.7L4.5 10.8 10.2 9z"></path>
                     <path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"></path>
@@ -272,11 +276,7 @@
               </div>
             </div>
             <details class="document-meta-panel" id="documentMetaPanel">
-              <summary class="document-meta-summary">
-                <span class="document-meta-summary-label">属性</span>
-                <span class="document-meta-summary-text" id="documentMetaSummary">其他 · 根目录 · 无日期 · 无标签</span>
-                <span class="document-meta-summary-caret" aria-hidden="true">⌄</span>
-              </summary>
+              <summary class="sr-only">文档属性</summary>
               <div class="document-meta-grid">
                 <div class="document-field">
                   <span>知识库</span>
@@ -354,33 +354,6 @@
               <div id="filePreviewHost" class="file-preview-host" aria-live="polite"></div>
             </details>
           </section>
-
-          <aside class="note-assistant-panel" id="noteAssistantPanel" hidden aria-label="AI 助手">
-            <div class="note-assistant-head">
-              <strong>AI 助手</strong>
-              <span class="note-assistant-head-spacer"></span>
-              <button type="button" class="secondary-action compact" data-note-assistant-action="sessions" aria-expanded="false">历史</button>
-              <button type="button" class="secondary-action compact" data-note-assistant-action="new">新对话</button>
-              <button type="button" class="icon-button" data-note-assistant-action="close" aria-label="关闭 AI 助手" title="关闭">✕</button>
-            </div>
-            <div class="note-assistant-session-list" id="noteAssistantSessionList" hidden></div>
-            <div class="note-assistant-batch" id="noteAssistantBatch" hidden>
-              <span><strong id="noteAssistantBatchCount">0</strong> 条提案待应用</span>
-              <span class="note-assistant-batch-actions">
-                <button type="button" class="primary-action compact" data-note-assistant-action="apply-all">全部应用</button>
-                <button type="button" class="secondary-action compact" data-note-assistant-action="ignore-all">全部忽略</button>
-              </span>
-            </div>
-            <div class="note-assistant-messages" id="noteAssistantMessages"></div>
-            <div class="note-assistant-status" id="noteAssistantStatus" hidden></div>
-            <div class="note-assistant-composer">
-              <textarea id="noteAssistantInput" rows="2" placeholder="询问本篇内容，或让 AI 修改…" aria-label="向 AI 助手提问"></textarea>
-              <div class="note-assistant-composer-actions">
-                <button type="button" id="noteAssistantSend" class="primary-action compact" data-note-assistant-action="send">发送</button>
-                <button type="button" id="noteAssistantStop" class="secondary-action compact" data-note-assistant-action="stop" hidden>停止</button>
-              </div>
-            </div>
-          </aside>
         </article>
       </section>
 
@@ -535,6 +508,43 @@
       </section>
     </main>
   </div>
+
+  <aside class="note-assistant-panel" id="noteAssistantPanel" hidden role="dialog" aria-modal="false" aria-labelledby="noteAssistantTitle" aria-label="留序 LiuXu">
+    <div class="note-assistant-head" data-note-assistant-drag>
+      <strong id="noteAssistantTitle">留序 LiuXu</strong>
+      <span class="note-assistant-head-spacer"></span>
+      <button type="button" class="secondary-action compact" data-note-assistant-action="sessions" aria-expanded="false">历史</button>
+      <button type="button" class="secondary-action compact" data-note-assistant-action="new">新对话</button>
+      <button type="button" class="icon-button" data-note-assistant-action="close" aria-label="关闭留序 LiuXu" title="关闭">✕</button>
+    </div>
+    <div class="note-assistant-session-list" id="noteAssistantSessionList" hidden></div>
+    <div class="note-assistant-batch" id="noteAssistantBatch" hidden>
+      <span><strong id="noteAssistantBatchCount">0</strong> 条提案待应用</span>
+      <span class="note-assistant-batch-actions">
+        <button type="button" class="primary-action compact" data-note-assistant-action="apply-all">全部应用</button>
+        <button type="button" class="secondary-action compact" data-note-assistant-action="ignore-all">全部忽略</button>
+      </span>
+    </div>
+    <div class="note-assistant-messages" id="noteAssistantMessages"></div>
+    <div class="note-assistant-status" id="noteAssistantStatus" hidden></div>
+    <div class="note-assistant-composer">
+      <textarea id="noteAssistantInput" rows="1" maxlength="8000" placeholder="询问本篇内容，或让留序 LiuXu 修改…" aria-label="向留序 LiuXu 提问"></textarea>
+      <div class="composer-footer">
+        <div class="composer-meta">
+          <label class="composer-model-field">
+            <span class="sr-only">留序 LiuXu 模型</span>
+            <select id="noteAssistantModelSelect" class="composer-model-select" aria-label="切换留序 LiuXu 模型"></select>
+          </label>
+          <span class="composer-hint">Enter 发送</span>
+        </div>
+        <div class="composer-actions">
+          <button type="button" class="stop-button" id="noteAssistantStop" data-note-assistant-action="stop" hidden>停止</button>
+          <button type="button" class="send-button" id="noteAssistantSend" data-note-assistant-action="send" aria-label="发送消息">↑</button>
+        </div>
+      </div>
+    </div>
+    <div class="note-assistant-resize" data-note-assistant-resize aria-hidden="true"></div>
+  </aside>
 
   <dialog class="workspace-dialog settings-dialog" id="settingsDialog">
     <form class="dialog-card settings-card" id="settingsForm">
