@@ -49,6 +49,8 @@ test('workspace density nits keep 36px controls, 24px narrow padding, and title 
   assert.match(css, /\.document-title-input[\s\S]*text-overflow:\s*ellipsis/);
   assert.doesNotMatch(workbench, /\.topbar-mode-switch/);
   assert.doesNotMatch(workbench, /\.run-status \{ display: none !important; \}/);
+  assert.match(workbench, /\.agent-composer textarea:focus-visible \{ outline: none/);
+  assert.match(workbench, /\.note-assistant-composer textarea:focus-visible \{ outline: none/);
 });
 
 test('mode nav collapse is independent from desktop sidebar collapse', () => {
@@ -62,6 +64,11 @@ test('mode nav collapse is independent from desktop sidebar collapse', () => {
   const nav = document.querySelector('#workspaceModeNav');
   assert.equal(brand?.tagName, 'BUTTON');
   assert.equal(brand?.getAttribute('aria-controls'), 'workspaceModeNav');
+  const caret = brand?.querySelector('.brand-toggle-caret');
+  assert.equal(caret !== null, true);
+  assert.equal(caret?.getAttribute('fill'), 'none');
+  assert.equal(caret?.getAttribute('width'), '12');
+  assert.equal(caret?.querySelector('path')?.getAttribute('fill'), 'none');
   assert.equal(nav?.querySelectorAll('[data-mode]').length, 4);
   assert.equal(document.querySelector('#agentSidebarPanel') !== null, true);
   assert.match(source, /const MODE_NAV_COLLAPSED_KEY = 'workbenchModeNavCollapsed'/);
@@ -72,6 +79,10 @@ test('mode nav collapse is independent from desktop sidebar collapse', () => {
   assert.match(source, /\$\('#sidebarToggle'\)\.addEventListener\('click', \(\) => toggleDesktopSidebar\(\)\)/);
   assert.doesNotMatch(source, /\$\('#workspaceBrand'\)\.addEventListener\('click', \(\) => toggleDesktopSidebar/);
   assert.match(css, /body\.mode-nav-collapsed \.workspace-mode-nav[\s\S]*display:\s*none/);
+  assert.match(css, /body\.mode-nav-collapsed \.brand-toggle-caret[\s\S]*rotate\(-90deg\)/);
+  assert.match(css, /\.workspace-brand svg[\s\S]*fill:\s*none/);
+  assert.match(css, /\.brand-toggle-caret \{[^}]*width:\s*12px/);
+  assert.match(css, /\.brand-toggle-caret path \{ fill: none; \}/);
 });
 
 test('message follower keeps history position and resumes only at bottom or explicit jump', async () => {

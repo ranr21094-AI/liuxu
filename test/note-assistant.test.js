@@ -10,7 +10,7 @@ process.env.AI_SECRETS_KEY_FILE = process.env.AI_SECRETS_KEY_FILE
 
 const { createDatabase } = require('../database.js');
 const { createAgentStore } = require('../lib/agent/store');
-const { createMemoryService } = require('../lib/agent/memory');
+const { createMemoryService, buildMemoryRefreshUserMessage } = require('../lib/agent/memory');
 const { createRuntime } = require('../lib/agent/runtime');
 const { registerAgentRoutes } = require('../lib/agent/routes');
 const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
@@ -250,4 +250,72 @@ test('note-assist sessions list, explicit fetch, and hard delete', async (t) => 
   assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM agent_messages WHERE session_id = ?').get(firstData.sessionId).count, 0);
   const removedAgain = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/sessions/${encodeURIComponent(firstData.sessionId)}`, { method: 'DELETE' });
   assert.equal(removedAgain.status, 404);
+});
+
+test('note-assist sessions stay out of Agent history and memory refresh', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const { document } = knowledge.createNote({ title: '隔离笔记', content: '正文' }, { diaryUnlocked: true });
+  const store = createAgentStore(db);
+  const agentSession = store.createSession('Agent 任务');
+  store.saveSession({ ...agentSession, messages: [{ role: 'user', content: 'Agent 问题' }] });
+
+  const app = express();
+  app.use(express.json());
+  registerAgentRoutes(app, {
+    db,
+    hasDiaryAccess: () => true,
+    noteAssistModelClientFor: async () => ({ async complete() { return { text: '好', toolCalls: [] }; } }),
+  });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const sent = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '笔记里的问题' }),
+  });
+  assert.equal(sent.status, 202);
+  const sentData = await sent.json();
+  await new Promise(resolve => setTimeout(resolve, 150));
+
+  const listed = await fetch(`${base}/api/agent/sessions`);
+  assert.equal(listed.status, 200);
+  const listedData = await listed.json();
+  assert.equal(listedData.sessions.some(item => item.id === sentData.sessionId), false);
+  assert.equal(listedData.sessions.some(item => item.id === agentSession.id), true);
+
+  const hidden = await fetch(`${base}/api/agent/sessions/${encodeURIComponent(sentData.sessionId)}`);
+  assert.equal(hidden.status, 404);
+  const patched = await fetch(`${base}/api/agent/sessions/${encodeURIComponent(sentData.sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '不该改' }),
+  });
+  assert.equal(patched.status, 404);
+  const posted = await fetch(`${base}/api/agent/sessions/${encodeURIComponent(sentData.sessionId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '混进 Agent' }),
+  });
+  assert.equal(posted.status, 404);
+  const removed = await fetch(`${base}/api/agent/sessions/${encodeURIComponent(sentData.sessionId)}`, { method: 'DELETE' });
+  assert.equal(removed.status, 404);
+
+  const noteSession = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/session`);
+  assert.equal(noteSession.status, 200);
+  const noteData = await noteSession.json();
+  assert.equal(noteData.session.id, sentData.sessionId);
+  assert.match(noteData.session.messages[0].content, /笔记里的问题/);
+
+  assert.equal(store.listSessionSummaries().some(item => item.id === sentData.sessionId), false);
+  assert.equal(store.listSessions({ excludeDocumentBound: true }).some(item => item.id === sentData.sessionId), false);
+  assert.equal(store.listSessions().some(item => item.id === sentData.sessionId), true);
+
+  const prompt = buildMemoryRefreshUserMessage(store, { list: () => [] });
+  assert.equal(prompt.includes(sentData.sessionId), false);
+  assert.match(prompt, new RegExp(agentSession.id));
 });

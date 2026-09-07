@@ -89,6 +89,8 @@ const state = {
   editorMode: 'edit',
   routeSerial: 0,
   memoryLayer: '',
+  memoryEditingId: '',
+  memoryEditingDraft: '',
   memories: { items: [], proposals: [] },
   pendingAttachments: [],
   computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
@@ -1962,7 +1964,12 @@ async function saveComputerPolicy() {
 function memoryLayerLabel(layer) {
   if (layer === 'L3') return '流程';
   if (layer === 'L2') return '事实';
+  if (layer === 'system') return '系统';
   return layer || '记忆';
+}
+
+function isSystemMemoryItem(item) {
+  return item?.kind === 'system' || item?.layer === 'system';
 }
 
 function memoryBodyHtml(content) {
@@ -1979,17 +1986,31 @@ function renderMemoryItems(items) {
     root.innerHTML = `<p class="memory-empty">${items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>`;
     return;
   }
-  root.innerHTML = visible.map(item => `
-    <article class="memory-item" data-memory-item="${escHtml(item.id)}">
+  root.innerHTML = visible.map(item => {
+    const system = isSystemMemoryItem(item);
+    const editing = system && state.memoryEditingId === item.id;
+    const body = editing
+      ? `<textarea class="memory-system-editor" data-memory-system-editor="${escHtml(item.id)}" maxlength="8000">${escHtml(state.memoryEditingDraft)}</textarea>`
+      : memoryBodyHtml(item.content);
+    const actions = system
+      ? (editing
+        ? `<button class="secondary-action compact" type="button" data-memory-edit-cancel="${escHtml(item.id)}">取消</button>
+        <button class="primary-action compact" type="button" data-memory-system-save="${escHtml(item.id)}">保存</button>`
+        : `<button class="secondary-action compact" type="button" data-memory-edit="${escHtml(item.id)}">编辑</button>
+        <button class="secondary-action compact" type="button" data-memory-system-restore="${escHtml(item.id)}">恢复默认</button>`)
+      : `<button class="danger-action compact" type="button" data-memory-archive="${escHtml(item.id)}">删除</button>`;
+    return `
+    <article class="memory-item" data-memory-item="${escHtml(item.id)}" data-memory-kind="${escHtml(item.kind || item.layer || '')}">
       <header>
         <span class="memory-layer">${escHtml(memoryLayerLabel(item.layer))}</span>
         <h4>${escHtml(item.title || '未命名记忆')}</h4>
       </header>
-      ${memoryBodyHtml(item.content)}
+      ${body}
       <div class="card-actions">
-        <button class="danger-action compact" type="button" data-memory-archive="${escHtml(item.id)}">删除</button>
+        ${actions}
       </div>
-    </article>`).join('');
+    </article>`;
+  }).join('');
 }
 
 function updateMemoryPendingBadge(pendingCount) {
@@ -2177,6 +2198,65 @@ async function handleMemoryProposalAction(id, action) {
   if (state.mode === 'memory') await loadMemoriesPanel();
   else await refreshMemoryPendingCount();
   showToast(action === 'approve' ? '长期记忆已保存' : '已忽略这项记忆草稿', 'success');
+}
+
+async function confirmSystemPromptChange(title, message) {
+  const first = await confirmAction({
+    title,
+    message,
+    confirmText: '继续',
+  });
+  if (!first) return false;
+  return confirmAction({
+    title: '再次确认',
+    message: '这会立即替换当前系统提示词，之后的对话都会使用新文案。',
+    confirmText: '应用',
+  });
+}
+
+async function saveSystemMemoryItem(id) {
+  if (!id) return;
+  const editor = document.querySelector(`[data-memory-system-editor="${CSS.escape(id)}"]`);
+  const content = editor ? editor.value : state.memoryEditingDraft;
+  const confirmed = await confirmSystemPromptChange(
+    '修改系统提示词',
+    '新的系统提示词会立刻用于 Agent 或笔记内 AI，请确认文案无误。',
+  );
+  if (!confirmed) return;
+  const response = await apiFetch(`/api/agent/memories/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showToast(data.error || '系统提示词保存失败', 'error');
+    return;
+  }
+  state.memoryEditingId = '';
+  state.memoryEditingDraft = '';
+  await loadMemoriesPanel();
+  showToast('系统提示词已更新', 'success');
+}
+
+async function restoreSystemMemoryItem(id) {
+  if (!id) return;
+  const item = (state.memories?.items || []).find(entry => entry.id === id);
+  const confirmed = await confirmSystemPromptChange(
+    '恢复默认系统提示词',
+    `“${item?.title || '系统提示词'}”将恢复为出厂文案，当前自定义内容会被替换。`,
+  );
+  if (!confirmed) return;
+  const response = await apiFetch(`/api/agent/memories/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showToast(data.error || '恢复默认失败', 'error');
+    return;
+  }
+  state.memoryEditingId = '';
+  state.memoryEditingDraft = '';
+  await loadMemoriesPanel();
+  showToast('已恢复默认系统提示词', 'success');
 }
 
 async function archiveMemoryItem(id) {
@@ -5562,6 +5642,10 @@ function bindEvents() {
     if (remove) deleteArchivedSession(remove.dataset.archivedDelete).catch(error => showToast(error.message, 'error'));
   });
   $('#refreshAgentMemory').addEventListener('click', () => refreshAgentMemory().catch(error => showToast(error.message, 'error')));
+  $('#memoryView').addEventListener('input', event => {
+    const editor = event.target.closest('[data-memory-system-editor]');
+    if (editor) state.memoryEditingDraft = editor.value;
+  });
   $('#memoryView').addEventListener('click', async event => {
     const approve = event.target.closest('[data-memory-approve]');
     if (approve) {
@@ -5571,6 +5655,32 @@ function bindEvents() {
     const dismiss = event.target.closest('[data-memory-dismiss]');
     if (dismiss) {
       await handleMemoryProposalAction(dismiss.dataset.memoryDismiss, 'dismiss');
+      return;
+    }
+    const restore = event.target.closest('[data-memory-system-restore]');
+    if (restore) {
+      await restoreSystemMemoryItem(restore.dataset.memorySystemRestore);
+      return;
+    }
+    const save = event.target.closest('[data-memory-system-save]');
+    if (save) {
+      await saveSystemMemoryItem(save.dataset.memorySystemSave);
+      return;
+    }
+    const edit = event.target.closest('[data-memory-edit]');
+    if (edit) {
+      const id = edit.dataset.memoryEdit;
+      const item = (state.memories?.items || []).find(entry => entry.id === id);
+      state.memoryEditingId = id;
+      state.memoryEditingDraft = item?.content || '';
+      renderMemoryWorkspace();
+      return;
+    }
+    const cancel = event.target.closest('[data-memory-edit-cancel]');
+    if (cancel) {
+      state.memoryEditingId = '';
+      state.memoryEditingDraft = '';
+      renderMemoryWorkspace();
       return;
     }
     const archive = event.target.closest('[data-memory-archive]');

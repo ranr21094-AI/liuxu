@@ -955,6 +955,21 @@ test('agent session summaries stay lightweight and sessions can be renamed, arch
   assert.equal(store.listRunsForSession(session.id).length, 0);
 });
 
+test('listSessionSummaries omits document-bound note-assist sessions', (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const agent = store.createSession('Agent');
+  const note = store.createSession('笔记助手', { documentId: 'note:1' });
+  store.saveSession({ ...agent, messages: [{ role: 'user', content: 'Agent 内容' }] });
+  store.saveSession({ ...note, messages: [{ role: 'user', content: '笔记内容' }] });
+  const summaries = store.listSessionSummaries();
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].id, agent.id);
+  assert.equal(store.listSessions().length, 2);
+  assert.equal(store.listSessions({ excludeDocumentBound: true }).length, 1);
+  assert.equal(store.listSessions({ excludeDocumentBound: true })[0].id, agent.id);
+});
+
 test('agent runtime picks up the model client after a read-only session listing initializes its cache', async (t) => {
   const db = tempDb(t);
   runtimeFor(db, { hasDiaryAccessFlag: false });

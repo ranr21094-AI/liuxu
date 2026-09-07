@@ -2,6 +2,24 @@
 
 ## 2026-09-07
 
+### Memory 系统提示词与笔记助手隔离（v1.2.10）
+
+- Memory 新增「系统」筛选：Agent、笔记助手、Memory 刷新的静态提示词可编辑，保存/恢复默认需连续两次确认；不能删除，空内容不保存，上限 8000 字。首次只播种缺失项，不覆盖已改正文。
+- L0 规则、工具列表、检查点、媒体/附件提示、`@` 注入和 Kimi Formula 仍由代码拼接。Agent 工具看不到、也不能改系统条目。
+- 绑定文档的笔记助手会话不再出现在 Agent 历史、会话 CRUD 和 Memory 刷新扫描；ZIP 仍导出全部会话。
+- 笔记助手发给自定义供应商的 system 改为单段文本，修复 `messages[0]: invalid type: string` 的 400。
+- 品牌旁折叠指示改为描边 chevron：展开朝下，收起朝右。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.10-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.10-mac-arm64.dmg`、`LiuXu-1.2.10-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.10，无需逐版本安装。
+
+## 2026-09-07
+
 ### 工作台布局与停靠助手（v1.2.9）
 
 - 模式切换收到左侧导航，顶栏压到 52px；点品牌只收起模式按钮，不收起整列侧栏。

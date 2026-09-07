@@ -747,6 +747,8 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .agent-composer { position: relative; flex: 0 0 auto; margin-bottom: 18px; border: 1px solid var(--line-strong); border-radius: 15px; background: var(--surface); padding: 12px 12px 9px; box-shadow: 0 8px 28px rgba(0,0,0,.07); }
 .agent-composer:focus-within { border-color: color-mix(in srgb, var(--accent) 44%, var(--line)); }
 .agent-composer textarea { display: block; width: 100%; max-height: 180px; resize: none; border: 0; outline: 0; background: transparent; padding: 1px 2px 8px; line-height: 1.6; }
+.agent-composer textarea:focus,
+.agent-composer textarea:focus-visible { outline: none; box-shadow: none; }
 .mention-menu { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 8px); z-index: 8; max-height: 260px; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 6px; box-shadow: 0 16px 40px rgba(0,0,0,.16); }
 .mention-group-title { margin: 4px 8px 2px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .06em; }
 .mention-item { display: block; width: 100%; border: 0; border-radius: 8px; background: transparent; padding: 7px 8px; color: var(--text); cursor: pointer; font-size: 12px; text-align: left; }
@@ -1229,7 +1231,7 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .memory-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
 .memory-page-head h1 { margin: 0; font-family: Georgia, "Songti SC", serif; font-size: 28px; font-weight: 500; }
 .memory-page-head p { max-width: 460px; margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
-.memory-filter { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; margin-top: 12px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.memory-filter { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; margin-top: 12px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
 .memory-filter button { min-height: 32px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 600; }
 .memory-filter button.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.06); }
 .memory-item, .memory-proposal { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 12px; }
@@ -1237,6 +1239,7 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .memory-item h4, .memory-proposal h4 { margin: 0; min-width: 0; flex: 1; font-size: 13px; line-height: 1.45; }
 .memory-card-head strong { min-width: 0; flex: 1; font-size: 13px; line-height: 1.45; }
 .memory-body { margin: 8px 0 0; color: var(--text); font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-system-editor { display: block; width: 100%; min-height: 180px; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; line-height: 1.65; resize: vertical; }
 .memory-layer { flex: none; border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .06em; }
 .memory-empty { margin: 8px 0 0; color: var(--faint); font-size: 12px; }
 .memory-proposal .card-actions, .memory-item .card-actions, .memory-card .card-actions { margin-top: 10px; }
@@ -2829,6 +2832,8 @@ html[data-theme="dark"] .agent-empty-hero__frame {
   font-size: 13px;
   line-height: 1.6;
 }
+.note-assistant-composer textarea:focus,
+.note-assistant-composer textarea:focus-visible { outline: none; box-shadow: none; }
 .note-assistant-composer .composer-model-field,
 .note-assistant-composer .composer-model-select {
   max-width: 100%;
