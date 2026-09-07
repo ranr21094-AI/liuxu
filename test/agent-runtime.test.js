@@ -978,7 +978,12 @@ test('agent runtime picks up the model client after a read-only session listing 
     modelClient: { async complete() { return { text: '动态模型已连接', toolCalls: [] }; } },
   });
   const session = pack.store.createSession('生命周期');
-  const run = await pack.runtime.start({ session, goal: '测试', userMessage: '测试' });
+  const run = await pack.runtime.start({
+    session,
+    goal: '测试',
+    userMessage: '测试',
+    modelClient: pack.modelClient,
+  });
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(pack.store.getRun(run.id).status, 'completed');
   assert.equal(pack.store.getRun(run.id).finalText, '动态模型已连接');
@@ -1394,7 +1399,10 @@ test('ask_user pauses the run until the user replies', async (t) => {
   const resumed = await runtime.resumeUserInput(run.id, '改 note:123');
   assert.equal(resumed.run.status, 'completed');
   assert.equal(resumed.run.finalText, '已按你的选择处理');
-  assert.ok(resumed.run.messages.some(item => item.role === 'user' && item.content === '改 note:123'));
+  const reply = resumed.run.messages.find(item => item.kind === 'ask_user_reply');
+  assert.equal(reply?.role, 'user');
+  assert.equal(reply?.content, '改 note:123');
+  assert.equal(reply?.question, '你要改哪篇笔记？');
 });
 
 test('ask_user in the same turn still queues confirm tools', async (t) => {
@@ -2473,4 +2481,115 @@ test('workbench tracks per-session runs for parallel agent sessions', () => {
   assert.match(styles, /\.session-run-badge/);
   assert.match(source, /BLOCKING_RUN_STATES\.has\(activeRunState\(\)\?\.status/);
   assert.doesNotMatch(source, /function setSessionRunStatus[\s\S]{0,500}renderSessions\(\)/);
+});
+
+test('ask_user resume does not resubscribe a live run or redraw a completed reply', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'workbench.js'), 'utf8');
+  assert.match(source, /function rememberTerminalRun\(entry,\s*runId\)/);
+  assert.match(source, /renderedTerminalRunIds:\s*new Set\(\)/);
+  assert.match(source, /if \(entry\.eventSource && entry\.runId === runId\)/);
+  assert.match(source, /alreadyRendered = TERMINAL_RUN_STATES\.has\(data\.status\) && live\?\.renderedTerminalRunIds\?\.has\(data\.runId\)/);
+  assert.match(source, /const firstTerminal = rememberTerminalRun\(entry, entry\.runId\)/);
+  assert.match(source, /if \(viewing && firstTerminal\)/);
+});
+
+test('ask_user replies render as a transcript Q/A card without a new run index', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'workbench.js'), 'utf8');
+  const styles = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'workbench.css'), 'utf8');
+  assert.match(source, /function isAskUserReplyMessage\(message\) \{/);
+  assert.match(source, /message\?\.kind === 'ask_user_reply'/);
+  assert.match(source, /article\.className = askUserReply \? 'message ask-user-turn'/);
+  assert.doesNotMatch(source, /ask-user-turn user/);
+  assert.match(source, /Agent 提问/);
+  assert.match(source, /补充回答/);
+  assert.match(source, /kind: 'ask_user_reply', question: pendingQuestion/);
+  assert.match(source, /if \(message\.role === 'user' && !isAskUserReplyMessage\(message\) && runIndex < runs\.length\)/);
+  assert.match(source, /user_input\.required[\s\S]{0,400}entry\.pendingQuestion/);
+  assert.match(styles, /\.message\.ask-user-turn \{/);
+  assert.match(styles, /\.message\.ask-user-turn \.ask-user-label \{[\s\S]*?font-size: 11px/);
+});
+
+test('checkpoint updates keep the full persisted session history', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const messages = [];
+  for (let index = 0; index < 30; index += 1) {
+    messages.push({ role: 'user', content: `u${index}` });
+    messages.push({ role: 'assistant', content: `a${index}` });
+  }
+  const session = store.createSession('long-history');
+  store.saveSession({ ...session, messages });
+  let round = 0;
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    modelClient: {
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            text: '',
+            toolCalls: [{
+              name: 'update_working_checkpoint',
+              arguments: { next: 'keep going', notes: 'still working' },
+            }],
+          };
+        }
+        return { text: '完成', toolCalls: [] };
+      },
+    },
+  });
+  const run = await runtime.start({ session: store.getSession(session.id), goal: '继续', userMessage: '继续' });
+  const done = await waitForRun(store, run.id);
+  assert.equal(done.status, 'completed');
+  const saved = store.getSession(session.id);
+  assert.equal(saved.messages.filter(item => item.role === 'user' && /^u\d+$/.test(item.content)).length, 30);
+  assert.equal(saved.messages.filter(item => item.role === 'assistant' && /^a\d+$/.test(item.content)).length, 30);
+  assert.equal(saved.messages.some(item => item.role === 'user' && item.content === '继续'), true);
+});
+
+test('agent and note-assist runs keep their own model clients', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const { document } = knowledge.createNote({ title: '绑定', content: '正文' }, { diaryUnlocked: true });
+  let releaseAgent;
+  const agentGate = new Promise(resolve => { releaseAgent = resolve; });
+  const agentClient = {
+    async complete() {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      releaseAgent();
+      return { text: 'agent-reply', toolCalls: [] };
+    },
+  };
+  const noteClient = {
+    async complete() {
+      await agentGate;
+      return { text: 'note-reply', toolCalls: [] };
+    },
+  };
+  const pack = runtimeFor(db, { hasDiaryAccessFlag: true, modelClient: agentClient });
+  const session = pack.store.createSession('agent-run');
+  const agentRun = await pack.runtime.start({
+    session,
+    goal: 'agent',
+    userMessage: 'agent',
+    modelClient: agentClient,
+  });
+  const noteSession = pack.store.createSession('note-run', { documentId: document.id });
+  const notePack = runtimeFor(db, { hasDiaryAccessFlag: true, modelClient: noteClient });
+  const noteRun = await notePack.runtime.startNoteAssist({
+    session: noteSession,
+    documentId: document.id,
+    userMessage: 'note',
+    modelClient: noteClient,
+  });
+  const agentDone = await waitForRun(pack.store, agentRun.id, 1000);
+  const noteDone = await waitForRun(notePack.store, noteRun.id, 1000);
+  assert.equal(agentDone.status, 'completed');
+  assert.equal(noteDone.status, 'completed');
+  assert.equal(agentDone.finalText, 'agent-reply');
+  assert.equal(noteDone.finalText, 'note-reply');
 });

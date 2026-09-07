@@ -2,6 +2,25 @@
 
 ## 2026-09-07
 
+### 备份恢复与 Agent 隔离（v1.2.11）
+
+- ZIP「合并」不再整库覆盖当前 `schedule.db`；知识笔记按文档 id 合并，较新的 `updatedAt` 获胜。没有库文件的旧 ZIP 合并时不会删掉当前库。
+- ZIP「替换」先校验备份库完整性，通过后再切换；切换后打不开则从恢复前备份滚回。恢复后重建 Agent 连接。
+- 日记锁定时不能用 runId 读助手事件或删除助手会话；笔记助手发消息尊重所选会话。
+- Agent 与笔记助手各自绑定本轮模型客户端；checkpoint 保存完整对话，不再只留最后 40 条。
+- `ask_user` 提问和补充回答以卡片留在对话里；回答后不再重复画助手气泡；输入框聚焦不再出现内框虚线。
+- 「检查更新」的 15 秒超时现在会真正生效。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.11-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.11-mac-arm64.dmg`、`LiuXu-1.2.11-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.11，无需逐版本安装。
+
+## 2026-09-07
+
 ### Memory 系统提示词与笔记助手隔离（v1.2.10）
 
 - Memory 新增「系统」筛选：Agent、笔记助手、Memory 刷新的静态提示词可编辑，保存/恢复默认需连续两次确认；不能删除，空内容不保存，上限 8000 字。首次只播种缺失项，不覆盖已改正文。

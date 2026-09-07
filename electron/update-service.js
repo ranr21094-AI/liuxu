@@ -273,7 +273,7 @@ function createUpdateService({
   async function check() {
     // A hung GitHub connection must not leave the renderer waiting forever.
     const timeout = AbortSignal.timeout(15000);
-    const response = await fetchWithRedirects(fetchImpl, UPDATE_API_URL, { validateUrl: assertSafeApiUrl, signal: timeout.signal });
+    const response = await fetchWithRedirects(fetchImpl, UPDATE_API_URL, { validateUrl: assertSafeApiUrl, signal: timeout });
     if (!response.ok) throw new Error(`GitHub 更新检查失败（HTTP ${response.status}）`);
     const release = await response.json();
     const summary = summarizeRelease(release, { currentVersion, platform, arch });

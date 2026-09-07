@@ -51,6 +51,8 @@ test('workspace density nits keep 36px controls, 24px narrow padding, and title 
   assert.doesNotMatch(workbench, /\.run-status \{ display: none !important; \}/);
   assert.match(workbench, /\.agent-composer textarea:focus-visible \{ outline: none/);
   assert.match(workbench, /\.note-assistant-composer textarea:focus-visible \{ outline: none/);
+  assert.match(css, /\.agent-view \.agent-composer textarea:focus-visible/);
+  assert.match(css, /\.note-assistant-panel \.note-assistant-composer textarea:focus-visible \{ outline: none/);
 });
 
 test('mode nav collapse is independent from desktop sidebar collapse', () => {

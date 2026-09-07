@@ -190,3 +190,23 @@ test('update cache cleanup recognizes Windows x64 installers', async () => {
   assert.equal(fs.existsSync(path.join(cache, 'LiuXu-Setup-1.1.0-x64.exe')), false);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('update check passes the abort signal itself', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'liuxu-update-timeout-'));
+  let seenSignal;
+  const fetchImpl = async (url, options = {}) => {
+    seenSignal = options.signal;
+    return fakeResponse({ json: releaseFixture() });
+  };
+  const service = createUpdateService({
+    userDataPath: root,
+    currentVersion: '1.1.0',
+    platform: 'darwin',
+    arch: 'arm64',
+    fetchImpl,
+  });
+  await service.check();
+  assert.equal(typeof seenSignal?.aborted, 'boolean');
+  assert.equal(typeof seenSignal?.addEventListener, 'function');
+  fs.rmSync(root, { recursive: true, force: true });
+});

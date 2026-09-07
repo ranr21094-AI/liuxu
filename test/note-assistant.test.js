@@ -239,6 +239,20 @@ test('note-assist sessions list, explicit fetch, and hard delete', async (t) => 
   const foreign = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/session?sessionId=nope`);
   assert.equal(foreign.status, 404);
 
+  const resumed = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '回到第一个会话', sessionId: firstData.sessionId }),
+  });
+  assert.equal(resumed.status, 202);
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const firstAfter = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/session?sessionId=${encodeURIComponent(firstData.sessionId)}`);
+  const firstAfterData = await firstAfter.json();
+  assert.equal(firstAfterData.session.messages.some(item => item.content === '回到第一个会话'), true);
+  const secondAfter = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/session?sessionId=${encodeURIComponent(secondData.sessionId)}`);
+  const secondAfterData = await secondAfter.json();
+  assert.equal(secondAfterData.session.messages.some(item => item.content === '回到第一个会话'), false);
+
   // 删除：不存在 404；成功后 runs/messages 一并清理
   const removed = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(document.id)}/sessions/${encodeURIComponent(firstData.sessionId)}`, { method: 'DELETE' });
   assert.equal(removed.status, 200);
@@ -318,4 +332,70 @@ test('note-assist sessions stay out of Agent history and memory refresh', async 
   const prompt = buildMemoryRefreshUserMessage(store, { list: () => [] });
   assert.equal(prompt.includes(sentData.sessionId), false);
   assert.match(prompt, new RegExp(agentSession.id));
+});
+
+test('locked diary note-assist events and session delete return 403', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const diaryNote = knowledge.createNote({
+    title: '私密日记',
+    content: '秘密正文',
+    knowledgeBase: '日记',
+    visibility: 'diary',
+  }, { diaryUnlocked: true }).document;
+  const publicNote = knowledge.createNote({ title: '公开笔记', content: '公开正文' }, { diaryUnlocked: true }).document;
+
+  let diaryUnlocked = true;
+  let round = 0;
+  const app = express();
+  app.use(express.json());
+  registerAgentRoutes(app, {
+    db,
+    hasDiaryAccess: () => diaryUnlocked,
+    noteAssistModelClientFor: async () => ({
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return { text: '', toolCalls: [{ name: 'note.propose_edit', arguments: { find: '秘密正文', replace: '改写后的正文' } }] };
+        }
+        return { text: '已提出修改', toolCalls: [] };
+      },
+    }),
+  });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const sent = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '润色这一段' }),
+  });
+  assert.equal(sent.status, 202);
+  const sentData = await sent.json();
+  await new Promise(resolve => setTimeout(resolve, 250));
+
+  diaryUnlocked = false;
+  const lockedSession = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/session`);
+  assert.equal(lockedSession.status, 403);
+  const lockedEvents = await fetch(`${base}/api/agent/runs/${encodeURIComponent(sentData.runId)}/events`);
+  assert.equal(lockedEvents.status, 403);
+  const lockedDelete = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/sessions/${encodeURIComponent(sentData.sessionId)}`, { method: 'DELETE' });
+  assert.equal(lockedDelete.status, 403);
+
+  diaryUnlocked = true;
+  const publicSent = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(publicNote.id)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: '你好' }),
+  });
+  assert.equal(publicSent.status, 202);
+  const publicData = await publicSent.json();
+  await new Promise(resolve => setTimeout(resolve, 150));
+  diaryUnlocked = false;
+  const publicEvents = await fetch(`${base}/api/agent/runs/${encodeURIComponent(publicData.runId)}/events`);
+  assert.equal(publicEvents.status, 200);
+  publicEvents.body?.cancel?.();
 });

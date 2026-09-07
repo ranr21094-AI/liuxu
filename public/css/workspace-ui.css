@@ -71,6 +71,8 @@ body.mode-nav-collapsed .workspace-mode-nav { display: none; }
 #assistantToggleButton svg { width: 20px; height: 20px; fill: currentColor; }
 .agent-view :is(button,select,textarea):focus-visible, .knowledge-view :is(button,summary,textarea,input):focus-visible,
 .workspace-mode-nav button:focus-visible, .note-assistant-panel :is(button,textarea,select,[role="separator"]):focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.agent-view .agent-composer textarea:focus-visible,
+.note-assistant-panel .note-assistant-composer textarea:focus-visible { outline: none; box-shadow: none; }
 .document-meta-chips { max-width: 40%; border: 0; padding: 4px; background: transparent; }
 .document-meta-chip { font-size: 12px; }
 .document-toolbar-actions { margin-left: auto; width: auto; flex-wrap: wrap; }

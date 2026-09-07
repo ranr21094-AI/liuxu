@@ -96,6 +96,8 @@ const state = {
   computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
 };
 
+const RENDERED_TERMINAL_RUN_LIMIT = 32;
+
 function createEmptySessionRunState() {
   return {
     runId: '',
@@ -105,10 +107,23 @@ function createEmptySessionRunState() {
     childRunEventKeys: new Map(),
     activeChildRunId: '',
     runEventKeys: new Set(),
+    renderedTerminalRunIds: new Set(),
     runImages: [],
     delegateTitle: '',
+    pendingQuestion: '',
     needsReload: false,
   };
+}
+
+function rememberTerminalRun(entry, runId) {
+  if (!entry || !runId) return true;
+  const ids = entry.renderedTerminalRunIds || (entry.renderedTerminalRunIds = new Set());
+  if (ids.has(runId)) return false;
+  ids.add(runId);
+  while (ids.size > RENDERED_TERMINAL_RUN_LIMIT) {
+    ids.delete(ids.values().next().value);
+  }
+  return true;
 }
 
 function getSessionRunState(sessionId) {
@@ -2636,12 +2651,17 @@ function buildAssistantMetaHtml(createdAt, model = '') {
   return `<div class="message-meta">${modelHtml}${MESSAGE_COPY_ACTION}${timeHtml}</div>`;
 }
 
-function addMessage(role, content, citations = [], attachments = [], { createdAt, model, scroll = true } = {}) {
+function isAskUserReplyMessage(message) {
+  return message?.kind === 'ask_user_reply';
+}
+
+function addMessage(role, content, citations = [], attachments = [], { createdAt, model, scroll = true, kind = '', question = '' } = {}) {
   const list = $('#agentMessageList');
   unmountAgentEmptyHero(list);
   list.querySelector('.agent-empty-state')?.remove();
   const article = document.createElement('article');
-  article.className = `message ${role === 'user' ? 'user' : 'assistant'}`;
+  const askUserReply = kind === 'ask_user_reply';
+  article.className = askUserReply ? 'message ask-user-turn' : `message ${role === 'user' ? 'user' : 'assistant'}`;
   const citationHtml = Array.isArray(citations) && citations.length ? `
     <div class="citation-list">
       ${citations.map((citation, index) => {
@@ -2662,10 +2682,21 @@ function addMessage(role, content, citations = [], attachments = [], { createdAt
       return `<span class="message-attachment-file"><span class="attachment-type-glyph">${attachmentTypeIcon(item).replace(/<[^>]+>/g, '')}</span><span>${escHtml(label)}</span></span>`;
     }).join('')}</div>`
     : '';
-  article.innerHTML = role === 'user'
-    ? `${MESSAGE_COPY_ACTION}<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div>`
-    : `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>${buildAssistantMetaHtml(createdAt, model)}`;
-  article.dataset.copyText = buildMessageCopyText(content, role === 'user' ? attachments : []);
+  if (askUserReply) {
+    const questionText = String(question || '').trim();
+    const questionBlock = questionText
+      ? `<div class="ask-user-block"><span class="ask-user-label">Agent 提问</span><div class="ask-user-question">${escHtml(questionText)}</div></div>`
+      : '';
+    article.innerHTML = `<div class="ask-user-card">${questionBlock}<div class="ask-user-block"><span class="ask-user-label">补充回答</span><div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div></div>${MESSAGE_COPY_ACTION}`;
+    article.dataset.copyText = questionText
+      ? `Agent 提问：${questionText}\n补充回答：${buildMessageCopyText(content, attachments)}`
+      : buildMessageCopyText(content, attachments);
+  } else {
+    article.innerHTML = role === 'user'
+      ? `${MESSAGE_COPY_ACTION}<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${attachmentHtml}</div>`
+      : `<div class="message-body"><div class="message-content">${renderMarkdown(content)}</div>${citationHtml}</div>${buildAssistantMetaHtml(createdAt, model)}`;
+    article.dataset.copyText = buildMessageCopyText(content, role === 'user' ? attachments : []);
+  }
   list.append(article);
   if (scroll) scrollMessagesToBottom();
   return article;
@@ -2751,8 +2782,12 @@ function renderSessionMessages(session, { force = false } = {}) {
       });
       return;
     }
-    addMessage(message.role, message.content, [], message.attachments || [], { scroll: false });
-    if (message.role === 'user' && runIndex < runs.length) {
+    addMessage(message.role, message.content, [], message.attachments || [], {
+      scroll: false,
+      kind: isAskUserReplyMessage(message) ? 'ask_user_reply' : '',
+      question: message.question || '',
+    });
+    if (message.role === 'user' && !isAskUserReplyMessage(message) && runIndex < runs.length) {
       lastRun = runs[runIndex];
       upsertRunTrace(lastRun.id === liveId ? { id: lastRun.id, trace: [] } : lastRun, { live: lastRun.id === liveId });
       runIndex += 1;
@@ -3232,6 +3267,9 @@ function setSessionRunStatus(sessionId, status, text = '') {
     || (wasWaitingUser && status !== 'waiting_user')) {
     clearComposerDock();
   }
+  if (status === 'waiting_user' && entry.pendingQuestion) {
+    renderAgentQuestion(entry.pendingQuestion, entry.delegateTitle);
+  }
   const active = ACTIVE_RUN_STATES.has(status);
   const blocking = BLOCKING_RUN_STATES.has(status);
   $('#runStatus').hidden = !active;
@@ -3683,6 +3721,7 @@ function finishSessionRun(sessionId, { viewing = isViewingSession(sessionId) } =
   entry.runId = '';
   entry.status = '';
   entry.delegateTitle = '';
+  entry.pendingQuestion = '';
   entry.activeChildRunId = '';
   entry.runEventKeys.clear();
   entry.runImages = [];
@@ -3746,9 +3785,9 @@ function handleRunEvent(sessionId, event) {
     if (viewing) trace(delegateTitle ? `子任务「${delegateTitle}」继续执行` : '子任务继续执行', entry.runId);
   }
   if (event.type === 'user_input.required') {
-    setSessionRunStatus(sessionId, 'waiting_user');
     entry.delegateTitle = payload.delegateTitle || payload.delegate_title || '';
-    if (viewing) renderAgentQuestion(payload.question, entry.delegateTitle);
+    entry.pendingQuestion = String(payload.question || '').trim();
+    setSessionRunStatus(sessionId, 'waiting_user');
     const childRunId = payload.delegatedRunId || payload.delegated_run_id || entry.activeChildRunId;
     if (childRunId) {
       subscribeDelegateRun(sessionId, childRunId, entry.delegateTitle, entry.runId);
@@ -3793,7 +3832,8 @@ function handleRunEvent(sessionId, event) {
     refreshMemoryPendingCount().catch(() => {});
   }
   if (event.type === 'run.completed') {
-    if (viewing) {
+    const firstTerminal = rememberTerminalRun(entry, entry.runId);
+    if (viewing && firstTerminal) {
       const list = $('#agentMessageList');
       const known = collectKnownUploadUrls(list, { excludeRunId: entry.runId });
       let text = dedupeImageMarkdown(payload.text || '已完成。', known);
@@ -3810,8 +3850,9 @@ function handleRunEvent(sessionId, event) {
     finishSessionRun(sessionId, { viewing });
   }
   if (event.type === 'run.failed') {
+    const firstTerminal = rememberTerminalRun(entry, entry.runId);
     const message = payload.error === 'cancelled' ? '运行已停止。' : `运行未完成：${payload.error || '未知错误'}`;
-    if (viewing) {
+    if (viewing && firstTerminal) {
       if (payload.error === 'cancelled') clearComposerDock();
       removeRunImagePreviews(entry.runId);
       const card = document.createElement('div');
@@ -3852,14 +3893,18 @@ function subscribeRun(sessionId, runId, initialStatus = 'queued') {
     return;
   }
   const entry = ensureSessionRunState(sessionId);
-  const sameRun = entry.runId === runId;
-  if (entry.eventSource && entry.runId !== runId) {
+  if (entry.eventSource && entry.runId === runId) {
+    setSessionRunStatus(sessionId, initialStatus);
+    return;
+  }
+  if (entry.eventSource) {
     entry.eventSource.close();
     entry.eventSource = null;
   }
-  if (!sameRun) {
+  if (entry.runId !== runId) {
     entry.runEventKeys = new Set();
     entry.runImages = [];
+    entry.pendingQuestion = '';
   }
   entry.runId = runId;
   entry.delegateTitle = '';
@@ -3912,7 +3957,11 @@ async function sendAgentMessage(content) {
     ...(item.truncated ? { truncated: true } : {}),
   }));
   const resuming = entry.status === 'waiting_user' && entry.runId;
-  addMessage('user', content, [], attachments);
+  const pendingQuestion = resuming ? String(entry.pendingQuestion || '').trim() : '';
+  if (resuming) entry.pendingQuestion = '';
+  addMessage('user', content, [], attachments, resuming
+    ? { kind: 'ask_user_reply', question: pendingQuestion }
+    : {});
   scrollMessagesToBottom(true);
   patchSessionSummaryAfterUserMessage(session.id, content);
   state.pendingAttachments = [];
@@ -3925,11 +3974,16 @@ async function sendAgentMessage(content) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (resuming) entry.pendingQuestion = pendingQuestion;
     setSessionRunStatus(session.id, resuming ? 'waiting_user' : '');
     throw new Error(data.error || 'Agent 启动失败');
   }
   if (data.resumed) {
-    subscribeRun(session.id, data.runId, data.status || 'running');
+    const live = getSessionRunState(session.id);
+    const alreadyLive = Boolean(live?.eventSource && live.runId === data.runId);
+    const alreadyRendered = TERMINAL_RUN_STATES.has(data.status) && live?.renderedTerminalRunIds?.has(data.runId);
+    if (alreadyLive) setSessionRunStatus(session.id, data.status || 'running');
+    else if (!alreadyRendered) subscribeRun(session.id, data.runId, data.status || 'running');
     trace('已收到你的回答，继续运行', data.runId);
   } else {
     subscribeRun(session.id, data.runId, data.status);
