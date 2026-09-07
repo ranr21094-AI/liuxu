@@ -16,7 +16,8 @@ import {
   renderPreservingFocus,
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
-import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument } from './knowledge/note-assistant.js';
+import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
+import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
 import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { preloadMarkdownLibraries, renderToHtml, renderToHtmlUncached } from './markdown.js';
@@ -541,14 +542,15 @@ function selectedMentionItem() {
   return $('#mentionMenu:not([hidden]) .mention-item.active');
 }
 
-function scrollMessagesToBottom() {
-  const list = $('#agentMessageList');
-  requestAnimationFrame(() => { list.scrollTop = list.scrollHeight; });
+let messageFollower;
+function scrollMessagesToBottom(force = false) {
+  messageFollower?.follow(force);
 }
 
 const mobileSidebarQuery = window.matchMedia('(max-width: 840px)');
 const desktopSidebarQuery = window.matchMedia('(min-width: 841px)');
 const SIDEBAR_COLLAPSED_KEY = 'workbenchSidebarCollapsed';
+const MODE_NAV_COLLAPSED_KEY = 'workbenchModeNavCollapsed';
 const KNOWLEDGE_SEARCH_OPTIONS_KEY = 'knowledgeSearchOptions';
 
 const KNOWLEDGE_SEARCH_PRESETS = {
@@ -722,6 +724,7 @@ function syncMobileSidebarAccessibility() {
   const sidebar = $('#workspaceSidebar');
   const isOpen = document.body.classList.contains('sidebar-visible');
   const isHidden = mobileSidebarQuery.matches && !isOpen;
+  $('#sidebarBackdrop').hidden = !mobileSidebarQuery.matches || !isOpen;
   sidebar.inert = isHidden;
   if (isHidden) sidebar.setAttribute('aria-hidden', 'true');
   else sidebar.removeAttribute('aria-hidden');
@@ -735,22 +738,22 @@ function openMobileSidebar() {
 }
 
 function closeMobileSidebar() {
+  const restoreFocus = document.body.classList.contains('sidebar-visible') && $('#workspaceSidebar').contains(document.activeElement);
   document.body.classList.remove('sidebar-visible');
   syncMobileSidebarAccessibility();
+  if (restoreFocus) $('#sidebarOpen').focus();
 }
 
 function syncDesktopSidebar() {
   const collapsed = desktopSidebarQuery.matches && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
   document.body.classList.toggle('sidebar-collapsed', collapsed);
   const toggle = $('#sidebarToggle');
-  const expand = $('#sidebarExpand');
   if (toggle) {
     toggle.hidden = !desktopSidebarQuery.matches;
     toggle.setAttribute('aria-expanded', String(!collapsed));
     toggle.setAttribute('aria-label', collapsed ? '展开侧栏' : '收起侧栏');
     toggle.title = collapsed ? '展开侧栏' : '收起侧栏';
   }
-  if (expand) expand.hidden = !desktopSidebarQuery.matches || !collapsed;
 }
 
 function toggleDesktopSidebar(forceCollapsed) {
@@ -760,6 +763,27 @@ function toggleDesktopSidebar(forceCollapsed) {
     : !document.body.classList.contains('sidebar-collapsed');
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
   syncDesktopSidebar();
+}
+
+function syncModeNav() {
+  const collapsed = localStorage.getItem(MODE_NAV_COLLAPSED_KEY) === 'true';
+  document.body.classList.toggle('mode-nav-collapsed', collapsed);
+  const nav = $('#workspaceModeNav');
+  const brand = $('#workspaceBrand');
+  if (nav) nav.hidden = collapsed;
+  if (brand) {
+    brand.setAttribute('aria-expanded', String(!collapsed));
+    brand.setAttribute('aria-label', collapsed ? '展开导航' : '收起导航');
+    brand.title = collapsed ? '展开导航' : '收起导航';
+  }
+}
+
+function toggleModeNav(forceCollapsed) {
+  const collapsed = typeof forceCollapsed === 'boolean'
+    ? forceCollapsed
+    : localStorage.getItem(MODE_NAV_COLLAPSED_KEY) !== 'true';
+  localStorage.setItem(MODE_NAV_COLLAPSED_KEY, String(collapsed));
+  syncModeNav();
 }
 
 function parseRoute() {
@@ -804,7 +828,9 @@ async function navigate(mode, id = '', options = {}, { replace = false } = {}) {
 
 function setModeUI(mode) {
   state.mode = mode;
-  document.querySelectorAll('.topbar-mode-switch [data-mode]').forEach(button => {
+  document.body.dataset.mode = mode;
+  noteAssistantSetMode(mode);
+  document.querySelectorAll('.workspace-mode-nav [data-mode]').forEach(button => {
     button.classList.toggle('active', button.dataset.mode === mode);
     button.setAttribute('aria-current', button.dataset.mode === mode ? 'page' : 'false');
   });
@@ -824,7 +850,7 @@ function setModeUI(mode) {
     } else if (isKnowledgeRoot()) {
       $('#topbarSubtitle').textContent = `${state.knowledgeBases.length} 个知识库`;
     } else {
-      $('#topbarSubtitle').textContent = state.activeDocument?.title || `${state.knowledgeTotal} 条知识`;
+      $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ') || `${state.knowledgeTotal} 条知识`;
     }
   }
   closeMobileSidebar();
@@ -1969,7 +1995,7 @@ function renderMemoryItems(items) {
 function updateMemoryPendingBadge(pendingCount) {
   const count = Math.max(0, Number(pendingCount) || 0);
   const badge = $('#memoryPendingBadge');
-  const memoryButton = document.querySelector('.topbar-mode-switch [data-mode="memory"]');
+  const memoryButton = document.querySelector('.workspace-mode-nav [data-mode="memory"]');
   if (badge) {
     if (count > 0) {
       badge.hidden = false;
@@ -2606,6 +2632,8 @@ function applySessionDetail(session, { force = false, scroll = true } = {}) {
 
 function renderSessionMessages(session, { force = false } = {}) {
   const list = $('#agentMessageList');
+  const changedSession = list.dataset.sessionId !== session.id;
+  const previousScroll = list.scrollTop;
   const fingerprint = sessionMessagesFingerprint(session);
   const local = getSessionRunState(session.id);
   const runActive = (session?.latestRun && ACTIVE_RUN_STATES.has(session.latestRun.status))
@@ -2655,7 +2683,8 @@ function renderSessionMessages(session, { force = false } = {}) {
     upsertRunTrace(run.id === liveId ? { id: run.id, trace: [] } : run, { live: run.id === liveId });
     runIndex += 1;
   }
-  scrollMessagesToBottom();
+  if (!changedSession) list.scrollTop = previousScroll;
+  scrollMessagesToBottom(changedSession);
 }
 
 function showEmptySessionContent() {
@@ -3804,6 +3833,7 @@ async function sendAgentMessage(content) {
   }));
   const resuming = entry.status === 'waiting_user' && entry.runId;
   addMessage('user', content, [], attachments);
+  scrollMessagesToBottom(true);
   patchSessionSummaryAfterUserMessage(session.id, content);
   state.pendingAttachments = [];
   renderAttachmentPreview();
@@ -4362,7 +4392,7 @@ async function renderActiveDocument(document) {
   if (metaPanel) metaPanel.open = false;
   updateDocumentMetaSummary();
   $('#documentContent').value = document.content || '';
-  $('#topbarSubtitle').textContent = document.title || '未命名';
+  $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ');
   setDocumentSaveState('已保存');
   const isFile = document.sourceType === 'file';
   $('#noteEditor').hidden = false;
@@ -4589,7 +4619,8 @@ async function saveDocument() {
     scheduleDocumentSave();
   }
   knowledgeEnhancements?.onDocumentSaved?.(data);
-  $('#topbarSubtitle').textContent = data.title || '未命名';
+  $('#topbarSubtitle').textContent = [data.knowledgeBase || state.selectedKnowledgeBase, data.folderPath || state.selectedFolderPath].filter(Boolean).join(' / ')
+    || `${state.knowledgeTotal} 条知识`;
   updateDocumentSummary(data);
   const locationChanged = previous && (
     (previous.knowledgeBase || '其他') !== (data.knowledgeBase || '其他')
@@ -4647,9 +4678,9 @@ async function importKnowledgeFile(file) {
   }
 }
 
-function applyNoteAssistantEdit({ find, replace, append, content }) {
+function applyNoteAssistantEdit({ documentId, find, replace, append, content }) {
   const editor = $('#documentContent');
-  if (!editor || state.documentConflict) return;
+  if (!editor || state.documentConflict || state.activeDocument?.id !== documentId || state.activeDocument?.status === 'archived') throw new Error('文档已切换、归档或存在保存冲突，请重新打开目标文档后应用');
   if (append) {
     const addition = String(content || '');
     const start = editor.value.length;
@@ -4799,6 +4830,7 @@ async function deleteActiveDocument() {
 async function syncDiaryStatus() {
   const status = await getDiaryStatus();
   state.diaryUnlocked = status.enabled === false || !status.locked;
+  if (!state.diaryUnlocked) noteAssistantLockPrivate();
   const button = $('#diaryButton');
   if (!button) return;
   const label = state.diaryUnlocked ? '私密知识已解锁' : '私密知识已锁定';
@@ -4842,7 +4874,13 @@ function applyTheme(value) {
 
 function bindEvents() {
   initKnowledgeNameDialog();
-  document.querySelector('.topbar-mode-switch').addEventListener('click', async event => {
+  initWorkspaceControls();
+  messageFollower = createMessageFollower($('#agentMessageList'), $('#agentJumpToLatest'));
+  const composerObserver = new ResizeObserver(entries => {
+    $('#conversation').style.setProperty('--composer-height', `${entries[0].target.getBoundingClientRect().height}px`);
+  });
+  composerObserver.observe($('#agentComposer'));
+  document.querySelector('.workspace-mode-nav').addEventListener('click', async event => {
     const button = event.target.closest('[data-mode]');
     if (!button) return;
     const targetMode = button.dataset.mode;
@@ -4860,8 +4898,18 @@ function bindEvents() {
   $('#sidebarOpen').addEventListener('click', openMobileSidebar);
   $('#sidebarClose').addEventListener('click', closeMobileSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeMobileSidebar);
+  $('#workspaceSidebar').addEventListener('keydown', event => {
+    if (!mobileSidebarQuery.matches || !document.body.classList.contains('sidebar-visible')) return;
+    if (event.key === 'Escape') { event.preventDefault(); closeMobileSidebar(); }
+    if (event.key === 'Tab') {
+      const controls = [...$('#workspaceSidebar').querySelectorAll('button,input,select,summary,[tabindex="0"]')].filter(el => !el.disabled && !el.hidden && el.getClientRects().length);
+      const first = controls[0]; const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+  });
   $('#sidebarToggle').addEventListener('click', () => toggleDesktopSidebar());
-  $('#sidebarExpand').addEventListener('click', () => toggleDesktopSidebar(false));
+  $('#workspaceBrand').addEventListener('click', () => toggleModeNav());
   $('#newSessionButton').addEventListener('click', () => createSession().catch(error => showToast(error.message, 'error')));
   $('#sessionSearch').addEventListener('input', renderSessions);
   $('#sessionList').addEventListener('click', event => {
@@ -5224,6 +5272,7 @@ function bindEvents() {
   });
   desktopSidebarQuery.addEventListener('change', syncDesktopSidebar);
   syncDesktopSidebar();
+  syncModeNav();
 
   $('#diaryButton').addEventListener('click', toggleDiary);
   $('#closeDiaryDialog').addEventListener('click', () => $('#diaryDialog').close());
@@ -5470,7 +5519,13 @@ function bindEvents() {
       await renderActiveDocument(document);
     },
   });
-  initNoteAssistant({ applyEdit: applyNoteAssistantEdit });
+  initNoteAssistant({ applyEdit: applyNoteAssistantEdit, ensureDocument: async documentId => {
+    if (!documentId) throw new Error('缺少关联文档');
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`);
+    if (!response.ok) throw new Error('文档已删除或当前无权访问');
+    if (state.mode !== 'knowledge' || state.activeDocument?.id !== documentId) await navigate('knowledge', documentId);
+    if (state.activeDocument?.id !== documentId || state.mode !== 'knowledge' || state.documentConflict || state.activeDocument.status === 'archived') throw new Error('请先解决文档保存冲突，再应用提案');
+  } });
   createBackupActions({
     confirmAction,
     reloadKnowledge: async () => {

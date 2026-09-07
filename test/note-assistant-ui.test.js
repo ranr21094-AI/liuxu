@@ -160,11 +160,17 @@ test('batch apply applies every pending proposal in order and updates the editor
     assert.equal(document.querySelectorAll('.note-assistant-proposal.is-applied').length, 2);
     assert.equal(document.querySelector('#noteAssistantBatch').hidden, true, 'batch bar hides when nothing pending');
 
-    // 忽略路径：单条提案忽略后批量条不出现
-    source.emit('note.edit_proposed', { type: 'note.edit_proposed', payload: {
+    // A completed source must not mutate the session; use a fresh run.
+    source.emit('note.edit_proposed', { payload: { id: 'stale', documentId: 'note:1' } });
+    assert.equal(document.querySelectorAll('.note-assistant-proposal').length, 2);
+    input.value = '再提出一处修改';
+    document.querySelector('#noteAssistantSend').click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const nextSource = sources.at(-1);
+    nextSource.emit('note.edit_proposed', { type: 'note.edit_proposed', payload: {
       id: 'p3', documentId: 'note:1', find: 'AA-', replace: 'AB-',
     } });
-    source.emit('run.completed', { type: 'run.completed', payload: { text: '' } });
+    nextSource.emit('run.completed', { type: 'run.completed', payload: { text: '' } });
     assert.equal(document.querySelector('#noteAssistantBatch').hidden, true, 'single pending proposal does not show batch bar');
     document.querySelector('[data-note-assistant-action="ignore-all"]').click();
     assert.equal(document.querySelectorAll('.note-assistant-proposal.is-ignored').length, 1);
@@ -269,6 +275,71 @@ test('session switcher lists, switches, and deletes document sessions', async ()
     dom.window.close();
     restore(previous);
   }
+});
+
+test('assistant preserves same-document drafts across modes and isolates new or locked documents', async () => {
+  const { dom, previous } = stubDom();
+  try {
+    global.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+    const ui = await import(`${pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js')).href}?state=${Date.now()}`);
+    ui.initNoteAssistant({ applyEdit() {} });
+    const doc = { id: 'note:1', title: '工作流', status: 'active' };
+    ui.noteAssistantSetActiveDocument(doc);
+    document.querySelector('#assistantToggleButton').click();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const field = document.querySelector('#noteAssistantInput');
+    const panel = document.querySelector('#noteAssistantPanel');
+    field.value = '未发送的草稿'; field.setSelectionRange(2, 4);
+    ui.noteAssistantSetMode('agent');
+    assert.equal(panel.hidden, false); assert.equal(panel.dataset.layout, 'floating');
+    ui.noteAssistantSetMode('knowledge'); ui.noteAssistantSetActiveDocument({ ...doc, title: '新标题' });
+    assert.equal(panel.hidden, false); assert.equal(field.value, '未发送的草稿'); assert.equal(field.selectionStart, 2);
+    ui.noteAssistantSetActiveDocument({ id: 'note:2', visibility: 'diary', status: 'active' });
+    assert.equal(panel.hidden, true); assert.equal(field.value, '');
+    document.querySelector('#assistantToggleButton').click();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    field.value = '私密草稿';
+    ui.noteAssistantLockPrivate();
+    assert.equal(panel.hidden, true); assert.equal(field.value, '');
+    assert.equal(document.querySelector('#noteAssistantMessages').textContent, '');
+  } finally { dom.window.close(); restore(previous); }
+});
+
+test('proposal checks document identity and rejects context changes during navigation', async () => {
+  const { dom, previous } = stubDom();
+  try {
+    global.fetch = async url => String(url).endsWith('/messages')
+      ? { ok: true, status: 202, json: async () => ({ runId: 'r1', sessionId: 's1' }) }
+      : { ok: false, status: 404, json: async () => ({}) };
+    let source;
+    global.EventSource = class {
+      constructor() { source = this; this.handlers = {}; }
+      addEventListener(type, callback) { this.handlers[type] = callback; }
+      close() {}
+      emit(payload) { this.handlers['note.edit_proposed']({ data: JSON.stringify({ payload }) }); }
+    };
+    const ui = await import(`${pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js')).href}?guard=${Date.now()}`);
+    let applied = 0; let release; let requested;
+    ui.initNoteAssistant({ applyEdit() { applied++; }, ensureDocument(id) { requested = id; return new Promise(resolve => { release = resolve; }); } });
+    ui.noteAssistantSetActiveDocument({ id: 'note:1', status: 'active' });
+    document.querySelector('#assistantToggleButton').click();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    document.querySelector('#documentContent').value = '原文';
+    document.querySelector('#noteAssistantInput').value = '修改';
+    document.querySelector('#noteAssistantSend').click();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    source.emit({ id: 'wrong', documentId: 'note:9', find: '原文', replace: '新文' });
+    document.querySelector('[data-proposal-id="wrong"] [data-note-assistant-action="apply"]').click();
+    assert.equal(requested, undefined); assert.equal(applied, 0);
+    source.emit({ id: 'right', documentId: 'note:1', find: '原文', replace: '新文' });
+    document.querySelector('[data-proposal-id="right"] [data-note-assistant-action="apply"]').click();
+    assert.equal(requested, 'note:1');
+    ui.noteAssistantSetActiveDocument({ id: 'note:2', status: 'active' });
+    release(); await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(applied, 0);
+    source.emit({ id: 'late', documentId: 'note:1', find: '原文', replace: '错误' });
+    assert.equal(document.querySelectorAll('.note-assistant-proposal').length, 0);
+  } finally { dom.window.close(); restore(previous); }
 });
 
 test('clampNoteAssistantBounds keeps the window inside the viewport', async () => {

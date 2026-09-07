@@ -70,3 +70,40 @@ Passed. The intended deviation from the reference is the requested removal of th
 
 - `express.static` 对 CSS 下发 `Cache-Control: max-age=86400`：升级后浏览器可能命中旧样式一天（既有行为，非本轮引入）。
 - `:focus-visible` 在设置导航按钮上会残留高亮（jsdom 点击路径的浏览器焦点行为，视觉无碍）。
+
+---
+
+# Agent / 知识库 UI 打磨 — Design QA（2026-09-07）
+
+## Scope
+
+收口导航侧栏、52px 顶栏、Agent 960 列、知识 chips/更多菜单、助手停靠/浮动/覆盖。本轮补密度小缺口、深色截图矩阵、空状态/溢出检查，以及自动测试 vs 实机视觉的书面结论。不升级版本、不打包。
+
+密度决定：侧栏搜索与 Agent/知识主控件 36px；`≤840` 水平内边距 24px；顶栏运行状态在窄屏保持可见；保存后顶栏副标题用路径而不是文档标题；删除 `.topbar-mode-switch`。
+
+## Evidence
+
+- 隔离预览：`http://127.0.0.1:4218/`（临时 DATA_DIR，静态 `no-store`）
+- 截图与矩阵：`docs/ui-review/README.md`、`docs/ui-review/screenshots/`
+- 改前深色仅有 1440；其余宽度的改前深色无法从当前 UI 复原
+- CDP：1440/1280/840/520 均无页面横向溢出；840 助手为 overlay 且不写偏好；520 运行状态可见；长标题内部省略
+
+## Automated vs visual
+
+- **自动**：停靠规则、跨模式临时浮动、消息跟随、日记锁/提案文档身份、顶栏无模式按钮、36px/24px/死 CSS/副标题路径。这些不代替像素验收。
+- **视觉**：浅色改前改后四档宽度已齐；本轮补齐深色改后四档、停靠/覆盖、空知识库、空搜索、长标题、Agent 1440/520。
+- **未实机重放**（无模型）：流式不重建输入框、审批 dock、混合附件。代码与既有测试覆盖结构，不记为视觉通过。
+
+## Five-surface review
+
+- 系统状态：知识「已保存」仍在文档头；Agent 窄屏顶栏可显示「运行中」。
+- 空/加载：知识库根、无匹配搜索、未选文档均有独立文案；列表滚动与搜索栏分离。
+- 校验/错误：归档/删除在 `#documentMore`；提案仍先核对目标文档（测试覆盖）。
+- 主路径：左栏模式、知识编辑、停靠助手、切到 Agent 时停靠变临时浮动（测试覆盖）。
+- 窄屏：≤840 侧栏抽屉、助手 overlay、编辑/分屏/预览仍在；24px 内边距。
+
+## Final assessment
+
+Passed for layout, density, and the documented visual matrix. Residual risk is live-model interaction (stream / approval / attachments), not the shell. Shipped in v1.2.9.
+
+`npm test`（2026-09-07）：329 tests, 328 pass, 0 fail, 1 skipped.

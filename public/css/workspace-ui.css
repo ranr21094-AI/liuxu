@@ -1,0 +1,122 @@
+/* Agent / knowledge refinement. Other content pages keep their own layouts. */
+:root { --topbar-height: 52px; --doc-pad-x: clamp(24px, 3vw, 40px); }
+.workspace-topbar { flex: 0 0 var(--topbar-height); height: var(--topbar-height); backdrop-filter: none; background: var(--bg); padding: 0 24px; }
+.workspace-brand { height: 64px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 0 20px; cursor: pointer; text-align: left; }
+.workspace-brand:hover { background: var(--surface-hover); }
+.workspace-brand strong { font-size: 16px; letter-spacing: -.03em; }
+.workspace-brand strong span { color: var(--muted); font-size: 13px; margin-left: 4px; font-weight: 500; }
+body.mode-nav-collapsed .workspace-mode-nav { display: none; }
+.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-text); font-weight: 700; }
+.workspace-mode-nav { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; margin: 0 12px 12px; padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.workspace-mode-nav button { display: flex; position: relative; align-items: center; gap: 12px; text-align: left; min-height: 36px; padding: 0 12px; font-size: 13px; font-weight: 500; }
+.workspace-mode-nav button.active { background: var(--accent-soft); font-weight: 650; box-shadow: none; }
+.workspace-mode-nav button:hover { background: var(--surface-hover); }
+.workspace-mode-nav svg, .workspace-sidebar-footer svg, .document-more svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.workspace-mode-nav .mode-pending-badge { position: static; margin-left: auto; }
+.workspace-sidebar .search-field,
+#agentSidebarPanel .agent-sidebar-toolbar {
+  height: 36px;
+}
+#agentSidebarPanel .agent-toolbar-btn { flex: 0 0 36px; }
+.workspace-sidebar :is(.primary-action,.secondary-action,.load-more,.danger-action) { min-height: 36px; }
+.agent-view :is(.primary-action,.load-more,.stop-button),
+.knowledge-view :is(.primary-action,.load-more) { min-height: 36px; }
+.workspace-sidebar :is(.sidebar-status,.knowledge-panel-heading,.knowledge-tree-heading,.knowledge-base-select small,.empty-list) { color: var(--muted); font-size: 12px; }
+.workspace-sidebar input::placeholder { color: var(--muted); }
+.workspace-sidebar .sidebar-panel { padding-top: 0; }
+.workspace-sidebar-footer { flex: 0 0 auto; display: flex; gap: 4px; padding: 12px; border-top: 1px solid var(--line); }
+.workspace-sidebar-footer .icon-button { display: flex; width: auto; flex: 1; justify-content: center; gap: 8px; font-size: 12px; }
+.topbar-leading > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.topbar-subtitle { margin: 0; font-size: 12px; color: var(--muted); }
+.topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.workspace-sidebar :is(.session-group-title,.session-select small,.document-row small,.knowledge-search-mode-hint,.document-count,.document-list-heading,.load-more) { font-size: 12px; color: var(--muted); }
+.workspace-sidebar :is(.session-row,.document-row) { border-radius: 8px; }
+.workspace-sidebar :is(.session-row.active,.document-row.active) { background: var(--accent-soft); }
+.knowledge-date-filter { flex: none; display: flex; align-items: center; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.knowledge-date-filter input { min-width: 0; flex: 1; width: 0; height: 32px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 4px 8px; }
+.knowledge-active-filters { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; flex: none; }
+.knowledge-active-filters button { border: 0; padding: 4px 8px; border-radius: 6px; font-size: 12px; background: var(--accent-soft); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
+#knowledgeInsidePanel > :not(.document-list-section) { flex-shrink: 0; }
+#knowledgeInsidePanel .document-list-section { min-height: 0; }
+.agent-view, .agent-view:has(.agent-empty-hero) { padding: 0 clamp(16px, 3vw, 40px); }
+.agent-view .conversation, .agent-view:has(.agent-empty-hero) .conversation { position: relative; width: 100%; max-width: 960px; margin-inline: auto; }
+.agent-view .message-list { padding: 28px 4px 24px; scroll-behavior: auto; overflow-anchor: auto; }
+.agent-view .message-list:has(.agent-empty-hero) { padding: 0; }
+.agent-view .agent-composer { width: 100%; margin: 0 0 16px; box-shadow: 0 2px 10px rgb(0 0 0 / .03); border-radius: 12px; }
+.agent-view .message-content { font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; min-width: 0; }
+.agent-view .message, .agent-view .message-body { min-width: 0; max-width: 100%; }
+.agent-view .message.user .message-body { background: var(--surface-active); color: var(--text); border-radius: 12px; }
+.agent-view .message.assistant .message-body { background: transparent; border: 0; box-shadow: none; }
+.agent-view .message-content pre, .agent-view .message-content table, .knowledge-view .markdown-preview pre, .knowledge-view .markdown-preview table { max-width: 100%; overflow-x: auto; }
+.agent-view .message-content table, .knowledge-view .markdown-preview table { display: block; width: max-content; }
+.agent-view :is(.composer-hint,.message-meta,.run-status,.agent-attachment-status) { font-size: 12px; color: var(--muted); }
+.agent-view .composer-model-select, .note-assistant-panel .composer-model-select { max-width: 100%; text-overflow: ellipsis; }
+.agent-view .composer-meta, .note-assistant-panel .composer-meta { min-width: 0; flex: 1; }
+.agent-view .composer-model-field, .note-assistant-panel .composer-model-field { min-width: 0; max-width: 100%; }
+.agent-view .agent-attachment-preview { max-height: 132px; overflow-y: auto; }
+.agent-view .agent-attachment-chip { max-width: min(280px, 100%); }
+.agent-view .agent-attachment-file-name, .message-attachment-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.jump-to-latest { position: absolute; z-index: 12; bottom: calc(var(--composer-height, 112px) + 24px); align-self: center; border-radius: 20px; box-shadow: 0 2px 10px rgb(0 0 0 / .08); }
+.document-header { padding: 16px var(--doc-pad-x); }
+.document-title-row { flex-wrap: wrap; gap: 8px 12px; }
+.document-title-main { flex: 1 1 240px; min-width: 0; }
+.document-title-input { width: 100%; min-width: 0; padding: 4px 0; border: 1px solid transparent; border-radius: 6px; background: transparent; font-size: 21px; overflow: hidden; text-overflow: ellipsis; }
+.document-title-input:hover { border-bottom-color: var(--line); }
+.document-title-input:focus { border-color: var(--line-strong); padding-inline: 8px; }
+.knowledge-view .save-state { font-size: 12px; }
+#assistantToggleButton svg { width: 20px; height: 20px; fill: currentColor; }
+.agent-view :is(button,select,textarea):focus-visible, .knowledge-view :is(button,summary,textarea,input):focus-visible,
+.workspace-mode-nav button:focus-visible, .note-assistant-panel :is(button,textarea,select,[role="separator"]):focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.document-meta-chips { max-width: 40%; border: 0; padding: 4px; background: transparent; }
+.document-meta-chip { font-size: 12px; }
+.document-toolbar-actions { margin-left: auto; width: auto; flex-wrap: wrap; }
+.document-more { position: relative; }
+.document-more > summary { list-style: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--muted); cursor: pointer; }
+.document-more > summary::-webkit-details-marker { display: none; }
+.document-more[open] > summary, .document-more > summary:hover { background: var(--surface-hover); }
+.document-more-menu { position: absolute; right: 0; top: 40px; z-index: 30; width: 160px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 24px rgb(0 0 0 / .1); }
+.document-more-menu :is(button.icon-button,button.secondary-action) { width: 100%; display: flex; justify-content: flex-start; padding: 0 12px; font-size: 13px; }
+.document-more-menu .danger { color: var(--danger); }
+.knowledge-view :is(.note-editor > textarea,.markdown-preview) { font-size: 15px; line-height: 1.8; padding-inline: var(--doc-pad-x); max-width: none; }
+.note-assistant-heading { min-width: 0; flex: 1; }
+.note-assistant-head-spacer { display: none; }
+.note-assistant-document { display: block; border: 0; padding: 4px 0 0; background: transparent; font-size: 12px; color: var(--muted); cursor: pointer; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.note-assistant-document:hover { color: var(--text); text-decoration: underline; }
+.note-assistant-head { flex-wrap: wrap; gap: 6px; padding: 12px; }
+.note-assistant-head .secondary-action { padding-inline: 8px; font-size: 12px; }
+.note-assistant-panel { box-shadow: 0 8px 30px rgb(0 0 0 / .12); }
+.note-assistant-panel .note-assistant-bubble { font-size: 15px; line-height: 1.7; }
+.note-assistant-message.is-user .note-assistant-bubble { background: var(--surface-active); color: var(--text); }
+.note-assistant-message.is-assistant .note-assistant-bubble { background: transparent; border: 0; padding-inline: 0; }
+.note-assistant-panel :is(.note-assistant-status,.note-assistant-runline,.note-assistant-session-copy small) { font-size: 12px; }
+.note-assistant-panel[data-layout="docked"] { top: var(--topbar-height); right: 0; bottom: 0; width: var(--assistant-dock-width); height: auto; border: 0; border-left: 1px solid var(--line); border-radius: 0; box-shadow: none; }
+.assistant-docked .knowledge-view { width: calc(100% - var(--assistant-dock-width)); flex-shrink: 0; }
+.note-assistant-panel[data-layout="docked"] .note-assistant-head, .note-assistant-panel[data-layout="overlay"] .note-assistant-head { cursor: default; }
+.note-assistant-panel:not([data-layout="floating"]) .note-assistant-resize { display: none; }
+.note-assistant-dock-resize { display: none; }
+.note-assistant-panel[data-layout="docked"] .note-assistant-dock-resize { display: block; position: absolute; left: 0; top: 0; bottom: 0; width: 5px; cursor: ew-resize; touch-action: none; }
+.note-assistant-dock-resize:hover { background: var(--line-strong); }
+.note-assistant-panel[data-layout="overlay"] { top: var(--topbar-height); right: 8px; bottom: 8px; width: min(420px, calc(100vw - 16px)); height: auto; }
+@media (max-width: 1100px) {
+  .document-toolbar-actions { width: auto; }
+  .document-meta-chips { max-width: 100%; }
+}
+@media (max-width: 840px) {
+  :root { --doc-pad-x: 24px; }
+  .workspace-sidebar { width: min(288px, calc(100vw - 32px)); visibility: hidden; }
+  body.sidebar-visible .workspace-sidebar { visibility: visible; }
+  .sidebar-mobile-bar { position: absolute; top: 12px; right: 12px; padding: 0; }
+  .workspace-topbar { padding-inline: 16px; }
+  .workspace-topbar .run-status { display: inline-flex; max-width: 42vw; overflow: hidden; }
+  .document-title-main { flex-basis: 100%; }
+  .document-header { padding: 12px var(--doc-pad-x); }
+  .agent-view .composer-hint { display: none; }
+  .note-assistant-panel[data-layout="overlay"] { top: 8px; }
+}
+@media (pointer: coarse) {
+  .workspace-mode-nav button, .workspace-sidebar-footer .icon-button,
+  .agent-view button, .knowledge-view button, .note-assistant-panel button { min-height: 44px; min-width: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-view *, .knowledge-view *, .note-assistant-panel * { scroll-behavior: auto; transition: none; }
+}

@@ -1,5 +1,6 @@
 import { apiFetch } from '../auth.js';
 import { escHtml, showToast, confirmDialog } from '../helpers.js';
+import { createAssistantLayout } from './assistant-layout.js';
 
 // Per-document AI assistant floating window (kind: note_assist). The assistant
 // shares the agent runtime with restricted tools; edit proposals arrive as
@@ -14,6 +15,8 @@ const DEFAULT_HEIGHT = 560;
 let state = null;
 let bound = false;
 let chromeGesture = null;
+let layout = null;
+let contextSerial = 0;
 
 function panel() { return document.querySelector('#noteAssistantPanel'); }
 function messagesHost() { return document.querySelector('#noteAssistantMessages'); }
@@ -102,7 +105,8 @@ function boundsFromPanel() {
 }
 
 function restoreBounds() {
-  persistBounds(applyBounds(readStoredBounds() || defaultNoteAssistantBounds()));
+  if (panel()?.dataset.layout && panel().dataset.layout !== 'floating') return;
+  applyBounds(readStoredBounds() || defaultNoteAssistantBounds());
 }
 
 function autoResizeNoteComposer() {
@@ -120,12 +124,16 @@ function setOpen(open) {
   const host = panel();
   if (!host) return;
   host.hidden = !open;
+  layout?.sync();
   document.querySelector('#assistantToggleButton')?.setAttribute('aria-expanded', open ? 'true' : 'false');
   if (open) {
     restoreBounds();
     input()?.focus();
     autoResizeNoteComposer();
     scrollMessagesToBottom();
+  } else if (host.contains(document.activeElement)) {
+    const target = document.querySelector('#assistantToggleButton:not([hidden])') || document.querySelector('#sidebarOpen');
+    target?.focus();
   }
 }
 
@@ -173,6 +181,7 @@ function startChromeGesture(event, kind) {
 
 function bindWindowChrome(host) {
   host.addEventListener('pointerdown', event => {
+    if (host.dataset.layout && host.dataset.layout !== 'floating') return;
     if (event.button !== 0) return;
     if (event.target.closest('[data-note-assistant-resize]')) {
       event.preventDefault();
@@ -188,8 +197,8 @@ function bindWindowChrome(host) {
   window.addEventListener('pointerup', endChromeGesture);
   window.addEventListener('pointercancel', endChromeGesture);
   window.addEventListener('resize', () => {
-    if (!isOpen()) return;
-    persistBounds(applyBounds(boundsFromPanel()));
+    if (!isOpen() || (host.dataset.layout && host.dataset.layout !== 'floating')) return;
+    applyBounds(readStoredBounds() || boundsFromPanel());
   });
 }
 
@@ -307,10 +316,25 @@ function updateBatchBar() {
 }
 
 async function applyProposal(payload, { silent = false } = {}) {
+  const documentId = state.activeDocumentId;
+  const serial = contextSerial;
+  if (!documentId || (payload.documentId && payload.documentId !== documentId)) {
+    setStatus('提案与当前文档不一致，无法应用', 'error');
+    return { ok: false };
+  }
+  try {
+    await state.ensureDocument?.(documentId);
+  } catch (error) {
+    setStatus(error.message, 'error');
+    return { ok: false };
+  }
+  if (serial !== contextSerial || state.activeDocumentId !== documentId) return { ok: false };
   const editor = document.querySelector('#documentContent');
   if (!editor) return { ok: false };
+  try {
   if (payload.append) {
-    state.applyEdit({
+    await state.applyEdit({
+      documentId,
       append: true,
       content: String(payload.content || ''),
     });
@@ -330,9 +354,13 @@ async function applyProposal(payload, { silent = false } = {}) {
     if (!silent) showToast('提案原文在笔记中出现多次，为避免误改已跳过', 'error');
     return { ok: false };
   }
-  state.applyEdit({ find, replace: String(payload.replace ?? '') });
+  await state.applyEdit({ documentId, find, replace: String(payload.replace ?? '') });
   markProposal(payload.id, true, '已应用');
   return { ok: true };
+  } catch (error) {
+    setStatus(error.message, 'error');
+    return { ok: false };
+  }
 }
 
 async function applyAllProposals() {
@@ -355,14 +383,17 @@ function ignoreAllProposals() {
 }
 
 async function loadSession(documentId) {
+  const serial = contextSerial;
   setStatus('');
   try {
     const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(documentId)}/session`);
+    if (serial !== contextSerial) return;
     if (!response.ok) {
       state.sessionId = '';
       return;
     }
     const data = await response.json().catch(() => ({}));
+    if (serial !== contextSerial) return;
     state.sessionId = data.session?.id || '';
     messagesHost().innerHTML = '';
     for (const message of data.session?.messages || []) {
@@ -377,7 +408,7 @@ async function loadSession(documentId) {
       subscribeRun(data.activeRun.id);
     }
   } catch {
-    state.sessionId = '';
+    if (serial === contextSerial) state.sessionId = '';
   }
 }
 
@@ -429,20 +460,23 @@ function finishRun() {
 }
 
 function subscribeRun(runId) {
+  const serial = contextSerial;
   state.eventSource?.close();
   setStatus('正在思考…', 'running');
   syncComposer();
   const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
   state.eventSource = source;
-  source.addEventListener('run.started', () => setStatus('正在思考…', 'running'));
+  source.addEventListener('run.started', () => { if (serial === contextSerial && state.runId === runId) setStatus('正在思考…', 'running'); });
   for (const type of ['tool.started', 'note.edit_proposed', 'run.completed', 'run.failed', 'user_input.required']) {
     source.addEventListener(type, event => {
+      if (serial !== contextSerial || state.runId !== runId) return;
       let payload = null;
       try { payload = JSON.parse(event.data || '{}'); } catch { payload = null; }
       handleRunEvent({ type, payload: payload?.payload ?? payload });
     });
   }
   source.onerror = () => {
+    if (serial !== contextSerial || state.eventSource !== source) { source.close(); return; }
     // Terminal runs end the stream server-side; only treat premature errors
     // as failures when the run is still considered active.
     if (!state.runId) {
@@ -458,6 +492,7 @@ function subscribeRun(runId) {
 }
 
 async function send() {
+  const serial = contextSerial;
   const text = String(input()?.value || '').trim();
   if (!text || state.runId || !state.activeDocumentId) return;
   input().value = '';
@@ -475,6 +510,7 @@ async function send() {
     });
     state.newSessionRequested = false;
     const data = await response.json().catch(() => ({}));
+    if (serial !== contextSerial) return;
     if (response.status === 403) {
       renderMessage('assistant', '日记已锁定，无法使用留序 LiuXu。');
       return;
@@ -496,10 +532,12 @@ async function stop() {
 }
 
 async function loadSessionList() {
+  const serial = contextSerial;
   if (!state.activeDocumentId) return;
   try {
     const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/sessions`);
     const data = await response.json().catch(() => ({}));
+    if (serial !== contextSerial) return;
     state.sessions = response.ok ? (data.sessions || []) : [];
   } catch {
     state.sessions = [];
@@ -545,6 +583,7 @@ async function switchSession(sessionId) {
     return;
   }
   // Detach the current stream first — an in-flight run keeps going server-side.
+  const serial = ++contextSerial;
   state.eventSource?.close();
   state.eventSource = null;
   state.runId = '';
@@ -555,6 +594,7 @@ async function switchSession(sessionId) {
     const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/session?sessionId=${encodeURIComponent(sessionId)}`);
     if (!response.ok) throw new Error('会话不存在');
     const data = await response.json().catch(() => ({}));
+    if (serial !== contextSerial) return;
     messagesHost().innerHTML = '';
     for (const message of data.session?.messages || []) {
       if (message.role === 'user' || message.role === 'assistant') {
@@ -624,6 +664,7 @@ async function toggle() {
 }
 
 function newConversation() {
+  contextSerial += 1;
   state.sessionId = '';
   state.newSessionRequested = true;
   state.eventSource?.close();
@@ -638,7 +679,7 @@ function newConversation() {
   if (state.sessionListOpen) loadSessionList();
 }
 
-export function initNoteAssistant({ applyEdit }) {
+export function initNoteAssistant({ applyEdit, ensureDocument }) {
   if (bound) return;
   const host = panel();
   if (!host) return;
@@ -654,7 +695,10 @@ export function initNoteAssistant({ applyEdit }) {
     sessionListOpen: false,
     newSessionRequested: false,
     applyEdit: typeof applyEdit === 'function' ? applyEdit : () => {},
+    ensureDocument,
   };
+  layout = createAssistantLayout(host, { restoreFloating: restoreBounds });
+  layout.sync();
 
   host.addEventListener('click', event => {
     const action = event.target.closest('[data-note-assistant-action]');
@@ -667,6 +711,7 @@ export function initNoteAssistant({ applyEdit }) {
       return;
     }
     const kind = action.dataset.noteAssistantAction;
+    if (kind === 'document') Promise.resolve(state.ensureDocument?.(state.activeDocumentId)).catch(error => setStatus(error.message, 'error'));
     if (kind === 'close') setOpen(false);
     if (kind === 'new') newConversation();
     if (kind === 'send') send();
@@ -695,6 +740,13 @@ export function initNoteAssistant({ applyEdit }) {
     if (event.target === input()) autoResizeNoteComposer();
   });
   host.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); setOpen(false); return; }
+    if (event.key === 'Tab' && host.dataset.layout === 'overlay') {
+      const controls = [...host.querySelectorAll('button, textarea, select, [tabindex="0"]')].filter(el => !el.disabled && !el.hidden && el.getClientRects().length);
+      const first = controls[0]; const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
     if (event.target === input() && event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       send();
@@ -706,6 +758,11 @@ export function initNoteAssistant({ applyEdit }) {
 
 export function noteAssistantSetActiveDocument(doc) {
   if (!state) return;
+  state.activeDocument = doc;
+  const label = document.querySelector('#noteAssistantDocument');
+  if (label) { label.textContent = doc?.title || '未命名文档'; label.title = `返回：${doc?.title || '未命名文档'}`; }
+  if (doc?.id === state.activeDocumentId && doc?.status !== 'archived') { layout?.sync(); return; }
+  contextSerial += 1;
   // Switching documents detaches the current stream; an in-flight run keeps
   // going server-side and its proposals stay bound to that document.
   state.eventSource?.close();
@@ -717,6 +774,7 @@ export function noteAssistantSetActiveDocument(doc) {
   state.proposalState = new Map();
   state.sessionListOpen = false;
   state.activeDocumentId = doc?.id || '';
+  if (input()) input().value = '';
   messagesHost().innerHTML = '';
   setOpen(false);
   const toggleButton = document.querySelector('#assistantToggleButton');
@@ -728,6 +786,9 @@ export function noteAssistantSetActiveDocument(doc) {
 
 export function noteAssistantClear() {
   if (!state) return;
+  contextSerial += 1;
+  state.activeDocument = null;
+  if (input()) input().value = '';
   state.eventSource?.close();
   state.eventSource = null;
   state.runId = '';
@@ -741,4 +802,9 @@ export function noteAssistantClear() {
   setOpen(false);
   document.querySelector('#assistantToggleButton')?.setAttribute('hidden', '');
   updateBatchBar();
+}
+
+export function noteAssistantSetMode(mode) { layout?.setMode(mode); }
+export function noteAssistantLockPrivate() {
+  if (state?.activeDocument?.visibility === 'diary' || state?.activeDocument?.knowledgeBase === '日记') noteAssistantClear();
 }

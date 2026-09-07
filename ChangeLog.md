@@ -1,5 +1,22 @@
 # 更新日志
 
+## 2026-09-07
+
+### 工作台布局与停靠助手（v1.2.9）
+
+- 模式切换收到左侧导航，顶栏压到 52px；点品牌只收起模式按钮，不收起整列侧栏。
+- 桌面侧栏用顶栏同一颗按钮收起/展开，收起后不再叠悬浮汉堡；窄屏仍用抽屉汉堡。
+- 留序助手宽屏默认停靠在正文右侧，不够宽或窄屏改为覆盖层；切走模式时临时浮动，不覆盖已保存的停靠偏好。
+- 知识筛选以 chips 显示，归档/删除收入「更多」；侧栏主控件 36px，窄屏内边距 24px，长标题省略且页面不横向撑破。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.9-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.9-mac-arm64.dmg`、`LiuXu-1.2.9-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.9，无需逐版本安装。
+
 ## 2026-09-06
 
 ### 知识库留序弹窗与紧凑标题栏（v1.2.8）
@@ -8,14 +25,6 @@
 - 留序输入区对齐 Agent 作曲栏：多行输入、附件与发送，并与顶栏共用全局模型选择。
 - 从知识库切到其他模式再回来时，会回到刚才打开的笔记或文件夹。
 - 笔记标题栏压成一行：圆角标题、淡色保存状态、可点属性 chips；空日期/空标签不再占一整条灰底，点 chips 才展开四列表单。
-
-## 发布文件
-
-- Windows x64：`LiuXu-Setup-1.2.8-x64.exe` 及 `.sha256`
-- macOS 12+ Apple Silicon：`LiuXu-1.2.8-mac-arm64.dmg`、`LiuXu-1.2.8-mac-arm64.zip` 及对应 `.sha256`
-- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
-
-本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.8，无需逐版本安装。
 
 ### 全量代码审查修复（v1.2.7）
 
