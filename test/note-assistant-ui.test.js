@@ -371,3 +371,55 @@ test('clampNoteAssistantBounds keeps the window inside the viewport', async () =
     restore(previous);
   }
 });
+
+test('assistant confirmations, answer resume, browser replay and mutation refresh use the existing run', async () => {
+  const { dom, previous } = stubDom();
+  try {
+    document.querySelector('.note-assistant-composer').insertAdjacentHTML('afterbegin', '<div id="noteAssistantApprovalDock" hidden></div>');
+    const posts = [], sources = [], refreshed = [], relayed = [];
+    let saveOkay = false;
+    global.fetch = async (url, options = {}) => {
+      if (options.method === 'POST') posts.push({ url: String(url), body: options.body ? JSON.parse(options.body) : {} });
+      if (String(url).endsWith('/messages')) return { ok: true, status: 202, json: async () => ({ runId: 'run-ui', sessionId: 'session-ui', resumed: posts.length > 1 }) };
+      if (String(url).includes('/approvals/')) return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    global.EventSource = class {
+      constructor() { this.handlers = {}; sources.push(this); }
+      addEventListener(type, fn) { this.handlers[type] = fn; }
+      close() { this.closed = true; }
+      emit(type, payload, at = 1) { this.handlers[type]?.({ data: JSON.stringify({ type, at, payload }) }); }
+    };
+    const url = pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js')); url.search = `integration=${Date.now()}`;
+    const ui = await import(url.href);
+    ui.initNoteAssistant({ beforeMutation: async () => saveOkay, afterMutation: async (id, payload) => refreshed.push({ id, payload }), relayClientToolRequest: (entry, payload) => relayed.push({ entry, payload }) });
+    ui.noteAssistantSetActiveDocument({ id: 'note:1', status: 'active' });
+    document.querySelector('#assistantToggleButton').click(); await new Promise(r => setTimeout(r, 10));
+    const input = document.querySelector('#noteAssistantInput'); input.value = '修改笔记'; document.querySelector('#noteAssistantSend').click(); await new Promise(r => setTimeout(r, 10));
+    const source = sources.at(-1);
+    const call = { name: 'knowledge.update', arguments: { id: 'note:1', baseVersion: 1, content: 'new' } };
+    source.emit('approval.required', { approvals: [{ id: 'a1', call }], queueIndex: 1, queueTotal: 2 });
+    assert.match(document.querySelector('#noteAssistantApprovalDock').textContent, /1\/2/);
+    document.querySelector('[data-note-approval="true"]').click(); await new Promise(r => setTimeout(r, 10));
+    assert.equal(posts.length, 1, 'failed draft save must not approve');
+    assert.ok(document.querySelector('[data-note-approval="true"]'), 'approval remains available');
+    saveOkay = true; document.querySelector('[data-note-approval="true"]').click(); await new Promise(r => setTimeout(r, 10));
+    assert.match(posts.at(-1).url, /run-ui\/approvals\/a1/);
+    source.emit('tool.completed', { call, result: { ok: true, summary: 'updated' } }); await new Promise(r => setTimeout(r, 10));
+    assert.ok(refreshed.some(item => item.payload.call?.name === 'knowledge.update'));
+    source.emit('user_input.required', { question: '补充什么？' }, 2);
+    assert.equal(input.disabled, false); assert.match(document.querySelector('#noteAssistantApprovalDock').textContent, /补充什么/);
+    input.value = '答案'; document.querySelector('#noteAssistantSend').click(); await new Promise(r => setTimeout(r, 10));
+    assert.equal(posts.at(-1).body.sessionId, 'session-ui');
+    const resumed = sources.at(-1); assert.notEqual(resumed, source);
+    const browser = { id: 'browser-1', request: { name: 'browser.scan' } };
+    resumed.emit('client_tool.requested', browser, 3); resumed.emit('client_tool.requested', browser, 3);
+    assert.equal(relayed.length, 1, 'replayed browser event is not re-executed');
+    resumed.onerror(); assert.equal(resumed.closed, undefined, 'connection retains native reconnect');
+    resumed.emit('memory.proposed', { id: 'memory-1', content: '记忆内容' }, 4);
+    resumed.emit('delegate.started', { delegateTitle: '子任务' }, 5);
+    assert.match(document.querySelector('#noteAssistantMessages').textContent, /记忆内容/);
+    resumed.emit('run.completed', { text: '完成' }, 6);
+    assert.equal(input.disabled, false); assert.equal(document.querySelector('#noteAssistantApprovalDock').hidden, true);
+  } finally { dom.window.close(); restore(previous); }
+});

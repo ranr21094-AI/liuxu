@@ -53,6 +53,9 @@ test('workspace density nits keep 36px controls, 24px narrow padding, and title 
   assert.match(workbench, /\.note-assistant-composer textarea:focus-visible \{ outline: none/);
   assert.match(css, /\.agent-view \.agent-composer textarea:focus-visible/);
   assert.match(css, /\.note-assistant-panel \.note-assistant-composer textarea:focus-visible \{ outline: none/);
+  assert.match(css, /\.agent-view, \.agent-view:has\(\.agent-empty-hero\) \{ padding:\s*0;/);
+  assert.match(css, /\.agent-view \.conversation, \.agent-view:has\(\.agent-empty-hero\) \.conversation \{[^}]*max-width:\s*none/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*?\.agent-view, \.agent-view:has\(\.agent-empty-hero\) \{ padding:\s*0;/);
 });
 
 test('compact mode nav stays visible and keeps independent sidebar controls', () => {

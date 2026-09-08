@@ -2918,3 +2918,11 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .note-assistant-proposal.is-applied { opacity: 0.62; border-style: solid; }
 .note-assistant-proposal.is-ignored { opacity: 0.5; }
 .note-assistant-proposal.is-ignored .note-assistant-proposal-body { text-decoration: line-through; }
+
+/* Keep assistant confirmations usable inside a small floating panel. */
+#noteAssistantApprovalDock { max-height: 240px; overflow: hidden; flex-shrink: 0; }
+#noteAssistantApprovalDock .approval-card { display: flex; flex-direction: column; max-height: 240px; }
+#noteAssistantApprovalDock .approval-card-body { overflow: auto; min-height: 0; }
+#noteAssistantApprovalDock .card-actions { flex-shrink: 0; }
+.note-assistant-bubble img { max-width: 100%; height: auto; }
+.note-assistant-bubble pre { max-width: 100%; overflow: auto; }

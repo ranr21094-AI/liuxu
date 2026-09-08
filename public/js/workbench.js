@@ -867,6 +867,7 @@ function knowledgeSwitchTarget() {
 }
 
 async function applyRoute() {
+  if (noteMutationLock) { history.replaceState(null, '', routeHash('knowledge', noteMutationLock.id)); return; }
   const route = parseRoute();
   if (route.legacyTodos) history.replaceState(null, '', '#todos');
   const activeDocumentId = state.activeDocument?.id || '';
@@ -3667,10 +3668,13 @@ async function confirmChromePairing() {
   }
 }
 
+const relayedBrowserRequests = new Set();
 function relayClientToolRequest(entry, payload) {
   const extensionId = localStorage.getItem(CHROME_EXTENSION_ID_KEY) || '';
   const runtime = window.chrome?.runtime;
   if (!extensionId || !runtime?.sendMessage || !payload?.request?.name || !entry?.runId || !payload?.id) return;
+  if (relayedBrowserRequests.has(payload.id)) return;
+  relayedBrowserRequests.add(payload.id);
   const { name, args, nonce, signature } = payload.request;
   try {
     runtime.sendMessage(extensionId, { type: 'agent.command', name, args, nonce, signature }, response => {
@@ -4677,16 +4681,28 @@ async function resolveDocumentConflict(current) {
   return false;
 }
 
+const documentSaveRequests = new Map();
 async function saveDocument() {
+  const id = state.activeDocument?.id;
+  if (!id) return true;
+  if (state.documentConflict) return false;
+  const pending = documentSaveRequests.get(id);
+  if (pending) return pending;
+  const request = saveDocumentOnce().catch(error => {
+    setDocumentSaveState('保存失败', 'error');
+    showToast(error.message || '文档保存失败', 'error');
+    return false;
+  }).finally(() => {
+    documentSaveRequests.delete(id);
+    state.savingDocument = false;
+  });
+  documentSaveRequests.set(id, request);
+  return request;
+}
+
+async function saveDocumentOnce() {
   clearTimeout(state.documentSaveTimer);
   if (!state.activeDocument || !state.documentDirty || state.documentConflict) return true;
-  if (state.savingDocument) {
-    // A PATCH is already in flight; the debounce meanwhile captured newer
-    // input, so run once more after the current request settles instead of
-    // firing a conflicting second PATCH with the same baseVersion.
-    state.documentSaveTimer = setTimeout(() => saveDocument(), 400);
-    return true;
-  }
   const id = state.activeDocument.id;
   const patch = currentDocumentPatch();
   const submittedContent = patch.content;
@@ -4699,8 +4715,8 @@ async function saveDocument() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
-  } finally {
-    state.savingDocument = false;
+  } catch (error) {
+    throw error;
   }
   const data = await response.json().catch(() => ({}));
   if (state.activeDocument?.id !== id) return false;
@@ -4746,8 +4762,47 @@ async function saveDocument() {
   return true;
 }
 
+let noteMutationLock = null;
+async function beforeNoteMutation(id) {
+  if (state.activeDocument?.id !== id) return true;
+  if (!(await flushPendingSaves())) return false;
+  if (state.activeDocument?.id !== id) return false;
+  const controls = [...document.querySelectorAll('#documentWorkspace input, #documentWorkspace textarea, #documentWorkspace select, #documentWorkspace button')]
+    .filter(control => !control.closest('#noteAssistantPanel'));
+  noteMutationLock = { id, controls: controls.map(control => [control, control.disabled]) };
+  controls.forEach(control => { control.disabled = true; });
+  return true;
+}
+async function afterNoteMutation(id, payload = {}) {
+  const lock = noteMutationLock;
+  if (!lock || lock.id !== id) return;
+  try {
+    if (payload.failed || payload.result?.ok === false || payload.disconnected || state.activeDocument?.id !== id || state.documentDirty) return;
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
+    if (noteMutationLock !== lock || state.activeDocument?.id !== id) return;
+    if (response.status === 404 || response.status === 403) { showEmptyDocument(); return; }
+    if (!response.ok) throw new Error('无法刷新笔记，请重新打开文档');
+    const document = await response.json();
+    if (document.status === 'archived') showEmptyDocument();
+    else await renderActiveDocument(document);
+    await loadKnowledgeTree();
+    await loadDocuments();
+  } finally {
+    if (!payload.disconnected && noteMutationLock === lock) {
+      for (const [control, disabled] of lock.controls) control.disabled = disabled;
+      noteMutationLock = null;
+    }
+  }
+}
+
 async function flushPendingSaves() {
-  return saveDocument();
+  const id = state.activeDocument?.id;
+  if (!id) return true;
+  do {
+    if (!(await saveDocument())) return false;
+    if (state.activeDocument?.id !== id || state.documentConflict) return false;
+  } while (state.documentDirty || documentSaveRequests.has(id));
+  return true;
 }
 
 async function createNote() {
@@ -4967,7 +5022,7 @@ async function toggleDiary() {
     confirmText: '立即锁定',
   });
   if (!confirmed) return;
-  await flushPendingSaves();
+  if (!(await flushPendingSaves())) return;
   await lockDiary();
   state.diaryUnlocked = false;
   if (state.activeDocument?.visibility === 'diary') await navigate('knowledge');
@@ -5630,7 +5685,7 @@ function bindEvents() {
       await renderActiveDocument(document);
     },
   });
-  initNoteAssistant({ applyEdit: applyNoteAssistantEdit, ensureDocument: async documentId => {
+  initNoteAssistant({ renderMarkdown, approvalBodyHtml, relayClientToolRequest, handleMemoryProposalAction, beforeMutation: beforeNoteMutation, afterMutation: afterNoteMutation, applyEdit: applyNoteAssistantEdit, ensureDocument: async documentId => {
     if (!documentId) throw new Error('缺少关联文档');
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`);
     if (!response.ok) throw new Error('文档已删除或当前无权访问');

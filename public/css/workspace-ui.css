@@ -37,13 +37,25 @@
 .knowledge-active-filters button { border: 0; padding: 4px 8px; border-radius: 6px; font-size: 12px; background: var(--accent-soft); cursor: pointer; max-width: 100%; overflow-wrap: anywhere; }
 #knowledgeInsidePanel > :not(.document-list-section) { flex-shrink: 0; }
 #knowledgeInsidePanel .document-list-section { min-height: 0; }
-.agent-view, .agent-view:has(.agent-empty-hero) { padding: 0 clamp(16px, 3vw, 40px); }
-.agent-view .conversation, .agent-view:has(.agent-empty-hero) .conversation { position: relative; width: 100%; max-width: 960px; margin-inline: auto; }
-.agent-view .message-list { padding: 28px 4px 24px; scroll-behavior: auto; overflow-anchor: auto; }
+.agent-view, .agent-view:has(.agent-empty-hero) { padding: 0; --agent-gutter: clamp(16px, 3vw, 40px); }
+.agent-view .conversation, .agent-view:has(.agent-empty-hero) .conversation { position: relative; width: 100%; max-width: none; margin-inline: auto; }
+.agent-view .message-list { padding: 28px 0 24px; scroll-behavior: auto; overflow-anchor: auto; }
 .agent-view .message-list:has(.agent-empty-hero) { padding: 0; }
-.agent-view .agent-composer { width: 100%; margin: 0 0 16px; box-shadow: 0 2px 10px rgb(0 0 0 / .03); border-radius: 12px; }
+.agent-view .agent-composer {
+  width: min(960px, calc(100% - 2 * var(--agent-gutter)));
+  max-width: min(960px, calc(100% - 2 * var(--agent-gutter)));
+  margin: 0 auto 16px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / .03);
+  border-radius: 12px;
+}
 .agent-view .message-content { font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; min-width: 0; }
-.agent-view .message, .agent-view .message-body { min-width: 0; max-width: 100%; }
+.agent-view .message {
+  min-width: 0;
+  width: min(960px, calc(100% - 2 * var(--agent-gutter)));
+  max-width: min(960px, calc(100% - 2 * var(--agent-gutter)));
+  margin-inline: auto;
+}
+.agent-view .message-body { min-width: 0; max-width: 100%; }
 .agent-view .message.user .message-body { background: var(--surface-active); color: var(--text); border-radius: 12px; }
 .agent-view .message.assistant .message-body { background: transparent; border: 0; box-shadow: none; }
 .agent-view .message-content pre, .agent-view .message-content table, .knowledge-view .markdown-preview pre, .knowledge-view .markdown-preview table { max-width: 100%; overflow-x: auto; }
@@ -113,6 +125,14 @@
   .document-header { padding: 12px var(--doc-pad-x); }
   .agent-view .composer-hint { display: none; }
   .note-assistant-panel[data-layout="overlay"] { top: 8px; }
+}
+@media (max-width: 760px) {
+  .agent-view, .agent-view:has(.agent-empty-hero) { padding: 0; --agent-gutter: 10px; }
+  .agent-view .agent-composer,
+  .agent-view .message {
+    width: calc(100% - 20px);
+    max-width: calc(100% - 20px);
+  }
 }
 @media (pointer: coarse) {
   .workspace-mode-nav button, .workspace-sidebar-footer .icon-button,

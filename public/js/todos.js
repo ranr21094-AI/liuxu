@@ -1,4 +1,13 @@
-import { apiFetch } from './auth.js';
+import { apiFetch as rawApiFetch } from './auth.js';
+
+async function apiFetch(url, options = {}) {
+  const response = await rawApiFetch(url, options);
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `请求失败（${response.status}）`);
+  }
+  return response;
+}
 import { showToast, escHtml, setupDragAndDrop, confirmDialog, $ } from './helpers.js';
 import { businessDateString, parseBusinessDate } from './businessDate.js';
 import { countdownTiming } from './countdownDate.js';

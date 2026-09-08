@@ -60,7 +60,7 @@ async function verifyAgentCommand(message) {
   } catch {
     stored = '';
   }
-  const keyBytes = hexToBytes(stored);
+  const keyBytes = /^[a-f0-9]{64}$/i.test(stored) ? new TextEncoder().encode(stored) : null;
   // No key configured: keep the pre-pairing behavior so the browser tools
   // stay usable; a paired setup always enforces the signature.
   if (!keyBytes || !keyBytes.length) return true;

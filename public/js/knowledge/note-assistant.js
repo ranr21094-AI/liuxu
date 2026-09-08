@@ -3,7 +3,7 @@ import { escHtml, showToast, confirmDialog } from '../helpers.js';
 import { createAssistantLayout } from './assistant-layout.js';
 
 // Per-document AI assistant floating window (kind: note_assist). The assistant
-// shares the agent runtime with restricted tools; edit proposals arrive as
+// shares the full agent runtime; optional edit proposals arrive as
 // note.edit_proposed events and are applied manually by the user in the editor.
 const ACTIVE_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'waiting_client_tool', 'waiting_user']);
 const BOUNDS_KEY = 'liuxu.noteAssistant.bounds';
@@ -217,12 +217,12 @@ function setStatus(text, tone = '') {
 }
 
 function syncComposer() {
-  const busy = Boolean(state?.runId);
+  const busy = Boolean(state?.sending || (state?.runId && state?.runStatus !== 'waiting_user'));
   const send = document.querySelector('#noteAssistantSend');
   const stop = document.querySelector('#noteAssistantStop');
   if (send) send.hidden = busy;
-  if (stop) stop.hidden = !busy;
-  if (input()) input().disabled = busy;
+  if (stop) stop.hidden = !state?.runId;
+  if (input()) { input().disabled = busy; input().placeholder = state?.runStatus === 'waiting_user' ? '输入回答，继续当前任务…' : '询问本篇内容，或让留序 LiuXu 修改…'; }
 }
 
 function renderMessage(role, content) {
@@ -231,7 +231,8 @@ function renderMessage(role, content) {
   const item = document.createElement('div');
   item.className = `note-assistant-message is-${role === 'user' ? 'user' : 'assistant'}`;
   item.innerHTML = `<div class="note-assistant-bubble"></div>`;
-  item.querySelector('.note-assistant-bubble').textContent = content;
+  if (role !== 'user' && state.renderMarkdown) item.querySelector('.note-assistant-bubble').innerHTML = state.renderMarkdown(content);
+  else item.querySelector('.note-assistant-bubble').textContent = content;
   host.appendChild(item);
   scrollMessagesToBottom();
 }
@@ -399,6 +400,10 @@ async function loadSession(documentId) {
     for (const message of data.session?.messages || []) {
       if (message.role === 'user' || message.role === 'assistant') {
         renderMessage(message.role, String(message.content || ''));
+      } else if (message.role === 'tool') {
+        let result; try { result = JSON.parse(message.content || '{}'); } catch { result = {}; }
+        renderMessage('assistant', `${message.name || '工具'}：${result.summary || message.content || ''}`);
+        for (const image of result.data?.images || []) if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![生成图片](${image.url})`);
       }
     }
     if (!state.sessionId) renderStatusLine('还没有对话，向留序 LiuXu 提问或让它修改本篇内容。');
@@ -412,10 +417,75 @@ async function loadSession(documentId) {
   }
 }
 
+function approvalDock() { return document.querySelector('#noteAssistantApprovalDock'); }
+function clearInteraction() {
+  state.approval = null;
+  const dock = approvalDock();
+  if (dock) { dock.hidden = true; dock.innerHTML = ''; }
+}
+function showApproval(payload) {
+  state.runStatus = 'waiting_approval';
+  state.approval = payload.approvals?.[0] || null;
+  const dock = approvalDock();
+  if (!dock || !state.approval) return;
+  const approval = state.approval;
+  dock.hidden = false;
+  dock.innerHTML = `<section class="approval-card"><div class="approval-card-body"><h3>确认执行 ${escHtml(approval.call?.name || '')}（${Number(payload.queueIndex) || 1}/${Number(payload.queueTotal) || 1}）</h3>${state.approvalBodyHtml?.(approval) || `<pre>${escHtml(JSON.stringify(approval.call?.arguments || {}, null, 2))}</pre>`}</div><div class="card-actions"><button type="button" data-note-approval="false">拒绝</button><button type="button" data-note-approval="true">允许执行</button></div></section>`;
+  syncComposer();
+}
+async function resolveApproval(approved) {
+  if (!state.approval || state.approving || state.mutationPending) return;
+  const approval = state.approval;
+  const runId = state.runId;
+  const serial = contextSerial;
+  const documentId = state.activeDocumentId;
+  const call = approval.call || {};
+  const mutation = approved && String(call.arguments?.id) === documentId && ['knowledge.update', 'knowledge.delete', 'knowledge.archive', 'knowledge.restore'].includes(call.name);
+  state.approving = true;
+  let requestStarted = false;
+  let responseReceived = false;
+  try {
+    if (mutation && await state.beforeMutation?.(documentId) === false) throw new Error('草稿保存失败，请解决后再确认');
+    if (serial !== contextSerial || runId !== state.runId) { if (mutation) await state.afterMutation?.(documentId, { failed: true }); return; }
+    if (mutation) state.mutationPending = true;
+    requestStarted = true;
+    const response = await apiFetch(`/api/agent/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approval.id)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approved }),
+    });
+    responseReceived = true;
+    if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || '无法处理确认'); }
+    if (state.approval?.id === approval.id) { clearInteraction(); state.runStatus = 'running'; }
+  } catch (error) {
+    if (mutation && (!requestStarted || responseReceived)) { state.mutationPending = false; await state.afterMutation?.(documentId, { failed: true }); }
+    showToast(error.message, 'error');
+  } finally { state.approving = false; syncComposer(); }
+}
+
 function handleRunEvent(event) {
   const type = event?.type || '';
+  const payload = event.payload || {};
+  if (type === 'approval.required') { showApproval(payload); return; }
+  if (type === 'client_tool.requested') { state.runStatus = 'waiting_client_tool'; state.relayClientToolRequest?.({ runId: state.runId }, payload); return; }
+  if (type.startsWith('delegate.')) { renderStatusLine(`子任务：${payload.delegateTitle || ''} ${type === 'delegate.completed' ? '已完成' : '执行中'}`); return; }
+  if (type === 'memory.proposed') {
+    renderMessage('assistant', `记忆提案：\n${payload.content || ''}`);
+    const actions = document.createElement('div');
+    actions.innerHTML = `<button data-note-memory="approve" data-memory-id="${escHtml(payload.id)}">保存记忆</button><button data-note-memory="dismiss" data-memory-id="${escHtml(payload.id)}">忽略</button>`;
+    messagesHost()?.append(actions); return;
+  }
+  if (type === 'tool.completed') {
+    const call = payload.call || {};
+    renderMessage('assistant', `${call.name || '工具'}：${payload.result?.summary || JSON.stringify(payload.result || {})}`);
+    const images = payload.result?.data?.images || (payload.result?.data?.url ? [{ url: payload.result.data.url }] : []);
+    for (const image of images) if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![生成图片](${image.url})`);
+    if (String(call.arguments?.id) === state.activeDocumentId && ['knowledge.update', 'knowledge.delete', 'knowledge.archive', 'knowledge.restore'].includes(call.name)) {
+      state.mutationPending = false;
+      Promise.resolve(state.afterMutation?.(state.activeDocumentId, payload)).catch(error => showToast(error.message, 'error'));
+    }
+    return;
+  }
   if (type === 'tool.started') {
-    const name = event.payload?.call?.name || '';
+    const name = event.payload?.name || event.payload?.call?.name || '';
     if (name === 'note.read') renderStatusLine('正在读取笔记内容…');
     else if (name === 'knowledge.search') renderStatusLine('正在检索知识库…');
     else if (name === 'note.propose_edit') renderStatusLine('正在生成修改提案…');
@@ -446,13 +516,21 @@ function handleRunEvent(event) {
     return;
   }
   if (type === 'user_input.required') {
-    finishRun();
+    state.runStatus = 'waiting_user';
+    clearInteraction();
+    const dock = approvalDock();
+    if (dock) { dock.hidden = false; dock.innerHTML = `<div class="approval-card-body">${escHtml(payload.question || '请补充信息')}</div>`; }
+    setStatus('等待你的回答');
     renderStatusLine('');
     renderMessage('assistant', String(event.payload?.question || '（需要补充信息）'));
   }
 }
 
 function finishRun() {
+  state.mutationPending = false;
+  clearInteraction();
+  state.runStatus = '';
+  Promise.resolve(state.afterMutation?.(state.activeDocumentId, { reconcile: true })).catch(() => {});
   state.eventSource?.close();
   state.eventSource = null;
   state.runId = '';
@@ -461,17 +539,21 @@ function finishRun() {
 
 function subscribeRun(runId) {
   const serial = contextSerial;
+  state.runStatus = 'running';
   state.eventSource?.close();
   setStatus('正在思考…', 'running');
   syncComposer();
   const source = new EventSource(`/api/agent/runs/${encodeURIComponent(runId)}/events`);
   state.eventSource = source;
   source.addEventListener('run.started', () => { if (serial === contextSerial && state.runId === runId) setStatus('正在思考…', 'running'); });
-  for (const type of ['tool.started', 'note.edit_proposed', 'run.completed', 'run.failed', 'user_input.required']) {
+  for (const type of ['tool.started', 'tool.completed', 'approval.required', 'client_tool.requested', 'memory.proposed', 'delegate.started', 'delegate.completed', 'delegate.progress', 'note.edit_proposed', 'run.completed', 'run.failed', 'user_input.required']) {
     source.addEventListener(type, event => {
       if (serial !== contextSerial || state.runId !== runId) return;
       let payload = null;
       try { payload = JSON.parse(event.data || '{}'); } catch { payload = null; }
+      const key = JSON.stringify([runId, type, payload?.at, payload?.payload ?? payload]);
+      if (type !== 'approval.required' && state.eventKeys.has(key)) return;
+      state.eventKeys.add(key);
       handleRunEvent({ type, payload: payload?.payload ?? payload });
     });
   }
@@ -483,18 +565,19 @@ function subscribeRun(runId) {
       source.close();
       return;
     }
-    source.close();
-    state.eventSource = null;
-    state.runId = '';
-    setStatus('连接中断，请重试', 'error');
-    syncComposer();
+    if (source.readyState === 2) { finishRun(); setStatus('连接已关闭，请重新打开会话', 'error'); return; }
+    setStatus('连接中断，正在恢复…', 'error');
+    Promise.resolve(state.afterMutation?.(state.activeDocumentId, { disconnected: true })).catch(() => {});
+    // Keep pending answers during native reconnect; replayed events are deduplicated above.
   };
 }
 
 async function send() {
   const serial = contextSerial;
   const text = String(input()?.value || '').trim();
-  if (!text || state.runId || !state.activeDocumentId) return;
+  if (!text || state.sending || (state.runId && state.runStatus !== 'waiting_user') || !state.activeDocumentId) return;
+  state.sending = true;
+  syncComposer();
   input().value = '';
   autoResizeNoteComposer();
   renderMessage('user', text);
@@ -512,16 +595,17 @@ async function send() {
     const data = await response.json().catch(() => ({}));
     if (serial !== contextSerial) return;
     if (response.status === 403) {
-      renderMessage('assistant', '日记已锁定，无法使用留序 LiuXu。');
-      return;
+      throw new Error('日记已锁定，无法使用留序 LiuXu。');
     }
     if (!response.ok) throw new Error(data.error || '发送失败');
+    clearInteraction();
     state.sessionId = data.sessionId || state.sessionId;
     state.runId = data.runId;
     subscribeRun(data.runId);
   } catch (error) {
+    if (serial === contextSerial && input() && !input().value) input().value = text;
     showToast(error.message || '留序 LiuXu 发送失败', 'error');
-  }
+  } finally { state.sending = false; syncComposer(); }
 }
 
 async function stop() {
@@ -584,6 +668,7 @@ async function switchSession(sessionId) {
   }
   // Detach the current stream first — an in-flight run keeps going server-side.
   const serial = ++contextSerial;
+  clearInteraction(); state.runStatus = ''; state.eventKeys.clear();
   state.eventSource?.close();
   state.eventSource = null;
   state.runId = '';
@@ -599,6 +684,10 @@ async function switchSession(sessionId) {
     for (const message of data.session?.messages || []) {
       if (message.role === 'user' || message.role === 'assistant') {
         renderMessage(message.role, String(message.content || ''));
+      } else if (message.role === 'tool') {
+        let result; try { result = JSON.parse(message.content || '{}'); } catch { result = {}; }
+        renderMessage('assistant', `${message.name || '工具'}：${result.summary || message.content || ''}`);
+        for (const image of result.data?.images || []) if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![生成图片](${image.url})`);
       }
     }
     if (data.activeRun && ACTIVE_RUN_STATES.has(data.activeRun.status)) {
@@ -665,6 +754,9 @@ async function toggle() {
 
 function newConversation() {
   contextSerial += 1;
+  clearInteraction();
+  state.runStatus = '';
+  state.eventKeys.clear();
   state.sessionId = '';
   state.newSessionRequested = true;
   state.eventSource?.close();
@@ -679,12 +771,15 @@ function newConversation() {
   if (state.sessionListOpen) loadSessionList();
 }
 
-export function initNoteAssistant({ applyEdit, ensureDocument }) {
+export function initNoteAssistant({ applyEdit, ensureDocument, ...integrations }) {
   if (bound) return;
   const host = panel();
   if (!host) return;
   bound = true;
   state = {
+    ...integrations,
+    runStatus: '',
+    eventKeys: new Set(),
     activeDocumentId: '',
     sessionLoaded: false,
     sessionId: '',
@@ -701,6 +796,10 @@ export function initNoteAssistant({ applyEdit, ensureDocument }) {
   layout.sync();
 
   host.addEventListener('click', event => {
+    const approval = event.target.closest('[data-note-approval]');
+    if (approval) { resolveApproval(approval.dataset.noteApproval === 'true'); return; }
+    const memory = event.target.closest('[data-note-memory]');
+    if (memory) { Promise.resolve(state.handleMemoryProposalAction?.(memory.dataset.memoryId, memory.dataset.noteMemory)).then(() => memory.parentElement.remove()).catch(error => showToast(error.message, 'error')); return; }
     const action = event.target.closest('[data-note-assistant-action]');
     if (!action) {
       // Clicks outside the session dropdown close it.
@@ -711,6 +810,7 @@ export function initNoteAssistant({ applyEdit, ensureDocument }) {
       return;
     }
     const kind = action.dataset.noteAssistantAction;
+    if ((state.approving || state.mutationPending) && ['new', 'switch-session', 'delete-session'].includes(kind)) return;
     if (kind === 'document') Promise.resolve(state.ensureDocument?.(state.activeDocumentId)).catch(error => setStatus(error.message, 'error'));
     if (kind === 'close') setOpen(false);
     if (kind === 'new') newConversation();
@@ -763,6 +863,9 @@ export function noteAssistantSetActiveDocument(doc) {
   if (label) { label.textContent = doc?.title || '未命名文档'; label.title = `返回：${doc?.title || '未命名文档'}`; }
   if (doc?.id === state.activeDocumentId && doc?.status !== 'archived') { layout?.sync(); return; }
   contextSerial += 1;
+  clearInteraction();
+  state.runStatus = '';
+  state.eventKeys.clear();
   // Switching documents detaches the current stream; an in-flight run keeps
   // going server-side and its proposals stay bound to that document.
   state.eventSource?.close();
@@ -786,7 +889,11 @@ export function noteAssistantSetActiveDocument(doc) {
 
 export function noteAssistantClear() {
   if (!state) return;
+  Promise.resolve(state.afterMutation?.(state.activeDocumentId, { failed: true })).catch(() => {});
   contextSerial += 1;
+  clearInteraction();
+  state.runStatus = '';
+  state.eventKeys.clear();
   state.activeDocument = null;
   if (input()) input().value = '';
   state.eventSource?.close();

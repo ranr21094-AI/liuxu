@@ -97,7 +97,7 @@ test('note.propose_edit validates matches and emits a proposal without touching 
   assert.equal(runtimeWithScript.store.findLatestSessionForDocument(document.id).id, noteSession.id);
 });
 
-test('note_assist runs expose only the restricted tool set', async (t) => {
+test('note_assist runs expose the full registered tool set plus bound note tools', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
   const { document } = knowledge.createNote({ title: '工具集', content: '正文' }, { diaryUnlocked: true });
@@ -110,9 +110,7 @@ test('note_assist runs expose only the restricted tool set', async (t) => {
   const run = await runtime.startNoteAssist({ session, documentId: document.id, userMessage: 'hi' });
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(store.getRun(run.id).status, 'completed');
-  assert.deepEqual([...seenTools].sort(), ['knowledge.list', 'knowledge.read', 'knowledge.search', 'note.propose_edit', 'note.read']);
-  assert.equal(seenTools.includes('bash.run'), false);
-  assert.equal(seenTools.includes('agent.delegate'), false);
+  for (const name of ['knowledge.list', 'knowledge.read', 'knowledge.search', 'knowledge.update', 'note.propose_edit', 'note.read', 'agent.delegate', 'ask_user']) assert.ok(seenTools.includes(name), name);
 });
 
 test('note-assist routes serve sessions and gate locked documents', async (t) => {
@@ -398,4 +396,90 @@ test('locked diary note-assist events and session delete return 403', async (t) 
   const publicEvents = await fetch(`${base}/api/agent/runs/${encodeURIComponent(publicData.runId)}/events`);
   assert.equal(publicEvents.status, 200);
   publicEvents.body?.cancel?.();
+});
+
+test('note assistant direct writes require confirmation and preserve original baseVersion', async t => {
+  const db = tempDb(t), knowledge = createKnowledgeService(db);
+  const doc = knowledge.createNote({ title: '版本', content: 'original' }).document;
+  let calls = 0;
+  const { runtime, store } = makeRuntime(db, () => ++calls === 1
+    ? { toolCalls: [{ name: 'knowledge.update', arguments: { id: doc.id, baseVersion: doc.version, content: 'agent edit' } }] }
+    : { text: 'done' });
+  const run = await runtime.startNoteAssist({ session: store.createSession('版本', { documentId: doc.id }), documentId: doc.id, userMessage: 'edit' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(run.status, 'waiting_approval'); assert.equal(knowledge.getDocument(doc.id).content, 'original');
+  knowledge.updateDocument(doc.id, { baseVersion: doc.version, content: 'saved draft' });
+  await runtime.resolveApproval(run.id, run.pendingApprovals[0].id, { approved: true });
+  assert.equal(knowledge.getDocument(doc.id).content, 'saved draft');
+  assert.ok(store.getRun(run.id).events.some(event => event.type === 'tool.completed' && /version conflict/i.test(event.payload.result.summary)));
+});
+
+test('note assistant rejects unregistered tools and supports confirmed direct writes', async t => {
+  const db = tempDb(t), knowledge = createKnowledgeService(db);
+  const doc = knowledge.createNote({ title: '写入', content: 'original' }).document;
+  let calls = 0;
+  const { runtime, store } = makeRuntime(db, () => ++calls === 1
+    ? { toolCalls: [{ name: 'nonexistent.tool', arguments: {} }, { name: 'knowledge.update', arguments: { id: doc.id, baseVersion: doc.version, content: 'confirmed' } }] }
+    : { text: 'done' });
+  const run = await runtime.startNoteAssist({ session: store.createSession('写入', { documentId: doc.id }), documentId: doc.id, userMessage: 'edit' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(run.pendingApprovals.length, 1);
+  assert.ok(run.events.some(event => event.type === 'tool.completed' && event.payload.call.name === 'nonexistent.tool' && !event.payload.result.ok));
+  await runtime.resolveApproval(run.id, run.pendingApprovals[0].id, { approved: true });
+  assert.equal(knowledge.getDocument(doc.id).content, 'confirmed');
+});
+
+test('only the old factory note prompt is upgraded; custom system text stays intact', t => {
+  const db = tempDb(t), store = createAgentStore(db), memory = createMemoryService(store);
+  const { LEGACY_NOTE_ASSIST_SYSTEM_LINES, factorySystemBody } = require('../lib/agent/system-prompt');
+  memory.list();
+  let data = store.readMemories();
+  const item = data.items.find(item => item.builtinId === 'system-note-assist');
+  item.content = LEGACY_NOTE_ASSIST_SYSTEM_LINES.join('\n'); store.writeMemories(data);
+  memory.list(); assert.equal(store.readMemories().items.find(item => item.builtinId === 'system-note-assist').content, factorySystemBody('note_assist'));
+  data = store.readMemories(); data.items.find(item => item.builtinId === 'system-note-assist').content = 'My custom prompt'; store.writeMemories(data);
+  memory.list(); assert.equal(store.readMemories().items.find(item => item.builtinId === 'system-note-assist').content, 'My custom prompt');
+});
+
+test('standalone note route initializes full dependencies and resumes an existing question', async t => {
+  const db = tempDb(t), knowledge = createKnowledgeService(db);
+  const doc = knowledge.createNote({ title: '独立启动', content: 'body' }).document;
+  const app = express(); app.use(express.json());
+  let rounds = 0; let seen = []; let webCalls = 0;
+  registerAgentRoutes(app, {
+    db, hasDiaryAccess: () => false,
+    modelClient: { complete: async ({ tools }) => { seen = tools.map(tool => tool.name); return ++rounds === 1 ? { toolCalls: [{ name: 'ask_user', arguments: { question: '继续？' } }] } : { text: 'complete' }; } },
+    webSearchFor: () => { webCalls++; return async () => ({ ok: true }); },
+    computerFor: () => ({ execute: async () => ({ ok: true }) }),
+    chromeFor: () => ({ request: () => ({ ok: true }) }),
+  });
+  const server = await new Promise(resolve => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const endpoint = `http://127.0.0.1:${server.address().port}/api/agent/note-assist/${encodeURIComponent(doc.id)}/messages`;
+  const post = content => fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+  const first = await (await post('begin')).json(); await new Promise(resolve => setTimeout(resolve, 30));
+  assert.ok(seen.includes('bash.run')); assert.ok(seen.includes('browser.scan')); assert.ok(seen.includes('image.generate')); assert.equal(webCalls, 1);
+  const next = await (await post('answer')).json(); assert.equal(next.resumed, true); assert.equal(next.runId, first.runId); assert.equal(rounds, 2);
+});
+
+test('note delegates inherit the document and bubble confirmed mutations to their parent', async t => {
+  const db = tempDb(t), knowledge = createKnowledgeService(db);
+  const doc = knowledge.createNote({ title: '委派', content: 'original' }).document;
+  let parents = 0, children = 0;
+  const { runtime, store } = makeRuntime(db, ({ goal, tools }) => {
+    if (goal !== 'child') return ++parents === 1 ? { toolCalls: [{ name: 'agent.delegate', arguments: { prompt: 'child' } }] } : { text: 'parent done' };
+    assert.ok(tools.some(tool => tool.name === 'note.read')); assert.ok(!tools.some(tool => tool.name === 'agent.delegate'));
+    children++;
+    if (children === 1) return { toolCalls: [{ name: 'note.read', arguments: {} }] };
+    if (children === 2) return { toolCalls: [{ name: 'knowledge.update', arguments: { id: doc.id, baseVersion: doc.version, content: 'child edit' } }] };
+    return { text: 'child done' };
+  });
+  const run = await runtime.startNoteAssist({ session: store.createSession('委派', { documentId: doc.id }), documentId: doc.id, userMessage: 'parent' });
+  await new Promise(resolve => setImmediate(resolve));
+  await runtime.resolveApproval(run.id, run.pendingApprovals[0].id, { approved: true });
+  const child = store.listChildRuns(run.id)[0]; assert.equal(child.noteDocumentId, doc.id);
+  assert.equal(run.status, 'waiting_approval'); assert.equal(run.pendingApprovals[0].call.name, 'knowledge.update');
+  await runtime.resolveApproval(run.id, run.pendingApprovals[0].id, { approved: true });
+  assert.equal(knowledge.getDocument(doc.id).content, 'child edit'); assert.equal(parents, 2); assert.equal(children, 3);
+  assert.ok(store.getRun(run.id).events.some(event => event.type === 'tool.completed' && event.payload.delegatedRunId === child.id && event.payload.call.name === 'knowledge.update'));
 });
