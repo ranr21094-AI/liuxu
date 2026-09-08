@@ -490,6 +490,34 @@ test('categories sub strings migrate to nested objects on read', (t) => {
   assert.equal(persisted.find(item => item.name === '开发').sub[0].name, '前端');
 });
 
+test('addCategory materializes a document-only parent folder before creating a child', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-ghost-folder-');
+  const knowledge = openKnowledge(db);
+  knowledge.createNote({
+    title: '导入件',
+    content: '附件正文',
+    knowledgeBase: '其他',
+    folderPath: '附件',
+  });
+  const before = db.getAllCategories(false, false).find(item => item.name === '其他');
+  assert.equal((before.sub || []).some(item => item.name === '附件'), false);
+
+  const created = db.addCategory('子目录', '其他/附件');
+  assert.equal(created.error, undefined);
+  assert.equal(created.name, '子目录');
+  assert.equal(created.parent, '其他/附件');
+  const other = db.getAllCategories(false, false).find(item => item.name === '其他');
+  const attachment = (other.sub || []).find(item => item.name === '附件');
+  assert.ok(attachment);
+  assert.deepEqual(attachment.sub.map(item => item.name), ['子目录']);
+
+  const duplicate = db.addCategory('子目录', '其他/附件');
+  assert.equal(duplicate.error, 'Category already exists');
+
+  const missing = db.addCategory('子目录', '不存在/附件');
+  assert.equal(missing.error, 'Parent category not found');
+});
+
 test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', async (t) => {
   const chinese = '测试.png';
   const mojibake = Buffer.from(chinese, 'utf8').toString('latin1');

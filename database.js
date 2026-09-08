@@ -1429,6 +1429,32 @@ function findCategoryNode(cats, fullPath) {
   return node;
 }
 
+function emptyCategoryNode(name) {
+  return { name, sub: [], calendar_day_visible: true };
+}
+
+/** Walk or create folder segments under an existing knowledge base (mkdir -p). Does not create a new base except the diary root. */
+function ensureCategoryPath(cats, fullPath) {
+  const segments = String(fullPath || '').split('/').map(s => s.trim()).filter(Boolean);
+  if (!segments.length) return null;
+  let node = cats.find(c => c.name === segments[0]);
+  if (!node && segments[0] === DIARY_CATEGORY) {
+    node = emptyCategoryNode(DIARY_CATEGORY);
+    cats.push(node);
+  }
+  if (!node) return null;
+  for (let i = 1; i < segments.length; i += 1) {
+    if (!Array.isArray(node.sub)) node.sub = [];
+    let child = node.sub.find(s => s.name === segments[i]);
+    if (!child) {
+      child = emptyCategoryNode(segments[i]);
+      node.sub.push(child);
+    }
+    node = child;
+  }
+  return node;
+}
+
 /** Split "开发/前端" into { parent: "开发", sub: "前端" } */
 function parseCategoryPath(cat) {
   if (!cat) return { parent: '其他', sub: null };
@@ -1449,20 +1475,17 @@ function addCategory(name, parent) {
   const cats = readCategories();
   if (parent) {
     // parent is a full path within a base: "开发" or "开发/前端"
-    let p = findCategoryNode(cats, parent);
-    if (!p && parent === DIARY_CATEGORY) {
-      p = { name: DIARY_CATEGORY, sub: [], calendar_day_visible: true };
-      cats.push(p);
-    }
-    if (!p) return null;
-    if ((p.sub || []).some(item => item.name === name)) return null;
-    p.sub.push({ name, sub: [], calendar_day_visible: true });
+    const p = ensureCategoryPath(cats, parent);
+    if (!p) return { error: 'Parent category not found' };
+    if (!Array.isArray(p.sub)) p.sub = [];
+    if (p.sub.some(item => item.name === name)) return { error: 'Category already exists' };
+    p.sub.push(emptyCategoryNode(name));
     writeCategories(cats);
     return { name, parent };
   }
   // Parent-level category
-  if (cats.some(c => c.name === name)) return null;
-  cats.push({ name, sub: [], calendar_day_visible: true });
+  if (cats.some(c => c.name === name)) return { error: 'Category already exists' };
+  cats.push(emptyCategoryNode(name));
   writeCategories(cats);
   return { name, sub: [], calendar_day_visible: true };
 }

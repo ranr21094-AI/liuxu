@@ -12,13 +12,13 @@
 <body>
   <div class="workspace-shell" id="workspaceShell">
     <aside class="workspace-sidebar" id="workspaceSidebar" aria-label="工作区侧栏">
-      <button class="workspace-brand" id="workspaceBrand" type="button" aria-controls="workspaceModeNav" aria-expanded="true" aria-label="收起导航" title="收起导航"><span class="brand-mark" aria-hidden="true">L</span><strong>留序 <span>LiuXu</span></strong><svg class="brand-toggle-caret" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none"/></svg></button>
-          <nav class="mode-switch workspace-mode-nav" id="workspaceModeNav" aria-label="工作模式">
-            <button type="button" data-mode="agent" class="active"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="3"/><path d="m7 18-3 3v-5M8 9h8M8 13h5"/></svg>Agent</button>
-            <button type="button" data-mode="knowledge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v16M12 5C9 3 6 3 3 4v15c3-1 6-1 9 2 3-3 6-3 9-2V4c-3-1-6-1-9 1Z"/></svg>知识库</button>
-            <button type="button" data-mode="memory"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4a3 3 0 0 0-5 3 4 4 0 0 0 0 7 3 3 0 0 0 5 5M15 4a3 3 0 0 1 5 3 4 4 0 0 1 0 7 3 3 0 0 1-5 5M9 4v16M15 4v16M9 9H6M15 14h3"/></svg>Memory<span class="mode-pending-badge" id="memoryPendingBadge" hidden aria-hidden="true"></span></button>
-            <button type="button" data-mode="todos"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 9 2 2 5-5M8 16h8"/></svg>待办</button>
-          </nav>
+      <div class="workspace-brand" id="workspaceBrand"><span class="brand-mark" aria-hidden="true">L</span><strong>留序 <span>LiuXu</span></strong></div>
+      <nav class="mode-switch workspace-mode-nav" id="workspaceModeNav" aria-label="工作模式">
+        <button type="button" data-mode="agent" class="active" aria-current="page">Agent</button>
+        <button type="button" data-mode="knowledge">知识库</button>
+        <button type="button" data-mode="memory">Memory<span class="mode-pending-badge" id="memoryPendingBadge" hidden aria-hidden="true"></span></button>
+        <button type="button" data-mode="todos">待办</button>
+      </nav>
       <div class="sidebar-mobile-bar">
         <button class="icon-button sidebar-close" id="sidebarClose" type="button" aria-label="关闭侧栏">×</button>
       </div>

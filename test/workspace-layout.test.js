@@ -55,7 +55,7 @@ test('workspace density nits keep 36px controls, 24px narrow padding, and title 
   assert.match(css, /\.note-assistant-panel \.note-assistant-composer textarea:focus-visible \{ outline: none/);
 });
 
-test('mode nav collapse is independent from desktop sidebar collapse', () => {
+test('compact mode nav stays visible and keeps independent sidebar controls', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
@@ -64,27 +64,58 @@ test('mode nav collapse is independent from desktop sidebar collapse', () => {
   const document = new JSDOM(html).window.document;
   const brand = document.querySelector('#workspaceBrand');
   const nav = document.querySelector('#workspaceModeNav');
-  assert.equal(brand?.tagName, 'BUTTON');
-  assert.equal(brand?.getAttribute('aria-controls'), 'workspaceModeNav');
-  const caret = brand?.querySelector('.brand-toggle-caret');
-  assert.equal(caret !== null, true);
-  assert.equal(caret?.getAttribute('fill'), 'none');
-  assert.equal(caret?.getAttribute('width'), '12');
-  assert.equal(caret?.querySelector('path')?.getAttribute('fill'), 'none');
-  assert.equal(nav?.querySelectorAll('[data-mode]').length, 4);
+  assert.equal(brand?.tagName, 'DIV');
+  assert.equal(brand?.getAttribute('aria-controls'), null);
+  assert.equal(brand?.getAttribute('aria-expanded'), null);
+  assert.equal(brand?.querySelector('svg'), null);
+  assert.equal(nav.hidden, false);
+  const buttons = [...nav.querySelectorAll('[data-mode]')];
+  assert.deepEqual(buttons.map(button => button.textContent), ['Agent', '知识库', 'Memory', '待办']);
+  assert.deepEqual(buttons.map(button => button.dataset.mode), ['agent', 'knowledge', 'memory', 'todos']);
+  assert.ok(buttons.every(button => button.type === 'button'));
+  assert.equal(nav.querySelector('svg'), null);
+  assert.equal(buttons[0].getAttribute('aria-current'), 'page');
   assert.equal(document.querySelector('#agentSidebarPanel') !== null, true);
-  assert.match(source, /const MODE_NAV_COLLAPSED_KEY = 'workbenchModeNavCollapsed'/);
+  assert.doesNotMatch(source, /workbenchModeNavCollapsed|MODE_NAV_COLLAPSED_KEY|syncModeNav|toggleModeNav/);
   assert.match(source, /const SIDEBAR_COLLAPSED_KEY = 'workbenchSidebarCollapsed'/);
-  assert.match(source, /function toggleModeNav/);
   assert.match(source, /function toggleDesktopSidebar/);
-  assert.match(source, /\$\('#workspaceBrand'\)\.addEventListener\('click', \(\) => toggleModeNav\(\)\)/);
   assert.match(source, /\$\('#sidebarToggle'\)\.addEventListener\('click', \(\) => toggleDesktopSidebar\(\)\)/);
   assert.doesNotMatch(source, /\$\('#workspaceBrand'\)\.addEventListener\('click', \(\) => toggleDesktopSidebar/);
-  assert.match(css, /body\.mode-nav-collapsed \.workspace-mode-nav[\s\S]*display:\s*none/);
-  assert.match(css, /body\.mode-nav-collapsed \.brand-toggle-caret[\s\S]*rotate\(-90deg\)/);
-  assert.match(css, /\.workspace-brand svg[\s\S]*fill:\s*none/);
-  assert.match(css, /\.brand-toggle-caret \{[^}]*width:\s*12px/);
-  assert.match(css, /\.brand-toggle-caret path \{ fill: none; \}/);
+  assert.doesNotMatch(css, /mode-nav-collapsed|brand-toggle-caret/);
+  assert.match(css, /\.workspace-brand \{[^}]*height:\s*48px/);
+  assert.match(css, /\.workspace-mode-nav \{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.workspace-mode-nav \{[^}]*margin:\s*0 12px 12px; padding:\s*0/);
+  assert.match(css, /\.workspace-mode-nav button \{[^}]*min-height:\s*36px[^}]*font-size:\s*13px[^}]*white-space:\s*nowrap/);
+  assert.match(css, /@media \(pointer: coarse\)[\s\S]*\.workspace-mode-nav button[\s\S]*min-height:\s*44px/);
+  assert.match(css, /\.workspace-mode-nav button:focus-visible/);
+  assert.match(css, /\.workspace-mode-nav \.mode-pending-badge \{[^}]*position:\s*absolute/);
+});
+
+test('Memory badge caps visual count without losing the full accessible count', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../public/js/workbench.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const dom = new JSDOM(html);
+  const document = dom.window.document;
+  const start = source.indexOf('function updateMemoryPendingBadge(');
+  const end = source.indexOf('\nfunction renderMemorySidebar()', start);
+  assert.ok(start >= 0 && end > start);
+  const context = { document, $: selector => document.querySelector(selector) };
+  vm.runInNewContext(source.slice(start, end) + '\nthis.update = updateMemoryPendingBadge;', context);
+  const badge = document.querySelector('#memoryPendingBadge');
+  const button = document.querySelector('[data-mode="memory"]');
+  try {
+    for (const count of [1, 9, 10, 125, 0]) {
+      context.update(count);
+      assert.equal(badge.hidden, count === 0);
+      assert.equal(badge.textContent, count === 0 ? '' : count > 9 ? '9+' : String(count));
+      assert.equal(badge.getAttribute('aria-hidden'), 'true');
+      assert.equal(button.getAttribute('aria-label'), count ? `Memory，${count} 条记忆待确认` : 'Memory');
+      assert.equal(button.classList.contains('has-pending'), count > 0);
+    }
+  } finally { dom.window.close(); }
 });
 
 test('message follower keeps history position and resumes only at bottom or explicit jump', async () => {

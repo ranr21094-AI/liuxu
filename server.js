@@ -2827,10 +2827,14 @@ app.post('/api/categories', (req, res) => {
       return rejectLockedDiary(res);
     }
     const result = db.addCategory(cleanName, parentPath || null);
-    if (!result) {
-      if (parentPath) return res.status(404).json({ error: 'Parent category not found' });
-      return res.status(409).json({ error: 'Category already exists' });
+    if (!result) return res.status(400).json({ error: 'Invalid category name' });
+    if (result.error === 'Parent category not found') {
+      return res.status(404).json({ error: result.error });
     }
+    if (result.error === 'Category already exists') {
+      return res.status(409).json({ error: result.error });
+    }
+    if (result.error) return res.status(400).json({ error: result.error });
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

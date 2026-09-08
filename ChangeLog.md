@@ -1,5 +1,22 @@
 # 更新日志
 
+## 2026-09-08
+
+### 紧凑侧栏导航与分类树修复（v1.2.12）
+
+- 品牌栏收紧至 48px，`Agent｜知识库｜Memory｜待办` 改为单行等宽文字标签；旧导航折叠偏好不再影响入口显示。
+- Memory 待确认数量改为右上角角标，最多显示 `9+`，完整数量保留在按钮无障碍名称与提示中。
+- 保留整条侧栏收起和 840px 以下抽屉行为，桌面/触控焦点与 `aria-current` 状态保持可用。
+- 修复文档路径下新建子分类时缺少父级文件夹的问题，并区分重复分类和不存在父级的错误。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.12-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.12-mac-arm64.dmg`、`LiuXu-1.2.12-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.12，无需逐版本安装。
+
 ## 2026-09-07
 
 ### 备份恢复与 Agent 隔离（v1.2.11）

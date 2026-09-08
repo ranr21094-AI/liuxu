@@ -567,7 +567,6 @@ function scrollMessagesToBottom(force = false) {
 const mobileSidebarQuery = window.matchMedia('(max-width: 840px)');
 const desktopSidebarQuery = window.matchMedia('(min-width: 841px)');
 const SIDEBAR_COLLAPSED_KEY = 'workbenchSidebarCollapsed';
-const MODE_NAV_COLLAPSED_KEY = 'workbenchModeNavCollapsed';
 const KNOWLEDGE_SEARCH_OPTIONS_KEY = 'knowledgeSearchOptions';
 
 const KNOWLEDGE_SEARCH_PRESETS = {
@@ -780,27 +779,6 @@ function toggleDesktopSidebar(forceCollapsed) {
     : !document.body.classList.contains('sidebar-collapsed');
   localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
   syncDesktopSidebar();
-}
-
-function syncModeNav() {
-  const collapsed = localStorage.getItem(MODE_NAV_COLLAPSED_KEY) === 'true';
-  document.body.classList.toggle('mode-nav-collapsed', collapsed);
-  const nav = $('#workspaceModeNav');
-  const brand = $('#workspaceBrand');
-  if (nav) nav.hidden = collapsed;
-  if (brand) {
-    brand.setAttribute('aria-expanded', String(!collapsed));
-    brand.setAttribute('aria-label', collapsed ? '展开导航' : '收起导航');
-    brand.title = collapsed ? '展开导航' : '收起导航';
-  }
-}
-
-function toggleModeNav(forceCollapsed) {
-  const collapsed = typeof forceCollapsed === 'boolean'
-    ? forceCollapsed
-    : localStorage.getItem(MODE_NAV_COLLAPSED_KEY) !== 'true';
-  localStorage.setItem(MODE_NAV_COLLAPSED_KEY, String(collapsed));
-  syncModeNav();
 }
 
 function parseRoute() {
@@ -2035,9 +2013,8 @@ function updateMemoryPendingBadge(pendingCount) {
   if (badge) {
     if (count > 0) {
       badge.hidden = false;
-      badge.removeAttribute('aria-hidden');
+      badge.setAttribute('aria-hidden', 'true');
       badge.textContent = count > 9 ? '9+' : String(count);
-      badge.setAttribute('aria-label', `${count} 条记忆待确认`);
     } else {
       badge.hidden = true;
       badge.setAttribute('aria-hidden', 'true');
@@ -2046,6 +2023,8 @@ function updateMemoryPendingBadge(pendingCount) {
     }
   }
   memoryButton?.classList.toggle('has-pending', count > 0);
+  memoryButton?.setAttribute('aria-label', count > 0 ? `Memory，${count} 条记忆待确认` : 'Memory');
+  if (memoryButton) memoryButton.title = count > 0 ? `${count} 条记忆待确认` : 'Memory';
   const sidebarCount = $('#memorySidebarCount');
   if (sidebarCount) sidebarCount.classList.toggle('is-pending', count > 0);
 }
@@ -5043,7 +5022,6 @@ function bindEvents() {
     }
   });
   $('#sidebarToggle').addEventListener('click', () => toggleDesktopSidebar());
-  $('#workspaceBrand').addEventListener('click', () => toggleModeNav());
   $('#newSessionButton').addEventListener('click', () => createSession().catch(error => showToast(error.message, 'error')));
   $('#sessionSearch').addEventListener('input', renderSessions);
   $('#sessionList').addEventListener('click', event => {
@@ -5406,7 +5384,6 @@ function bindEvents() {
   });
   desktopSidebarQuery.addEventListener('change', syncDesktopSidebar);
   syncDesktopSidebar();
-  syncModeNav();
 
   $('#diaryButton').addEventListener('click', toggleDiary);
   $('#closeDiaryDialog').addEventListener('click', () => $('#diaryDialog').close());

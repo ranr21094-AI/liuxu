@@ -1,22 +1,17 @@
 /* Agent / knowledge refinement. Other content pages keep their own layouts. */
 :root { --topbar-height: 52px; --doc-pad-x: clamp(24px, 3vw, 40px); }
 .workspace-topbar { flex: 0 0 var(--topbar-height); height: var(--topbar-height); backdrop-filter: none; background: var(--bg); padding: 0 24px; }
-.workspace-brand { height: 64px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 0 20px; cursor: pointer; text-align: left; }
-.workspace-brand:hover { background: var(--surface-hover); }
+.workspace-brand { height: 48px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: 100%; padding: 0 20px; }
 .workspace-brand strong { font-size: 16px; letter-spacing: -.03em; }
 .workspace-brand strong span { color: var(--muted); font-size: 13px; margin-left: 4px; font-weight: 500; }
-.brand-toggle-caret { margin-left: auto; width: 12px; height: 12px; min-width: 12px; min-height: 12px; flex: 0 0 12px; color: var(--faint); stroke-width: 1.8; transition: transform .15s ease; }
-.brand-toggle-caret path { fill: none; }
-body.mode-nav-collapsed .brand-toggle-caret { transform: rotate(-90deg); }
-body.mode-nav-collapsed .workspace-mode-nav { display: none; }
 .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-text); font-weight: 700; }
-.workspace-mode-nav { flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px; margin: 0 12px 12px; padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
-.workspace-mode-nav button { display: flex; position: relative; align-items: center; gap: 12px; text-align: left; min-height: 36px; padding: 0 12px; font-size: 13px; font-weight: 500; }
+.workspace-mode-nav { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 12px 12px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.workspace-mode-nav button { display: flex; position: relative; align-items: center; justify-content: center; min-width: 0; min-height: 36px; padding: 0 4px; font-size: 13px; font-weight: 500; white-space: nowrap; }
 .workspace-mode-nav button.active { background: var(--accent-soft); font-weight: 650; box-shadow: none; }
 .workspace-mode-nav button:hover { background: var(--surface-hover); }
-.workspace-brand svg, .workspace-mode-nav svg, .workspace-sidebar-footer svg, .document-more svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.workspace-mode-nav svg, .workspace-sidebar-footer svg, .document-more svg { width: 18px; height: 18px; flex: none; }
-.workspace-mode-nav .mode-pending-badge { position: static; margin-left: auto; }
+.workspace-sidebar-footer svg, .document-more svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.workspace-sidebar-footer svg, .document-more svg { width: 18px; height: 18px; flex: none; }
+.workspace-mode-nav .mode-pending-badge { position: absolute; top: -7px; right: 0; margin: 0; }
 .workspace-sidebar .search-field,
 #agentSidebarPanel .agent-sidebar-toolbar {
   height: 36px;

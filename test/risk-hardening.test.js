@@ -347,6 +347,50 @@ test('unlocked system diary category can receive a new subcategory without prior
   assert.deepEqual(after.find(category => category.name === DIARY_CATEGORY).sub.map(item => item.name), ['notes']);
 });
 
+test('creating a folder under a document-only path materializes the parent category', async (t) => {
+  const { db, baseUrl } = loadFreshApp(t);
+  const { createKnowledgeService } = require('../lib/knowledge/documents');
+  const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
+  ensureLogsMigrated(db);
+  const knowledge = createKnowledgeService(db);
+  knowledge.createNote({
+    title: '导入件',
+    content: '附件正文',
+    knowledgeBase: OTHER_CATEGORY,
+    folderPath: '附件',
+  });
+
+  const created = await fetch(`${baseUrl}/api/categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '子目录', parent: `${OTHER_CATEGORY}/附件` }),
+  });
+  assert.equal(created.status, 201);
+  const createdBody = await created.json();
+  assert.equal(createdBody.name, '子目录');
+  const categories = await (await fetch(`${baseUrl}/api/categories`)).json();
+  const other = categories.find(item => item.name === OTHER_CATEGORY);
+  const attachment = (other.sub || []).find(item => item.name === '附件');
+  assert.ok(attachment);
+  assert.deepEqual(attachment.sub.map(item => item.name), ['子目录']);
+
+  const duplicate = await fetch(`${baseUrl}/api/categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '子目录', parent: `${OTHER_CATEGORY}/附件` }),
+  });
+  assert.equal(duplicate.status, 409);
+  assert.equal((await duplicate.json()).error, 'Category already exists');
+
+  const missing = await fetch(`${baseUrl}/api/categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '子目录', parent: '不存在/附件' }),
+  });
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error, 'Parent category not found');
+});
+
 test('category calendar-day visibility only hides logs from date browsing', async (t) => {
   const { db, baseUrl } = loadFreshApp(t);
   db.addCategory('隐藏日分类', null);
@@ -2542,14 +2586,13 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   const document = new JSDOM(html).window.document;
   const modes = [...document.querySelectorAll('.workspace-mode-nav [data-mode]')].map(item => item.dataset.mode);
   assert.ok(document.querySelector('.workspace-mode-nav').closest('#workspaceSidebar'));
-  assert.equal(document.querySelector('#workspaceBrand')?.tagName, 'BUTTON');
-  assert.equal(document.querySelector('#workspaceBrand')?.getAttribute('aria-controls'), 'workspaceModeNav');
+  assert.equal(document.querySelector('#workspaceBrand')?.tagName, 'DIV');
+  assert.equal(document.querySelector('#workspaceBrand')?.getAttribute('aria-controls'), null);
   assert.equal(document.querySelector('#workspaceModeNav') !== null, true);
-  assert.match(source, /workbenchModeNavCollapsed/);
-  assert.match(source, /function toggleModeNav/);
-  assert.match(source, /\$\('#workspaceBrand'\)\.addEventListener\('click', \(\) => toggleModeNav\(\)\)/);
+  assert.doesNotMatch(source, /workbenchModeNavCollapsed|function toggleModeNav/);
+  assert.doesNotMatch(source, /\$\('#workspaceBrand'\)\.addEventListener/);
   assert.doesNotMatch(source, /\$\('#workspaceBrand'\)[\s\S]{0,80}toggleDesktopSidebar/);
-  assert.match(workspaceUi, /body\.mode-nav-collapsed \.workspace-mode-nav/);
+  assert.doesNotMatch(workspaceUi, /body\.mode-nav-collapsed \.workspace-mode-nav/);
   assert.equal(document.querySelector('.workspace-topbar [data-mode]'), null);
   assert.doesNotMatch(html, /topbar-mode-switch/);
   assert.doesNotMatch(styles, /\.topbar-mode-switch/);
@@ -2832,7 +2875,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.doesNotMatch(styles, /\.document-workspace\s*\{[^}]*width:\s*min\(1040px,\s*100%\)/);
   assert.match(styles, /\.document-folder-row/);
   assert.match(styles, /\.file-original-panel/);
-  assert.match(workspaceUi, /\.workspace-mode-nav\s*\{[\s\S]*flex-direction:\s*column/);
+  assert.match(workspaceUi, /\.workspace-mode-nav\s*\{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
   assert.match(styles, /@media \(max-width: 840px\)[\s\S]*body\.sidebar-visible \.workspace-sidebar/);
   assert.equal(document.querySelector('#sidebarToggle') !== null, true);
   assert.equal(document.querySelector('#sidebarExpand'), null);
