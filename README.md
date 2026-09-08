@@ -15,14 +15,14 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.2.11-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.2.13-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.2.11-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.2.13-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（测试包）
@@ -30,8 +30,8 @@ Get-FileHash .\LiuXu-Setup-1.2.11-x64.exe -Algorithm SHA256
 当前 Mac 首发包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
 
 ```text
-LiuXu-1.2.11-mac-arm64.dmg
-LiuXu-1.2.11-mac-arm64.zip
+LiuXu-1.2.13-mac-arm64.dmg
+LiuXu-1.2.13-mac-arm64.zip
 ```
 
 测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
@@ -39,8 +39,8 @@ LiuXu-1.2.11-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.2.11-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.2.11-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.2.13-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.2.13-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -89,6 +89,11 @@ API Key 会使用本机密钥加密保存。调用模型、联网搜索或生图
 桌面版进入 **设置 → 更新** 后会检查 GitHub Releases。发现新版本时，留序会下载当前平台的安装包并校验 GitHub SHA-256；确认后打开安装程序。更新只替换应用文件，不会覆盖知识、待办、密钥或备份数据。
 
 更新包保存在应用专用缓存目录，成功升级或超过 7 天会自动清理。当前项目只发布 Windows 11 x64 和 macOS Apple Silicon 包；Mac 测试包或未签名 Windows 包会在打开前显示风险提示。任意 v1.2.0 及以上版本都可以在应用内直接更新到最新版，无需逐版本安装；更早的 v1.0.x / v1.1.x 安装包未内置更新器，需先手动安装一次任意 v1.2.x 版本。
+
+### 代理 Fake-IP 与生图尺寸（v1.2.13）
+
+- 本机 Clash / Surge Fake-IP（`198.18.x.x`）不再把 HTTPS 供应商和生图下载误判成内网。
+- `image.generate` 可用 `2:3` 这类宽高比，会映射到模型支持的像素尺寸。
 
 ### 备份恢复与 Agent 隔离（v1.2.11）
 
@@ -270,7 +275,7 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.2.11` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.2.13` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
 
 ### macOS 提示无法验证开发者
 
@@ -325,13 +330,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.2.11-x64.exe
-LiuXu-Setup-1.2.11-x64.exe.sha256
+LiuXu-Setup-1.2.13-x64.exe
+LiuXu-Setup-1.2.13-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.2.11-mac-arm64.dmg
-LiuXu-1.2.11-mac-arm64.dmg.sha256
-LiuXu-1.2.11-mac-arm64.zip
-LiuXu-1.2.11-mac-arm64.zip.sha256
+LiuXu-1.2.13-mac-arm64.dmg
+LiuXu-1.2.13-mac-arm64.dmg.sha256
+LiuXu-1.2.13-mac-arm64.zip
+LiuXu-1.2.13-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -365,6 +370,7 @@ desktop-build-summary-mac.json
 
 - [更新日志](ChangeLog.md)
 - [代码审查与修复记录](code-review-remediation.md)
+- [v1.2.13 发布说明](docs/releases/v1.2.13.md)
 - [v1.2.12 发布说明](docs/releases/v1.2.12.md)
 - [v1.2.1 发布说明](docs/releases/v1.2.1.md)
 - [v1.2.2 发布说明](docs/releases/v1.2.2.md)

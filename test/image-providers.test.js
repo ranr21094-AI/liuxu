@@ -10,6 +10,7 @@ const {
   imageModelRef,
 } = require('../lib/agent/image-providers');
 const { normalizeUnifiedImageRequest } = require('../lib/agent/image-service');
+const { isValidSeedreamSize } = require('../lib/agent/seedream');
 const { createDatabase } = require('../database');
 const { resetSecretStoreForTests } = require('../secret-store');
 
@@ -80,6 +81,36 @@ test('unified request maps legacy count and applies provider defaults', () => {
   assert.equal(request.count, 2);
   assert.equal(request.size, '1024x1024');
   assert.equal(request.apiKey, 'key');
+});
+
+test('unified request converts aspect ratios into supported model sizes', () => {
+  const seedreamSettings = migrateLegacyImageProviders({
+    imageProvider: 'seedream',
+    seedreamModel: 'doubao-seedream-4-0-250828',
+    seedreamSize: '4K',
+  });
+  const seedreamRequest = normalizeUnifiedImageRequest(seedreamSettings, { prompt: 'poster', size: '2:3' });
+  assert.match(seedreamRequest.size, /^\d+x\d+$/);
+  assert.equal(isValidSeedreamSize(seedreamRequest.model.upstreamId, seedreamRequest.size), true);
+  const [width, height] = seedreamRequest.size.split('x').map(Number);
+  assert.ok(Math.abs((width / height) - (2 / 3)) < 0.03);
+
+  const openAiSettings = migrateLegacyImageProviders({
+    imageProvider: 'getoken',
+    getokenModel: 'gpt-image-2',
+    getokenApiKey: 'key',
+  });
+  const openAiRequest = normalizeUnifiedImageRequest(openAiSettings, { prompt: 'poster', size: '2:3' });
+  assert.equal(openAiRequest.size, '1024x1536');
+});
+
+test('unified request still rejects invalid or extreme aspect ratios', () => {
+  const settings = migrateLegacyImageProviders({
+    imageProvider: 'seedream',
+    seedreamModel: 'doubao-seedream-4-0-250828',
+  });
+  assert.throws(() => normalizeUnifiedImageRequest(settings, { prompt: 'poster', size: 'not-a-size' }), /Unsupported image size/);
+  assert.throws(() => normalizeUnifiedImageRequest(settings, { prompt: 'poster', size: '1:20' }), /Unsupported image size/);
 });
 
 test('image provider keys are encrypted in ai_settings and decoded on read', t => {

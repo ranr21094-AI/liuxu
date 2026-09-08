@@ -2,6 +2,21 @@
 
 ## 2026-09-08
 
+### 代理 Fake-IP 与生图尺寸（v1.2.13）
+
+- SSRF 不再把 Clash / Surge 等 Fake-IP 返回的 `198.18.0.0/15`（可附带 IPv6 ULA）整份解析当成内网。HTTPS 供应商地址和生图结果下载可以走代理；字面量内网、重绑定、假 IP 与真内网混在一起的解析仍会拒绝。
+- `image.generate` 的 `size` 支持 `2:3` 这类宽高比，会映射到当前模型支持的像素尺寸。
+
+## 发布文件
+
+- Windows x64：`LiuXu-Setup-1.2.13-x64.exe` 及 `.sha256`
+- macOS 12+ Apple Silicon：`LiuXu-1.2.13-mac-arm64.dmg`、`LiuXu-1.2.13-mac-arm64.zip` 及对应 `.sha256`
+- `desktop-build-summary.json` 与 `desktop-build-summary-mac.json`
+
+本次发布为双端测试包：macOS Apple Silicon 使用 ad-hoc 签名，Windows x64 未使用 Authenticode 正式签名，尚未进行 Apple 公证。任意 v1.2.0 及以上版本都可以在应用内直接更新到 v1.2.13，无需逐版本安装。
+
+## 2026-09-08
+
 ### 紧凑侧栏导航与分类树修复（v1.2.12）
 
 - 品牌栏收紧至 48px，`Agent｜知识库｜Memory｜待办` 改为单行等宽文字标签；旧导航折叠偏好不再影响入口显示。

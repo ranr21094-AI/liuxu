@@ -443,4 +443,22 @@ test('public HTTPS provider URLs that resolve to private addresses are rejected'
   assert.equal(allowed.value, 'https://api.example.com/v1');
   const local = await validateProviderBaseUrl('http://127.0.0.1:11434/v1');
   assert.equal(local.value, 'http://127.0.0.1:11434/v1');
+
+  const proxyLookup = async () => [
+    { address: '198.18.0.87', family: 4 },
+    { address: 'fdfe:dcba:9876::57', family: 6 },
+  ];
+  const proxied = await validateProviderBaseUrl('https://ark.example/v1', proxyLookup);
+  assert.equal(proxied.value, 'https://ark.example/v1');
+
+  const mixedLookup = async () => [
+    { address: '198.18.0.87', family: 4 },
+    { address: '127.0.0.1', family: 4 },
+  ];
+  const mixed = await validateProviderBaseUrl('https://evil.example/v1', mixedLookup);
+  assert.match(mixed.error, /private or local/);
+
+  const ulaOnlyLookup = async () => [{ address: 'fdfe:dcba:9876::57', family: 6 }];
+  const ulaOnly = await validateProviderBaseUrl('https://evil.example/v1', ulaOnlyLookup);
+  assert.match(ulaOnly.error, /private or local/);
 });
