@@ -237,6 +237,13 @@ function renderMessage(role, content) {
   scrollMessagesToBottom();
 }
 
+function renderToolImages(result) {
+  const images = result?.data?.images || (result?.data?.imageUrl ? [{ url: result.data.imageUrl }] : []);
+  for (const image of images) {
+    if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![工具图片](${image.url})`);
+  }
+}
+
 function renderStatusLine(text) {
   const host = messagesHost();
   if (!host) return;
@@ -398,12 +405,14 @@ async function loadSession(documentId) {
     state.sessionId = data.session?.id || '';
     messagesHost().innerHTML = '';
     for (const message of data.session?.messages || []) {
-      if (message.role === 'user' || message.role === 'assistant') {
+      if (message.kind === 'browser_screenshot') {
+        for (const attachment of message.attachments || []) renderToolImages({ data: { imageUrl: attachment.url } });
+      } else if (message.role === 'user' || message.role === 'assistant') {
         renderMessage(message.role, String(message.content || ''));
       } else if (message.role === 'tool') {
         let result; try { result = JSON.parse(message.content || '{}'); } catch { result = {}; }
         renderMessage('assistant', `${message.name || '工具'}：${result.summary || message.content || ''}`);
-        for (const image of result.data?.images || []) if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![生成图片](${image.url})`);
+        renderToolImages(result);
       }
     }
     if (!state.sessionId) renderStatusLine('还没有对话，向留序 LiuXu 提问或让它修改本篇内容。');
@@ -476,8 +485,7 @@ function handleRunEvent(event) {
   if (type === 'tool.completed') {
     const call = payload.call || {};
     renderMessage('assistant', `${call.name || '工具'}：${payload.result?.summary || JSON.stringify(payload.result || {})}`);
-    const images = payload.result?.data?.images || (payload.result?.data?.url ? [{ url: payload.result.data.url }] : []);
-    for (const image of images) if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![生成图片](${image.url})`);
+    renderToolImages(payload.result);
     if (String(call.arguments?.id) === state.activeDocumentId && ['knowledge.update', 'knowledge.delete', 'knowledge.archive', 'knowledge.restore'].includes(call.name)) {
       state.mutationPending = false;
       Promise.resolve(state.afterMutation?.(state.activeDocumentId, payload)).catch(error => showToast(error.message, 'error'));

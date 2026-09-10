@@ -1,9 +1,14 @@
 const KEY = 'liuxu.noteAssistant.layout';
 
-export function resolveAssistantLayout({ preference = 'docked', mode = 'knowledge', mainWidth = 0, viewportWidth = 0, width = 380 } = {}) {
+export function resolveAssistantLayout({ preference = 'docked', mode = 'knowledge', mainWidth = 0, viewportWidth = 0, width = 380, browserWidth = 0 } = {}) {
   const dockWidth = Math.max(320, Math.min(480, Number(width) || 380));
   if (viewportWidth <= 840) return { mode: 'overlay', width: dockWidth };
   if (preference === 'floating' || mode !== 'knowledge') return { mode: 'floating', width: dockWidth };
+  if (browserWidth > 0) {
+    if (mainWidth - browserWidth - dockWidth >= 420) return { mode: 'docked', width: dockWidth };
+    if (mainWidth - Math.max(browserWidth, dockWidth) >= 420) return { mode: 'stacked', width: dockWidth };
+    return { mode: 'overlay', width: dockWidth };
+  }
   return { mode: mainWidth - dockWidth >= 600 ? 'docked' : 'overlay', width: dockWidth };
 }
 
@@ -22,12 +27,17 @@ export function createAssistantLayout(host, { restoreFloating } = {}) {
     try { window.localStorage.setItem(KEY, JSON.stringify({ preference, width })); } catch { /* optional */ }
   };
   function sync() {
+    const browserPanel = document.querySelector('#noteBrowserPanel:not([hidden])');
+    const browserWidth = browserPanel && !document.body.classList.contains('note-browser-expanded')
+      ? browserPanel.getBoundingClientRect().width : 0;
     const available = main?.clientWidth || window.innerWidth;
-    const next = resolveAssistantLayout({ preference, mode, mainWidth: available, viewportWidth: window.innerWidth, width });
+    const next = resolveAssistantLayout({ preference, mode, mainWidth: available, viewportWidth: window.innerWidth, width, browserWidth });
     const previous = host.dataset.layout;
     host.dataset.layout = next.mode;
     document.body.classList.toggle('assistant-docked', !host.hidden && next.mode === 'docked');
+    document.body.classList.toggle('assistant-stacked', !host.hidden && next.mode === 'stacked');
     document.body.style.setProperty('--assistant-dock-width', `${next.width}px`);
+    document.body.style.setProperty('--assistant-stack-width', `${Math.max(browserWidth, next.width)}px`);
     const button = host.querySelector('[data-note-assistant-layout]');
     if (button) {
       button.textContent = preference === 'docked' ? '浮动' : '停靠';
@@ -73,5 +83,6 @@ export function createAssistantLayout(host, { restoreFloating } = {}) {
   const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sync) : null;
   if (main) observer?.observe(main);
   window.addEventListener('resize', sync);
-  return { sync, setMode(next) { mode = next; sync(); }, destroy() { observer?.disconnect(); window.removeEventListener('resize', sync); } };
+  window.addEventListener('note-browser-layout', sync);
+  return { sync, setMode(next) { mode = next; sync(); }, destroy() { observer?.disconnect(); window.removeEventListener('resize', sync); window.removeEventListener('note-browser-layout', sync); } };
 }

@@ -15,23 +15,23 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.3.0-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.4.0-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.3.0-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.4.0-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（测试包）
 
-当前 Mac 首发包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
+当前 Mac 测试包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
 
 ```text
-LiuXu-1.3.0-mac-arm64.dmg
-LiuXu-1.3.0-mac-arm64.zip
+LiuXu-1.4.0-mac-arm64.dmg
+LiuXu-1.4.0-mac-arm64.zip
 ```
 
 测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
@@ -39,8 +39,8 @@ LiuXu-1.3.0-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.3.0-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.3.0-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.4.0-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.4.0-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -57,6 +57,10 @@ shasum -a 256 -c LiuXu-1.3.0-mac-arm64.zip.sha256
 还包括私密知识锁定、Agent 会话归档、JSON/ZIP 备份恢复、模型级能力配置，以及可选的 Chrome 桥接和电脑工具。
 
 笔记助手使用完整 Agent 工具，支持联网、图片、电脑/浏览器操作、记忆与单层子任务，沿用操作确认和目录白名单。直接修改当前笔记前会先保存草稿，再按工具读取时的版本号确认写入；发生冲突须重新读取并确认。需要先看效果时仍可要求生成修改提案。待审批或待回答的会话可重新打开继续。
+
+桌面版在笔记工具栏提供 **浏览器**。它可以和正文、笔记助手同时打开，支持多标签、地址输入、前进后退、刷新或停止、外部打开，以及拖动或用方向键调整宽度。每篇笔记分别记住标签和选中状态；关闭侧栏、切换笔记不会刷新网页。空间不足时，浏览器与助手会在右侧上下排列，极窄窗口改为覆盖显示。网页版不嵌入网页，仍可使用已有的外部打开方式。
+
+笔记助手可读取侧栏网页正文和截图。打开、跳转、点击、输入、选择、滚动和关闭标签仍需逐项确认；确认绑定笔记、标签和页面版本，网页或标签变化后会拒绝旧操作。日记锁定会立即隐藏对应网页并阻止助手访问。网站登录状态只在留序的内置浏览器中共用，与外部 Chrome 分开；网页未提交表单不保证在应用重启后恢复。
 
 ZIP 恢复优先使用校验通过的 SQLite，兼容 JSON 仅供旧格式导入。导出与恢复共同限制压缩 ZIP 为 512 MiB、数据库为 120 MiB、单个附件为 30 MiB、总解压声明大小为 1 GiB；旧格式单份 JSON 上限为 10 MiB。超限导出会明确失败；替换恢复后会重新构建搜索索引。
 
@@ -279,7 +283,7 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.3.0` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.4.0` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
 
 ### macOS 提示无法验证开发者
 
@@ -334,13 +338,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.3.0-x64.exe
-LiuXu-Setup-1.3.0-x64.exe.sha256
+LiuXu-Setup-1.4.0-x64.exe
+LiuXu-Setup-1.4.0-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.3.0-mac-arm64.dmg
-LiuXu-1.3.0-mac-arm64.dmg.sha256
-LiuXu-1.3.0-mac-arm64.zip
-LiuXu-1.3.0-mac-arm64.zip.sha256
+LiuXu-1.4.0-mac-arm64.dmg
+LiuXu-1.4.0-mac-arm64.dmg.sha256
+LiuXu-1.4.0-mac-arm64.zip
+LiuXu-1.4.0-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -361,6 +365,7 @@ desktop-build-summary-mac.json
 ### 技术结构
 
 - Electron 主进程启动本机随机端口的 Express 服务，并以沙箱窗口加载。
+- 桌面笔记浏览器由 Electron `WebContentsView` 承载，使用独立的持久化 session；远程页面没有预加载脚本、Node 或应用 IPC。标签元数据按数据目录保存在 `.note-browser-state.json`。
 - SQLite 保存知识、待办、Agent、Memory 和设置，二进制附件保存在数据目录。
 - 前端使用原生 JavaScript ES Modules，没有前端框架。
 - Markdown 预览使用 marked、DOMPurify、KaTeX 和 PDF.js。
@@ -374,6 +379,8 @@ desktop-build-summary-mac.json
 
 - [更新日志](ChangeLog.md)
 - [代码审查与修复记录](code-review-remediation.md)
+- [笔记内置浏览器架构](docs/note-browser.md)
+- [v1.4.0 发布说明](docs/releases/v1.4.0.md)
 - [v1.3.0 发布说明](docs/releases/v1.3.0.md)
 - [v1.2.13 发布说明](docs/releases/v1.2.13.md)
 - [v1.2.12 发布说明](docs/releases/v1.2.12.md)

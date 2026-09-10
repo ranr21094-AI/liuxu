@@ -8,6 +8,9 @@ test('assistant docking respects editor minimum and preserves floating preferenc
   assert.deepEqual(resolve(base), { mode: 'docked', width: 380 });
   assert.equal(resolve({ ...base, mainWidth: 979 }).mode, 'overlay');
   assert.equal(resolve({ ...base, mainWidth: 980 }).mode, 'docked');
+  assert.equal(resolve({ ...base, mainWidth: 1220, browserWidth: 420 }).mode, 'docked');
+  assert.equal(resolve({ ...base, mainWidth: 1000, browserWidth: 420 }).mode, 'stacked');
+  assert.equal(resolve({ ...base, mainWidth: 800, browserWidth: 420 }).mode, 'overlay');
   for (const viewportWidth of [840, 520]) assert.equal(resolve({ ...base, viewportWidth }).mode, 'overlay');
   for (const mode of ['agent','memory','todos']) assert.equal(resolve({ ...base, mode }).mode, 'floating');
   assert.equal(resolve({ ...base, preference: 'floating' }).mode, 'floating');

@@ -280,6 +280,9 @@
                     <path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"></path>
                   </svg>
                 </button>
+                <button class="icon-button" id="noteBrowserToggleButton" type="button" title="浏览器" aria-label="打开浏览器侧栏" aria-expanded="false" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><circle cx="7" cy="6.5" r=".6"></circle><circle cx="10" cy="6.5" r=".6"></circle></svg>
+                </button>
                 <details class="document-more" id="documentMore"><summary aria-label="更多文档操作" title="更多文档操作"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></summary><div class="document-more-menu">
                 <button class="icon-button" id="archiveDocumentButton" type="button" title="归档文档" aria-label="归档文档">归档文档</button>
                 <button class="secondary-action compact" id="restoreDocumentButton" type="button" hidden>恢复</button>
@@ -367,6 +370,26 @@
             </details>
           </section>
         </article>
+        <aside class="note-browser-panel" id="noteBrowserPanel" aria-label="笔记浏览器" hidden>
+          <div class="note-browser-resize" id="noteBrowserResize" role="separator" tabindex="0" aria-label="调整浏览器宽度" aria-orientation="vertical" aria-valuemin="320" aria-valuemax="760"></div>
+          <header class="note-browser-header">
+            <div class="note-browser-tabs" id="noteBrowserTabs" role="tablist"></div>
+            <button type="button" class="icon-button" id="noteBrowserNewTab" title="新标签页" aria-label="新标签页">＋</button>
+            <button type="button" class="icon-button" id="noteBrowserExpand" title="放大或恢复" aria-label="放大或恢复浏览器">□</button>
+            <button type="button" class="icon-button" id="noteBrowserClosePanel" title="收起浏览器" aria-label="收起浏览器">×</button>
+          </header>
+          <form class="note-browser-toolbar" id="noteBrowserAddressForm">
+            <button type="button" id="noteBrowserBack" aria-label="后退" title="后退">←</button>
+            <button type="button" id="noteBrowserForward" aria-label="前进" title="前进">→</button>
+            <button type="button" id="noteBrowserReload" aria-label="刷新或停止">刷新</button>
+            <input id="noteBrowserAddress" type="text" inputmode="url" autocomplete="off" spellcheck="false" aria-label="网址或搜索内容" placeholder="输入网址或搜索内容">
+            <button type="submit" aria-label="打开">前往</button>
+            <button type="button" id="noteBrowserExternal" aria-label="在系统浏览器中打开" title="在系统浏览器中打开">↗</button>
+          </form>
+          <div class="note-browser-viewport" id="noteBrowserViewport" data-empty="true">
+            <div class="note-browser-empty" id="noteBrowserEmpty">新建标签页开始浏览</div>
+          </div>
+        </aside>
       </section>
 
       <section class="workspace-view todo-view" id="todoView" data-main-mode="todos" hidden>

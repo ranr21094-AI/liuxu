@@ -27,7 +27,7 @@ function restoreModeQuery() {
   return $('#restoreModeSelect')?.value === 'merge' ? 'merge' : 'replace';
 }
 
-export function createBackupActions({ confirmAction, reloadKnowledge }) {
+export function createBackupActions({ confirmAction, reloadKnowledge, onWorkspaceReplaced = () => {} }) {
   async function exportJsonBackup() {
     await downloadApiExport('/api/backup', 'liuxu-backup.json');
     showToast('JSON 备份已开始下载', 'success');
@@ -64,6 +64,7 @@ export function createBackupActions({ confirmAction, reloadKnowledge }) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '恢复失败');
     showToast('JSON 备份已恢复', 'success');
+    if (mode === 'replace') onWorkspaceReplaced();
     await reloadKnowledge();
   }
 
@@ -89,6 +90,7 @@ export function createBackupActions({ confirmAction, reloadKnowledge }) {
     showToast(data.secretsReset
       ? 'ZIP 工作区已恢复；跨设备加密的 API Key 已清空，请在模型设置中重新填写'
       : 'ZIP 工作区已恢复', 'success');
+    if (mode === 'replace') onWorkspaceReplaced();
     await reloadKnowledge();
   }
 

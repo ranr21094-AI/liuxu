@@ -18,6 +18,7 @@ const {
   shouldQuitAfterAllWindowsClosed,
 } = require('./runtime');
 const { createUpdateService } = require('./update-service');
+const { createNoteBrowserManager } = require('./note-browser');
 
 let mainWindow = null;
 let httpServer = null;
@@ -26,6 +27,7 @@ let shutdownPromise = null;
 let quitAllowed = false;
 let appOrigin = '';
 let updateService = null;
+let noteBrowser = null;
 let macUpdateOpened = false;
 let log = () => {};
 const startupStartedAt = performance.now();
@@ -164,6 +166,25 @@ function configureUpdateIpc() {
   });
 }
 
+function configureNoteBrowserIpc() {
+  for (const channel of ['open', 'activate', 'command', 'close', 'execute-tool', 'load-state', 'save-state', 'clear-state']) {
+    ipcMain.removeHandler(`liuxu:browser:${channel}`);
+  }
+  const handle = (channel, method) => ipcMain.handle(`liuxu:browser:${channel}`, async (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    if (!noteBrowser) throw new Error('内置浏览器尚未就绪');
+    return noteBrowser[method](payload);
+  });
+  handle('open', 'open');
+  handle('activate', 'activate');
+  handle('command', 'command');
+  handle('close', 'close');
+  handle('execute-tool', 'executeTool');
+  handle('load-state', 'loadState');
+  handle('save-state', 'saveState');
+  handle('clear-state', 'clearState');
+}
+
 async function createMainWindow(appUrl) {
   if (focusMainWindow()) return mainWindow;
   appOrigin = new URL(appUrl).origin;
@@ -186,6 +207,14 @@ async function createMainWindow(appUrl) {
     },
   });
   mainWindow = window;
+  noteBrowser = createNoteBrowserManager({
+    window,
+    statePath: path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), '.note-browser-state.json'),
+    send: payload => {
+      if (!window.isDestroyed()) window.webContents.send('liuxu:browser:event', payload);
+    },
+    openExternal,
+  });
   installNavigationGuards(window.webContents, appOrigin);
   window.once('ready-to-show', () => {
     logStartupPhase('window-ready-to-show');
@@ -208,6 +237,8 @@ async function createMainWindow(appUrl) {
     });
   });
   window.on('closed', () => {
+    noteBrowser?.destroy();
+    noteBrowser = null;
     if (mainWindow === window) mainWindow = null;
   });
   await window.loadURL(appUrl);
@@ -216,6 +247,7 @@ async function createMainWindow(appUrl) {
 
 async function startDesktop() {
   prepareRuntimeEnvironment();
+  process.env.LIUXU_DESKTOP = '1';
   logStartupPhase('runtime-ready');
   updateService = createUpdateService({
     userDataPath: app.getPath('userData'),
@@ -340,7 +372,11 @@ if (!app.requestSingleInstanceLock()) {
       : null);
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
+    const browserSession = session.fromPartition('persist:liuxu-note-browser');
+    browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    browserSession.setPermissionCheckHandler(() => false);
     configureUpdateIpc();
+    configureNoteBrowserIpc();
     startupPromise = startDesktop();
     return startupPromise;
   }).catch((error) => {

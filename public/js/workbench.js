@@ -17,6 +17,7 @@ import {
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
 import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
+import { initNoteBrowser, noteBrowserSetDocument, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
 import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
 import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
@@ -2413,6 +2414,9 @@ function handleDelegateRunEvent(sessionId, childRunId, event) {
     delegateTrace(`正在执行 ${payload.name || payload.call?.name || '工具'}`, childRunId, sessionId);
   }
   if (event.type === 'tool.completed') {
+    if (payload.call?.name === 'knowledge.delete' && payload.result?.ok !== false && payload.call?.arguments?.id) {
+      noteBrowserDeleteDocument(payload.call.arguments.id);
+    }
     delegateTrace(payload.result?.summary || payload.call?.name || '工具执行完成', childRunId, sessionId);
     if (isViewingSession(sessionId)) {
       trackGeneratedImageUrlsFromToolResult(
@@ -3282,6 +3286,11 @@ function setRunStatus(status, text = '') {
 function approvalBodyHtml(approval) {
   const name = approval.call?.name || '';
   const args = approval.call?.arguments && typeof approval.call.arguments === 'object' ? approval.call.arguments : {};
+  if (name.startsWith('note_browser.')) {
+    const target = [args.url, args.tabId ? `标签 ${args.tabId}` : '', args.index !== undefined ? `元素 ${args.index}` : ''].filter(Boolean).join(' · ');
+    const value = args.text ?? args.value;
+    return `<p>将操作当前笔记的内置浏览器；网页或标签变化后本次确认会自动失效。</p><div class="approval-risk"><strong>目标</strong><pre>${escHtml(target || name)}</pre>${value !== undefined ? `<strong>内容</strong><pre>${escHtml(String(value))}</pre>` : ''}</div>`;
+  }
   if (name === 'image.generate') {
     const prompt = String(args.prompt || '').trim();
     const extras = [];
@@ -3670,6 +3679,12 @@ async function confirmChromePairing() {
 
 const relayedBrowserRequests = new Set();
 function relayClientToolRequest(entry, payload) {
+  if (payload?.request?.name?.startsWith('note_browser.')) {
+    if (relayedBrowserRequests.has(payload.id)) return;
+    relayedBrowserRequests.add(payload.id);
+    relayNoteBrowserTool(entry, payload);
+    return;
+  }
   const extensionId = localStorage.getItem(CHROME_EXTENSION_ID_KEY) || '';
   const runtime = window.chrome?.runtime;
   if (!extensionId || !runtime?.sendMessage || !payload?.request?.name || !entry?.runId || !payload?.id) return;
@@ -4403,6 +4418,7 @@ function showEmptyDocument() {
   state.activeDocument = null;
   knowledgeEnhancements?.clear?.();
   noteAssistantClear();
+  noteBrowserClear();
   destroyFilePreview();
   clearTimeout(state.documentSaveTimer);
   state.documentDirty = false;
@@ -4531,6 +4547,7 @@ async function renderActiveDocument(document) {
   renderDocuments();
   knowledgeEnhancements?.setActiveDocument?.(document);
   noteAssistantSetActiveDocument(document);
+  noteBrowserSetDocument(document);
   rememberKnowledgeResume({
     id: document.id,
     knowledgeBase: state.selectedKnowledgeBase,
@@ -4778,6 +4795,13 @@ async function afterNoteMutation(id, payload = {}) {
   if (!lock || lock.id !== id) return;
   try {
     if (payload.failed || payload.result?.ok === false || payload.disconnected || state.activeDocument?.id !== id || state.documentDirty) return;
+    if (payload.call?.name === 'knowledge.delete') {
+      noteBrowserDeleteDocument(id);
+      showEmptyDocument();
+      await loadKnowledgeTree();
+      await loadDocuments();
+      return;
+    }
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
     if (noteMutationLock !== lock || state.activeDocument?.id !== id) return;
     if (response.status === 404 || response.status === 403) { showEmptyDocument(); return; }
@@ -4991,6 +5015,7 @@ async function deleteActiveDocument() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '删除失败', 'error');
   showToast('文档已删除', 'success');
+  noteBrowserClear({ deleteDocument: true });
   await loadDocuments();
   await navigate('knowledge');
 }
@@ -4998,7 +5023,10 @@ async function deleteActiveDocument() {
 async function syncDiaryStatus() {
   const status = await getDiaryStatus();
   state.diaryUnlocked = status.enabled === false || !status.locked;
-  if (!state.diaryUnlocked) noteAssistantLockPrivate();
+  if (!state.diaryUnlocked) {
+    noteAssistantLockPrivate();
+    noteBrowserLockPrivate();
+  }
   const button = $('#diaryButton');
   if (!button) return;
   const label = state.diaryUnlocked ? '私密知识已解锁' : '私密知识已锁定';
@@ -5685,6 +5713,7 @@ function bindEvents() {
       await renderActiveDocument(document);
     },
   });
+  initNoteBrowser({ onError: error => showToast(error.message || '浏览器操作失败', 'error') });
   initNoteAssistant({ renderMarkdown, approvalBodyHtml, relayClientToolRequest, handleMemoryProposalAction, beforeMutation: beforeNoteMutation, afterMutation: afterNoteMutation, applyEdit: applyNoteAssistantEdit, ensureDocument: async documentId => {
     if (!documentId) throw new Error('缺少关联文档');
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`);
@@ -5694,6 +5723,7 @@ function bindEvents() {
   } });
   createBackupActions({
     confirmAction,
+    onWorkspaceReplaced: noteBrowserResetWorkspace,
     reloadKnowledge: async () => {
       await loadKnowledgeTree();
       await loadDocuments();

@@ -12,7 +12,7 @@ const { createDatabase } = require('../database.js');
 const { createAgentStore } = require('../lib/agent/store');
 const { createMemoryService, buildMemoryRefreshUserMessage } = require('../lib/agent/memory');
 const { createRuntime } = require('../lib/agent/runtime');
-const { registerAgentRoutes } = require('../lib/agent/routes');
+const { registerAgentRoutes, persistNoteBrowserScreenshot } = require('../lib/agent/routes');
 const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
 
@@ -27,7 +27,7 @@ function tempDb(t) {
   return db;
 }
 
-function makeRuntime(db, complete) {
+function makeRuntime(db, complete, extras = {}) {
   const store = createAgentStore(db);
   const memory = createMemoryService(store);
   const runtime = createRuntime({
@@ -36,6 +36,7 @@ function makeRuntime(db, complete) {
     memory,
     hasDiaryAccessFlag: true,
     modelClient: { async complete(request) { return complete(request); } },
+    ...extras,
   });
   return { store, memory, runtime };
 }
@@ -111,6 +112,86 @@ test('note_assist runs expose the full registered tool set plus bound note tools
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(store.getRun(run.id).status, 'completed');
   for (const name of ['knowledge.list', 'knowledge.read', 'knowledge.search', 'knowledge.update', 'note.propose_edit', 'note.read', 'agent.delegate', 'ask_user']) assert.ok(seenTools.includes(name), name);
+});
+
+test('desktop note browser tools are bound to note-assist runs and relayed through the client', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const { document } = knowledge.createNote({ title: '浏览器助手', content: '正文' }, { diaryUnlocked: true });
+  let noteRound = 0;
+  let mainTools = [];
+  const noteBrowser = {
+    available: () => true,
+    request(name, args, documentId) {
+      return { clientTool: true, request: { name, args, documentId } };
+    },
+  };
+  const { runtime, store } = makeRuntime(db, request => {
+    if (request.goal === 'main') {
+      mainTools = request.tools.map(tool => tool.name);
+      return { text: '完成', toolCalls: [] };
+    }
+    noteRound += 1;
+    return noteRound === 1
+      ? { text: '', toolCalls: [{ name: 'note_browser.tabs', arguments: {} }] }
+      : { text: '已读取标签', toolCalls: [] };
+  }, { noteBrowser });
+  const noteSession = store.createSession('浏览器助手', { documentId: document.id });
+  const run = await runtime.startNoteAssist({ session: noteSession, documentId: document.id, userMessage: '查看网页' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const waiting = store.getRun(run.id);
+  assert.equal(waiting.status, 'waiting_client_tool');
+  assert.deepEqual(waiting.pendingClientTool.request, { name: 'note_browser.tabs', args: {}, documentId: document.id });
+  await runtime.clientToolResult(run.id, waiting.pendingClientTool.id, { ok: true, summary: '1 tab', data: { tabs: [] } });
+  assert.equal(store.getRun(run.id).status, 'completed');
+
+  const mainSession = store.createSession('普通 Agent');
+  const main = await runtime.start({ session: mainSession, goal: 'main', userMessage: 'main' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(store.getRun(main.id).status, 'completed');
+  assert.equal(mainTools.some(name => name.startsWith('note_browser.')), false);
+});
+
+test('note browser mutations retain approved tab and page version before client execution', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const { document } = knowledge.createNote({ title: '浏览器审批', content: '正文' }, { diaryUnlocked: true });
+  let round = 0;
+  const { runtime, store } = makeRuntime(db, () => {
+    round += 1;
+    return round === 1
+      ? { text: '', toolCalls: [{ name: 'note_browser.navigate', arguments: { tabId: 'tab-a', pageVersion: 7, url: 'https://example.com/next' } }] }
+      : { text: '完成', toolCalls: [] };
+  }, { noteBrowser: { available: () => true, request: (name, args, documentId) => ({ clientTool: true, request: { name, args, documentId } }) } });
+  const session = store.createSession('浏览器审批', { documentId: document.id });
+  const started = await runtime.startNoteAssist({ session, documentId: document.id, userMessage: '打开下一页' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  let run = store.getRun(started.id);
+  assert.equal(run.status, 'waiting_approval');
+  assert.equal(run.pendingApprovals[0].call.name, 'note_browser.navigate');
+  await runtime.resolveApproval(run.id, run.pendingApprovals[0].id, { approved: true });
+  run = store.getRun(started.id);
+  assert.equal(run.status, 'waiting_client_tool');
+  assert.equal(run.pendingClientTool.request.documentId, document.id);
+  assert.deepEqual(run.pendingClientTool.request.args, { tabId: 'tab-a', pageVersion: 7, url: 'https://example.com/next' });
+  await runtime.clientToolResult(run.id, run.pendingClientTool.id, { ok: false, summary: '网页已变化', errorCode: 'stale_target' });
+  assert.equal(store.getRun(run.id).status, 'completed');
+});
+
+test('note browser screenshots are stored as private visual attachments for diary runs', (t) => {
+  const db = tempDb(t);
+  const result = persistNoteBrowserScreenshot(
+    db,
+    { call: { name: 'note_browser.screenshot' } },
+    { noteDocumentVisibility: 'diary' },
+    { ok: true, data: { image: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'), mimeType: 'image/jpeg', title: '网页', url: 'https://example.com/' } },
+  );
+  assert.match(result.data.imageUrl, /^\/uploads\/note-browser-/);
+  assert.equal(result.data.image, undefined);
+  assert.equal(result.data.pageUrl, 'https://example.com/');
+  const filename = result.data.imageUrl.split('/').pop();
+  assert.equal(fs.existsSync(path.join(db.dataDir, 'uploads', filename)), true);
+  assert.equal(db.isPrivateUpload(filename), true);
 });
 
 test('note-assist routes serve sessions and gate locked documents', async (t) => {
