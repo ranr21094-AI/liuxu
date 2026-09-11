@@ -10,6 +10,20 @@
   <link rel="stylesheet" href="/vendor/katex/katex.min.css">
 </head>
 <body>
+  <div class="remote-session-banner" id="remoteSessionBanner" hidden>
+    <span><strong id="remoteDeviceLabel">已授权手机</strong> · 文件与脚本在此电脑运行</span>
+    <button type="button" id="remoteLogoutButton">退出此设备</button>
+  </div>
+  <section class="remote-pairing-gate" id="remotePairingGate" hidden aria-labelledby="remotePairingTitle">
+    <div class="remote-pairing-card">
+      <span class="dialog-eyebrow">LIUXU REMOTE</span>
+      <h1 id="remotePairingTitle">连接留序</h1>
+      <p>为这台手机命名，然后在电脑端确认。授权只保存在你的电脑上。</p>
+      <label>设备名称<input id="remoteDeviceName" type="text" maxlength="80" value="我的手机" autocomplete="name"></label>
+      <button class="primary-action" id="remotePairButton" type="button">请求连接</button>
+      <p id="remotePairingStatus" role="status" aria-live="polite"></p>
+    </div>
+  </section>
   <div class="workspace-shell" id="workspaceShell">
     <aside class="workspace-sidebar" id="workspaceSidebar" aria-label="工作区侧栏">
       <div class="workspace-brand" id="workspaceBrand"><span class="brand-mark" aria-hidden="true">L</span><strong>留序 <span>LiuXu</span></strong></div>
@@ -601,6 +615,7 @@
           <button type="button" data-settings-nav="knowledge">知识库搜索</button>
           <button type="button" data-settings-nav="data">数据</button>
           <button type="button" data-settings-nav="computer">电脑</button>
+          <button type="button" data-settings-nav="remote">远程访问</button>
         </nav>
         <div class="settings-content">
           <section class="settings-section" data-settings-panel="appearance">
@@ -833,6 +848,34 @@
               <div id="chromePairingResult" class="computer-allowlist" hidden></div>
               <small>配对成功后把显示的密钥粘贴到扩展弹窗保存；此后扩展只执行带本应用签名的浏览器命令。</small>
             </div>
+          </section>
+          <section class="settings-section" data-settings-panel="remote" hidden>
+            <h3>远程访问</h3>
+            <p class="settings-copy">通过 Tailscale 私有网络在手机浏览器中使用留序。不会开启公网 Funnel。</p>
+            <div id="remoteDesktopSettings">
+              <label class="settings-row" for="remoteAccessToggle"><span><strong>允许手机访问</strong><small>关闭后立即断开所有远程会话</small></span><input id="remoteAccessToggle" type="checkbox"></label>
+              <label class="settings-field" for="remoteAccessPort">本机远程端口<input id="remoteAccessPort" type="number" min="1024" max="65535" value="43140"></label>
+              <div class="settings-actions">
+                <button type="button" class="primary-action compact" id="remoteAccessApply">应用</button>
+                <button type="button" class="secondary-action compact" id="remoteAccessRefresh">刷新状态</button>
+                <button type="button" class="secondary-action compact" id="remoteServeConfigure">配置 Tailscale Serve</button>
+              </div>
+              <p class="settings-copy" id="remoteAccessStatus">正在读取状态…</p>
+              <p class="settings-copy" id="remoteAccessUrl"></p>
+              <div class="settings-subsection">
+                <h4>配对手机</h4>
+                <button type="button" class="secondary-action compact" id="remoteCreatePairing">生成一次性二维码</button>
+                <div id="remotePairingCode" hidden><img id="remotePairingQr" alt="手机配对二维码"><input id="remotePairingUrl" readonly aria-label="手机配对地址"></div>
+              </div>
+              <div class="settings-subsection"><h4>等待确认</h4><div id="remotePendingDevices" class="remote-device-list"></div></div>
+              <div class="settings-subsection"><h4>已授权设备</h4><div id="remoteAuthorizedDevices" class="remote-device-list"></div><button type="button" class="danger-action compact" id="remoteRevokeAll">全部退出</button></div>
+              <div class="settings-subsection">
+                <h4>安装与连接</h4>
+                <ol class="settings-copy"><li>在电脑和手机<a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">安装 Tailscale</a>，并登录同一个私有网络。</li><li>开启上方开关，再点“配置 Tailscale Serve”。检测到已有 Serve 配置时会保留原配置并提示人工调整。</li><li>生成二维码，用手机扫描并回到电脑批准。</li></ol>
+              </div>
+              <button type="button" class="danger-action compact" id="remoteQuitApp">完全退出留序</button>
+            </div>
+            <div id="remotePhoneSettings" hidden><p class="settings-copy">此设备已通过电脑授权。远程端口、设备授权和目录白名单只能在电脑端修改。</p><button type="button" class="danger-action compact" id="remoteSettingsLogout">退出此设备</button></div>
           </section>
           <section class="settings-section" data-settings-panel="data" hidden>
             <h3>备份与恢复</h3>

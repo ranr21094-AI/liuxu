@@ -41,6 +41,33 @@ function makeRuntime(db, complete, extras = {}) {
   return { store, memory, runtime };
 }
 
+test('remote note runs persist their capability boundary and omit browser tools', async (t) => {
+  const db = tempDb(t);
+  const knowledge = createKnowledgeService(db);
+  const { document } = knowledge.createNote({ title: '远程笔记', content: '内容' }, { diaryUnlocked: true });
+  const store = createAgentStore(db);
+  const session = store.createSession('远程笔记', { documentId: document.id });
+  let tools = [];
+  const { runtime } = makeRuntime(db, ({ tools: offered }) => {
+    tools = offered.map(tool => tool.name);
+    return { text: '完成', toolCalls: [] };
+  }, {
+    computer: { available: () => true, execute: async () => ({ ok: true }) },
+    noteBrowser: { available: () => true },
+  });
+  const run = await runtime.startNoteAssist({
+    session,
+    documentId: document.id,
+    userMessage: '读取当前笔记',
+    remoteClient: true,
+  });
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(store.getRun(run.id).remoteClient, true);
+  assert.ok(tools.includes('note.read'));
+  assert.equal(tools.some(name => name.startsWith('browser.')), false);
+  assert.equal(tools.some(name => name.startsWith('note_browser.')), false);
+});
+
 test('note.propose_edit validates matches and emits a proposal without touching the document', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);

@@ -19,9 +19,15 @@ const {
 } = require('./runtime');
 const { createUpdateService } = require('./update-service');
 const { createNoteBrowserManager } = require('./note-browser');
+const QRCode = require('qrcode');
+const { createRemoteAccessService } = require('../lib/remote/access');
+const { setRemoteAccessService } = require('../lib/remote/context');
+const { inspectTailscale, configureTailscaleServe } = require('./remote-access');
 
 let mainWindow = null;
 let httpServer = null;
+let remoteServer = null;
+let remoteAccess = null;
 let startupPromise = null;
 let shutdownPromise = null;
 let quitAllowed = false;
@@ -59,7 +65,7 @@ function loadLegacySecretKeySetting(envPath) {
 function prepareRuntimeEnvironment() {
   process.env.HOST = '127.0.0.1';
   process.env.PORT = '0';
-  if (!app.isPackaged) return { dataDir: process.env.DATA_DIR || path.join(__dirname, '..', 'data') };
+  if (!app.isPackaged) return { dataDir: path.resolve(process.env.DATA_DIR || path.join(__dirname, '..', 'data')) };
 
   const userDataDir = app.getPath('userData');
   const resolved = resolveDesktopDataDir({ userDataDir });
@@ -185,6 +191,91 @@ function configureNoteBrowserIpc() {
   handle('clear-state', 'clearState');
 }
 
+function closeHttpServer(server, label) {
+  if (!server) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    const timer = setTimeout(() => {
+      log('warn', `${label} server close timed out; closing active connections`);
+      server.closeAllConnections?.();
+      finish();
+    }, 4000);
+    timer.unref?.();
+    try {
+      server.close(() => { clearTimeout(timer); finish(); });
+    } catch (error) {
+      clearTimeout(timer);
+      log('error', `${label} server close failed`, error);
+      finish();
+    }
+  });
+}
+
+async function refreshRemoteStatus() {
+  if (!remoteAccess) throw new Error('远程访问服务尚未就绪');
+  const tailscale = await inspectTailscale();
+  return remoteAccess.setConnectionStatus(tailscale);
+}
+
+async function syncRemoteListener() {
+  if (remoteServer) {
+    const current = remoteServer;
+    remoteServer = null;
+    current.closeAllConnections?.();
+    await closeHttpServer(current, 'remote');
+  }
+  const settings = remoteAccess?.snapshot();
+  if (!settings?.enabled) return settings;
+  const { startRemoteServer } = require('../server.js');
+  try {
+    remoteServer = await startRemoteServer(settings.port, '127.0.0.1');
+  } catch (error) {
+    if (error?.code === 'EADDRINUSE') throw new Error(`远程端口 ${settings.port} 已被占用，请换一个端口`);
+    throw error;
+  }
+  return refreshRemoteStatus();
+}
+
+function configureRemoteAccessIpc() {
+  const channels = ['status', 'update', 'refresh', 'configure-serve', 'create-pairing', 'approve', 'deny', 'revoke-device', 'revoke-all', 'quit'];
+  for (const channel of channels) ipcMain.removeHandler(`liuxu:remote:${channel}`);
+  const trusted = (channel, handler) => ipcMain.handle(`liuxu:remote:${channel}`, async (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    if (!remoteAccess) throw new Error('远程访问服务尚未就绪');
+    return handler(payload);
+  });
+  trusted('status', async () => remoteAccess.snapshot());
+  trusted('refresh', refreshRemoteStatus);
+  trusted('update', async (payload) => {
+    const previous = remoteAccess.snapshot();
+    remoteAccess.configure({ enabled: payload.enabled === true, port: payload.port, publicUrl: previous.publicUrl });
+    try {
+      return await syncRemoteListener();
+    } catch (error) {
+      remoteAccess.configure({ enabled: previous.enabled, port: previous.port, publicUrl: previous.publicUrl });
+      await syncRemoteListener().catch(() => {});
+      throw error;
+    }
+  });
+  trusted('configure-serve', async () => {
+    const settings = remoteAccess.snapshot();
+    if (!settings.enabled) throw new Error('请先开启远程访问');
+    const result = await configureTailscaleServe({ port: settings.port });
+    return remoteAccess.setConnectionStatus(result);
+  });
+  trusted('create-pairing', async () => {
+    await refreshRemoteStatus();
+    const pairing = remoteAccess.createPairing();
+    return { ...pairing, qrDataUrl: await QRCode.toDataURL(pairing.url, { width: 240, margin: 1 }) };
+  });
+  trusted('approve', async payload => remoteAccess.approvePairing(payload.id));
+  trusted('deny', async payload => remoteAccess.denyPairing(payload.id));
+  trusted('revoke-device', async payload => remoteAccess.revokeDevice(payload.id));
+  trusted('revoke-all', async () => remoteAccess.revokeAll());
+  trusted('quit', async () => { setImmediate(() => beginShutdown()); return { quitting: true }; });
+}
+
 async function createMainWindow(appUrl) {
   if (focusMainWindow()) return mainWindow;
   appOrigin = new URL(appUrl).origin;
@@ -246,8 +337,10 @@ async function createMainWindow(appUrl) {
 }
 
 async function startDesktop() {
-  prepareRuntimeEnvironment();
+  const { dataDir } = prepareRuntimeEnvironment();
   process.env.LIUXU_DESKTOP = '1';
+  remoteAccess = createRemoteAccessService({ statePath: path.join(dataDir, '.remote-access.json') });
+  setRemoteAccessService(remoteAccess);
   logStartupPhase('runtime-ready');
   updateService = createUpdateService({
     userDataPath: app.getPath('userData'),
@@ -266,39 +359,30 @@ async function startDesktop() {
   const appUrl = `http://127.0.0.1:${address.port}/`;
   logStartupPhase('local-server-ready');
   log('info', `local server ready at ${appUrl}`);
+  if (remoteAccess.snapshot().enabled) {
+    try {
+      await syncRemoteListener();
+      log('info', `remote server ready on 127.0.0.1:${remoteAccess.snapshot().port}`);
+    } catch (error) {
+      remoteAccess.setConnectionStatus({
+        state: 'error',
+        message: error.message || '远程入口启动失败，请检查端口设置',
+        publicUrl: remoteAccess.snapshot().publicUrl,
+      });
+      log('error', 'remote server startup failed', error);
+    }
+  }
   await createMainWindow(appUrl);
   logStartupPhase('window-loaded');
   return appUrl;
 }
 
 function closeServer() {
-  if (!httpServer) return Promise.resolve();
   const server = httpServer;
   httpServer = null;
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      log('warn', 'local server close timed out; closing active connections');
-      server.closeAllConnections?.();
-      finish();
-    }, 4000);
-    timer.unref?.();
-    try {
-      server.close(() => {
-        clearTimeout(timer);
-        finish();
-      });
-    } catch (error) {
-      clearTimeout(timer);
-      log('error', 'local server close failed', error);
-      finish();
-    }
-  });
+  const remote = remoteServer;
+  remoteServer = null;
+  return Promise.all([closeHttpServer(remote, 'remote'), closeHttpServer(server, 'local')]);
 }
 
 function beginShutdown() {
@@ -351,7 +435,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => {
-    if (shouldQuitAfterAllWindowsClosed()) app.quit();
+    if (shouldQuitAfterAllWindowsClosed() && !remoteAccess?.snapshot().enabled) app.quit();
   });
   app.on('activate', () => {
     if (!focusMainWindow() && startupPromise) {
@@ -377,6 +461,7 @@ if (!app.requestSingleInstanceLock()) {
     browserSession.setPermissionCheckHandler(() => false);
     configureUpdateIpc();
     configureNoteBrowserIpc();
+    configureRemoteAccessIpc();
     startupPromise = startDesktop();
     return startupPromise;
   }).catch((error) => {

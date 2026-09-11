@@ -9,8 +9,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - **Start server**: `npm start` (builds vendor assets, then starts Express)
 - **Desktop (dev)**: `npm run desktop` (builds vendor assets, then Electron window + embedded server)
 - **Desktop (platform build)**: `npm run desktop:build` dispatches to the current platform. Windows produces the NSIS x64 installer; Apple Silicon macOS produces ad-hoc DMG + ZIP test artifacts.
-- **Desktop (Windows)**: from this C-drive project, run `npm run desktop:build:win` → `dist/desktop/LiuXu-Setup-1.4.0-x64.exe` + SHA-256/build summary (build caches are under `D:\Temp\work-log-build-c`)
-- **Desktop (macOS test)**: `npm run desktop:build:mac` → `LiuXu-1.4.0-mac-arm64.dmg` + ZIP, SHA-256 files, and `desktop-build-summary-mac.json`.
+- **Desktop (Windows)**: from this C-drive project, run `npm run desktop:build:win` → `dist/desktop/LiuXu-Setup-1.4.1-x64.exe` + SHA-256/build summary (build caches are under `D:\Temp\work-log-build-c`)
+- **Desktop (macOS test)**: `npm run desktop:build:mac` → `LiuXu-1.4.1-mac-arm64.dmg` + ZIP, SHA-256 files, and `desktop-build-summary-mac.json`.
 - **Desktop (macOS release)**: `npm run desktop:release:mac` requires full Xcode, a Developer ID Application certificate, and Apple notarization credentials.
 - **Tests**: `npm test` (builds vendor assets, then runs Node tests)
 - **Performance**: `npm run perf:baseline` (temporary 1,000-document dataset; set `PERF_DOCS=10000` for the heavy run), `npm run perf:check` (threshold report; use `PERF_STRICT=1` to fail on targets)
@@ -22,6 +22,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - **`electron/main.js`**: Electron main process — strict single-instance restore/show/focus, packaged data resolution, Windows-only first-run migration, macOS Dock/menu lifecycle, then `startServer()` and a sandboxed `BrowserWindow` on `http://127.0.0.1:<random-port>/`.
 - **`electron/runtime.js`**: testable desktop config, staged data migration, SQLite/hash checks, AI-secret scope re-encryption, log writer, and navigation guards.
 - **`electron/note-browser.js`**: owns document-bound `WebContentsView` tabs, navigation/version guards, sandboxed persistent browser session, page extraction/screenshots and `.note-browser-state.json` persistence. Renderer access is limited to `liuxuDesktop.browser` in `preload.js`.
+- **Remote access**: `lib/remote/` owns pairing, hashed 30-day device sessions, CSRF/origin enforcement and remote-listener detection. `electron/remote-access.js` inspects/configures Tailscale Serve; desktop IPC is exposed as `liuxuDesktop.remote`. Remote state lives in `.remote-access.json` and is excluded from backups.
 - **`electron-builder.yml`**: Windows per-user NSIS x64 plus macOS 12+ arm64 DMG/ZIP (`ai.ranr21094.liuxu`), output `dist/desktop/`, `asarUnpack` for `better-sqlite3`.
 - **`scripts/desktop-build.ps1`**: C-project reproducible build; puts TEMP/npm/Electron caches under `D:\Temp\work-log-build-c`, installs with third-party scripts disabled, downloads Electron explicitly, verifies the bundled SQLite native module, runs tests, and emits installer checksum/summary.
 - **`scripts/desktop-build-mac.mjs`**: Apple Silicon reproducible build; verifies Node/SQLite architecture, runs tests, builds ad-hoc or Developer ID artifacts, verifies DMG/ZIP signatures, and emits checksums/summary.

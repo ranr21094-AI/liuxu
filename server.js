@@ -91,6 +91,8 @@ const {
   MAX_AGENT_ATTACHMENTS,
   MAX_TOTAL_BYTES,
 } = require('./lib/agent/attachments');
+const { remoteAccessMiddleware, registerRemoteAccessRoutes } = require('./lib/remote/routes');
+const { registerRemoteServer } = require('./lib/remote/context');
 const { serviceFor: knowledgeServiceFor } = require('./lib/knowledge/routes');
 
 const app = express();
@@ -487,7 +489,8 @@ async function readJsonWithLimit(response, maxBytes = 8 * 1024 * 1024, errorMess
 function isValidDiaryToken(req, token) {
   if (!token) return false;
   const entry = diaryTokens.get(token);
-  if (!entry || entry.userId !== req.user.id || Date.now() - entry.createdAt > DIARY_TOKEN_TTL) {
+  const remoteDeviceId = req.remoteAuth?.device?.id || '';
+  if (!entry || entry.userId !== req.user.id || entry.remoteDeviceId !== remoteDeviceId || Date.now() - entry.createdAt > DIARY_TOKEN_TTL) {
     diaryTokens.delete(token);
     return false;
   }
@@ -854,7 +857,9 @@ app.use(express.json({ limit: '2mb' }));
 
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
+app.use(remoteAccessMiddleware);
 app.use(localUserMiddleware);
+registerRemoteAccessRoutes(app);
 
 app.get(['/', '/index.html'], (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
@@ -914,7 +919,11 @@ app.post('/api/auth/diary', rateLimiter(20, 15 * 60 * 1000), (req, res) => {
   if (!password) return res.status(400).json({ error: '请输入密码' });
   if (typeof password === 'string' && password.trim() === DIARY_MAGIC_PHRASE) {
     const token = generateToken();
-    diaryTokens.set(token, { userId: req.user.id, createdAt: Date.now() });
+    diaryTokens.set(token, {
+      userId: req.user.id,
+      remoteDeviceId: req.remoteAuth?.device?.id || '',
+      createdAt: Date.now(),
+    });
     setDiaryCookie(req, res, token);
     return res.json({ unlocked: true });
   }
@@ -3691,6 +3700,17 @@ function startServer(port = PORT, host = HOST) {
   });
 }
 
+function startRemoteServer(port = 43140, host = '127.0.0.1') {
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, host, () => {
+      registerRemoteServer(server);
+      console.log(`LiuXu remote server running at http://${host}:${server.address().port}`);
+      resolve(server);
+    });
+    server.once('error', reject);
+  });
+}
+
 if (require.main === module) {
   startServer().catch(err => {
     console.error(err);
@@ -3701,6 +3721,7 @@ if (require.main === module) {
 module.exports = {
   app,
   startServer,
+  startRemoteServer,
   hasDiaryAccess,
   isDiaryCategory,
   createTodoReminderService,

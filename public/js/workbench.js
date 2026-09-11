@@ -28,6 +28,8 @@ import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
 import { scheduleRender } from './app/render-scheduler.js';
 import { getDesktopUpdates } from './desktop/bridge.js';
+import { getDesktopRemoteAccess } from './desktop/bridge.js';
+import { initializeRemoteSession, isRemoteClient, logoutRemoteSession } from './remote-access.js';
 import {
   ensureModelUiId,
   randomModelUiId,
@@ -95,6 +97,7 @@ const state = {
   memories: { items: [], proposals: [] },
   pendingAttachments: [],
   computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
+  remoteAccess: null,
 };
 
 const RENDERED_TERMINAL_RUN_LIMIT = 32;
@@ -1785,7 +1788,7 @@ async function loadAgentSettingsForm() {
 }
 
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'updates', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer'];
+  const allowed = ['appearance', 'sessions', 'model', 'updates', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'remote'];
   const next = allowed.includes(panel) ? panel : 'appearance';
   state.settingsPanel = next;
   document.querySelectorAll('[data-settings-nav]').forEach(button => {
@@ -1797,10 +1800,52 @@ function setSettingsPanel(panel) {
     section.hidden = section.dataset.settingsPanel !== next;
   });
   const saveButton = $('#saveAgentSettings');
-  if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data' || next === 'updates';
+  if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data' || next === 'updates' || next === 'remote';
   if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
   if (next === 'knowledge') fillKnowledgeSearchOptionsForm();
   if (next === 'updates') loadDesktopUpdateInfo().catch(error => renderDesktopUpdateError(error));
+  if (next === 'remote') loadRemoteAccessSettings().catch(error => showToast(error.message, 'error'));
+}
+
+function remoteBridge() { return getDesktopRemoteAccess(); }
+
+function renderRemoteDeviceList(root, items, pending = false) {
+  if (!root) return;
+  if (!items?.length) {
+    root.innerHTML = `<p class="empty-list">${pending ? '没有等待确认的设备' : '还没有已授权设备'}</p>`;
+    return;
+  }
+  root.innerHTML = items.map(item => `<div class="remote-device-row"><span><strong>${escHtml(item.name || '手机')}</strong><small>${pending ? '正在等待电脑确认' : `${item.activeSessions || 0} 个有效会话`}</small></span><span>${pending ? `<button type="button" class="primary-action compact" data-remote-approve="${escHtml(item.id)}">批准</button><button type="button" class="secondary-action compact" data-remote-deny="${escHtml(item.id)}">拒绝</button>` : `<button type="button" class="danger-action compact" data-remote-revoke="${escHtml(item.id)}">撤销</button>`}</span></div>`).join('');
+}
+
+function renderRemoteAccessSettings() {
+  const bridge = remoteBridge();
+  $('#remoteDesktopSettings').hidden = !bridge;
+  $('#remotePhoneSettings').hidden = Boolean(bridge);
+  if (!bridge || !state.remoteAccess) return;
+  const data = state.remoteAccess;
+  $('#remoteAccessToggle').checked = data.enabled === true;
+  $('#remoteAccessPort').value = data.port || 43140;
+  $('#remoteAccessStatus').textContent = data.connection?.message || (data.enabled ? '远程入口已开启' : '远程访问已关闭');
+  $('#remoteAccessUrl').textContent = data.publicUrl ? `手机地址：${data.publicUrl}` : '连接 Tailscale 后会显示手机地址。';
+  $('#remoteServeConfigure').hidden = data.connection?.serveConfigured === true;
+  $('#remoteCreatePairing').disabled = !data.enabled || !data.publicUrl;
+  renderRemoteDeviceList($('#remotePendingDevices'), data.pending, true);
+  renderRemoteDeviceList($('#remoteAuthorizedDevices'), data.devices, false);
+}
+
+async function loadRemoteAccessSettings(refresh = false) {
+  const bridge = remoteBridge();
+  if (!bridge) { renderRemoteAccessSettings(); return; }
+  state.remoteAccess = await (refresh ? bridge.refresh() : bridge.getStatus());
+  renderRemoteAccessSettings();
+}
+
+async function remoteAction(action) {
+  const bridge = remoteBridge();
+  if (!bridge) return;
+  state.remoteAccess = await action(bridge);
+  renderRemoteAccessSettings();
 }
 
 async function openSettings(panel = 'appearance') {
@@ -1890,6 +1935,10 @@ async function saveAgentSettings() {
 function syncComputerSettingsVisibility() {
   const nav = document.querySelector('[data-settings-nav="computer"]');
   if (nav) nav.hidden = false;
+  const remoteNav = document.querySelector('[data-settings-nav="remote"]');
+  if (remoteNav) remoteNav.hidden = !remoteBridge() && !isRemoteClient();
+  const remote = isRemoteClient();
+  for (const control of document.querySelectorAll('[data-settings-panel="computer"] input, [data-settings-panel="computer"] button')) control.disabled = remote;
 }
 
 function renderComputerAllowlist() {
@@ -1937,6 +1986,7 @@ function addComputerAllowlistEntry() {
 }
 
 async function saveComputerPolicy() {
+  if (isRemoteClient()) return;
   if (!state.computerPolicy) return;
   const response = await apiFetch('/api/admin/agent-policy', {
     method: 'PUT',
@@ -3679,6 +3729,10 @@ async function confirmChromePairing() {
 
 const relayedBrowserRequests = new Set();
 function relayClientToolRequest(entry, payload) {
+  if (isRemoteClient()) {
+    showToast('此任务正在等待电脑端浏览器，请回到电脑继续', 'error');
+    return;
+  }
   if (payload?.request?.name?.startsWith('note_browser.')) {
     if (relayedBrowserRequests.has(payload.id)) return;
     relayedBrowserRequests.add(payload.id);
@@ -4582,6 +4636,18 @@ async function openKnowledgeDocument(id, { block = '', offset = 0, serial = stat
   if (block || offset) locateDocumentPosition(offset, data.content || '');
 }
 
+async function refreshRemoteForeground() {
+  refreshBackgroundSessionRuns();
+  if (!isRemoteClient() || !state.activeDocument?.id || state.mode !== 'knowledge' || state.documentConflict) return;
+  const id = state.activeDocument.id;
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
+  const current = await response.json().catch(() => ({}));
+  if (!response.ok || state.activeDocument?.id !== id) return;
+  if (Number(current.version) === Number(state.activeDocument.version)) return;
+  if (state.documentDirty) await resolveDocumentConflict(current);
+  else await renderActiveDocument(current);
+}
+
 function locateDocumentPosition(offset, content) {
   const position = Math.max(0, Math.min(Number(offset) || 0, content.length));
   const q = activeKnowledgeSearchQuery();
@@ -5459,7 +5525,10 @@ function bindEvents() {
   });
   window.addEventListener('popstate', applyRoute);
   window.addEventListener('hashchange', applyRoute);
-  window.addEventListener('focus', () => refreshBackgroundSessionRuns());
+  window.addEventListener('focus', () => refreshRemoteForeground().catch(() => {}));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshRemoteForeground().catch(() => {});
+  });
   mobileSidebarQuery.addEventListener('change', () => {
     document.body.classList.remove('sidebar-visible');
     syncMobileSidebarAccessibility();
@@ -5489,12 +5558,42 @@ function bindEvents() {
   $('#closeSettingsDialog').addEventListener('click', () => $('#settingsDialog').close());
   $('#settingsForm').addEventListener('submit', event => {
     event.preventDefault();
+    if (state.settingsPanel === 'remote' && remoteBridge()) {
+      remoteAction(bridge => bridge.update({ enabled: $('#remoteAccessToggle').checked, port: Number($('#remoteAccessPort').value) })).catch(error => showToast(error.message, 'error'));
+      return;
+    }
     saveAgentSettings();
   });
   document.querySelector('.settings-nav').addEventListener('click', event => {
     const button = event.target.closest('[data-settings-nav]');
     if (button) setSettingsPanel(button.dataset.settingsNav);
   });
+  $('#remoteLogoutButton')?.addEventListener('click', () => logoutRemoteSession().catch(error => showToast(error.message, 'error')));
+  $('#remoteSettingsLogout')?.addEventListener('click', () => logoutRemoteSession().catch(error => showToast(error.message, 'error')));
+  $('#remoteAccessApply')?.addEventListener('click', () => remoteAction(bridge => bridge.update({ enabled: $('#remoteAccessToggle').checked, port: Number($('#remoteAccessPort').value) })).catch(error => showToast(error.message, 'error')));
+  $('#remoteAccessRefresh')?.addEventListener('click', () => loadRemoteAccessSettings(true).catch(error => showToast(error.message, 'error')));
+  $('#remoteServeConfigure')?.addEventListener('click', () => remoteAction(bridge => bridge.configureServe()).catch(error => showToast(error.message, 'error')));
+  $('#remoteCreatePairing')?.addEventListener('click', async () => {
+    try {
+      const pairing = await remoteBridge().createPairing();
+      $('#remotePairingCode').hidden = false;
+      $('#remotePairingQr').src = pairing.qrDataUrl;
+      $('#remotePairingUrl').value = pairing.url;
+      showToast('配对二维码已生成，10 分钟内有效', 'success');
+    } catch (error) { showToast(error.message, 'error'); }
+  });
+  $('#remotePendingDevices')?.addEventListener('click', event => {
+    const approve = event.target.closest('[data-remote-approve]');
+    const deny = event.target.closest('[data-remote-deny]');
+    if (approve) remoteAction(bridge => bridge.approve(approve.dataset.remoteApprove)).catch(error => showToast(error.message, 'error'));
+    if (deny) remoteAction(bridge => bridge.deny(deny.dataset.remoteDeny)).catch(error => showToast(error.message, 'error'));
+  });
+  $('#remoteAuthorizedDevices')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-remote-revoke]');
+    if (button) remoteAction(bridge => bridge.revokeDevice(button.dataset.remoteRevoke)).catch(error => showToast(error.message, 'error'));
+  });
+  $('#remoteRevokeAll')?.addEventListener('click', () => remoteAction(bridge => bridge.revokeAll()).catch(error => showToast(error.message, 'error')));
+  $('#remoteQuitApp')?.addEventListener('click', () => remoteBridge()?.quit().catch(error => showToast(error.message, 'error')));
   $('#desktopUpdatePanel')?.addEventListener('click', event => {
     if (event.target.closest('#desktopUpdateCheck')) {
       loadDesktopUpdateInfo().catch(renderDesktopUpdateError);
@@ -5812,6 +5911,7 @@ function bindEvents() {
 }
 
 async function initialize() {
+  if (!await initializeRemoteSession()) return;
   bindEvents();
   initTodos();
   syncMobileSidebarAccessibility();
@@ -5823,6 +5923,9 @@ async function initialize() {
   await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();
+  window.setInterval(() => {
+    if ($('#settingsDialog')?.open && state.settingsPanel === 'remote' && remoteBridge()) loadRemoteAccessSettings().catch(() => {});
+  }, 2000);
 }
 
 initialize().catch(error => {

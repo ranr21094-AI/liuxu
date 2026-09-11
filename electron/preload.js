@@ -61,4 +61,20 @@ const browser = {
   },
 };
 
-contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser) }));
+function remoteInvoke(channel, payload) {
+  return ipcRenderer.invoke(`liuxu:remote:${channel}`, payload || {});
+}
+const remote = Object.freeze({
+  getStatus: () => remoteInvoke('status'),
+  update: payload => remoteInvoke('update', payload),
+  refresh: () => remoteInvoke('refresh'),
+  configureServe: () => remoteInvoke('configure-serve'),
+  createPairing: () => remoteInvoke('create-pairing'),
+  approve: id => remoteInvoke('approve', { id }),
+  deny: id => remoteInvoke('deny', { id }),
+  revokeDevice: id => remoteInvoke('revoke-device', { id }),
+  revokeAll: () => remoteInvoke('revoke-all'),
+  quit: () => remoteInvoke('quit'),
+});
+
+contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote }));

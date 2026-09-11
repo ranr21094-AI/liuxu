@@ -1,6 +1,6 @@
 {
   "name": "work-log",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "LiuXu is a local-first personal AI workspace for knowledge, memory, and tasks.",
   "author": "LiuXu Contributors",
   "main": "electron/main.js",
@@ -35,7 +35,8 @@
     "minisearch": "^7.2.0",
     "multer": "^2.2.0",
     "nodemailer": "^9.1.0",
-    "pdfjs-dist": "^4.2.67"
+    "pdfjs-dist": "^4.2.67",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "electron": "43.4.1",

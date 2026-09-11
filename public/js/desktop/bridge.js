@@ -9,3 +9,7 @@ export function getDesktopUpdates() {
 export function isDesktopRuntime() {
   return Boolean(getDesktopUpdates());
 }
+
+export function getDesktopRemoteAccess() {
+  return window.liuxuDesktop?.remote || null;
+}
