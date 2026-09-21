@@ -15,7 +15,7 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.4.2-x64.exe`。
+1. 在 [v1.4.2 Windows 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.4.2) 下载 `LiuXu-Setup-1.4.2-x64.exe`。当前 `1.4.2-1` 更新先发布 macOS 包。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
@@ -25,22 +25,22 @@
 Get-FileHash .\LiuXu-Setup-1.4.2-x64.exe -Algorithm SHA256
 ```
 
-### macOS Apple Silicon（测试包）
+### macOS Apple Silicon（v1.4.2-1）
 
-当前 Mac 测试包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
+当前 Mac 包支持 M 系列芯片和 macOS 12 及以上，`1.4.2-1` 修复了知识库图片预览和数据库笔记回写本地目录的问题。构建产物为：
 
 ```text
-LiuXu-1.4.2-mac-arm64.dmg
-LiuXu-1.4.2-mac-arm64.zip
+LiuXu-1.4.2-1-mac-arm64.dmg
+LiuXu-1.4.2-1-mac-arm64.zip
 ```
 
-测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
+该包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。
 
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.4.2-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.4.2-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.4.2-1-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.4.2-1-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -342,13 +342,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.4.2-x64.exe
+LiuXu-Setup-1.4.2-x64.exe (Windows，v1.4.2)
 LiuXu-Setup-1.4.2-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.4.2-mac-arm64.dmg
-LiuXu-1.4.2-mac-arm64.dmg.sha256
-LiuXu-1.4.2-mac-arm64.zip
-LiuXu-1.4.2-mac-arm64.zip.sha256
+LiuXu-1.4.2-1-mac-arm64.dmg (macOS，v1.4.2-1，132,064,946 bytes)
+LiuXu-1.4.2-1-mac-arm64.dmg.sha256
+LiuXu-1.4.2-1-mac-arm64.zip (146,141,550 bytes)
+LiuXu-1.4.2-1-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -386,6 +386,7 @@ desktop-build-summary-mac.json
 - [代码审查与修复记录](code-review-remediation.md)
 - [笔记内置浏览器架构](docs/note-browser.md)
 - [本地知识库同步说明](docs/knowledge-folder-sync.md)
+- [v1.4.2-1 发布说明](docs/releases/v1.4.2-1.md)
 - [v1.4.2 发布说明](docs/releases/v1.4.2.md)
 - [v1.4.1 发布说明](docs/releases/v1.4.1.md)
 - [v1.4.0 发布说明](docs/releases/v1.4.0.md)

@@ -81,6 +81,33 @@ test('external edits, moves, additions and deletes reconcile by stable id', asyn
   assert.equal(knowledge.getDocument(note.id, { diaryUnlocked: true }), null);
 });
 
+test('sync backfills database-only notes and copies legacy HTML images as local Markdown assets', async (t) => {
+  const { dir, root, knowledge } = setup(t);
+  const existing = knowledge.createNote({ title: '已有笔记', content: '用于启用本地同步' }).document;
+  knowledge.folderSync.migrateAll({ rootPath: root });
+  knowledge.folderSync.configure({ enabled: false, rootPath: root });
+
+  fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'uploads', 'legacy.png'), Buffer.from('legacy-image-bytes'));
+  const note = knowledge.createNote({
+    title: '9.21',
+    knowledgeBase: '虎扑',
+    folderPath: '工作',
+    content: '记录正文\n\n<img src="/uploads/legacy.png" width="300">',
+  }).document;
+  knowledge.folderSync.configure({ enabled: true, rootPath: root });
+
+  const snapshot = await knowledge.folderSync.syncNow({ reason: 'backfill-database-only-note' });
+  const synced = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const notePath = knowledge.folderSync.localPathFor(synced);
+  assert.equal(snapshot.report.added, 1);
+  assert.ok(notePath.endsWith(path.join('虎扑', '工作', '9.21.md')));
+  assert.match(synced.content, /!\[image\]\(\.\/legacy\.png\)/);
+  assert.match(fs.readFileSync(notePath, 'utf8'), /!\[image\]\(\.\/legacy\.png\)/);
+  assert.deepEqual(fs.readFileSync(path.join(path.dirname(notePath), 'legacy.png')), Buffer.from('legacy-image-bytes'));
+  assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(existing.id, { diaryUnlocked: true })));
+});
+
 test('disk changes win application save conflicts and preserve the draft', (t) => {
   const { root, knowledge } = setup(t);
   const note = knowledge.createNote({ title: '冲突', content: '数据库正文' }).document;

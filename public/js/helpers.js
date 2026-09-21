@@ -100,6 +100,27 @@ export function normalizeUploadSrc(value) {
   return src;
 }
 
+function isSafeKnowledgeAssetSrc(value) {
+  const src = String(value || '').trim();
+  if (!src || src.startsWith('//') || src.includes('\\') || /(?:^|\/)(?:\.|%2e){1,2}(?:\/|[?#]|$)/i.test(src)) return false;
+  const pageOrigin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : (typeof document !== 'undefined' && document.defaultView?.location?.origin
+      ? document.defaultView.location.origin
+      : '');
+  let url;
+  try { url = new URL(src, pageOrigin || 'http://localhost'); } catch { return false; }
+  if (pageOrigin && url.origin !== pageOrigin) return false;
+  if (!src.startsWith('/') && !pageOrigin) return false;
+  const segments = url.pathname.split('/');
+  if (segments.length < 6 || segments[1] !== 'api' || segments[2] !== 'knowledge' || segments[3] !== 'assets') return false;
+  let decoded;
+  try { decoded = segments.slice(4).map(segment => decodeURIComponent(segment)); } catch { return false; }
+  if (!/^(?:note|file):[1-9]\d*$/.test(decoded[0] || '') || decoded.length < 2) return false;
+  if (decoded.some(segment => !segment || segment === '.' || segment === '..' || /[\\/\0]/.test(segment))) return false;
+  return /\.(?:png|jpe?g|gif|webp|bmp)$/i.test(decoded.at(-1));
+}
+
 export function isSafeImageSrc(value) {
   const src = String(value || '').trim();
   if (!src) return false;
@@ -107,6 +128,9 @@ export function isSafeImageSrc(value) {
   const normalized = normalizeUploadSrc(src);
   if (normalized.startsWith('/uploads/')) {
     return isSafeUploadFilename(normalized.slice('/uploads/'.length));
+  }
+  if (src.startsWith('/api/knowledge/assets/') || /\/api\/knowledge\/assets\//i.test(src)) {
+    return isSafeKnowledgeAssetSrc(src);
   }
   try {
     const url = new URL(src);

@@ -35,14 +35,16 @@ function assertSafeUrl(value, { api = false } = {}) {
 }
 
 function parseReleaseVersion(value) {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-r(\d+))?$/i.exec(String(value || '').trim());
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-(r)?(\d+))?$/i.exec(String(value || '').trim());
   if (!match) return null;
+  const revision = Number(match[5] || 0);
+  const suffix = match[5] === undefined ? '' : `-${match[4] ? 'r' : ''}${revision}`;
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
     patch: Number(match[3]),
-    revision: Number(match[4] || 0),
-    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`,
+    revision,
+    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}${suffix}`,
   };
 }
 
@@ -114,7 +116,7 @@ function releaseAsset(release, name) {
 function summarizeRelease(release, { currentVersion, platform, arch }) {
   const current = parseReleaseVersion(currentVersion);
   const rawTag = String(release?.tag_name || '').trim();
-  const remote = /^v\d+\.\d+\.\d+(?:-r\d+)?$/i.test(rawTag) ? parseReleaseVersion(rawTag) : null;
+  const remote = /^v\d+\.\d+\.\d+(?:-r?\d+)?$/i.test(rawTag) ? parseReleaseVersion(rawTag) : null;
   if (!current) throw new Error(`当前版本号无效：${currentVersion}`);
   if (!remote) return { state: 'incompatible', currentVersion: current.version, platform, arch, reason: 'GitHub 发布标签不是标准版本号' };
   if (release.draft || release.prerelease) return { state: 'incompatible', currentVersion: current.version, latestVersion: remote.version, platform, arch, reason: '最新发布仍是草稿或预发布版本' };

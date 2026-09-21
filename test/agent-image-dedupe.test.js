@@ -4,6 +4,7 @@ const { JSDOM } = require('jsdom');
 const {
   collectKnownUploadUrls,
   dedupeImageMarkdown,
+  isSafeImageSrc,
   normalizeUploadSrc,
 } = require('../public/js/helpers.js');
 
@@ -36,4 +37,13 @@ test('collectKnownUploadUrls gathers message and preview urls', () => {
 
 test('normalizeUploadSrc keeps safe relative upload paths', () => {
   assert.equal(normalizeUploadSrc('/uploads/foo.png'), '/uploads/foo.png');
+});
+
+test('knowledge folder image assets pass the image allowlist with path validation', () => {
+  assert.equal(isSafeImageSrc('/api/knowledge/assets/note%3A329/岗位职责.png'), true);
+  assert.equal(isSafeImageSrc('/api/knowledge/assets/file%3A12/附件/photo.jpg'), true);
+  assert.equal(isSafeImageSrc('/api/knowledge/assets/note%3A329/../secret.png'), false);
+  assert.equal(isSafeImageSrc('/api/knowledge/assets/note%3A329/%2e%2e/secret.png'), false);
+  assert.equal(isSafeImageSrc('/api/knowledge/assets/agent%3A1/photo.png'), false);
+  assert.equal(isSafeImageSrc('/api/knowledge/documents/note%3A329/photo.png'), false);
 });

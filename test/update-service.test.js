@@ -55,11 +55,22 @@ function releaseFixture({ version = '1.2.0', digest, assetName = platformAssetNa
 
 test('release version parsing and comparison handles revision tags', () => {
   assert.deepEqual(parseReleaseVersion('v1.0.0-r2'), {
-    major: 1, minor: 0, patch: 0, revision: 2, version: '1.0.0',
+    major: 1, minor: 0, patch: 0, revision: 2, version: '1.0.0-r2',
+  });
+  assert.deepEqual(parseReleaseVersion('v1.4.2-1'), {
+    major: 1, minor: 4, patch: 2, revision: 1, version: '1.4.2-1',
   });
   assert.equal(compareReleaseVersions('1.0.0-r2', '1.0.0'), 1);
   assert.equal(compareReleaseVersions('1.1.0', '1.0.0-r2'), 1);
   assert.equal(compareReleaseVersions('1.0.0', '1.0.0-r2'), -1);
+  assert.equal(compareReleaseVersions('1.4.2-1', '1.4.2'), 1);
+  assert.equal(platformAssetName('darwin', 'arm64', parseReleaseVersion('1.4.2-1').version), 'LiuXu-1.4.2-1-mac-arm64.dmg');
+  const revisionSummary = summarizeRelease(releaseFixture({ version: '1.4.2-1' }), {
+    currentVersion: '1.4.2', platform: 'darwin', arch: 'arm64',
+  });
+  assert.equal(revisionSummary.state, 'available');
+  assert.equal(revisionSummary.latestVersion, '1.4.2-1');
+  assert.equal(revisionSummary.candidate.name, 'LiuXu-1.4.2-1-mac-arm64.dmg');
   assert.equal(parseReleaseVersion('latest'), null);
 });
 
