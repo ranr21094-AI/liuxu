@@ -99,7 +99,7 @@
 .note-assistant-head { flex-wrap: wrap; gap: 6px; padding: 12px; }
 .note-assistant-head .secondary-action { padding-inline: 8px; font-size: 12px; }
 .note-assistant-panel { box-shadow: 0 8px 30px rgb(0 0 0 / .12); }
-.note-assistant-panel .note-assistant-bubble { font-size: 15px; line-height: 1.7; }
+.note-assistant-panel .note-assistant-bubble { font-size: 15px; line-height: 1.5; }
 .note-assistant-message.is-user .note-assistant-bubble { background: var(--surface-active); color: var(--text); }
 .note-assistant-message.is-assistant .note-assistant-bubble { background: transparent; border: 0; padding-inline: 0; }
 .note-assistant-panel :is(.note-assistant-status,.note-assistant-runline,.note-assistant-session-copy small) { font-size: 12px; }

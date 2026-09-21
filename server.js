@@ -2844,6 +2844,7 @@ app.post('/api/categories', (req, res) => {
       return res.status(409).json({ error: result.error });
     }
     if (result.error) return res.status(400).json({ error: result.error });
+    knowledgeServiceFor(db).knowledge.folderSync.ensureDirectoryTree();
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2911,7 +2912,10 @@ app.put('/api/categories/:oldName', (req, res) => {
     const rewrittenPath = categorySeparator >= 0
       ? `${oldName.slice(0, categorySeparator)}/${newName}`
       : newName;
-    knowledgeServiceFor(db).knowledge.rewriteCollectionPath(oldName, rewrittenPath);
+    const knowledge = knowledgeServiceFor(db).knowledge;
+    knowledge.rewriteCollectionPath(oldName, rewrittenPath);
+    knowledge.folderSync.removeCollectionDirectory(oldName, 'folder-renamed');
+    knowledge.folderSync.ensureDirectoryTree();
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2925,7 +2929,10 @@ app.delete('/api/categories/:name', (req, res) => {
     if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const ok = db.deleteCategory(name);
     if (!ok) return res.status(404).json({ error: 'Category not found' });
-    knowledgeServiceFor(db).knowledge.reassignCollectionPath(name, '其他');
+    const knowledge = knowledgeServiceFor(db).knowledge;
+    knowledge.reassignCollectionPath(name, '其他');
+    knowledge.folderSync.removeCollectionDirectory(name, 'folder-deleted');
+    knowledge.folderSync.ensureDirectoryTree();
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

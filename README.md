@@ -15,14 +15,14 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在最新版本页面下载 `LiuXu-Setup-1.4.1-x64.exe`。
+1. 在最新版本页面下载 `LiuXu-Setup-1.4.2-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.4.1-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.4.2-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（测试包）
@@ -30,8 +30,8 @@ Get-FileHash .\LiuXu-Setup-1.4.1-x64.exe -Algorithm SHA256
 当前 Mac 测试包支持 M 系列芯片和 macOS 12 及以上，构建产物为：
 
 ```text
-LiuXu-1.4.1-mac-arm64.dmg
-LiuXu-1.4.1-mac-arm64.zip
+LiuXu-1.4.2-mac-arm64.dmg
+LiuXu-1.4.2-mac-arm64.zip
 ```
 
 测试包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。正式公开发布前会改用 Developer ID 签名并完成 Apple 公证。
@@ -39,8 +39,8 @@ LiuXu-1.4.1-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.4.1-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.4.1-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.4.2-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.4.2-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -57,6 +57,8 @@ shasum -a 256 -c LiuXu-1.4.1-mac-arm64.zip.sha256
 还包括私密知识锁定、Agent 会话归档、JSON/ZIP 备份恢复、模型级能力配置，以及可选的 Chrome 桥接和电脑工具。
 
 笔记助手使用完整 Agent 工具，支持联网、图片、电脑/浏览器操作、记忆与单层子任务，沿用操作确认和目录白名单。直接修改当前笔记前会先保存草稿，再按工具读取时的版本号确认写入；发生冲突须重新读取并确认。需要先看效果时仍可要求生成修改提案。待审批或待回答的会话可重新打开继续。
+
+桌面版知识库可映射为一个真实本地文件夹，默认位置是“文稿/留序知识库”。首次安装后，进入 **设置 → 知识库 → 选择文件夹**，选择默认位置或其他目录即可启用同步；已有条目会迁移到所选目录。笔记以带稳定 ID front matter 的 UTF-8 Markdown 保存，图片放在 Markdown 同目录并使用相对引用；PDF、Word 和图片档案保留原文件，批注另存为同目录 Markdown。留序内的保存、移动、归档和删除会写入文件夹，外部编辑器或文件管理器中的增删改和移动也会自动同步回来。磁盘与编辑器同时修改时以磁盘文件为准，并把未写入内容保存为可恢复的冲突草稿。操作方法、文件布局和故障恢复见[本地知识库同步说明](docs/knowledge-folder-sync.md)。
 
 桌面版在笔记工具栏提供 **浏览器**。它可以和正文、笔记助手同时打开，支持多标签、地址输入、前进后退、刷新或停止、外部打开，以及拖动或用方向键调整宽度。每篇笔记分别记住标签和选中状态；关闭侧栏、切换笔记不会刷新网页。空间不足时，浏览器与助手会在右侧上下排列，极窄窗口改为覆盖显示。网页版不嵌入网页，仍可使用已有的外部打开方式。
 
@@ -285,7 +287,7 @@ ZIP 工作区备份包含数据库和附件，但不会代替 `ai-secrets.key`�
 
 ### Windows 提示未知发布者
 
-`v1.4.1` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
+`v1.4.2` 测试安装包可能未完成正式签名，这是当前版本的已知限制。请从本仓库 Release 页面下载并核对 SHA-256，不要使用来源不明的转载包。
 
 ### macOS 提示无法验证开发者
 
@@ -340,13 +342,13 @@ npm run desktop:release:mac    # Mac Developer ID 签名 + Apple 公证
 构建产物位于 `dist/desktop/`：
 
 ```text
-LiuXu-Setup-1.4.1-x64.exe
-LiuXu-Setup-1.4.1-x64.exe.sha256
+LiuXu-Setup-1.4.2-x64.exe
+LiuXu-Setup-1.4.2-x64.exe.sha256
 desktop-build-summary.json
-LiuXu-1.4.1-mac-arm64.dmg
-LiuXu-1.4.1-mac-arm64.dmg.sha256
-LiuXu-1.4.1-mac-arm64.zip
-LiuXu-1.4.1-mac-arm64.zip.sha256
+LiuXu-1.4.2-mac-arm64.dmg
+LiuXu-1.4.2-mac-arm64.dmg.sha256
+LiuXu-1.4.2-mac-arm64.zip
+LiuXu-1.4.2-mac-arm64.zip.sha256
 desktop-build-summary-mac.json
 ```
 
@@ -369,7 +371,7 @@ desktop-build-summary-mac.json
 - Electron 主进程启动本机随机端口的 Express 服务，并以沙箱窗口加载。
 - 桌面笔记浏览器由 Electron `WebContentsView` 承载，使用独立的持久化 session；远程页面没有预加载脚本、Node 或应用 IPC。标签元数据按数据目录保存在 `.note-browser-state.json`。
 - 手机远程入口与桌面本地入口共用同一个 Express 应用、数据库和 Agent 运行时，独立监听 `127.0.0.1:43140` 并由 Tailscale Serve 代理。设备与会话哈希保存在 `.remote-access.json`，不进入备份。
-- SQLite 保存知识、待办、Agent、Memory 和设置，二进制附件保存在数据目录。
+- SQLite 保存知识索引、关联、历史、Agent、Memory、待办和设置；知识正文与档案同步到配置的本地知识库文件夹，数据目录保留兼容副本。
 - 前端使用原生 JavaScript ES Modules，没有前端框架。
 - Markdown 预览使用 marked、DOMPurify、KaTeX 和 PDF.js。
 - `better-sqlite3` 原生模块随 Windows x64 或 macOS arm64 安装包分发。
@@ -383,6 +385,8 @@ desktop-build-summary-mac.json
 - [更新日志](ChangeLog.md)
 - [代码审查与修复记录](code-review-remediation.md)
 - [笔记内置浏览器架构](docs/note-browser.md)
+- [本地知识库同步说明](docs/knowledge-folder-sync.md)
+- [v1.4.2 发布说明](docs/releases/v1.4.2.md)
 - [v1.4.1 发布说明](docs/releases/v1.4.1.md)
 - [v1.4.0 发布说明](docs/releases/v1.4.0.md)
 - [v1.3.0 发布说明](docs/releases/v1.3.0.md)

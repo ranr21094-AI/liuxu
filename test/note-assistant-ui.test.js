@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
+const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 
 const PANEL_HTML = `
@@ -422,4 +423,144 @@ test('assistant confirmations, answer resume, browser replay and mutation refres
     resumed.emit('run.completed', { text: '完成' }, 6);
     assert.equal(input.disabled, false); assert.equal(document.querySelector('#noteAssistantApprovalDock').hidden, true);
   } finally { dom.window.close(); restore(previous); }
+});
+
+test('note assistant groups historical tools into one compact execution trace', async () => {
+  const { dom, previous } = stubDom();
+  try {
+    const messages = [
+      { role: 'user', content: '总结这篇笔记' },
+      { role: 'tool', name: 'note.read', content: JSON.stringify({ ok: true, summary: 'Read current document "9.21"' }) },
+      { role: 'tool', name: 'knowledge.search', content: JSON.stringify({ ok: true, summary: 'Found 15 document(s)' }) },
+      { role: 'tool', name: 'knowledge.list', content: JSON.stringify({ ok: true, summary: 'Listed 2 document(s)' }) },
+      { role: 'tool', name: 'knowledge.read', content: JSON.stringify({ ok: true, summary: 'Read 未命名笔记' }) },
+      { role: 'tool', name: 'knowledge.read', content: JSON.stringify({ ok: false, summary: '读取失败' }) },
+      { role: 'assistant', content: '这是最终总结。' },
+    ];
+    global.fetch = async url => String(url).includes('/session')
+      ? { ok: true, status: 200, json: async () => ({ session: { id: 's-history', messages } }) }
+      : { ok: false, status: 404, json: async () => ({}) };
+    const ui = await import(`${pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js')).href}?history-trace=${Date.now()}`);
+    ui.initNoteAssistant({});
+    ui.noteAssistantSetActiveDocument({ id: 'note:1', status: 'active' });
+    document.querySelector('#assistantToggleButton').click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const traces = document.querySelectorAll('.note-assistant-execution');
+    assert.equal(traces.length, 1);
+    assert.equal(traces[0].open, false, 'execution trace is collapsed by default');
+    assert.equal(traces[0].querySelectorAll('.note-assistant-tool-step').length, 5);
+    assert.match(traces[0].querySelector('.note-assistant-execution-summary').textContent, /已完成 5 项/);
+    assert.match(traces[0].querySelector('.note-assistant-execution-summary').textContent, /1 项异常/);
+    const summaries = [...traces[0].querySelectorAll('.note-assistant-tool-result')].map(node => node.textContent);
+    assert.deepEqual(summaries.slice(0, 3), ['已读取“9.21”', '找到 15 篇文档', '列出 2 篇文档']);
+    assert.match(traces[0].querySelector('.note-assistant-tool-detail pre').textContent, /note\.read/);
+    assert.equal(traces[0].classList.contains('has-problem'), true);
+    assert.deepEqual(
+      [...traces[0].querySelectorAll('.note-assistant-tool-main strong')].map(node => node.textContent),
+      ['读取当前笔记', '检索知识库', '列出知识文档', '读取知识文档', '读取知识文档'],
+    );
+    assert.equal(document.querySelectorAll('.note-assistant-message').length, 2, 'tool results are not rendered as assistant bubbles');
+    assert.equal(document.querySelector('#noteAssistantMessages').scrollTop, 0, 'opening history starts at the beginning');
+  } finally { dom.window.close(); restore(previous); }
+});
+
+test('live tool replay updates one trace and preserves scroll position away from the bottom', async () => {
+  const { dom, previous } = stubDom();
+  try {
+    const sources = [];
+    global.fetch = async url => String(url).endsWith('/messages')
+      ? { ok: true, status: 202, json: async () => ({ runId: 'run-trace', sessionId: 'session-trace' }) }
+      : { ok: false, status: 404, json: async () => ({}) };
+    global.EventSource = class {
+      constructor() { this.handlers = {}; sources.push(this); }
+      addEventListener(type, handler) { this.handlers[type] = handler; }
+      close() {}
+      emit(type, payload, at) { this.handlers[type]?.({ data: JSON.stringify({ type, at, payload }) }); }
+    };
+    const ui = await import(`${pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js')).href}?live-trace=${Date.now()}`);
+    ui.initNoteAssistant({});
+    ui.noteAssistantSetActiveDocument({ id: 'note:1', status: 'active' });
+    document.querySelector('#assistantToggleButton').click();
+    await new Promise(resolve => setTimeout(resolve, 10));
+    document.querySelector('#noteAssistantInput').value = '查找相关内容';
+    document.querySelector('#noteAssistantSend').click();
+    await new Promise(resolve => setTimeout(resolve, 10));
+
+    const host = document.querySelector('#noteAssistantMessages');
+    Object.defineProperty(host, 'scrollHeight', { configurable: true, value: 1000 });
+    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 200 });
+    host.scrollTop = 100;
+    const source = sources.at(-1);
+    const search = { id: 'call-search', name: 'knowledge.search', arguments: { query: '会议' } };
+    source.emit('tool.started', search, 1);
+    source.emit('tool.started', search, 1);
+    source.emit('tool.completed', { call: search, result: { ok: true, summary: 'Found 15 document(s)' } }, 2);
+    assert.equal(host.scrollTop, 100, 'new tool activity does not pull a reader away from earlier content');
+    assert.equal(host.querySelectorAll('.note-assistant-tool-step').length, 1, 'replayed events update the existing step');
+
+    const failed = { id: 'call-fail', name: 'custom.unknown', arguments: {} };
+    source.emit('tool.started', failed, 3);
+    source.emit('tool.completed', { call: failed, result: { ok: false, summary: 'Network error' } }, 4);
+    const rejected = { id: 'call-reject', name: 'knowledge.update', arguments: { id: 'note:1' } };
+    source.emit('tool.started', rejected, 5);
+    source.emit('tool.completed', { call: rejected, result: { ok: false, summary: 'User rejected the action' } }, 6);
+    const cancelled = { id: 'call-cancel', name: 'web.fetch', arguments: { url: 'https://example.com' } };
+    source.emit('tool.started', cancelled, 7);
+    source.emit('run.failed', { error: 'cancelled' }, 8);
+
+    const trace = host.querySelector('.note-assistant-execution');
+    assert.equal(trace.open, false);
+    assert.equal(trace.querySelectorAll('.note-assistant-tool-step').length, 4);
+    assert.deepEqual(
+      [...trace.querySelectorAll('.note-assistant-tool-step')].map(step => step.dataset.status),
+      ['success', 'failed', 'rejected', 'cancelled'],
+    );
+    assert.match(trace.querySelector('.note-assistant-execution-summary').textContent, /已完成 4 项/);
+    assert.match(trace.querySelector('.note-assistant-execution-summary').textContent, /3 项异常/);
+    assert.equal(trace.querySelector('.note-assistant-tool-step[data-tool-name="web.fetch"] .note-assistant-tool-result').textContent, '操作已取消');
+    assert.match(trace.querySelector('.note-assistant-tool-step[data-tool-name="custom.unknown"] .note-assistant-tool-main strong').textContent, /执行工具/);
+    assert.match(trace.querySelector('.note-assistant-tool-step[data-tool-name="custom.unknown"] pre').textContent, /custom\.unknown/);
+  } finally { dom.window.close(); restore(previous); }
+});
+
+test('reconnecting an active run reuses its trailing historical tool step', async () => {
+  const { dom, previous } = stubDom();
+  try {
+    const sources = [];
+    const messages = [
+      { role: 'user', content: '继续查找' },
+      { role: 'tool', name: 'knowledge.search', content: JSON.stringify({ ok: true, summary: 'Found 3 document(s)' }) },
+    ];
+    global.fetch = async url => String(url).includes('/session')
+      ? { ok: true, status: 200, json: async () => ({ session: { id: 's-replay', messages }, activeRun: { id: 'run-replay', status: 'running' } }) }
+      : { ok: false, status: 404, json: async () => ({}) };
+    global.EventSource = class {
+      constructor() { this.handlers = {}; sources.push(this); }
+      addEventListener(type, handler) { this.handlers[type] = handler; }
+      close() {}
+      emit(type, payload, at) { this.handlers[type]?.({ data: JSON.stringify({ type, at, payload }) }); }
+    };
+    const ui = await import(`${pathToFileURL(path.join(__dirname, '../public/js/knowledge/note-assistant.js')).href}?reconnect-trace=${Date.now()}`);
+    ui.initNoteAssistant({});
+    ui.noteAssistantSetActiveDocument({ id: 'note:1', status: 'active' });
+    document.querySelector('#assistantToggleButton').click();
+    await new Promise(resolve => setTimeout(resolve, 20));
+
+    const call = { id: 'replayed-call', name: 'knowledge.search', arguments: { query: '项目' } };
+    sources.at(-1).emit('tool.started', call, 1);
+    sources.at(-1).emit('tool.completed', { call, result: { ok: true, summary: 'Found 3 document(s)' } }, 2);
+    assert.equal(document.querySelectorAll('.note-assistant-execution').length, 1);
+    assert.equal(document.querySelectorAll('.note-assistant-tool-step').length, 1, 'replayed history is updated instead of duplicated');
+    assert.equal(document.querySelector('.note-assistant-tool-step').dataset.callId, ':replayed-call');
+  } finally { dom.window.close(); restore(previous); }
+});
+
+test('note assistant spacing stays scoped and compact', () => {
+  const workbench = fs.readFileSync(path.join(__dirname, '../public/css/workbench.css'), 'utf8');
+  const workspace = fs.readFileSync(path.join(__dirname, '../public/css/workspace-ui.css'), 'utf8');
+  assert.match(workbench, /\.note-assistant-messages\s*\{[\s\S]*?gap:\s*8px/);
+  assert.match(workbench, /\.note-assistant-message\.is-assistant \.note-assistant-bubble p\s*\{\s*margin:\s*\.4em 0/);
+  assert.match(workbench, /\.note-assistant-message\.is-user \.note-assistant-bubble\s*\{\s*white-space:\s*pre-wrap/);
+  assert.match(workspace, /\.note-assistant-panel \.note-assistant-bubble\s*\{\s*font-size:\s*15px;\s*line-height:\s*1\.5/);
 });

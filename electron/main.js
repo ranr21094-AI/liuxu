@@ -191,6 +191,27 @@ function configureNoteBrowserIpc() {
   handle('clear-state', 'clearState');
 }
 
+function configureKnowledgeFolderIpc() {
+  for (const channel of ['choose', 'open']) ipcMain.removeHandler(`liuxu:knowledge-folder:${channel}`);
+  ipcMain.handle('liuxu:knowledge-folder:choose', async (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    const result = await dialog.showOpenDialog(mainWindow || undefined, {
+      title: '选择留序知识库文件夹',
+      defaultPath: typeof payload.currentPath === 'string' && payload.currentPath ? payload.currentPath : app.getPath('documents'),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return { cancelled: result.canceled, path: result.filePaths?.[0] || '' };
+  });
+  ipcMain.handle('liuxu:knowledge-folder:open', async (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    const target = path.resolve(String(payload.path || ''));
+    if (!target || !fs.existsSync(target) || !fs.statSync(target).isDirectory()) throw new Error('知识库文件夹不存在');
+    const error = await shell.openPath(target);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
+}
+
 function closeHttpServer(server, label) {
   if (!server) return Promise.resolve();
   return new Promise((resolve) => {
@@ -339,6 +360,7 @@ async function createMainWindow(appUrl) {
 async function startDesktop() {
   const { dataDir } = prepareRuntimeEnvironment();
   process.env.LIUXU_DESKTOP = '1';
+  process.env.LIUXU_DOCUMENTS_DIR = app.getPath('documents');
   remoteAccess = createRemoteAccessService({ statePath: path.join(dataDir, '.remote-access.json') });
   setRemoteAccessService(remoteAccess);
   logStartupPhase('runtime-ready');
@@ -461,6 +483,7 @@ if (!app.requestSingleInstanceLock()) {
     browserSession.setPermissionCheckHandler(() => false);
     configureUpdateIpc();
     configureNoteBrowserIpc();
+    configureKnowledgeFolderIpc();
     configureRemoteAccessIpc();
     startupPromise = startDesktop();
     return startupPromise;

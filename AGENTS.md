@@ -9,8 +9,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - **Start server**: `npm start` (builds vendor assets, then starts Express)
 - **Desktop (dev)**: `npm run desktop` (builds vendor assets, then Electron window + embedded server)
 - **Desktop (platform build)**: `npm run desktop:build` dispatches to the current platform. Windows produces the NSIS x64 installer; Apple Silicon macOS produces ad-hoc DMG + ZIP test artifacts.
-- **Desktop (Windows)**: from this C-drive project, run `npm run desktop:build:win` → `dist/desktop/LiuXu-Setup-1.4.1-x64.exe` + SHA-256/build summary (build caches are under `D:\Temp\work-log-build-c`)
-- **Desktop (macOS test)**: `npm run desktop:build:mac` → `LiuXu-1.4.1-mac-arm64.dmg` + ZIP, SHA-256 files, and `desktop-build-summary-mac.json`.
+- **Desktop (Windows)**: from this C-drive project, run `npm run desktop:build:win` → `dist/desktop/LiuXu-Setup-1.4.2-x64.exe` + SHA-256/build summary (build caches are under `D:\Temp\work-log-build-c`)
+- **Desktop (macOS test)**: `npm run desktop:build:mac` → `LiuXu-1.4.2-mac-arm64.dmg` + ZIP, SHA-256 files, and `desktop-build-summary-mac.json`.
 - **Desktop (macOS release)**: `npm run desktop:release:mac` requires full Xcode, a Developer ID Application certificate, and Apple notarization credentials.
 - **Tests**: `npm test` (builds vendor assets, then runs Node tests)
 - **Performance**: `npm run perf:baseline` (temporary 1,000-document dataset; set `PERF_DOCS=10000` for the heavy run), `npm run perf:check` (threshold report; use `PERF_STRICT=1` to fail on targets)
@@ -45,6 +45,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ### Knowledge model (notes-only in UI)
 
 - All user-facing content is **knowledge notes** (`note:<id>`) or **imported files** (`file:<id>`) in the `knowledge_documents` SQLite table.
+- **Local folder sync**: `lib/knowledge/folder-sync.js` mirrors documents to the configured root (`.knowledge-folder.json`; desktop default `Documents/留序知识库`). Notes use Markdown front matter and colocated relative images; imported files remain binary and annotations are sibling Markdown. SQLite remains responsible for ids, search, links, revisions and Agent state. Do not bypass its version/fingerprint checks when writing files.
+- The root reserves `.liuxu/` for manifests, operation journals, conflict drafts and trash, and `.archive/` for archived knowledge. Filesystem resources must pass root-boundary and symlink checks.
 - Legacy `logs.json` entries are **auto-migrated** to native notes on first knowledge API access (`lib/knowledge/migrate-logs.js`); backup copy at `logs.migrated.json`, then legacy logs are cleared from SQLite.
 - There is **no** `log:<id>` virtual adapter and **no** workbench UI for hours/pinned/CSV export.
 - `/api/logs` remains as a **compatibility API** (tests, old scripts); new content should use `/api/knowledge/documents`.
@@ -62,6 +64,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 | `knowledge-files/` | Imported attachment binaries |
 | `uploads/` | Markdown inline images; served at `/uploads/` |
 | `agent-assets/` | Agent-generated binaries |
+| `.knowledge-folder.json` | Machine-local knowledge root and sync configuration; excluded from portable root metadata |
 
 Removed: `photo-wall.json`, `/api/photo-wall*`, `/api/export` (CSV), standalone AI chat pages.
 
@@ -74,7 +77,7 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 - **Single-user local mode**: no login page; server always uses legacy `{DATA_DIR}/schedule.db`.
 - **Todos**: `js/todos.js`, dedicated `#todos` mode (not a knowledge sub-view).
 - **State**: Module-local `state` in `workbench.js` — no framework.
-- **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images via `#insertImageButton` → `POST /api/upload`.
+- **Knowledge editor**: Title/body/date; Markdown preview (`marked` + DOMPurify + KaTeX). Inline images upload through `POST /api/upload`, then move beside the Markdown file on its next synchronized save. Relative images render through the protected `/api/knowledge/assets/:id/*` route.
 - **Settings → 数据**: JSON/ZIP backup and restore (`workbench-backup.js`).
 - **Settings → Memory**: tunables in the `ai_settings` SQLite row via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps). L2/L3 不再全量注入 Agent；仅 L0 规则在 system prompt。Agent 通过 `memory.list` / `memory.search` / `memory.read` 按需读取（`memoryContextMaxL2/L3` 保留兼容但不再控制注入）。
 - **Settings → 模型**: provider cards only (built-in providers removed from the UI; legacy keys auto-migrated once at startup by `lib/agent/migrate-builtin-providers.js`, marker `.builtin-providers-migrated.json`). Each card holds baseUrl / apiFormat / apiKey / models (fetch via `POST /api/ai/custom-providers/models`, cap 200) plus capability flags `supportsMedia` / `thinking` (''/deepseek/k3/optional/fixed) / `zdr`; provider count is uncapped. `resolveAiModelProfile` maps these onto the profile so thinking params / ZDR work identically for migrated providers.
@@ -94,7 +97,7 @@ See `README.md` § Relevant API for the full table. Notable groups:
 
 - **Diary**: `/api/auth/diary*` unlock routes; unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 - **Logs (compat)**: `/api/logs`, `/api/stats` — no CSV export
-- **Knowledge**: `/api/knowledge/tree`, `/api/knowledge/documents`, `/api/knowledge/search`, `/api/knowledge/imports`, `/api/knowledge/link-targets`, backlinks/revisions/restore, archive/restore
+- **Knowledge**: `/api/knowledge/tree`, `/api/knowledge/documents`, `/api/knowledge/search`, `/api/knowledge/imports`, `/api/knowledge/link-targets`, backlinks/revisions/restore, archive/restore, `/api/knowledge/sync*`, protected relative assets
 - **Agent**: `/api/agent/sessions`, `/api/agent/runs`, `/api/agent/memories`, `/api/agent/note-assist/:documentId/session|messages` (per-document assistant, `kind: note_assist`), `/api/ai/settings`
 - **Backup**: `GET /api/backup`, `POST /api/restore`, `GET /api/workspace/export`, `POST /api/workspace/restore`
 - **Todos / countdowns / categories**: `/api/todos`, `/api/countdowns`, `/api/categories`, …

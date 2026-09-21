@@ -207,6 +207,16 @@ function scrollMessagesToBottom() {
   if (host) host.scrollTop = host.scrollHeight;
 }
 
+function messagesAreNearBottom() {
+  const host = messagesHost();
+  if (!host) return true;
+  return host.scrollHeight - host.scrollTop - host.clientHeight < 56;
+}
+
+function followMessages(wasNearBottom, force = false) {
+  if (force || wasNearBottom) scrollMessagesToBottom();
+}
+
 function setStatus(text, tone = '') {
   const host = document.querySelector('#noteAssistantStatus');
   if (!host) return;
@@ -225,23 +235,261 @@ function syncComposer() {
   if (input()) { input().disabled = busy; input().placeholder = state?.runStatus === 'waiting_user' ? '输入回答，继续当前任务…' : '询问本篇内容，或让留序 LiuXu 修改…'; }
 }
 
-function renderMessage(role, content) {
+function renderMessage(role, content, { follow = true, forceFollow = false } = {}) {
   const host = messagesHost();
   if (!host) return;
+  const wasNearBottom = follow && messagesAreNearBottom();
   const item = document.createElement('div');
   item.className = `note-assistant-message is-${role === 'user' ? 'user' : 'assistant'}`;
   item.innerHTML = `<div class="note-assistant-bubble"></div>`;
   if (role !== 'user' && state.renderMarkdown) item.querySelector('.note-assistant-bubble').innerHTML = state.renderMarkdown(content);
   else item.querySelector('.note-assistant-bubble').textContent = content;
   host.appendChild(item);
-  scrollMessagesToBottom();
+  followMessages(wasNearBottom, forceFollow);
 }
 
-function renderToolImages(result) {
+function renderToolImages(result, options = {}) {
   const images = result?.data?.images || (result?.data?.imageUrl ? [{ url: result.data.imageUrl }] : []);
   for (const image of images) {
-    if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![工具图片](${image.url})`);
+    if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![工具图片](${image.url})`, options);
   }
+}
+
+const TOOL_LABELS = {
+  'note.read': '读取当前笔记',
+  'note.propose_edit': '生成修改提案',
+  'knowledge.search': '检索知识库',
+  'knowledge.list': '列出知识文档',
+  'knowledge.tree': '读取知识目录',
+  'knowledge.read': '读取知识文档',
+  'knowledge.update': '更新知识文档',
+  'knowledge.archive': '归档知识文档',
+  'knowledge.restore': '恢复知识文档',
+  'knowledge.delete': '删除知识文档',
+  'memory.list': '读取记忆列表',
+  'memory.search': '检索记忆',
+  'memory.read': '读取记忆',
+  'memory.propose': '生成记忆提案',
+  'web.search': '搜索网页',
+  'web.fetch': '读取网页',
+  'image.generate': '生成图片',
+  'agent.delegate': '执行子任务',
+  'ask_user': '请求补充信息',
+  'update_working_checkpoint': '更新工作进度',
+};
+
+const TOOL_PREFIX_LABELS = [
+  ['note_browser.', '操作笔记浏览器'],
+  ['browser.', '操作浏览器'],
+  ['task.', '处理待办'],
+  ['countdown.', '处理倒数日'],
+  ['file.', '处理文件'],
+  ['code.', '运行代码'],
+  ['bash.', '运行脚本'],
+  ['computer.', '操作电脑'],
+];
+
+function toolLabel(name) {
+  const exact = TOOL_LABELS[String(name || '')];
+  if (exact) return exact;
+  return TOOL_PREFIX_LABELS.find(([prefix]) => String(name || '').startsWith(prefix))?.[1] || '执行工具';
+}
+
+function toolState(result, fallback = 'success') {
+  if (!result) return fallback;
+  const summary = String(result.summary || result.error || '').toLowerCase();
+  if (result.ok === false) {
+    if (summary.includes('reject') || summary.includes('拒绝')) return 'rejected';
+    if (summary.includes('cancel') || summary.includes('取消') || summary.includes('停止')) return 'cancelled';
+    return 'failed';
+  }
+  return 'success';
+}
+
+function toolStateLabel(status) {
+  return ({ running: '执行中', success: '已完成', failed: '失败', rejected: '已拒绝', cancelled: '已取消' })[status] || '已完成';
+}
+
+function toolResultSummary(name, result, status) {
+  const raw = String(result?.summary || result?.error || '').trim();
+  if (!raw) return status === 'running' ? '正在处理…' : '';
+  let match = raw.match(/^Read current document\s+["“]?(.+?)["”]?$/i);
+  if (match) return `已读取“${match[1]}”`;
+  match = raw.match(/^Found\s+(\d+)\s+document\(s\)$/i);
+  if (match) return `找到 ${match[1]} 篇文档`;
+  match = raw.match(/^Listed\s+(\d+)\s+document\(s\)$/i);
+  if (match) return `列出 ${match[1]} 篇文档`;
+  match = raw.match(/^Read\s+(.+)$/i);
+  if (match && name === 'knowledge.read') return `已读取“${match[1].replace(/^["“]|["”]$/g, '')}”`;
+  return raw;
+}
+
+function callIdentity(call = {}, payload = {}) {
+  const id = call.id || call.callId || call.call_id || payload.requestId || payload.id || '';
+  const delegated = payload.delegatedRunId || '';
+  return id ? `${delegated}:${id}` : '';
+}
+
+function createExecutionTrace({ runId = '', historical = false } = {}) {
+  const host = messagesHost();
+  if (!host) return null;
+  const wasNearBottom = !historical && messagesAreNearBottom();
+  const details = document.createElement('details');
+  details.className = 'note-assistant-execution';
+  if (runId) details.dataset.runId = runId;
+  details.innerHTML = `
+    <summary><span class="note-assistant-execution-dot" aria-hidden="true"></span><span class="note-assistant-execution-summary">执行过程</span><span class="note-assistant-execution-chevron" aria-hidden="true">⌄</span></summary>
+    <div class="note-assistant-execution-steps"></div>`;
+  host.appendChild(details);
+  followMessages(wasNearBottom);
+  return details;
+}
+
+function traceSteps(trace) {
+  return [...(trace?.querySelectorAll(':scope > .note-assistant-execution-steps > .note-assistant-tool-step') || [])];
+}
+
+function updateExecutionSummary(trace, { terminal = false } = {}) {
+  if (!trace) return;
+  const steps = traceSteps(trace);
+  const completed = steps.filter(step => step.dataset.status !== 'running').length;
+  const running = steps.findLast?.(step => step.dataset.status === 'running')
+    || [...steps].reverse().find(step => step.dataset.status === 'running');
+  const problems = steps.filter(step => ['failed', 'rejected', 'cancelled'].includes(step.dataset.status)).length;
+  const summary = trace.querySelector('.note-assistant-execution-summary');
+  let text = terminal || !running ? '执行过程' : `正在${running.dataset.label || '执行工具'}`;
+  if (completed) text += ` · 已完成 ${completed} 项`;
+  if (problems) text += ` · ${problems} 项异常`;
+  summary.textContent = text;
+  trace.classList.toggle('has-problem', problems > 0);
+  trace.classList.toggle('is-running', Boolean(running) && !terminal);
+}
+
+function findTraceStep(trace, call, payload, { completing = false } = {}) {
+  const identity = callIdentity(call, payload);
+  if (identity) {
+    const existing = trace.querySelector(`[data-call-id="${CSS.escape(identity)}"]`);
+    if (existing) return existing;
+    const replay = traceSteps(trace).find(step => step.dataset.replayCandidate === 'true'
+      && step.dataset.toolName === String(call?.name || payload?.name || ''));
+    if (replay) {
+      replay.dataset.callId = identity;
+      delete replay.dataset.replayCandidate;
+      return replay;
+    }
+  }
+  if (!completing) {
+    const replay = traceSteps(trace).find(step => step.dataset.replayCandidate === 'true'
+      && step.dataset.toolName === String(call?.name || payload?.name || ''));
+    if (replay) {
+      delete replay.dataset.replayCandidate;
+      return replay;
+    }
+  }
+  if (completing) {
+    const name = String(call?.name || payload?.name || '');
+    return [...traceSteps(trace)].reverse().find(step => step.dataset.status === 'running'
+      && step.dataset.toolName === name)
+      || traceSteps(trace).find(step => step.dataset.replayCandidate === 'true' && step.dataset.toolName === name)
+      || null;
+  }
+  return null;
+}
+
+function renderToolStep(trace, { call = {}, result = null, payload = {}, status = '', completing = false, follow = true } = {}) {
+  if (!trace) return null;
+  const wasNearBottom = follow && messagesAreNearBottom();
+  const name = String(call.name || payload.name || '');
+  const label = toolLabel(name);
+  let step = findTraceStep(trace, call, payload, { completing });
+  if (!step) {
+    step = document.createElement('div');
+    step.className = 'note-assistant-tool-step';
+    const identity = callIdentity(call, payload);
+    if (identity) step.dataset.callId = identity;
+    step.innerHTML = `
+      <span class="note-assistant-tool-state" aria-hidden="true"></span>
+      <div class="note-assistant-tool-copy"><div class="note-assistant-tool-main"><strong></strong><span></span></div><div class="note-assistant-tool-result"></div><details class="note-assistant-tool-detail"><summary>技术详情</summary><pre></pre></details></div>`;
+    trace.querySelector('.note-assistant-execution-steps').appendChild(step);
+  }
+  const nextStatus = status || (result ? toolState(result) : 'running');
+  const delegateTitle = String(payload.delegateTitle || '');
+  const summaryText = String(result?.summary || result?.error || '');
+  step.dataset.status = nextStatus;
+  step.dataset.toolName = name;
+  step.dataset.label = label;
+  step.querySelector('strong').textContent = delegateTitle ? `${label} · ${delegateTitle}` : label;
+  step.querySelector('.note-assistant-tool-main span').textContent = toolStateLabel(nextStatus);
+  const resultSummary = step.querySelector('.note-assistant-tool-result');
+  resultSummary.textContent = toolResultSummary(name, result, nextStatus);
+  resultSummary.hidden = !resultSummary.textContent;
+  const detail = step.querySelector('.note-assistant-tool-detail');
+  const raw = [name || 'unknown', summaryText, call.arguments && Object.keys(call.arguments).length ? JSON.stringify(call.arguments, null, 2) : ''].filter(Boolean).join('\n');
+  detail.hidden = !raw;
+  detail.querySelector('pre').textContent = raw;
+  updateExecutionSummary(trace);
+  followMessages(wasNearBottom);
+  return step;
+}
+
+function realtimeTrace(runId = state?.runId) {
+  const host = messagesHost();
+  if (!host) return null;
+  const selector = `.note-assistant-execution[data-run-id="${CSS.escape(String(runId || ''))}"]`;
+  return host.querySelector(selector) || createExecutionTrace({ runId });
+}
+
+function finalizeRealtimeTrace(status = 'success') {
+  const trace = messagesHost()?.querySelector(`.note-assistant-execution[data-run-id="${CSS.escape(String(state?.runId || ''))}"]`);
+  if (!trace) return;
+  for (const step of traceSteps(trace)) {
+    if (step.dataset.status !== 'running') continue;
+    step.dataset.status = status;
+    step.querySelector('.note-assistant-tool-main span').textContent = toolStateLabel(status);
+    const result = step.querySelector('.note-assistant-tool-result');
+    result.textContent = ({ success: '已结束', failed: '执行失败', rejected: '操作已拒绝', cancelled: '操作已取消' })[status] || '';
+    result.hidden = !result.textContent;
+  }
+  updateExecutionSummary(trace, { terminal: true });
+}
+
+function parseToolResult(message) {
+  try { return JSON.parse(message?.content || '{}'); } catch { return { ok: false, summary: String(message?.content || '') }; }
+}
+
+function renderSessionMessages(messages = []) {
+  const host = messagesHost();
+  if (!host) return;
+  host.innerHTML = '';
+  let trace = null;
+  let trailingTrace = null;
+  const closeTrace = () => { if (trace) updateExecutionSummary(trace, { terminal: true }); trace = null; };
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      if (!trace) trace = createExecutionTrace({ historical: true });
+      const result = parseToolResult(message);
+      renderToolStep(trace, { call: { name: message.name || '工具' }, result, completing: true, follow: false });
+      trailingTrace = trace;
+      renderToolImages(result, { follow: false });
+      continue;
+    }
+    closeTrace();
+    trailingTrace = null;
+    if (message.kind === 'browser_screenshot') {
+      for (const attachment of message.attachments || []) renderToolImages({ data: { imageUrl: attachment.url } }, { follow: false });
+    } else if (message.role === 'user' || message.role === 'assistant') {
+      renderMessage(message.role, String(message.content || ''), { follow: false });
+    }
+  }
+  closeTrace();
+  host.scrollTop = 0;
+  return trailingTrace;
+}
+
+function attachTrailingTrace(trace, runId) {
+  if (!trace || !runId) return;
+  trace.dataset.runId = runId;
+  for (const step of traceSteps(trace)) step.dataset.replayCandidate = 'true';
 }
 
 function renderStatusLine(text) {
@@ -403,22 +651,12 @@ async function loadSession(documentId) {
     const data = await response.json().catch(() => ({}));
     if (serial !== contextSerial) return;
     state.sessionId = data.session?.id || '';
-    messagesHost().innerHTML = '';
-    for (const message of data.session?.messages || []) {
-      if (message.kind === 'browser_screenshot') {
-        for (const attachment of message.attachments || []) renderToolImages({ data: { imageUrl: attachment.url } });
-      } else if (message.role === 'user' || message.role === 'assistant') {
-        renderMessage(message.role, String(message.content || ''));
-      } else if (message.role === 'tool') {
-        let result; try { result = JSON.parse(message.content || '{}'); } catch { result = {}; }
-        renderMessage('assistant', `${message.name || '工具'}：${result.summary || message.content || ''}`);
-        renderToolImages(result);
-      }
-    }
+    const trailingTrace = renderSessionMessages(data.session?.messages || []);
     if (!state.sessionId) renderStatusLine('还没有对话，向留序 LiuXu 提问或让它修改本篇内容。');
     if (data.activeRun && ACTIVE_RUN_STATES.has(data.activeRun.status)) {
       // A run is still in flight server-side; resubscribe to its events.
       state.runId = data.activeRun.id;
+      attachTrailingTrace(trailingTrace, data.activeRun.id);
       subscribeRun(data.activeRun.id);
     }
   } catch {
@@ -484,7 +722,8 @@ function handleRunEvent(event) {
   }
   if (type === 'tool.completed') {
     const call = payload.call || {};
-    renderMessage('assistant', `${call.name || '工具'}：${payload.result?.summary || JSON.stringify(payload.result || {})}`);
+    const trace = realtimeTrace();
+    renderToolStep(trace, { call, result: payload.result || {}, payload, completing: true });
     renderToolImages(payload.result);
     if (String(call.arguments?.id) === state.activeDocumentId && ['knowledge.update', 'knowledge.delete', 'knowledge.archive', 'knowledge.restore'].includes(call.name)) {
       state.mutationPending = false;
@@ -493,10 +732,9 @@ function handleRunEvent(event) {
     return;
   }
   if (type === 'tool.started') {
-    const name = event.payload?.name || event.payload?.call?.name || '';
-    if (name === 'note.read') renderStatusLine('正在读取笔记内容…');
-    else if (name === 'knowledge.search') renderStatusLine('正在检索知识库…');
-    else if (name === 'note.propose_edit') renderStatusLine('正在生成修改提案…');
+    const call = payload.call || payload;
+    renderToolStep(realtimeTrace(), { call, payload });
+    renderStatusLine('');
     return;
   }
   if (type === 'note.edit_proposed') {
@@ -510,15 +748,17 @@ function handleRunEvent(event) {
     return;
   }
   if (type === 'run.completed') {
+    finalizeRealtimeTrace('success');
     finishRun();
     renderStatusLine('');
     renderMessage('assistant', String(event.payload?.text || '（无回复）'));
     return;
   }
   if (type === 'run.failed') {
+    const error = String(event.payload?.error || '');
+    finalizeRealtimeTrace(error === 'cancelled' ? 'cancelled' : 'failed');
     finishRun();
     renderStatusLine('');
-    const error = String(event.payload?.error || '');
     if (error && error !== 'cancelled') renderMessage('assistant', `出错了：${error}`);
     else if (error === 'cancelled') renderMessage('assistant', '（已停止）');
     return;
@@ -588,7 +828,7 @@ async function send() {
   syncComposer();
   input().value = '';
   autoResizeNoteComposer();
-  renderMessage('user', text);
+  renderMessage('user', text, { forceFollow: true });
   try {
     const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/messages`, {
       method: 'POST',
@@ -688,18 +928,10 @@ async function switchSession(sessionId) {
     if (!response.ok) throw new Error('会话不存在');
     const data = await response.json().catch(() => ({}));
     if (serial !== contextSerial) return;
-    messagesHost().innerHTML = '';
-    for (const message of data.session?.messages || []) {
-      if (message.role === 'user' || message.role === 'assistant') {
-        renderMessage(message.role, String(message.content || ''));
-      } else if (message.role === 'tool') {
-        let result; try { result = JSON.parse(message.content || '{}'); } catch { result = {}; }
-        renderMessage('assistant', `${message.name || '工具'}：${result.summary || message.content || ''}`);
-        for (const image of result.data?.images || []) if (typeof image.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(image.url)) renderMessage('assistant', `![生成图片](${image.url})`);
-      }
-    }
+    const trailingTrace = renderSessionMessages(data.session?.messages || []);
     if (data.activeRun && ACTIVE_RUN_STATES.has(data.activeRun.status)) {
       state.runId = data.activeRun.id;
+      attachTrailingTrace(trailingTrace, data.activeRun.id);
       subscribeRun(data.activeRun.id);
     } else {
       syncComposer();

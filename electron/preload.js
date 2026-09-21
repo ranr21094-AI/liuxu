@@ -77,4 +77,12 @@ const remote = Object.freeze({
   quit: () => remoteInvoke('quit'),
 });
 
-contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote }));
+function knowledgeFolderInvoke(channel, payload) {
+  return ipcRenderer.invoke(`liuxu:knowledge-folder:${channel}`, payload || {});
+}
+const knowledgeFolder = Object.freeze({
+  chooseRoot: currentPath => knowledgeFolderInvoke('choose', { currentPath }),
+  openRoot: path => knowledgeFolderInvoke('open', { path }),
+});
+
+contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote, knowledgeFolder }));

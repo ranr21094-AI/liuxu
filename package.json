@@ -1,6 +1,6 @@
 {
   "name": "work-log",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "LiuXu is a local-first personal AI workspace for knowledge, memory, and tasks.",
   "author": "LiuXu Contributors",
   "main": "electron/main.js",
@@ -19,6 +19,7 @@
     "desktop:icon:mac": "node scripts/build-mac-icon.mjs",
     "perf:baseline": "node scripts/perf-baseline.mjs",
     "perf:check": "node scripts/perf-check.mjs",
+    "knowledge:migrate-folder": "node scripts/migrate-knowledge-folder.cjs",
     "test": "npm run build && node --test --test-concurrency=1",
     "test:note-browser:electron": "node scripts/run-note-browser-electron.cjs",
     "todo:reminder:test": "node scripts/send-todo-reminder-mail.js"

@@ -13,3 +13,7 @@ export function isDesktopRuntime() {
 export function getDesktopRemoteAccess() {
   return window.liuxuDesktop?.remote || null;
 }
+
+export function getDesktopKnowledgeFolder() {
+  return window.liuxuDesktop?.knowledgeFolder || null;
+}

@@ -41,6 +41,38 @@ test('workspace zip export includes binaries and restores them', async (t) => {
   assert.equal(restoredKnowledge.allDocuments()[0].title, 'ZIP 知识');
 });
 
+test('workspace zip carries the portable knowledge folder tree and restores it to the configured local root', async (t) => {
+  const { db, dir } = createTempDatabase(t, 'workspace-folder-source-');
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-folder-source-root-'));
+  t.after(() => fs.rmSync(sourceRoot, { recursive: true, force: true }));
+  const sourceKnowledge = createKnowledgeService(db);
+  sourceKnowledge.createNote({ title: '本地笔记', content: '来自文件夹', knowledgeBase: '资料' });
+  sourceKnowledge.folderSync.migrateAll({ rootPath: sourceRoot });
+  sourceKnowledge.folderSync.stop();
+  fs.mkdirSync(path.join(sourceRoot, '资料', '空文件夹'), { recursive: true });
+
+  const buffer = await exportWorkspace(db);
+  const zip = await JSZip.loadAsync(buffer);
+  assert.ok(zip.file('knowledge-folder/资料/本地笔记.md'));
+  assert.ok(zip.folder('knowledge-folder/资料/空文件夹'));
+  const workspace = JSON.parse(await zip.file('workspace.json').async('string'));
+  assert.deepEqual(workspace.knowledgeFolder, { included: true, portable: true });
+  assert.equal(JSON.stringify(workspace).includes(sourceRoot), false);
+
+  const { db: targetDb, dir: targetDir } = createTempDatabase(t, 'workspace-folder-target-');
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-folder-target-root-'));
+  t.after(() => fs.rmSync(targetRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(targetRoot, 'before.txt'), 'keep in restore backup');
+  fs.writeFileSync(path.join(targetDir, '.knowledge-folder.json'), JSON.stringify({ enabled: true, rootPath: targetRoot }));
+  const result = await restoreWorkspace(targetDb, buffer, 'replace');
+  assert.equal(result.knowledgeFolderRestored, true);
+  assert.ok(result.knowledgeFolderBackupPath);
+  assert.equal(fs.readFileSync(path.join(targetRoot, '资料', '本地笔记.md'), 'utf8').includes('来自文件夹'), true);
+  assert.equal(fs.existsSync(path.join(targetRoot, '资料', '空文件夹')), true);
+  assert.equal(fs.readFileSync(path.join(result.knowledgeFolderBackupPath, 'before.txt'), 'utf8'), 'keep in restore backup');
+  fs.rmSync(result.knowledgeFolderBackupPath, { recursive: true, force: true });
+});
+
 test('SQLite workspace replace does not replay incompatible compatibility JSON', async (t) => {
   const { db } = tempDb(t);
   const zip = await JSZip.loadAsync(await exportWorkspace(db));

@@ -4,6 +4,22 @@ import { renderToHtmlUncached } from '../markdown.js';
 const WIKI_LINK_RE = /\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g;
 const DOCUMENT_ID_RE = /^(?:note|file):[1-9]\d*$/;
 
+function rewriteRelativeImages(markdown, documentId) {
+  if (!DOCUMENT_ID_RE.test(String(documentId || ''))) return markdown;
+  return String(markdown || '').replace(/(!\[[^\]\n]*\]\(\s*)(<?)([^)\s>]+)(>?)([^)]*\))/g, (raw, prefix, left, source, right, suffix) => {
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(source)) return raw;
+    const match = source.match(/^([^?#]*)([?#].*)?$/);
+    if (!match?.[1]) return raw;
+    let pathname;
+    try {
+      pathname = match[1].split('/').map(segment => encodeURIComponent(decodeURIComponent(segment))).join('/');
+    } catch {
+      return raw;
+    }
+    return `${prefix}${left}/api/knowledge/assets/${encodeURIComponent(documentId)}/${pathname}${match[2] || ''}${right}${suffix}`;
+  });
+}
+
 function safeLabel(value) {
   return String(value || '').replace(/\|/g, '｜').replace(/\]\]/g, '］］').replace(/\r?\n/g, ' ').trim().slice(0, 200);
 }
@@ -41,7 +57,7 @@ export function renderKnowledgeMarkdown(value, options = {}) {
     position += chunk.length;
     return result;
   }).join('');
-  return renderToHtmlUncached(transformed);
+  return renderToHtmlUncached(rewriteRelativeImages(transformed, options.documentId));
 }
 
 export function bindKnowledgeLinkClicks(host, navigate) {

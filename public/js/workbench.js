@@ -27,8 +27,7 @@ import { createBackupActions } from './workbench-backup.js';
 import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
 import { scheduleRender } from './app/render-scheduler.js';
-import { getDesktopUpdates } from './desktop/bridge.js';
-import { getDesktopRemoteAccess } from './desktop/bridge.js';
+import { getDesktopUpdates, getDesktopRemoteAccess, getDesktopKnowledgeFolder } from './desktop/bridge.js';
 import { initializeRemoteSession, isRemoteClient, logoutRemoteSession } from './remote-access.js';
 import {
   ensureModelUiId,
@@ -98,6 +97,8 @@ const state = {
   pendingAttachments: [],
   computerPolicy: { computerToolsEnabled: true, allowedDirectories: [] },
   remoteAccess: null,
+  knowledgeSync: null,
+  knowledgeSyncLoading: false,
 };
 
 const RENDERED_TERMINAL_RUN_LIMIT = 32;
@@ -376,6 +377,7 @@ function renderDocumentPreview() {
   knowledgeLinkCleanup = null;
   host.innerHTML = renderKnowledgeMarkdown($('#documentContent').value || '*暂无正文*', {
     outgoingLinks: state.activeDocument?.outgoingLinks || [],
+    documentId: state.activeDocument?.id || '',
   });
   documentPreviewCleanup = enableMarkdownImagePreview(host, '.markdown-preview img');
   knowledgeLinkCleanup = bindKnowledgeLinkClicks(host, navigate);
@@ -1787,6 +1789,157 @@ async function loadAgentSettingsForm() {
   }
 }
 
+function knowledgeFolderBridge() { return getDesktopKnowledgeFolder(); }
+
+function formatSyncTime(value) {
+  const date = new Date(value || 0);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(date);
+}
+
+function renderKnowledgeSyncStatus() {
+  const sync = state.knowledgeSync;
+  const sidebar = $('#knowledgeSyncStatus');
+  const status = $('#knowledgeFolderStatus');
+  const pathInput = $('#knowledgeFolderPath');
+  const bridge = knowledgeFolderBridge();
+  const labels = {
+    disabled: '本地文件夹尚未启用',
+    needs_migration: '等待迁移现有知识',
+    syncing: '正在同步本地文件…',
+    idle: sync?.lastSyncAt ? `已同步 · ${formatSyncTime(sync.lastSyncAt)}` : '本地同步已就绪',
+    warning: '同步完成，但有文件需要处理',
+    error: '同步已暂停',
+  };
+  const label = sync ? (labels[sync.status] || sync.status || '同步状态未知') : '正在读取同步状态…';
+  if (sidebar) {
+    sidebar.querySelector('span:last-child').textContent = label;
+    sidebar.classList.toggle('error', sync?.status === 'error' || sync?.status === 'warning');
+  }
+  if (status) status.textContent = [label, sync?.error].filter(Boolean).join('：');
+  if (pathInput) pathInput.value = sync?.rootPath || sync?.defaultRootPath || '';
+  $('#openKnowledgeFolderButton')?.toggleAttribute('hidden', !bridge || !sync?.enabled);
+  if ($('#knowledgeFolderDesktopActions')) $('#knowledgeFolderDesktopActions').hidden = !bridge;
+  const errorSection = $('#knowledgeSyncErrorSection');
+  const errorHost = $('#knowledgeSyncError');
+  const errors = sync?.report?.errors || [];
+  if (errorSection) errorSection.hidden = !sync?.error && !errors.length;
+  if (errorHost) errorHost.textContent = [sync?.error, ...errors.map(item => `${item.path || item.id || '条目'}：${item.error}`)].filter(Boolean).join('\n');
+  const drafts = $('#knowledgeConflictDrafts');
+  if (drafts) {
+    drafts.innerHTML = sync?.drafts?.length ? sync.drafts.map(item => `
+      <div class="knowledge-conflict-draft">
+        <span><strong>${escHtml(item.title || item.documentId || '未命名草稿')}</strong><small>${escHtml(item.reason || '')} · ${escHtml(formatMessageTime(item.createdAt))}</small></span>
+        <button type="button" class="secondary-action compact" data-knowledge-draft="${escHtml(item.id)}">恢复到编辑器</button>
+      </div>`).join('') : '<p class="empty-list">没有冲突草稿</p>';
+  }
+}
+
+async function reconcileKnowledgeSync(previousGeneration) {
+  const sync = state.knowledgeSync;
+  if (!sync || previousGeneration == null || sync.generation === previousGeneration || state.mode !== 'knowledge') return;
+  const id = state.activeDocument?.id;
+  if (id) {
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
+    const current = await response.json().catch(() => ({}));
+    if (response.status === 404 || response.status === 403) {
+      showEmptyDocument();
+      showToast('本地文件已删除，知识条目已同步移除', 'error');
+    } else if (response.ok && Number(current.version) !== Number(state.activeDocument?.version)) {
+      if (state.documentDirty) {
+        await apiFetch('/api/knowledge/sync/drafts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ documentId: id, draft: currentDocumentPatch(), reason: '本地文件已更新' }),
+        }).catch(() => {});
+        showToast('本地文件已更新；未保存内容已放入冲突草稿', 'error');
+      } else {
+        showToast('已载入本地文件的最新内容', 'success');
+      }
+      await renderActiveDocument(current);
+    }
+  }
+  await loadKnowledgeTree();
+  await loadDocuments({ refreshTree: false });
+}
+
+async function loadKnowledgeSyncStatus({ reconcile = false } = {}) {
+  if (state.knowledgeSyncLoading) return state.knowledgeSync;
+  state.knowledgeSyncLoading = true;
+  const previousGeneration = state.knowledgeSync?.generation;
+  try {
+    const response = await apiFetch('/api/knowledge/sync/status');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '无法读取同步状态');
+    state.knowledgeSync = data;
+    renderKnowledgeSyncStatus();
+    if (reconcile) await reconcileKnowledgeSync(previousGeneration);
+    return data;
+  } finally {
+    state.knowledgeSyncLoading = false;
+  }
+}
+
+async function syncKnowledgeFolder() {
+  const button = $('#syncKnowledgeFolderButton');
+  if (button) button.disabled = true;
+  try {
+    const response = await apiFetch('/api/knowledge/sync', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '知识库同步失败');
+    const previousGeneration = state.knowledgeSync?.generation;
+    state.knowledgeSync = data;
+    renderKnowledgeSyncStatus();
+    await reconcileKnowledgeSync(previousGeneration);
+    showToast('本地知识库已同步', 'success');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function openKnowledgeFolder() {
+  const bridge = knowledgeFolderBridge();
+  if (!bridge || !state.knowledgeSync?.rootPath) throw new Error('请在桌面版中打开知识库文件夹');
+  await bridge.openRoot(state.knowledgeSync.rootPath);
+}
+
+async function chooseKnowledgeFolder() {
+  const bridge = knowledgeFolderBridge();
+  if (!bridge) throw new Error('知识库根目录只能在电脑端修改');
+  const picked = await bridge.chooseRoot(state.knowledgeSync?.rootPath || state.knowledgeSync?.defaultRootPath || '');
+  if (picked.cancelled || !picked.path) return;
+  const response = await apiFetch('/api/knowledge/sync/migrate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rootPath: picked.path }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '知识库迁移失败');
+  state.knowledgeSync = data.status;
+  renderKnowledgeSyncStatus();
+  await loadKnowledgeTree();
+  await loadDocuments();
+  showToast(`已迁移 ${data.report?.documents || 0} 个条目`, 'success');
+}
+
+async function restoreKnowledgeDraft(id) {
+  const response = await apiFetch(`/api/knowledge/sync/drafts/${encodeURIComponent(id)}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '草稿读取失败');
+  const documentId = data.documentId;
+  if (!documentId) throw new Error('草稿没有对应文档');
+  if (state.activeDocument?.id !== documentId) await navigate('knowledge', documentId);
+  const draft = data.draft || {};
+  if (draft.title != null) $('#documentTitle').value = draft.title;
+  if (draft.content != null) $('#documentContent').value = draft.content;
+  if (draft.knowledgeBase != null) $('#documentKnowledgeBase').value = draft.knowledgeBase;
+  if (draft.folderPath != null) $('#documentFolderPath').value = draft.folderPath;
+  if (draft.documentDate != null) $('#documentDate').value = draft.documentDate;
+  if (Array.isArray(draft.tags)) $('#documentTags').value = draft.tags.join(', ');
+  state.documentConflict = false;
+  scheduleDocumentSave();
+  renderDocumentPreview();
+  $('#settingsDialog').close();
+  showToast('冲突草稿已恢复到编辑器，将按当前本地版本保存', 'success');
+}
+
 function setSettingsPanel(panel) {
   const allowed = ['appearance', 'sessions', 'model', 'updates', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'remote'];
   const next = allowed.includes(panel) ? panel : 'appearance';
@@ -1802,7 +1955,10 @@ function setSettingsPanel(panel) {
   const saveButton = $('#saveAgentSettings');
   if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data' || next === 'updates' || next === 'remote';
   if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
-  if (next === 'knowledge') fillKnowledgeSearchOptionsForm();
+  if (next === 'knowledge') {
+    fillKnowledgeSearchOptionsForm();
+    loadKnowledgeSyncStatus().catch(error => showToast(error.message, 'error'));
+  }
   if (next === 'updates') loadDesktopUpdateInfo().catch(error => renderDesktopUpdateError(error));
   if (next === 'remote') loadRemoteAccessSettings().catch(error => showToast(error.message, 'error'));
 }
@@ -4751,6 +4907,18 @@ function scheduleDocumentSave() {
 async function resolveDocumentConflict(current) {
   state.documentConflict = true;
   setDocumentSaveState('保存冲突', 'error');
+  if (state.knowledgeSync?.enabled && current) {
+    const draft = currentDocumentPatch();
+    await apiFetch('/api/knowledge/sync/drafts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentId: state.activeDocument?.id, draft, reason: '本地文件已更新' }),
+    }).catch(() => {});
+    await renderActiveDocument(current);
+    await loadKnowledgeSyncStatus().catch(() => {});
+    showToast('本地文件版本已载入；未保存内容已放入冲突草稿', 'error');
+    return true;
+  }
   const reload = await confirmAction({
     title: '文档已在其他位置修改',
     message: '重新加载会显示服务器上的最新版本；取消可保留当前输入，方便先复制未保存内容。',
@@ -5549,6 +5717,16 @@ function bindEvents() {
     showToast('私密知识已解锁', 'success');
   });
   $('#settingsButton')?.addEventListener('click', () => openSettings('appearance').catch(error => showToast(error.message, 'error')));
+  $('#knowledgeSyncStatus')?.addEventListener('click', () => openSettings('knowledge').catch(error => showToast(error.message, 'error')));
+  $('#syncKnowledgeFolderButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#syncKnowledgeFolderSettingsButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#openKnowledgeFolderButton')?.addEventListener('click', () => openKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#openKnowledgeFolderSettingsButton')?.addEventListener('click', () => openKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#chooseKnowledgeFolderButton')?.addEventListener('click', () => chooseKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#knowledgeConflictDrafts')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-knowledge-draft]');
+    if (button) restoreKnowledgeDraft(button.dataset.knowledgeDraft).catch(error => showToast(error.message, 'error'));
+  });
   composerModelSelects().forEach(select => {
     select.addEventListener('change', event => {
       quickSaveAgentModel(event.target.value).catch(error => showToast(error.message, 'error'));
@@ -5920,12 +6098,17 @@ async function initialize() {
   const savedTheme = localStorage.getItem('theme');
   $('#themeSelect').value = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'system';
   await Promise.all([syncDiaryStatus(), loadAgentStatus(), loadComposerModelOptions()]);
-  await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount()]);
+  await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount(), loadKnowledgeSyncStatus()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();
   window.setInterval(() => {
     if ($('#settingsDialog')?.open && state.settingsPanel === 'remote' && remoteBridge()) loadRemoteAccessSettings().catch(() => {});
   }, 2000);
+  window.setInterval(() => {
+    if (state.mode === 'knowledge' || ($('#settingsDialog')?.open && state.settingsPanel === 'knowledge')) {
+      loadKnowledgeSyncStatus({ reconcile: true }).catch(() => {});
+    }
+  }, 4000);
 }
 
 initialize().catch(error => {
