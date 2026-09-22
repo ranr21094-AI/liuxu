@@ -18,6 +18,16 @@ function normalizeAddress(value) {
   if (/^[\w.-]+(?::\d+)?(?:\/|$)/.test(text)) return `https://${text}`;
   return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
 }
+function normalizeRuntimeUrl(value) {
+  try {
+    const url = new URL(String(value || ''), window.location.href);
+    if ((url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+      && url.pathname.startsWith('/api/knowledge/files/')) {
+      return `${window.location.origin}${url.pathname}${url.search}${url.hash}`;
+    }
+    return url.href;
+  } catch { return String(value || ''); }
+}
 function loadRecords() {
   try { const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); return value && typeof value === 'object' ? value : {}; } catch { return {}; }
 }
@@ -91,9 +101,29 @@ function render() {
 }
 function escapeHtml(value) { const node = document.createElement('span'); node.textContent = String(value || ''); return node.innerHTML; }
 async function openTab(url) {
-  const tab = await desktopBrowser().open({ documentId: state.documentId, url: normalizeAddress(url) });
+  const tab = await desktopBrowser().open({ documentId: state.documentId, url: normalizeRuntimeUrl(normalizeAddress(url)) });
   state.hydrated.add(state.documentId);
   upsertTab(tab, { select: true });
+}
+
+export function noteBrowserOpenUrl(url) {
+  if (!state || state.destroyed || state.loading || !desktopBrowser() || !state.documentId) return false;
+  let target;
+  try { target = normalizeRuntimeUrl(url); } catch { return false; }
+  const current = record();
+  current.open = true;
+  const existing = current.tabs.find(tab => tab.url === target);
+  if (existing) {
+    current.activeTabId = existing.id;
+    saveRecords();
+    render();
+    syncNative();
+  } else {
+    saveRecords();
+    render();
+    openTab(target).catch(state.onError);
+  }
+  return true;
 }
 async function hydrateDocument() {
   const current = record();

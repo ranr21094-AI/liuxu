@@ -55,6 +55,22 @@ test('browser sidebar keeps independent multi-tab state for each note', async ()
   } finally { cleanup(ctx); }
 });
 
+test('original files open in the current note browser sidebar and reuse their tab', async () => {
+  const ctx = setup();
+  try {
+    const browser = await load(); ctx.controller = browser.initNoteBrowser();
+    browser.noteBrowserSetDocument({ id: 'file:7', status: 'active' });
+    assert.equal(browser.noteBrowserOpenUrl('/api/knowledge/files/file%3A7/content'), true);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(ctx.calls.opened.length, 1);
+    assert.equal(ctx.calls.opened[0].url, 'http://127.0.0.1/api/knowledge/files/file%3A7/content');
+    assert.equal(document.querySelector('#noteBrowserPanel').hidden, false);
+    assert.equal(browser.noteBrowserOpenUrl('/api/knowledge/files/file%3A7/content'), true);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(ctx.calls.opened.length, 1);
+  } finally { cleanup(ctx); }
+});
+
 test('sidebar normalizes search text, resizes by keyboard, and clears restored workspace state', async () => {
   const ctx = setup();
   try {

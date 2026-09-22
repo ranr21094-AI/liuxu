@@ -47,3 +47,12 @@ test('knowledge folder image assets pass the image allowlist with path validatio
   assert.equal(isSafeImageSrc('/api/knowledge/assets/agent%3A1/photo.png'), false);
   assert.equal(isSafeImageSrc('/api/knowledge/documents/note%3A329/photo.png'), false);
 });
+
+test('knowledge preview normalizes dot-relative images before the safety allowlist', async () => {
+  const { rewriteRelativeImages } = await import(`../public/js/knowledge/links-history.js?relative-image=${Date.now()}`);
+  assert.equal(
+    rewriteRelativeImages('![岗位](./岗位职责.png)', 'note:329'),
+    '![岗位](/api/knowledge/assets/note%3A329/%E5%B2%97%E4%BD%8D%E8%81%8C%E8%B4%A3.png)',
+  );
+  assert.equal(rewriteRelativeImages('![越界](../secret.png)', 'note:329'), '![越界](../secret.png)');
+});

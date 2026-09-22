@@ -17,7 +17,7 @@ import {
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
 import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
-import { initNoteBrowser, noteBrowserSetDocument, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
+import { initNoteBrowser, noteBrowserSetDocument, noteBrowserOpenUrl, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
 import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
 import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
@@ -4771,7 +4771,9 @@ async function renderFileOriginalPanel(document) {
   const metaParts = [formatBytes(meta.bytes)];
   if (document.status === 'needs_ocr') metaParts.push('扫描型 PDF');
   $('#fileMeta').textContent = metaParts.filter(Boolean).join(' · ');
-  $('#openOriginalFile').href = meta.url || `/api/knowledge/files/${encodeURIComponent(document.id)}/content`;
+  const openOriginal = $('#openOriginalFile');
+  openOriginal.href = meta.url || `/api/knowledge/files/${encodeURIComponent(document.id)}/content`;
+  openOriginal.textContent = window.liuxuDesktop?.browser ? '在侧栏打开' : '打开原文件';
   await renderFilePreview(document, $('#filePreviewHost'));
 }
 
@@ -5991,6 +5993,10 @@ function bindEvents() {
     },
   });
   initNoteBrowser({ onError: error => showToast(error.message || '浏览器操作失败', 'error') });
+  $('#openOriginalFile')?.addEventListener('click', event => {
+    if (!noteBrowserOpenUrl(event.currentTarget.href)) return;
+    event.preventDefault();
+  });
   initNoteAssistant({ renderMarkdown, approvalBodyHtml, relayClientToolRequest, handleMemoryProposalAction, beforeMutation: beforeNoteMutation, afterMutation: afterNoteMutation, applyEdit: applyNoteAssistantEdit, ensureDocument: async documentId => {
     if (!documentId) throw new Error('缺少关联文档');
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`);

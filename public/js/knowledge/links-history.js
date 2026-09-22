@@ -4,7 +4,7 @@ import { renderToHtmlUncached } from '../markdown.js';
 const WIKI_LINK_RE = /\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g;
 const DOCUMENT_ID_RE = /^(?:note|file):[1-9]\d*$/;
 
-function rewriteRelativeImages(markdown, documentId) {
+export function rewriteRelativeImages(markdown, documentId) {
   if (!DOCUMENT_ID_RE.test(String(documentId || ''))) return markdown;
   return String(markdown || '').replace(/(!\[[^\]\n]*\]\(\s*)(<?)([^)\s>]+)(>?)([^)]*\))/g, (raw, prefix, left, source, right, suffix) => {
     if (/^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(source)) return raw;
@@ -12,7 +12,10 @@ function rewriteRelativeImages(markdown, documentId) {
     if (!match?.[1]) return raw;
     let pathname;
     try {
-      pathname = match[1].split('/').map(segment => encodeURIComponent(decodeURIComponent(segment))).join('/');
+      const segments = match[1].split('/').map(segment => decodeURIComponent(segment));
+      while (segments[0] === '.') segments.shift();
+      if (!segments.length || segments.some(segment => !segment || segment === '.' || segment === '..' || /[\\/\0]/.test(segment))) return raw;
+      pathname = segments.map(segment => encodeURIComponent(segment)).join('/');
     } catch {
       return raw;
     }

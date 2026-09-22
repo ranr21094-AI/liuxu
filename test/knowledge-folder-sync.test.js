@@ -81,6 +81,24 @@ test('external edits, moves, additions and deletes reconcile by stable id', asyn
   assert.equal(knowledge.getDocument(note.id, { diaryUnlocked: true }), null);
 });
 
+test('external note moves copy relative image dependencies into the new folder', async (t) => {
+  const { dir, root, knowledge } = setup(t);
+  fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'uploads', '岗位.png'), Buffer.from('role-image'));
+  const note = knowledge.createNote({ title: '岗位职责', content: '![岗位](/uploads/%E5%B2%97%E4%BD%8D.png)', knowledgeBase: '工作' }).document;
+  knowledge.folderSync.migrateAll({ rootPath: root });
+  const originalPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+  const movedDirectory = path.join(root, '工作', '岗位文件');
+  fs.mkdirSync(movedDirectory, { recursive: true });
+  const movedPath = path.join(movedDirectory, path.basename(originalPath));
+  fs.renameSync(originalPath, movedPath);
+
+  await knowledge.folderSync.syncNow({ reason: 'move-note-with-image' });
+
+  assert.deepEqual(fs.readFileSync(path.join(movedDirectory, '岗位.png')), Buffer.from('role-image'));
+  assert.match(knowledge.getDocument(note.id, { diaryUnlocked: true }).content, /\.\/%E5%B2%97%E4%BD%8D\.png/);
+});
+
 test('sync backfills database-only notes and copies legacy HTML images as local Markdown assets', async (t) => {
   const { dir, root, knowledge } = setup(t);
   const existing = knowledge.createNote({ title: '已有笔记', content: '用于启用本地同步' }).document;
