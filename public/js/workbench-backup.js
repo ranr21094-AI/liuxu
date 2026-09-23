@@ -7,6 +7,15 @@ function filenameFromDisposition(disposition, fallback) {
 }
 
 async function downloadApiExport(url, fallbackName) {
+  if (url === '/api/workspace/export') {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
   const response = await apiFetch(url);
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));

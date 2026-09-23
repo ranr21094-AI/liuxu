@@ -15,7 +15,7 @@ import {
   showToast,
   renderPreservingFocus,
 } from './helpers.js';
-import { destroyFilePreview, renderFilePreview } from './knowledge/filePreview.js';
+import { destroyFilePreview, renderFilePreview, setFileReaderTab } from './knowledge/filePreview.js';
 import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
 import { initNoteBrowser, noteBrowserSetDocument, noteBrowserOpenUrl, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
 import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
@@ -87,6 +87,8 @@ const state = {
   annotationSaveTimer: null,
   documentDirty: false,
   annotationDirty: false,
+  fileAnnotation: { documentId: '', id: '', version: 0, title: '', content: '', dirty: false },
+  fileAnnotationDrafts: new Map(),
   documentConflict: false,
   editorMode: 'edit',
   routeSerial: 0,
@@ -4738,9 +4740,13 @@ async function renderActiveDocument(document) {
   $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ');
   setDocumentSaveState('已保存');
   const isFile = document.sourceType === 'file';
+  $('#documentWorkspace').classList.toggle('is-file-document', isFile);
   $('#noteEditor').hidden = false;
+  $('#noteEditor').hidden = isFile;
+  $('#knowledgeLinkIssues').hidden = isFile;
+  $('#knowledgeRelations').hidden = isFile;
   $('#fileOriginalPanel').hidden = !isFile;
-  $('#editorModeSwitch').hidden = false;
+  $('#editorModeSwitch').hidden = isFile;
   $('#archiveDocumentButton').hidden = document.status === 'archived';
   $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
@@ -4750,7 +4756,7 @@ async function renderActiveDocument(document) {
   $('#documentTags').readOnly = document.status === 'archived';
   $('#documentContent').readOnly = document.status === 'archived';
   setEditorMode('edit');
-  if (isFile) await renderFileOriginalPanel(document);
+  if (isFile) renderFileOriginalPanel(document);
   else destroyFilePreview();
   renderKnowledgeBaseList();
   renderKnowledgeTree();
@@ -4765,16 +4771,85 @@ async function renderActiveDocument(document) {
   });
 }
 
-async function renderFileOriginalPanel(document) {
+function renderFileOriginalPanel(document) {
   const meta = document.fileMeta || {};
   $('#fileName').textContent = meta.filename || document.title || '文件';
   const metaParts = [formatBytes(meta.bytes)];
   if (document.status === 'needs_ocr') metaParts.push('扫描型 PDF');
+  if (meta.previewLimited) metaParts.push('原文保留，预览解析受限');
   $('#fileMeta').textContent = metaParts.filter(Boolean).join(' · ');
   const openOriginal = $('#openOriginalFile');
-  openOriginal.href = meta.url || `/api/knowledge/files/${encodeURIComponent(document.id)}/content`;
-  openOriginal.textContent = window.liuxuDesktop?.browser ? '在侧栏打开' : '打开原文件';
-  await renderFilePreview(document, $('#filePreviewHost'));
+  const localFiles = window.liuxuDesktop?.knowledgeFiles;
+  openOriginal.hidden = !localFiles?.openPath;
+  openOriginal.onclick = async () => {
+    try {
+      const response = await apiFetch(`/api/knowledge/files/${encodeURIComponent(document.id)}/location`);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '文件位置读取失败');
+      await localFiles.openPath(data.path);
+    } catch (error) { showToast(error.message || '系统打开失败', 'error'); }
+  };
+  const download = $('#downloadOriginalFile');
+  const url = meta.url || `/api/knowledge/files/${encodeURIComponent(document.id)}/content`;
+  download.href = `${url}${url.includes('?') ? '&' : '?'}download=1`;
+  $('#fileAnnotationTitle').value = '';
+  $('#fileAnnotationContent').value = '';
+  state.fileAnnotation = { documentId: document.id, id: '', version: 0, title: '', content: '', dirty: false };
+  setFileReaderTab('preview');
+  void renderFilePreview(document, $('#filePreviewHost'));
+}
+
+async function loadFileAnnotation(documentId) {
+  const draft = state.fileAnnotationDrafts.get(documentId);
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/annotation`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '批注读取失败');
+  if (state.activeDocument?.id !== documentId || state.activeDocument?.sourceType !== 'file') return;
+  const annotation = data.annotation;
+  const local = draft || annotation || {};
+  state.fileAnnotation = {
+    documentId,
+    id: annotation?.id || '',
+    version: Number(annotation?.version) || 0,
+    title: String(local.title || ''),
+    content: String(local.content || ''),
+    dirty: Boolean(draft?.dirty),
+  };
+  $('#fileAnnotationTitle').value = state.fileAnnotation.title;
+  $('#fileAnnotationContent').value = state.fileAnnotation.content;
+  $('#fileAnnotationState').textContent = state.fileAnnotation.dirty ? '有未保存修改' : (annotation ? '已保存' : '尚无批注');
+}
+
+async function saveFileAnnotation() {
+  const document = state.activeDocument;
+  const current = state.fileAnnotation;
+  if (!document || document.sourceType !== 'file' || current.documentId !== document.id) return;
+  const title = $('#fileAnnotationTitle').value.trim();
+  const content = $('#fileAnnotationContent').value;
+  if (!current.id && !title && !content.trim()) {
+    $('#fileAnnotationState').textContent = '尚无批注';
+    return;
+  }
+  $('#saveFileAnnotation').disabled = true;
+  $('#fileAnnotationState').textContent = '正在保存…';
+  try {
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/annotation`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content, baseVersion: current.id ? current.version : undefined }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '批注保存失败');
+    const annotation = data.annotation || data.document || data;
+    state.fileAnnotation = { documentId: document.id, id: annotation.id || current.id, version: Number(annotation.version) || current.version, title, content, dirty: false };
+    state.fileAnnotationDrafts.delete(document.id);
+    $('#fileAnnotationState').textContent = '已保存';
+    showToast('批注已保存', 'success');
+  } catch (error) {
+    state.fileAnnotation = { ...current, title, content, dirty: true };
+    state.fileAnnotationDrafts.set(document.id, state.fileAnnotation);
+    $('#fileAnnotationState').textContent = '保存失败，草稿已保留';
+    showToast(error.message, 'error');
+  } finally { $('#saveFileAnnotation').disabled = false; }
 }
 
 async function openKnowledgeDocument(id, { block = '', offset = 0, serial = state.routeSerial } = {}) {
@@ -5634,6 +5709,31 @@ function bindEvents() {
     event.target.value = '';
     if (file) importKnowledgeFile(file);
   });
+  $('#fileReaderTabs')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-file-reader-tab]');
+    if (!button) return;
+    const tab = button.dataset.fileReaderTab;
+    setFileReaderTab(tab);
+    if (tab === 'annotation' && state.activeDocument?.sourceType === 'file') {
+      loadFileAnnotation(state.activeDocument.id).catch(error => showToast(error.message, 'error'));
+    }
+  });
+  for (const selector of ['#fileAnnotationTitle', '#fileAnnotationContent']) {
+    $(selector)?.addEventListener('input', () => {
+      const documentId = state.activeDocument?.id;
+      if (!documentId || state.activeDocument?.sourceType !== 'file') return;
+      state.fileAnnotation = {
+        ...state.fileAnnotation,
+        documentId,
+        title: $('#fileAnnotationTitle').value,
+        content: $('#fileAnnotationContent').value,
+        dirty: true,
+      };
+      state.fileAnnotationDrafts.set(documentId, state.fileAnnotation);
+      $('#fileAnnotationState').textContent = '有未保存修改';
+    });
+  }
+  $('#saveFileAnnotation')?.addEventListener('click', () => saveFileAnnotation().catch(error => showToast(error.message, 'error')));
   $('#knowledgeLoadMore').addEventListener('click', () => loadDocuments({ append: true }).catch(error => showToast(error.message, 'error')));
   ['documentTitle', 'documentDate', 'documentTags', 'documentContent'].forEach(id => {
     $(`#${id}`).addEventListener('input', () => {

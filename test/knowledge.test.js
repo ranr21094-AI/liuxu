@@ -8,7 +8,8 @@ const { ensureLogsMigrated } = require('../lib/knowledge/migrate-logs');
 const { createSearchIndex } = require('../lib/knowledge/search');
 const { treeForDocuments, documentSummary } = require('../lib/knowledge/routes');
 const { filterDocuments } = require('../lib/knowledge/filters');
-const { extractText, inferPreviewKind } = require('../lib/knowledge/import');
+const { extractText, inferPreviewKind, validateOfficeArchive } = require('../lib/knowledge/import');
+const { fileKind } = require('../lib/knowledge/file-formats');
 const { chunkDocument } = require('../lib/knowledge/chunk');
 const { decodeUploadedFilename, contentDisposition } = require('../lib/util/filename');
 
@@ -234,7 +235,26 @@ test('image imports are recognized and stored with preview metadata', async (t) 
   assert.ok(knowledge.filePathFor(saved));
 });
 
-test('docx imports produce searchable text and formatted preview html', async () => {
+test('file registry resolves Office MIME types precisely and validates package structure', async t => {
+  assert.equal(fileKind('quarterly.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').previewKind, 'spreadsheet');
+  assert.equal(fileKind('slides.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation').previewKind, 'presentation');
+  assert.equal(fileKind('brief.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document').previewKind, 'docx');
+  assert.equal(fileKind('extensionless', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').ext, '.xlsx');
+
+  const JSZip = require('jszip');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'liuxu-office-check-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const workbook = new JSZip(); workbook.file('xl/workbook.xml', '<workbook/>');
+  const validPath = path.join(directory, 'report.xlsx');
+  fs.writeFileSync(validPath, await workbook.generateAsync({ type: 'nodebuffer' }));
+  const result = await validateOfficeArchive(validPath, '.xlsx');
+  assert.ok(result.entries >= 1);
+  const wrongPath = path.join(directory, 'report-as-word.docx');
+  fs.copyFileSync(validPath, wrongPath);
+  await assert.rejects(validateOfficeArchive(wrongPath, '.docx'), /type|Office/);
+});
+
+test('docx imports produce searchable text without storing clipped preview markup', async () => {
   const JSZip = require('jszip');
   const zip = new JSZip();
   zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -255,10 +275,10 @@ test('docx imports produce searchable text and formatted preview html', async ()
   const extracted = await extractText(buffer, 'brief.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   assert.equal(extracted.previewKind, 'docx');
   assert.match(extracted.text, /预览正文/);
-  assert.match(extracted.previewHtml, /预览正文/);
+  assert.equal(extracted.previewHtml, '');
 });
 
-test('docx imports embed images as data uris in preview html', async () => {
+test('docx import leaves layout and image rendering to the local reader', async () => {
   const JSZip = require('jszip');
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
   const zip = new JSZip();
@@ -306,8 +326,8 @@ test('docx imports embed images as data uris in preview html', async () => {
   const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
   const extracted = await extractText(buffer, 'image.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   assert.equal(extracted.previewKind, 'docx');
-  assert.match(extracted.previewHtml, /data:image\/png;base64,/);
-  assert.match(extracted.previewHtml, /<img\b/i);
+  assert.equal(extracted.previewHtml, '');
+  assert.equal(extracted.text.trim(), '图文');
 });
 
 test('imported files keep Unicode stored filenames', (t) => {

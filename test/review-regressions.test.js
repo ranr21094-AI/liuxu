@@ -46,19 +46,50 @@ for (const stale of [false, true]) test(`legacy ZIP imports structures and knowl
 test('native ZIP ignores oversized redundant JSON for replacement and merge', async t => {
   const source = dbFor(t); const knowledge = createKnowledgeService(source);
   for (let i = 0; i < 22; i++) knowledge.createNote({ title: `large ${i}`, content: 'x'.repeat(490000) });
-  const backup = await exportWorkspace(source);
-  const zip = await JSZip.loadAsync(backup);
+  const backup = await exportWorkspace(source, { fileResult: true });
+  t.after(() => fs.rmSync(backup.cleanupPath, { recursive: true, force: true }));
+  const zip = await JSZip.loadAsync(fs.readFileSync(backup.path));
   assert.ok((await zip.file('knowledge-documents.json').async('nodebuffer')).length > 10 * 1024 * 1024);
   for (const mode of ['replace', 'merge']) {
-    const target = dbFor(t); await restoreWorkspace(target, backup, mode);
+    const target = dbFor(t); await restoreWorkspace(target, backup.path, mode);
     assert.equal(createKnowledgeService(target).nativeDocuments().length, 22);
   }
 });
 
-test('export rejects attachments larger than the restore limit', async t => {
+test('native SQLite ZIP ignores workspace.json above the legacy JSON limit', async t => {
+  const source = dbFor(t);
+  createKnowledgeService(source).createNote({ title: 'SQLite 权威', content: '来自数据库' });
+  source.sqlite.pragma('wal_checkpoint(TRUNCATE)');
+  const zip = new JSZip();
+  zip.file('workspace.json', JSON.stringify({ redundant: 'x'.repeat(10 * 1024 * 1024 + 1) }));
+  zip.file('schedule.db', fs.readFileSync(path.join(source.dataDir, 'schedule.db')));
+  const archivePath = path.join(root, `large-workspace-${crypto.randomUUID()}.zip`);
+  fs.writeFileSync(archivePath, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+  t.after(() => fs.rmSync(archivePath, { force: true }));
+  const target = dbFor(t);
+  await restoreWorkspace(target, archivePath);
+  assert.equal(createKnowledgeService(target).nativeDocuments()[0].title, 'SQLite 权威');
+});
+
+test('streamed ZIP export can be restored directly from its temporary archive', async t => {
+  const source = dbFor(t);
+  const knowledge = createKnowledgeService(source);
+  knowledge.createNote({ title: '流式恢复', content: '不整包读入内存' });
+  const archive = await exportWorkspace(source, { fileResult: true });
+  t.after(() => fs.rmSync(archive.cleanupPath, { recursive: true, force: true }));
+  assert.equal(typeof archive.path, 'string');
+  assert.ok(archive.size > 0);
+  const target = dbFor(t);
+  await restoreWorkspace(target, archive.path);
+  assert.equal(createKnowledgeService(target).nativeDocuments()[0].title, '流式恢复');
+});
+
+test('export rejects attachments larger than the shared 250 MiB limit', async t => {
   const db = dbFor(t); fs.mkdirSync(path.join(db.dataDir, 'uploads'), { recursive: true });
-  fs.writeFileSync(path.join(db.dataDir, 'uploads', 'huge.bin'), Buffer.alloc(30 * 1024 * 1024 + 1));
-  await assert.rejects(exportWorkspace(db), /too large/);
+  const fd = fs.openSync(path.join(db.dataDir, 'uploads', 'huge.bin'), 'w');
+  fs.ftruncateSync(fd, 250 * 1024 * 1024 + 1);
+  fs.closeSync(fd);
+  await assert.rejects(exportWorkspace(db), /250 MiB file limit/);
 });
 
 test('database replacement discards same-version persisted search index', async t => {

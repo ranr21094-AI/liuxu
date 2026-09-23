@@ -85,4 +85,8 @@ const knowledgeFolder = Object.freeze({
   openRoot: path => knowledgeFolderInvoke('open', { path }),
 });
 
-contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote, knowledgeFolder }));
+const knowledgeFiles = Object.freeze({
+  openPath: path => ipcRenderer.invoke('liuxu:knowledge-file:open-path', { path }),
+});
+
+contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote, knowledgeFolder, knowledgeFiles }));

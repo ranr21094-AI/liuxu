@@ -2640,7 +2640,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /folderRowsHtml/);
   assert.match(source, /params\.set\('folder'/);
   assert.doesNotMatch(source, /#knowledgeFolderTree/);
-  assert.doesNotMatch(source, /#fileReader/);
+  assert.doesNotMatch(source, /#fileReader(?:['"`])/);
   assert.match(source, /documentRowSubtitle/);
   assert.match(source, /knowledgeFiltersActive/);
   assert.match(styles, /\.knowledge-breadcrumb/);
@@ -2651,7 +2651,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#knowledgeView') !== null, true);
   assert.equal(document.querySelector('#annotationContent'), null);
   assert.equal(document.querySelector('#filePreviewHost') !== null, true);
-  assert.equal(document.querySelector('#fileOriginalDetails') !== null, true);
+  assert.equal(document.querySelector('#fileReaderTabs') !== null, true);
   assert.equal(document.querySelector('#deleteDocumentButton') !== null, true);
   assert.equal(document.querySelector('#insertImageButton') !== null, true);
   assert.equal(document.querySelector('#insertImageButton svg[aria-hidden="true"]') !== null, true);

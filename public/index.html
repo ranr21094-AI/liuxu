@@ -104,7 +104,7 @@
                   </svg>
                 </button>
                 <button class="icon-button tree-add" id="importFileButton" type="button" title="导入文件" aria-label="导入文件">↑</button>
-                <input id="knowledgeFileInput" type="file" accept=".md,.txt,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,text/markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/png,image/jpeg,image/gif,image/webp,image/bmp,image/svg+xml" hidden>
+                <input id="knowledgeFileInput" type="file" accept=".md,.txt,.log,.csv,.tsv,.json,.xml,.yaml,.yml,.html,.htm,.css,.js,.mjs,.ts,.tsx,.py,.sh,.sql,.ini,.toml,.diff,.patch,.pdf,.docx,.xlsx,.xls,.ods,.pptx,.zip,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.avif,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov" hidden>
                 <button class="icon-button tree-add" id="newFolderButton" type="button" title="新建文件夹" aria-label="新建文件夹">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M3 7a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
@@ -353,6 +353,7 @@
             </details>
           </header>
 
+
           <div class="note-editor" id="noteEditor">
             <textarea id="documentContent" aria-label="Markdown 正文" aria-controls="knowledgeLinkPicker" aria-expanded="false" spellcheck="true"></textarea>
             <div class="markdown-preview prose" id="documentPreview" hidden></div>
@@ -381,14 +382,24 @@
 
           <section class="file-original-panel" id="fileOriginalPanel" hidden>
             <div class="file-original-head">
-              <strong id="fileName">原文件</strong>
-              <span id="fileMeta"></span>
-              <a class="secondary-action compact" id="openOriginalFile" href="#" target="_blank" rel="noopener">打开原文件</a>
+              <div class="file-original-identity"><strong id="fileName">原文件</strong><span id="fileMeta"></span></div>
+              <div class="file-original-actions"><a class="secondary-action compact" id="downloadOriginalFile" href="#" download>下载原文件</a><button class="secondary-action compact" id="openOriginalFile" type="button" hidden>系统打开</button></div>
             </div>
-            <details id="fileOriginalDetails">
-              <summary>文件预览</summary>
-              <div id="filePreviewHost" class="file-preview-host" aria-live="polite"></div>
-            </details>
+            <div class="file-reader-tabs" id="fileReaderTabs" role="tablist" aria-label="文件阅读模式">
+              <button type="button" class="active" data-file-reader-tab="preview" role="tab" aria-selected="true">预览</button>
+              <button type="button" data-file-reader-tab="annotation" role="tab" aria-selected="false">批注</button>
+              <button type="button" data-file-reader-tab="text" role="tab" aria-selected="false">提取文本</button>
+            </div>
+            <div class="file-reader-pane" id="filePreviewPane" role="tabpanel"><div id="filePreviewHost" class="file-preview-host" aria-live="polite"></div></div>
+            <section class="file-reader-pane file-annotation-pane" id="fileAnnotationPane" role="tabpanel" hidden>
+              <label>批注标题<input id="fileAnnotationTitle" maxlength="200" placeholder="可选标题"></label>
+              <textarea id="fileAnnotationContent" maxlength="200000" placeholder="记录与这个文件相关的笔记"></textarea>
+              <div class="file-annotation-actions"><span id="fileAnnotationState" role="status"></span><button type="button" class="primary-action compact" id="saveFileAnnotation">保存批注</button></div>
+            </section>
+            <section class="file-reader-pane file-text-pane" id="fileTextPane" role="tabpanel" hidden>
+              <label class="file-text-search">搜索提取文本<input id="fileTextSearch" type="search" placeholder="输入关键词"></label>
+              <pre class="file-preview-text" id="fileExtractedText"></pre>
+            </section>
           </section>
         </article>
         <aside class="note-browser-panel" id="noteBrowserPanel" aria-label="笔记浏览器" hidden>

@@ -32,6 +32,7 @@ let startupPromise = null;
 let shutdownPromise = null;
 let quitAllowed = false;
 let appOrigin = '';
+let desktopDataDir = '';
 let updateService = null;
 let noteBrowser = null;
 let macUpdateOpened = false;
@@ -212,6 +213,28 @@ function configureKnowledgeFolderIpc() {
   });
 }
 
+function configureKnowledgeFileIpc() {
+  ipcMain.removeHandler('liuxu:knowledge-file:open-path');
+  ipcMain.handle('liuxu:knowledge-file:open-path', async (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    const target = path.resolve(String(payload.path || ''));
+    const allowedRoots = [path.join(desktopDataDir, 'knowledge-files')];
+    try {
+      const config = JSON.parse(fs.readFileSync(path.join(desktopDataDir, '.knowledge-folder.json'), 'utf8'));
+      if (config?.enabled === true && path.isAbsolute(config.rootPath)) allowedRoots.push(path.resolve(config.rootPath));
+    } catch {}
+    const inside = allowedRoots.some(root => target.startsWith(`${path.resolve(root)}${path.sep}`));
+    if (!inside || !fs.existsSync(target) || !fs.statSync(target).isFile() || fs.lstatSync(target).isSymbolicLink()) {
+      throw new Error('文件位置无效');
+    }
+    const actual = fs.realpathSync(target);
+    if (!allowedRoots.some(root => actual.startsWith(`${path.resolve(root)}${path.sep}`))) throw new Error('文件位置越界');
+    const error = await shell.openPath(actual);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
+}
+
 function closeHttpServer(server, label) {
   if (!server) return Promise.resolve();
   return new Promise((resolve) => {
@@ -359,6 +382,7 @@ async function createMainWindow(appUrl) {
 
 async function startDesktop() {
   const { dataDir } = prepareRuntimeEnvironment();
+  desktopDataDir = dataDir;
   process.env.LIUXU_DESKTOP = '1';
   process.env.LIUXU_DOCUMENTS_DIR = app.getPath('documents');
   remoteAccess = createRemoteAccessService({ statePath: path.join(dataDir, '.remote-access.json') });
@@ -484,6 +508,7 @@ if (!app.requestSingleInstanceLock()) {
     configureUpdateIpc();
     configureNoteBrowserIpc();
     configureKnowledgeFolderIpc();
+    configureKnowledgeFileIpc();
     configureRemoteAccessIpc();
     startupPromise = startDesktop();
     return startupPromise;
