@@ -52,6 +52,67 @@ test('knowledge links, backlinks, revisions, and restore use stable document ids
   assert.equal(knowledge.listRevisions(target.id).total, 2);
 });
 
+test('named revisions survive automatic pruning, require the current version, and can be renamed or deleted', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-named-revisions-'));
+  const db = createDatabase(dir);
+  const knowledge = createKnowledgeService(db);
+  t.after(() => {
+    db.close();
+    cleanupTempDataDir(dir);
+  });
+  const note = knowledge.createNote({ title: '命名测试', content: '当前正文' }).document;
+  assert.equal(knowledge.createNamedRevision(note.id, { name: '发布前', baseVersion: note.version }).revision.name, '发布前');
+  assert.equal(knowledge.createNamedRevision(note.id, { name: '过期版本', baseVersion: note.version + 1 }).status, 409);
+  db.sqlite.prepare("UPDATE knowledge_revisions SET captured_at = '2020-01-01T00:00:00.000Z' WHERE document_id = ? AND name IS NOT NULL").run(note.id);
+  const updated = knowledge.updateDocument(note.id, { title: '后续修改', content: '后续正文', baseVersion: note.version }, { revisionReason: 'agent_write' }).document;
+  const revisions = knowledge.listRevisions(note.id).revisions;
+  assert.equal(revisions[0].name, '发布前');
+  assert.ok(revisions.some(item => item.reason === 'agent_write'));
+  assert.equal(knowledge.renameRevision(note.id, revisions[0].id, { name: '改名版本' }).revision.name, '改名版本');
+  assert.equal(knowledge.deleteNamedRevision(note.id, revisions[0].id).deleted, true);
+  assert.equal(knowledge.getRevision(note.id, revisions[0].id).error, 'Revision not found');
+  assert.equal(knowledge.getDocument(note.id).version, updated.version);
+});
+
+test('legacy note rows without a source type keep their revision history', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-legacy-revision-'));
+  const db = createDatabase(dir);
+  const knowledge = createKnowledgeService(db);
+  t.after(() => {
+    db.close();
+    cleanupTempDataDir(dir);
+  });
+  const note = knowledge.createNote({ title: '旧格式笔记', content: '保留历史' }).document;
+  const row = db.sqlite.prepare('SELECT body FROM knowledge_documents WHERE id = ?').get(note.id);
+  const body = JSON.parse(row.body);
+  delete body.sourceType;
+  db.sqlite.prepare('UPDATE knowledge_documents SET body = ? WHERE id = ?').run(JSON.stringify(body), note.id);
+
+  const loaded = knowledge.getDocument(note.id);
+  assert.equal(loaded.sourceType, 'note');
+  assert.equal(knowledge.createNamedRevision(note.id, { name: '旧笔记仍可命名', baseVersion: loaded.version }).revision.name, '旧笔记仍可命名');
+});
+
+test('restore can keep the present location while restoring the historical note fields', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-revision-location-'));
+  const db = createDatabase(dir);
+  const knowledge = createKnowledgeService(db);
+  t.after(() => {
+    db.close();
+    cleanupTempDataDir(dir);
+  });
+  const original = knowledge.createNote({ title: '初始标题', content: '初始正文', knowledgeBase: '工作', folderPath: '草稿' }).document;
+  const moved = knowledge.updateDocument(original.id, {
+    title: '新标题', content: '新正文', knowledgeBase: '工作', folderPath: '正式', baseVersion: original.version,
+  }).document;
+  const revision = knowledge.listRevisions(original.id).revisions[0];
+  const restored = knowledge.restoreRevision(original.id, revision.id, { baseVersion: moved.version, restoreLocation: false }).document;
+  assert.equal(restored.title, '初始标题');
+  assert.equal(restored.content, '初始正文');
+  assert.equal(restored.folderPath, '正式');
+  assert.equal(restored.knowledgeBase, '工作');
+});
+
 test('knowledge link targets exclude archived documents and backlinks hide archived sources', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-link-privacy-'));
   const db = createDatabase(dir);

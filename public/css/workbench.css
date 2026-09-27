@@ -1178,11 +1178,25 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .knowledge-relations-list { display: grid; gap: 6px; max-height: 250px; overflow: auto; }
 .knowledge-relation-row, .knowledge-revision-row { display: grid; gap: 3px; width: 100%; border: 1px solid transparent; border-radius: 8px; background: transparent; padding: 8px 10px; color: var(--text); text-align: left; cursor: pointer; }
 .knowledge-relation-row:hover, .knowledge-revision-row:hover { border-color: var(--line); background: var(--surface); }
+.knowledge-revision-row.selected { border-color: var(--accent); background: var(--accent-soft); }
 .knowledge-relation-row strong, .knowledge-revision-row strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .knowledge-relation-row small, .knowledge-revision-row small { color: var(--muted); overflow-wrap: anywhere; }
 .knowledge-relation-row em { color: var(--faint); font-size: 10px; font-style: normal; }
+.knowledge-revision-create { display: flex; gap: 8px; align-items: center; margin: 4px 0 6px; }
+.knowledge-revision-create input { min-width: 0; flex: 1; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); padding: 0 10px; font: inherit; font-size: 12px; }
+.knowledge-revision-retention, .knowledge-revision-image-note { margin: 5px 0 9px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.inline-retry { border: 0; background: transparent; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
 .knowledge-revision-detail { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
 .knowledge-revision-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: var(--muted); font-size: 11px; }
+.knowledge-revision-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.knowledge-revision-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.knowledge-revision-field { display: grid; gap: 4px; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 7px; overflow-wrap: anywhere; font-size: 11px; }
+.knowledge-revision-field strong { color: var(--text); }
+.knowledge-revision-field span { color: var(--muted); }
+.knowledge-revision-field .removed { color: var(--danger); }
+.knowledge-revision-field .added { color: var(--accent); }
+.knowledge-revision-detail h4 { margin: 8px 0; font-size: 12px; }
+.knowledge-revision-location-option { display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; color: var(--text); font-size: 12px; }
 .knowledge-revision-diff { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; max-height: 300px; overflow: auto; }
 .knowledge-revision-diff pre { min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 ui-monospace, Consolas, monospace; }
 .knowledge-revision-diff .removed { background: color-mix(in srgb, var(--danger) 9%, var(--surface)); }
@@ -1427,6 +1441,11 @@ html[data-theme="dark"] .agent-empty-hero__frame {
   .file-summary { flex-direction: column; }
   .knowledge-relations { margin-left: 0; margin-right: 0; }
   .knowledge-revision-diff { grid-template-columns: 1fr; }
+  .knowledge-revision-create { align-items: stretch; flex-direction: column; }
+  .knowledge-revision-create button { width: 100%; }
+  .knowledge-revision-detail-head { align-items: flex-start; flex-direction: column; }
+  .knowledge-revision-actions { justify-content: flex-start; }
+  .knowledge-revision-fields { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {

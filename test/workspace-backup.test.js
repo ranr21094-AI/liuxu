@@ -20,7 +20,8 @@ function tempDb(t) {
 test('workspace zip export includes binaries and restores them', async (t) => {
   const { db, dir } = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  knowledge.createNote({ title: 'ZIP 知识', content: '知识正文' });
+  const note = knowledge.createNote({ title: 'ZIP 知识', content: '知识正文' }).document;
+  knowledge.createNamedRevision(note.id, { name: 'ZIP 命名版本', baseVersion: note.version });
   const buffer = await exportWorkspace(db);
   assert.ok(buffer.length > 20);
   fs.rmSync(path.join(dir, 'uploads'), { recursive: true, force: true });
@@ -39,6 +40,7 @@ test('workspace zip export includes binaries and restores them', async (t) => {
   const restoredKnowledge = createKnowledgeService(db2);
   assert.equal(restoredKnowledge.allDocuments().length, 1);
   assert.equal(restoredKnowledge.allDocuments()[0].title, 'ZIP 知识');
+  assert.equal(restoredKnowledge.listRevisions(note.id).revisions[0].name, 'ZIP 命名版本');
 });
 
 test('workspace zip carries the portable knowledge folder tree and restores it to the configured local root', async (t) => {

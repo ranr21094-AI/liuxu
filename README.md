@@ -15,23 +15,23 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在 [v1.4.3 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.4.3) 下载 `LiuXu-Setup-1.4.3-x64.exe`。
+1. 在 [v1.4.5 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.4.5) 下载 `LiuXu-Setup-1.4.5-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.4.3-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.4.5-x64.exe -Algorithm SHA256
 ```
 
-### macOS Apple Silicon（v1.4.3）
+### macOS Apple Silicon（v1.4.5）
 
-当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.4.3 将知识库图片预览、数据库笔记回写本地目录及旧图片迁移修复同时提供给 Windows 和 macOS。构建产物为：
+当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.4.5 增强笔记版本历史，支持长期保留的命名版本、正文与元数据对比，以及检查并发版本后安全恢复。构建产物为：
 
 ```text
-LiuXu-1.4.3-mac-arm64.dmg
-LiuXu-1.4.3-mac-arm64.zip
+LiuXu-1.4.5-mac-arm64.dmg
+LiuXu-1.4.5-mac-arm64.zip
 ```
 
 该包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。
@@ -39,8 +39,8 @@ LiuXu-1.4.3-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.4.3-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.4.3-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.4.5-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.4.5-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -76,7 +76,7 @@ ZIP 恢复优先使用校验通过的 SQLite，兼容 JSON 仅供旧格式导入
 
 链接只会跳转到留序自己的知识文档路由。目标重命名后链接仍然有效；归档目标会标记为归档，永久删除后显示断链。私密日记锁定时，选择器、反向引用和历史内容均不会泄露日记信息。
 
-每篇文档底部都有默认折叠的“反向引用 / 版本历史”面板。正文、标题、标签、知识库、文件夹和文档日期发生变化时，留序会自动保存快照：5 分钟内合并，最多保留 50 个版本且最长 30 天。查看历史先显示元数据，选择版本后才加载正文；恢复旧版前会保存当前状态，并要求提交当前版本号，遇到并发编辑会拒绝覆盖。
+每篇 Markdown 笔记和档案批注底部都有默认折叠的“反向引用 / 版本历史”面板。普通编辑按 5 分钟窗口留存历史，不代表逐次保存记录；自动历史最多 50 条且保留 30 天。AI 写入、应用 AI 提案、外部文件同步和历史恢复前会额外留档。你也可以保存长期保留的命名版本并重命名或删除。历史对比包含正文、标题、标签、日期和所在位置；恢复默认保留当前位置，草稿保存后才会显示确认，并使用版本检查避免覆盖并发修改。图片文件不保留历史副本。完整规则见[笔记版本历史说明](docs/knowledge-revisions.md)。
 
 完整 ZIP“替换恢复”会保留版本历史；旧版 JSON/ZIP 可继续恢复并自动重建双链。结构 JSON 和“合并恢复”只迁移当前内容，不迁移历史快照。
 
@@ -388,6 +388,8 @@ desktop-build-summary-mac.json
 - [代码审查与修复记录](code-review-remediation.md)
 - [笔记内置浏览器架构](docs/note-browser.md)
 - [本地知识库同步说明](docs/knowledge-folder-sync.md)
+- [笔记版本历史说明](docs/knowledge-revisions.md)
+- [v1.4.5 发布说明](docs/releases/v1.4.5.md)
 - [v1.4.3 发布说明](docs/releases/v1.4.3.md)
 - [v1.4.2-1 发布说明](docs/releases/v1.4.2-1.md)
 - [v1.4.2 发布说明](docs/releases/v1.4.2.md)

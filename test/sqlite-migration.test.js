@@ -183,6 +183,7 @@ test('schema v3 migration is repeatable and keeps row-level updates stable', (t)
   db.update(first.id, { title: 'first updated' });
   knowledge.updateDocument(note.id, { content: 'body updated' });
   assert.equal(db.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
+  assert.ok(db.sqlite.prepare('PRAGMA table_info(knowledge_revisions)').all().some(column => column.name === 'name'));
   assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_link_targets LIMIT 1').get());
   assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM knowledge_revisions').get().count, 1);
   assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_index_state WHERE id = 1').get());

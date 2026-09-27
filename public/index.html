@@ -365,14 +365,19 @@
             <details id="knowledgeRelationsDetails">
               <summary>关联与历史 <span id="knowledgeRelationsSummary">默认折叠</span></summary>
               <div class="knowledge-relations-tabs" role="tablist" aria-label="文档关系与历史">
-                <button type="button" class="active" data-knowledge-relations-tab="backlinks" role="tab" aria-selected="true">反向引用 <span id="knowledgeBacklinkCount">0</span></button>
-                <button type="button" data-knowledge-relations-tab="revisions" role="tab" aria-selected="false">版本历史 <span id="knowledgeRevisionCount">0</span></button>
+                <button type="button" class="active" data-knowledge-relations-tab="backlinks" role="tab" aria-selected="true">反向引用 <span id="knowledgeBacklinkCount">–</span></button>
+                <button type="button" data-knowledge-relations-tab="revisions" role="tab" aria-selected="false">版本历史 <span id="knowledgeRevisionCount">–</span></button>
               </div>
               <div class="knowledge-relations-panel" id="knowledgeBacklinksPanel" role="tabpanel">
                 <div class="knowledge-relations-list" id="knowledgeBacklinksList" aria-live="polite"><p class="empty-list">展开后加载引用此文档的内容。</p></div>
                 <button class="load-more" id="knowledgeBacklinksLoadMore" type="button" hidden>加载更多引用</button>
               </div>
               <div class="knowledge-relations-panel" id="knowledgeRevisionsPanel" role="tabpanel" hidden>
+                <div class="knowledge-revision-create">
+                  <input id="knowledgeRevisionName" maxlength="100" placeholder="给当前版本命名">
+                  <button type="button" class="secondary-action compact" id="saveKnowledgeRevision">保存命名版本</button>
+                </div>
+                <p class="knowledge-revision-retention">普通编辑按 5 分钟窗口留存，不代表逐次保存记录；自动历史保留 30 天且最多 50 条，命名版本长期保留。</p>
                 <div class="knowledge-relations-list" id="knowledgeRevisionsList" aria-live="polite"><p class="empty-list">展开后加载版本历史。</p></div>
                 <div class="knowledge-revision-detail" id="knowledgeRevisionDetail" hidden></div>
                 <button class="load-more" id="knowledgeRevisionsLoadMore" type="button" hidden>加载更多版本</button>

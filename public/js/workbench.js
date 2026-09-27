@@ -5093,6 +5093,7 @@ async function saveDocumentOnce() {
 let noteMutationLock = null;
 async function beforeNoteMutation(id) {
   if (state.activeDocument?.id !== id) return true;
+  if (noteMutationLock) return false;
   if (!(await flushPendingSaves())) return false;
   if (state.activeDocument?.id !== id) return false;
   const controls = [...document.querySelectorAll('#documentWorkspace input, #documentWorkspace textarea, #documentWorkspace select, #documentWorkspace button')]
@@ -5181,31 +5182,43 @@ async function importKnowledgeFile(file) {
   }
 }
 
-function applyNoteAssistantEdit({ documentId, find, replace, append, content }) {
+async function applyNoteAssistantEdit({ documentId, find, replace, append, content }) {
   const editor = $('#documentContent');
   if (!editor || state.documentConflict || state.activeDocument?.id !== documentId || state.activeDocument?.status === 'archived') throw new Error('文档已切换、归档或存在保存冲突，请重新打开目标文档后应用');
-  if (append) {
-    const addition = String(content || '');
-    const start = editor.value.length;
-    editor.value = `${editor.value}${editor.value ? '\n\n' : ''}${addition}`;
-    editor.setSelectionRange(editor.value.length, editor.value.length);
+  if (!(await beforeNoteMutation(documentId))) throw new Error('当前草稿保存失败，未应用 AI 提案');
+  try {
+    const checkpoint = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/revisions/checkpoint`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseVersion: state.activeDocument.version }),
+    });
+    const checkpointData = await checkpoint.json().catch(() => ({}));
+    if (!checkpoint.ok) throw new Error(checkpointData.error || 'AI 提案前快照保存失败');
+    if (state.activeDocument?.id !== documentId) throw new Error('笔记已切换，未应用 AI 提案');
+    if (append) {
+      const addition = String(content || '');
+      const start = editor.value.length;
+      editor.value = `${editor.value}${editor.value ? '\n\n' : ''}${addition}`;
+      editor.setSelectionRange(editor.value.length, editor.value.length);
+      editor.focus();
+      state.documentDirty = true;
+      scheduleDocumentSave();
+      refreshDocumentPreview();
+      editor.setSelectionRange(start, start);
+      return;
+    }
+    const needle = String(find || '');
+    const start = needle ? editor.value.indexOf(needle) : -1;
+    if (start < 0) return;
+    editor.value = editor.value.slice(0, start) + String(replace ?? '') + editor.value.slice(start + needle.length);
+    const caret = start + String(replace ?? '').length;
     editor.focus();
+    editor.setSelectionRange(caret, caret);
     state.documentDirty = true;
     scheduleDocumentSave();
     refreshDocumentPreview();
-    editor.setSelectionRange(start, start);
-    return;
+  } finally {
+    await afterNoteMutation(documentId, { failed: true });
   }
-  const needle = String(find || '');
-  const start = needle ? editor.value.indexOf(needle) : -1;
-  if (start < 0) return;
-  editor.value = editor.value.slice(0, start) + String(replace ?? '') + editor.value.slice(start + needle.length);
-  const caret = start + String(replace ?? '').length;
-  editor.focus();
-  editor.setSelectionRange(caret, caret);
-  state.documentDirty = true;
-  scheduleDocumentSave();
-  refreshDocumentPreview();
 }
 
 function insertTextAtCursor(textarea, text) {
@@ -6088,6 +6101,8 @@ function bindEvents() {
     state,
     navigate,
     confirmAction,
+    beforeMutation: beforeNoteMutation,
+    afterMutation: afterNoteMutation,
     onRestore: async document => {
       await renderActiveDocument(document);
     },
