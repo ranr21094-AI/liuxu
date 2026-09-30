@@ -166,6 +166,32 @@
               <input type="time" id="todoReminderTime" value="08:00" step="60">
             </div>
           </div>
+          <details class="todo-smtp-settings" id="todoSmtpSettings">
+            <summary>发件服务器配置</summary>
+            <p class="todo-smtp-source" id="todoSmtpSource" role="status"></p>
+            <label class="todo-reminder-toggle" for="todoSmtpUseCustom">
+              <input type="checkbox" id="todoSmtpUseCustom">
+              <span>使用自定义 SMTP</span>
+            </label>
+            <div class="todo-smtp-fields" id="todoSmtpFields" hidden>
+              <div class="todo-reminder-grid todo-smtp-grid">
+                <label class="todo-reminder-field" for="todoSmtpHost">SMTP 主机<input id="todoSmtpHost" type="text" maxlength="255" spellcheck="false" placeholder="smtp.qq.com"></label>
+                <label class="todo-reminder-field" for="todoSmtpPort">端口<input id="todoSmtpPort" type="number" min="1" max="65535" step="1" value="465"></label>
+                <label class="todo-reminder-field" for="todoSmtpSecureMode">连接加密
+                  <select id="todoSmtpSecureMode"><option value="ssl">SSL/TLS</option><option value="starttls">STARTTLS</option><option value="none">无加密</option></select>
+                </label>
+                <label class="todo-reminder-field" for="todoSmtpFromAddress">发件邮箱<input id="todoSmtpFromAddress" type="email" maxlength="320" placeholder="留空时使用 SMTP 账号"></label>
+                <label class="todo-reminder-field" for="todoSmtpAuthUser">SMTP 账号<input id="todoSmtpAuthUser" type="text" maxlength="320" autocomplete="username"></label>
+                <label class="todo-reminder-field" for="todoSmtpPassword">SMTP 密码<input id="todoSmtpPassword" type="password" maxlength="1000" autocomplete="new-password" placeholder="不显示已保存密码"></label>
+              </div>
+              <label class="todo-smtp-clear-password" for="todoSmtpClearPassword"><input type="checkbox" id="todoSmtpClearPassword">清除已保存密码</label>
+              <p class="todo-smtp-password-state" id="todoSmtpPasswordState"></p>
+            </div>
+            <div class="todo-reminder-actions todo-smtp-actions">
+              <button class="secondary-action compact" id="btnTodoSmtpReset" type="button">恢复环境配置</button>
+              <button class="secondary-action compact" id="btnTodoReminderTest" type="button">发送测试邮件</button>
+            </div>
+          </details>
           <p class="todo-reminder-status" id="todoReminderStatusText" role="status" aria-live="polite">加载提醒状态中...</p>
           <div class="todo-reminder-actions">
             <button class="secondary-action compact" id="btnTodoReminderSave" type="button">保存提醒</button>
@@ -1005,6 +1031,21 @@
       <div class="dialog-actions">
         <button type="button" class="secondary-action" id="btnTodoCategoryCancel">取消</button>
         <button type="submit" class="primary-action compact" id="btnTodoCategoryAdd">添加</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="workspace-dialog" id="todoTestEmailDialog" aria-labelledby="todoTestEmailTitle">
+    <form class="dialog-card compact-dialog" id="todoTestEmailForm" autocomplete="off">
+      <header>
+        <div><span class="dialog-eyebrow">待办邮件</span><h2 id="todoTestEmailTitle">发送测试邮件</h2></div>
+        <button class="icon-button" type="button" id="todoTestEmailClose" aria-label="关闭">×</button>
+      </header>
+      <p>测试邮件只发送到此地址，不会修改每日提醒收件人。</p>
+      <label class="dialog-field" for="todoTestEmailInput">临时测试收件邮箱<input type="email" id="todoTestEmailInput" maxlength="320" autocomplete="email" required></label>
+      <div class="dialog-actions">
+        <button class="secondary-action" type="button" id="todoTestEmailCancel">取消</button>
+        <button class="primary-action compact" type="submit" id="todoTestEmailSend">发送测试邮件</button>
       </div>
     </form>
   </dialog>

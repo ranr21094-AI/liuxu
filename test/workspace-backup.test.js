@@ -108,6 +108,18 @@ test('cross-device workspace restore clears only secrets encrypted with an unava
   const settings = db.getAiSettings();
   settings.imageProviders[0].apiKey = 'image-only-secret';
   db.saveAiSettings({ ...settings, apiKey: 'windows-only-secret' });
+  db.saveTodoReminderSettings({
+    ...db.getTodoReminderSettings(),
+    smtp: {
+      useCustomSmtp: true,
+      host: 'smtp.example.com',
+      port: 465,
+      secureMode: 'ssl',
+      authUser: 'sender@example.com',
+      fromAddress: 'sender@example.com',
+      password: 'smtp-only-secret',
+    },
+  });
   const buffer = await exportWorkspace(db);
 
   const target = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-foreign-key-'));
@@ -124,8 +136,11 @@ test('cross-device workspace restore clears only secrets encrypted with an unava
   const result = await restoreWorkspace(restored, buffer, 'replace');
   assert.equal(result.success, true);
   assert.equal(result.secretsReset, true);
+  assert.equal(result.mailSecretsReset, true);
   assert.equal(restored.getAiSettings().apiKey, '');
   assert.equal(restored.getAiSettings().imageProviders.every(provider => provider.apiKey === ''), true);
+  assert.equal(restored.getTodoReminderMailSettings().password, '');
+  assert.equal(restored.getTodoReminderSettings().smtp.passwordConfigured, false);
   assert.equal(restored.getAllUnpaginated().some(item => item.title === 'zip log'), true);
 });
 

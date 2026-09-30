@@ -37,6 +37,7 @@ let todoReminderSettings = {
   recipientEmail: '',
   sendTime: '08:00',
   mailReady: false,
+  smtp: { useCustomSmtp: false, host: '', port: 465, secureMode: 'ssl', authUser: '', fromAddress: '', passwordConfigured: false, source: 'none', activeFromAddress: '' },
   lastStatus: 'idle',
   lastSentAt: '',
   lastError: '',
@@ -74,6 +75,17 @@ function normalizeTodoReminderSettings(data = {}) {
     recipientEmail: typeof data.recipientEmail === 'string' ? data.recipientEmail : '',
     sendTime: typeof data.sendTime === 'string' && data.sendTime ? data.sendTime : '08:00',
     mailReady: Boolean(data.mailReady),
+    smtp: {
+      useCustomSmtp: data.smtp?.useCustomSmtp === true,
+      host: typeof data.smtp?.host === 'string' ? data.smtp.host : '',
+      port: Number(data.smtp?.port) || 465,
+      secureMode: ['none', 'starttls', 'ssl'].includes(data.smtp?.secureMode) ? data.smtp.secureMode : 'ssl',
+      authUser: typeof data.smtp?.authUser === 'string' ? data.smtp.authUser : '',
+      fromAddress: typeof data.smtp?.fromAddress === 'string' ? data.smtp.fromAddress : '',
+      passwordConfigured: data.smtp?.passwordConfigured === true,
+      source: ['custom', 'environment'].includes(data.smtp?.source) ? data.smtp.source : 'none',
+      activeFromAddress: typeof data.smtp?.activeFromAddress === 'string' ? data.smtp.activeFromAddress : '',
+    },
     lastStatus: typeof data.lastStatus === 'string' ? data.lastStatus : 'idle',
     lastSentAt: typeof data.lastSentAt === 'string' ? data.lastSentAt : '',
     lastError: typeof data.lastError === 'string' ? data.lastError : '',
@@ -108,6 +120,27 @@ function renderTodoReminderSettings() {
   chip.classList.toggle('ready', todoReminderSettings.mailReady);
   chip.classList.toggle('missing', !todoReminderSettings.mailReady);
 
+  const smtp = todoReminderSettings.smtp;
+  $('#todoSmtpUseCustom').checked = smtp.useCustomSmtp;
+  $('#todoSmtpFields').hidden = !smtp.useCustomSmtp;
+  $('#todoSmtpHost').value = smtp.host;
+  $('#todoSmtpPort').value = String(smtp.port);
+  $('#todoSmtpSecureMode').value = smtp.secureMode;
+  $('#todoSmtpFromAddress').value = smtp.fromAddress;
+  $('#todoSmtpAuthUser').value = smtp.authUser;
+  $('#todoSmtpPassword').value = '';
+  $('#todoSmtpClearPassword').checked = false;
+  $('#todoSmtpClearPassword').disabled = !smtp.passwordConfigured;
+  $('#todoSmtpPasswordState').textContent = smtp.passwordConfigured
+    ? '密码已加密保存；留空可继续使用。'
+    : '尚未保存密码。无需认证的 SMTP 可留空。';
+  $('#todoSmtpSource').textContent = smtp.source === 'custom'
+    ? `当前使用自定义 SMTP：${smtp.host}:${smtp.port}`
+    : smtp.source === 'environment'
+      ? '当前使用服务环境中的 QQ SMTP 配置。'
+      : '尚无可用的发件服务器配置。';
+  $('#btnTodoReminderTest').disabled = !todoReminderSettings.mailReady;
+
   const statusMap = {
     idle: `系统会在每天 ${todoReminderSettings.sendTime || '08:00'} 检查当天到期待办。`,
     pending: '今日提醒已生成；若发信失败，服务会自动重试同一份汇总。',
@@ -118,7 +151,7 @@ function renderTodoReminderSettings() {
   };
   const parts = [];
   if (!todoReminderSettings.mailReady) {
-    parts.push('当前运行中的服务还没有可用的 QQ 发信配置；如果你刚修改了 .env，请重启服务后再启用提醒。');
+    parts.push('请配置可用的 SMTP 发件服务器并保存后，再启用邮件提醒。');
   }
   parts.push(statusMap[todoReminderSettings.lastStatus] || statusMap.idle);
   if (todoReminderSettings.lastError) {
@@ -772,10 +805,21 @@ async function clearCompletedTodos() {
 }
 
 async function saveTodoReminderSettings() {
+  const useCustomSmtp = $('#todoSmtpUseCustom').checked;
   const body = {
     enabled: $('#todoReminderEnabled').checked,
     recipientEmail: $('#todoReminderRecipient').value.trim(),
     sendTime: $('#todoReminderTime').value || '08:00',
+    smtp: useCustomSmtp ? {
+      useCustomSmtp: true,
+      host: $('#todoSmtpHost').value.trim(),
+      port: Number($('#todoSmtpPort').value),
+      secureMode: $('#todoSmtpSecureMode').value,
+      fromAddress: $('#todoSmtpFromAddress').value.trim(),
+      authUser: $('#todoSmtpAuthUser').value.trim(),
+      password: $('#todoSmtpPassword').value,
+      clearPassword: $('#todoSmtpClearPassword').checked,
+    } : { useCustomSmtp: false },
   };
   try {
     const res = await apiFetch('/api/todo-reminder-settings', {
@@ -786,6 +830,8 @@ async function saveTodoReminderSettings() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '保存提醒失败');
     todoReminderSettings = normalizeTodoReminderSettings(data);
+    $('#todoSmtpPassword').value = '';
+    $('#todoSmtpClearPassword').checked = false;
     todoReminderUiMessage = '提醒设置已保存。';
     renderTodoReminderSettings();
     showToast('提醒设置已保存', 'success');
@@ -793,6 +839,58 @@ async function saveTodoReminderSettings() {
     todoReminderUiMessage = '保存失败：' + err.message;
     renderTodoReminderSettings();
     showToast('提醒保存失败: ' + err.message, 'error');
+  }
+}
+
+async function resetTodoSmtpSettings() {
+  if (!todoReminderSettings.smtp.useCustomSmtp) return;
+  const confirmed = await confirmDialog({
+    title: '恢复环境配置',
+    message: '清除已保存的自定义 SMTP 配置，改用服务环境中的邮件设置。',
+    confirmText: '恢复',
+    danger: false,
+  });
+  if (!confirmed) return;
+  $('#todoSmtpUseCustom').checked = false;
+  $('#todoSmtpFields').hidden = true;
+  await saveTodoReminderSettings();
+}
+
+function openTodoTestEmailDialog() {
+  if (!todoReminderSettings.mailReady) {
+    showToast('请先配置并保存 SMTP 发件服务器', 'error');
+    return;
+  }
+  $('#todoTestEmailInput').value = $('#todoReminderRecipient').value.trim();
+  $('#todoTestEmailDialog').showModal();
+  $('#todoTestEmailInput').focus();
+  $('#todoTestEmailInput').select();
+}
+
+async function sendTodoReminderTestEmail(event) {
+  event.preventDefault();
+  const input = $('#todoTestEmailInput');
+  const button = $('#todoTestEmailSend');
+  const to = input.value.trim();
+  if (!input.reportValidity()) return;
+  button.disabled = true;
+  try {
+    const response = await apiFetch('/api/todo-reminder-settings/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to }),
+    });
+    const result = await response.json().catch(() => ({}));
+    $('#todoTestEmailDialog').close();
+    todoReminderUiMessage = `测试邮件已发送到 ${result.to || to}。`;
+    renderTodoReminderSettings();
+    showToast('测试邮件已发送', 'success');
+  } catch (error) {
+    todoReminderUiMessage = `测试邮件发送失败：${error.message}`;
+    renderTodoReminderSettings();
+    showToast('测试邮件发送失败: ' + error.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -876,12 +974,20 @@ export function initTodos() {
   $('#btnCountdownSave').addEventListener('click', saveCountdownFromForm);
   $('#btnCountdownCancel').addEventListener('click', resetCountdownForm);
   $('#btnTodoReminderSave').addEventListener('click', saveTodoReminderSettings);
+  $('#todoSmtpUseCustom').addEventListener('change', event => {
+    $('#todoSmtpFields').hidden = !event.target.checked;
+  });
+  $('#btnTodoSmtpReset').addEventListener('click', resetTodoSmtpSettings);
+  $('#btnTodoReminderTest').addEventListener('click', openTodoTestEmailDialog);
+  $('#todoTestEmailClose').addEventListener('click', () => $('#todoTestEmailDialog').close());
+  $('#todoTestEmailCancel').addEventListener('click', () => $('#todoTestEmailDialog').close());
+  $('#todoTestEmailForm').addEventListener('submit', sendTodoReminderTestEmail);
   $('#todoReminderEnabled').addEventListener('change', (e) => {
     if (!todoReminderSettings.mailReady && e.target.checked) {
       e.target.checked = false;
-      todoReminderUiMessage = '请先配置 QQ 发信账号并重启当前服务，再启用每日提醒。';
+      todoReminderUiMessage = '请先配置 SMTP 发件服务器并保存，再启用每日提醒。';
       renderTodoReminderSettings();
-      showToast('请先重启服务以加载 QQ 邮件配置', 'error');
+      showToast('请先配置并保存 SMTP 发件服务器', 'error');
     } else {
       todoReminderSettings.enabled = e.target.checked;
       todoReminderUiMessage = '';

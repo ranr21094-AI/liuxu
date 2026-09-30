@@ -272,6 +272,7 @@ const TOOL_LABELS = {
   'memory.propose': '生成记忆提案',
   'web.search': '搜索网页',
   'web.fetch': '读取网页',
+  'email.send': '发送邮件',
   'image.generate': '生成图片',
   'agent.delegate': '执行子任务',
   'ask_user': '请求补充信息',

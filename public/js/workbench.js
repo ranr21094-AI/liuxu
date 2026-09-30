@@ -3525,6 +3525,15 @@ function approvalBodyHtml(approval) {
       <p>将联网搜索公开来源。确认关键词无误后再允许执行。</p>
       <div class="approval-risk"><strong>搜索词</strong><pre>${escHtml(query || '（空）')}</pre></div>`;
   }
+  if (name === 'email.send') {
+    return `
+      <p>将通过已配置的 SMTP 发件账号发送纯文本邮件。确认收件人、主题和完整正文后再允许发送。</p>
+      <div class="approval-risk approval-email-risk">
+        <strong>收件人</strong><pre>${escHtml(String(args.to || '（空）'))}</pre>
+        <strong>主题</strong><pre>${escHtml(String(args.subject || '（空）'))}</pre>
+        <strong>正文</strong><pre>${escHtml(String(args.text ?? ''))}</pre>
+      </div>`;
+  }
   const summary = summarizeApprovalArgs(name, args);
   return `<div class="approval-risk"><strong>参数</strong><pre>${escHtml(JSON.stringify(summary, null, 2))}</pre></div>`;
 }

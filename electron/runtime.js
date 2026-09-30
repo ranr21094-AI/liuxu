@@ -305,6 +305,37 @@ function imageProviderSecretAad(scope, providerId) {
   return `work-log-ai-settings:v1:${scope}:imageProvider:${providerId}`;
 }
 
+function todoReminderSmtpPasswordAad(scope) {
+  return `work-log-todo-mail:v1:${scope}:smtpPassword`;
+}
+
+function reencryptTodoReminderMailScope(databasePath, sourceScope, targetScope, Database = require('better-sqlite3')) {
+  const source = path.resolve(sourceScope);
+  const target = path.resolve(targetScope);
+  if (source === target) return { changed: false, secrets: 0 };
+  const database = new Database(databasePath, { fileMustExist: true });
+  try {
+    const table = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'todo_reminder_settings'").get();
+    if (!table) return { changed: false, secrets: 0 };
+    const row = database.prepare('SELECT body FROM todo_reminder_settings WHERE id = 1').get();
+    if (!row) return { changed: false, secrets: 0 };
+    const settings = JSON.parse(row.body);
+    const value = settings?.smtp?.password;
+    if (typeof value !== 'string' || !value) return { changed: false, secrets: 0 };
+    const plaintext = isEncryptedSecret(value) ? decryptSecret(value, todoReminderSmtpPasswordAad(source)) : value;
+    settings.smtp.password = encryptSecret(plaintext, todoReminderSmtpPasswordAad(target));
+    database.transaction(() => {
+      database.prepare('UPDATE todo_reminder_settings SET body = ? WHERE id = 1').run(JSON.stringify(settings));
+    })();
+    const stored = JSON.parse(database.prepare('SELECT body FROM todo_reminder_settings WHERE id = 1').get().body);
+    const verified = decryptSecret(stored.smtp.password, todoReminderSmtpPasswordAad(target));
+    if (verified !== plaintext) throw new Error('SMTP 密码迁移校验失败');
+    return { changed: true, secrets: 1 };
+  } finally {
+    database.close();
+  }
+}
+
 // Reads every encrypted AI secret under the given scope. Any value that fails
 // to decrypt is a hard error — the caller must not commit a database whose
 // secrets the target installation would be unable to read.
@@ -456,7 +487,13 @@ function migrateLegacyData({
       target,
       Database,
     );
-    if (secretMigration.changed) quickCheckSqlite(path.join(staging, 'schedule.db'), Database);
+    const mailSecretMigration = reencryptTodoReminderMailScope(
+      path.join(staging, 'schedule.db'),
+      resolveLegacySecretScope(source, legacyEnvPath),
+      target,
+      Database,
+    );
+    if (secretMigration.changed || mailSecretMigration.changed) quickCheckSqlite(path.join(staging, 'schedule.db'), Database);
 
     const envCopied = copyLegacyEnv(legacyEnvPath, staging);
     if (fs.existsSync(target)) fs.rmdirSync(target);
@@ -469,7 +506,8 @@ function migrateLegacyData({
       files: sourceStats.files,
       bytes: sourceStats.bytes,
       envCopied,
-      secretsReencrypted: secretMigration.secrets,
+      secretsReencrypted: secretMigration.secrets + mailSecretMigration.secrets,
+      smtpSecretsReencrypted: mailSecretMigration.secrets,
     });
     return {
       migrated: true,
@@ -478,7 +516,8 @@ function migrateLegacyData({
       files: sourceStats.files,
       bytes: sourceStats.bytes,
       envCopied,
-      secretsReencrypted: secretMigration.secrets,
+      secretsReencrypted: secretMigration.secrets + mailSecretMigration.secrets,
+      smtpSecretsReencrypted: mailSecretMigration.secrets,
       completedAt,
     };
   } catch (error) {
@@ -567,6 +606,7 @@ module.exports = {
   quickCheckSqlite,
   readDesktopConfig,
   reencryptAiSettingsScope,
+  reencryptTodoReminderMailScope,
   restoreAndFocusWindow,
   resolveDesktopDataDir,
   sha256File,

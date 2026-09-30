@@ -52,6 +52,8 @@ test('remote note runs persist their capability boundary and omit browser tools'
     tools = offered.map(tool => tool.name);
     return { text: '完成', toolCalls: [] };
   }, {
+    emailAvailable: () => true,
+    emailSend: async () => ({ ok: true }),
     computer: { available: () => true, execute: async () => ({ ok: true }) },
     noteBrowser: { available: () => true },
   });
@@ -66,6 +68,7 @@ test('remote note runs persist their capability boundary and omit browser tools'
   assert.ok(tools.includes('note.read'));
   assert.equal(tools.some(name => name.startsWith('browser.')), false);
   assert.equal(tools.some(name => name.startsWith('note_browser.')), false);
+  assert.ok(tools.includes('email.send'));
 });
 
 test('note.propose_edit validates matches and emits a proposal without touching the document', async (t) => {
@@ -133,12 +136,12 @@ test('note_assist runs expose the full registered tool set plus bound note tools
   const { runtime, store } = makeRuntime(db, ({ tools }) => {
     seenTools = (tools || []).map(tool => tool.name);
     return { text: '答复', toolCalls: [] };
-  });
+  }, { emailAvailable: () => true, emailSend: async () => ({ ok: true }) });
   const session = store.createSession('工具集', { documentId: document.id });
   const run = await runtime.startNoteAssist({ session, documentId: document.id, userMessage: 'hi' });
   await new Promise(resolve => setTimeout(resolve, 150));
   assert.equal(store.getRun(run.id).status, 'completed');
-  for (const name of ['knowledge.list', 'knowledge.read', 'knowledge.search', 'knowledge.update', 'note.propose_edit', 'note.read', 'agent.delegate', 'ask_user']) assert.ok(seenTools.includes(name), name);
+  for (const name of ['knowledge.list', 'knowledge.read', 'knowledge.search', 'knowledge.update', 'note.propose_edit', 'note.read', 'agent.delegate', 'ask_user', 'email.send']) assert.ok(seenTools.includes(name), name);
 });
 
 test('desktop note browser tools are bound to note-assist runs and relayed through the client', async (t) => {

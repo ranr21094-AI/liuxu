@@ -220,6 +220,15 @@ const DEFAULT_TODO_REMINDER_SETTINGS = {
   enabled: false,
   recipientEmail: '',
   sendTime: '08:00',
+  smtp: {
+    useCustomSmtp: false,
+    host: '',
+    port: 465,
+    secureMode: 'ssl',
+    authUser: '',
+    fromAddress: '',
+    passwordConfigured: false,
+  },
 };
 
 const DEFAULT_TODO_REMINDER_STATE = {
@@ -321,6 +330,36 @@ function isValidTime24h(value) {
   return hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59;
 }
 
+function todoReminderSmtpPasswordAad() {
+  return `work-log-todo-mail:v1:${SECRET_SCOPE}:smtpPassword`;
+}
+
+function normalizeTodoReminderSmtp(data, { passwordConfigured = false } = {}) {
+  const source = isPlainObject(data) ? data : {};
+  const host = normalizeString(source.host, '').trim().slice(0, 255);
+  const port = normalizeFiniteNumber(source.port, 465, { min: 1, max: 65535 });
+  if (source.secureMode !== undefined && !['none', 'starttls', 'ssl'].includes(source.secureMode)) {
+    return { error: 'Invalid SMTP secureMode' };
+  }
+  const secureMode = ['none', 'starttls', 'ssl'].includes(source.secureMode) ? source.secureMode : 'ssl';
+  const authUser = normalizeString(source.authUser, '').trim().slice(0, 320);
+  const fromAddress = normalizeString(source.fromAddress, '').trim().slice(0, 320);
+  if (source.useCustomSmtp === true && (!host || /[\s/@\\]/.test(host))) {
+    return { error: 'SMTP host is required and must not contain whitespace or URL characters' };
+  }
+  if (port === null || !Number.isInteger(port)) return { error: 'SMTP port must be an integer from 1 to 65535' };
+  if (fromAddress && !isValidEmail(fromAddress)) return { error: 'Invalid SMTP fromAddress' };
+  return {
+    useCustomSmtp: source.useCustomSmtp === true,
+    host,
+    port,
+    secureMode,
+    authUser,
+    fromAddress,
+    passwordConfigured: Boolean(passwordConfigured),
+  };
+}
+
 function normalizeTodoReminderSnapshotItem(item) {
   if (!isPlainObject(item)) return null;
   const id = toPositiveInteger(item.id);
@@ -351,13 +390,16 @@ function normalizeTodoReminderSettings(data, { mailReady = true } = {}) {
   if (enabled && !recipientEmail) {
     return { error: 'Reminder recipientEmail is required when reminders are enabled' };
   }
-  if (enabled && !mailReady) {
-    return { error: 'QQ mail credentials are required when reminders are enabled' };
-  }
+  const smtp = normalizeTodoReminderSmtp(source.smtp, {
+    passwordConfigured: source.smtp?.passwordConfigured === true || Boolean(source.smtp?.password),
+  });
+  if (smtp.error) return smtp;
+  if (enabled && !mailReady) return { error: 'SMTP 发件服务未配置完整，不能启用邮件提醒' };
   return {
     enabled,
     recipientEmail,
     sendTime,
+    smtp,
   };
 }
 
@@ -627,30 +669,86 @@ function writeAiSettings(data) {
 }
 
 function readTodoReminderSettings() {
-  if (cache.todoReminderSettings !== null) return { ...cache.todoReminderSettings };
+  if (cache.todoReminderSettings !== null) return cloneJson(cache.todoReminderSettings);
   ensureDataDir();
   try {
     const saved = readSingleton(sqlite, 'todo_reminder_settings', null);
     if (!saved) {
-      cache.todoReminderSettings = { ...DEFAULT_TODO_REMINDER_SETTINGS };
-      return { ...cache.todoReminderSettings };
+      cache.todoReminderSettings = cloneJson(DEFAULT_TODO_REMINDER_SETTINGS);
+      return cloneJson(cache.todoReminderSettings);
     }
-    const normalized = normalizeTodoReminderSettings(saved);
+    const normalized = normalizeTodoReminderSettings(saved, {
+      mailReady: true,
+    });
     if (normalized.error) throw new Error(normalized.error);
     cache.todoReminderSettings = normalized;
-    return { ...cache.todoReminderSettings };
+    return cloneJson(cache.todoReminderSettings);
   } catch (err) {
     return failCorruptData('todo-reminder-settings.json', TODO_REMINDER_SETTINGS_FILE, err);
   }
+}
+
+function readTodoReminderMailSettings() {
+  ensureDataDir();
+  const saved = readSingleton(sqlite, 'todo_reminder_settings', null) || DEFAULT_TODO_REMINDER_SETTINGS;
+  const normalized = normalizeTodoReminderSmtp(saved.smtp, {
+    passwordConfigured: Boolean(saved.smtp?.password),
+  });
+  if (normalized.error) throw new Error(normalized.error);
+  let storedPassword = typeof saved.smtp?.password === 'string' ? saved.smtp.password : '';
+  let password = storedPassword;
+  if (isEncryptedSecret(storedPassword)) {
+    password = decryptSecret(storedPassword, todoReminderSmtpPasswordAad());
+  } else if (storedPassword) {
+    storedPassword = encryptSecret(storedPassword, todoReminderSmtpPasswordAad());
+    const migrated = { ...saved, smtp: { ...saved.smtp, password: storedPassword } };
+    writeSingleton(sqlite, 'todo_reminder_settings', migrated);
+    resetCache();
+  }
+  return { ...normalized, password, passwordConfigured: Boolean(password) };
 }
 
 function writeTodoReminderSettings(data, options = {}) {
   ensureDataDir();
   const normalized = normalizeTodoReminderSettings(data, options);
   if (normalized.error) return normalized;
-  writeSingleton(sqlite, 'todo_reminder_settings', normalized);
-  cache.todoReminderSettings = { ...normalized };
-  return { ...normalized };
+  const input = isPlainObject(data) ? data : {};
+  const incomingSmtp = isPlainObject(input.smtp) ? input.smtp : null;
+  const previous = readSingleton(sqlite, 'todo_reminder_settings', null) || {};
+  let storedSmtp = previous.smtp && typeof previous.smtp === 'object' ? { ...previous.smtp } : {};
+  if (incomingSmtp) {
+    const requestedCustom = incomingSmtp.useCustomSmtp === true;
+    if (!requestedCustom || incomingSmtp.resetToEnvironment === true) {
+      storedSmtp = { ...DEFAULT_TODO_REMINDER_SETTINGS.smtp, password: '' };
+    } else {
+      const currentPassword = typeof storedSmtp.password === 'string' ? storedSmtp.password : '';
+      const rawPassword = typeof incomingSmtp.password === 'string' ? incomingSmtp.password : '';
+      let password = currentPassword;
+      if (incomingSmtp.clearPassword === true) password = '';
+      else if (rawPassword) password = encryptSecret(rawPassword, todoReminderSmtpPasswordAad());
+      else if (password && !isEncryptedSecret(password)) password = encryptSecret(password, todoReminderSmtpPasswordAad());
+      storedSmtp = {
+        useCustomSmtp: true,
+        host: normalized.smtp.host,
+        port: normalized.smtp.port,
+        secureMode: normalized.smtp.secureMode,
+        authUser: normalized.smtp.authUser,
+        fromAddress: normalized.smtp.fromAddress,
+        password,
+      };
+    }
+  }
+  const persisted = {
+    enabled: normalized.enabled,
+    recipientEmail: normalized.recipientEmail,
+    sendTime: normalized.sendTime,
+    smtp: storedSmtp,
+  };
+  const safe = normalizeTodoReminderSettings(persisted, { mailReady: true });
+  if (safe.error) return safe;
+  writeSingleton(sqlite, 'todo_reminder_settings', persisted);
+  cache.todoReminderSettings = safe;
+  return cloneJson(safe);
 }
 
 function readTodoReminderState() {
@@ -2193,6 +2291,7 @@ return {
   addTodoCategory,
   deleteTodoCategory,
   getTodoReminderSettings: readTodoReminderSettings,
+  getTodoReminderMailSettings: readTodoReminderMailSettings,
   saveTodoReminderSettings: writeTodoReminderSettings,
   getTodoReminderState: readTodoReminderState,
   saveTodoReminderState: writeTodoReminderState,

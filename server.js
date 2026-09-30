@@ -12,8 +12,8 @@ const crypto = require('crypto');
 const childProcess = require('child_process');
 const { AsyncLocalStorage } = require('async_hooks');
 const multer = require('multer');
-const nodemailer = require('nodemailer');
 const database = require('./database');
+const { createSmtpSender, isValidMailbox, normalizeMailConfig } = require('./lib/mail/smtp');
 const { BUSINESS_TIME_ZONE, businessDateString, weekdayIndex } = require('./business-date');
 const { isPrivateIpLiteral, validateGeneratedImageUrl, createAgentWebFetchValidator, fetchFollowingRedirects } = require('./lib/net/ssrf');
 const { toolResult, toProviderTools, fromProviderName } = require('./lib/agent/tools');
@@ -531,6 +531,51 @@ function qqMailReady() {
   return Boolean(QQ_EMAIL_ACCOUNT && QQ_EMAIL_AUTH_CODE);
 }
 
+function legacyQqMailConfig() {
+  if (!qqMailReady()) return null;
+  return {
+    source: 'environment',
+    host: 'smtp.qq.com',
+    port: 465,
+    secureMode: 'ssl',
+    authUser: QQ_EMAIL_ACCOUNT,
+    password: QQ_EMAIL_AUTH_CODE,
+    fromAddress: QQ_EMAIL_ACCOUNT,
+  };
+}
+
+function effectiveTodoMailConfig(mailDb = db) {
+  const saved = mailDb.getTodoReminderMailSettings();
+  if (saved.useCustomSmtp) return normalizeMailConfig({ ...saved, source: 'custom' });
+  return normalizeMailConfig(legacyQqMailConfig() || { source: 'none' });
+}
+
+function candidateTodoMailConfig(body = {}, mailDb = db) {
+  const saved = mailDb.getTodoReminderMailSettings();
+  const incoming = body && typeof body.smtp === 'object' && !Array.isArray(body.smtp) ? body.smtp : null;
+  if (!incoming) return effectiveTodoMailConfig(mailDb);
+  if (incoming.useCustomSmtp !== true || incoming.resetToEnvironment === true) {
+    return normalizeMailConfig(legacyQqMailConfig() || { source: 'none' });
+  }
+  const prior = saved.useCustomSmtp ? saved : {};
+  const password = incoming.clearPassword === true
+    ? ''
+    : (typeof incoming.password === 'string' && incoming.password.length
+      ? incoming.password
+      : (prior.password || ''));
+  return normalizeMailConfig({
+    source: 'custom',
+    host: incoming.host ?? prior.host,
+    port: incoming.port ?? prior.port ?? 465,
+    secureMode: incoming.secureMode ?? prior.secureMode ?? 'ssl',
+    authUser: incoming.authUser ?? prior.authUser,
+    fromAddress: incoming.fromAddress ?? prior.fromAddress,
+    password,
+  });
+}
+
+const sendSmtpMessage = createSmtpSender();
+
 function getBusinessClockParts(date = new Date()) {
   const parts = {};
   for (const part of businessClockFormatter.formatToParts(date)) {
@@ -543,32 +588,10 @@ function getBusinessClockParts(date = new Date()) {
   return { ...parts, businessDate, time };
 }
 
-function createTodoReminderTransporter() {
-  return nodemailer.createTransport({
-    host: 'smtp.qq.com',
-    port: 465,
-    secure: true,
-    disableFileAccess: true,
-    disableUrlAccess: true,
-    auth: {
-      user: QQ_EMAIL_ACCOUNT,
-      pass: QQ_EMAIL_AUTH_CODE,
-    },
-  });
-}
-
-async function sendTodoReminderEmail({ from = QQ_EMAIL_ACCOUNT, to, subject, text, textEncoding = 'base64' }) {
-  if (!qqMailReady()) throw new Error('QQ mail credentials are not configured');
-  const transporter = createTodoReminderTransporter();
-  await transporter.sendMail({
-    from,
-    to,
-    subject,
-    text,
-    textEncoding,
-    disableFileAccess: true,
-    disableUrlAccess: true,
-  });
+async function sendTodoReminderEmail(message, { mailDb = db, send = sendSmtpMessage } = {}) {
+  const config = effectiveTodoMailConfig(mailDb);
+  if (!config.ready) throw new Error(config.error || 'SMTP 发件服务未配置完整');
+  return send(config, message);
 }
 
 function todoReminderPriorityRank(priority) {
@@ -622,10 +645,11 @@ function buildTodoReminderMail({ businessDate, snapshot }) {
   };
 }
 
-function createTodoReminderEmailMessage({ to, businessDate, snapshot }) {
+function createTodoReminderEmailMessage({ to, businessDate, snapshot, from } = {}) {
   const mail = buildTodoReminderMail({ businessDate, snapshot });
+  const sender = typeof from === 'string' ? from : (effectiveTodoMailConfig().fromAddress || QQ_EMAIL_ACCOUNT);
   return {
-    from: QQ_EMAIL_ACCOUNT,
+    from: sender,
     to,
     subject: mail.subject,
     text: mail.text,
@@ -636,11 +660,13 @@ function createTodoReminderEmailMessage({ to, businessDate, snapshot }) {
 function getTodoReminderResponse() {
   const saved = db.getTodoReminderSettings();
   const state = db.getTodoReminderState();
+  const effectiveMail = effectiveTodoMailConfig();
   return {
     enabled: saved.enabled,
-    recipientEmail: saved.recipientEmail || QQ_EMAIL_ACCOUNT,
+    recipientEmail: saved.recipientEmail || effectiveMail.fromAddress || QQ_EMAIL_ACCOUNT,
     sendTime: saved.sendTime,
-    mailReady: qqMailReady(),
+    mailReady: effectiveMail.ready,
+    smtp: { ...saved.smtp, source: effectiveMail.source, activeFromAddress: effectiveMail.fromAddress || '' },
     lastStatus: state.status,
     lastSentAt: state.sentAt || '',
     lastError: state.lastError || '',
@@ -649,8 +675,8 @@ function getTodoReminderResponse() {
 
 function createTodoReminderService({
   db: reminderDb = db,
-  sendMail = sendTodoReminderEmail,
-  mailReady = qqMailReady,
+  sendMail = mail => sendTodoReminderEmail(mail, { mailDb: reminderDb }),
+  mailReady = () => effectiveTodoMailConfig(reminderDb).ready,
   now = () => new Date(),
   intervalMs = TODO_REMINDER_INTERVAL_MS,
 } = {}) {
@@ -662,15 +688,19 @@ function createTodoReminderService({
       reminderDb.saveTodoReminderState({
         ...state,
         status: 'pending',
-        lastError: 'QQ mail credentials are not configured',
+        lastError: 'SMTP 发件服务未配置完整',
       });
       return false;
     }
     try {
+      const from = typeof reminderDb.getTodoReminderMailSettings === 'function'
+        ? effectiveTodoMailConfig(reminderDb).fromAddress
+        : '';
       const mail = createTodoReminderEmailMessage({
         to: settings.recipientEmail,
         businessDate: state.businessDate,
         snapshot: state.snapshot,
+        from,
       });
       await sendMail(mail);
       reminderDb.saveTodoReminderState({
@@ -2614,7 +2644,11 @@ app.get('/api/todo-reminder-settings', (_req, res) => {
 
 app.put('/api/todo-reminder-settings', (req, res) => {
   try {
-    const result = db.saveTodoReminderSettings(req.body, { mailReady: qqMailReady() });
+    const current = db.getTodoReminderSettings();
+    const editsSmtp = req.body && Object.prototype.hasOwnProperty.call(req.body, 'smtp');
+    const canKeepExistingReminderEnabled = current.enabled && req.body?.enabled === true && editsSmtp;
+    const mailReady = candidateTodoMailConfig(req.body).ready || canKeepExistingReminderEnabled;
+    const result = db.saveTodoReminderSettings(req.body, { mailReady });
     if (result.error) {
       return res.status(400).json({ error: result.error });
     }
@@ -2622,6 +2656,23 @@ app.put('/api/todo-reminder-settings', (req, res) => {
     res.json(getTodoReminderResponse());
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to save todo reminder settings' });
+  }
+});
+
+app.post('/api/todo-reminder-settings/test', rateLimiter(5, 60 * 1000), async (req, res) => {
+  const to = typeof req.body?.to === 'string' ? req.body.to.trim() : '';
+  if (!isValidMailbox(to)) return res.status(400).json({ error: '请输入有效的测试收件邮箱' });
+  try {
+    const config = effectiveTodoMailConfig();
+    if (!config.ready) return res.status(400).json({ error: config.error || '请先配置 SMTP 发件服务' });
+    await sendSmtpMessage(config, {
+      to,
+      subject: '留序邮件配置测试',
+      text: '这是一封留序邮件配置测试邮件。收到此邮件表示 SMTP 发件配置可用。',
+    });
+    res.json({ success: true, to });
+  } catch (err) {
+    res.status(502).json({ error: `测试邮件发送失败：${String(err?.message || 'SMTP 错误').slice(0, 300)}` });
   }
 });
 
@@ -3668,6 +3719,8 @@ mountNewApis(app, {
   webFetchFor: createAgentWebFetch,
   westockRunFor: createAgentWestock,
   imageGenerateFor: createAgentImageGenerate,
+  agentEmailAvailableFor: () => effectiveTodoMailConfig().ready,
+  agentEmailSendFor: () => message => sendTodoReminderEmail(message),
   agentImageUpload: agentUpload,
   agentImageUploadValidate: agentUploadedImageMatchesExtension,
   agentImageUploadSerialize: serializeUploadedFile,
@@ -3735,6 +3788,8 @@ module.exports = {
   buildTodoReminderMail,
   createTodoReminderEmailMessage,
   sendTodoReminderEmail,
+  effectiveTodoMailConfig,
+  candidateTodoMailConfig,
   getBusinessClockParts,
   sortTodosForReminder,
   getDueTodosForReminder,

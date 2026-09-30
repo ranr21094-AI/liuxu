@@ -788,8 +788,8 @@ test('AI settings persist to local data storage and validate options', async (t)
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clearApiKeys: true }),
   });
-  assert.equal(cleared.status, 200);
   const clearedBody = await cleared.json();
+  assert.equal(cleared.status, 200);
   assert.equal(clearedBody.apiKeyConfigured, false);
   assert.equal(clearedBody.moonshotApiKeyConfigured, false);
   assert.equal(clearedBody.openrouterApiKeyConfigured, false);
@@ -1710,6 +1710,15 @@ test('todo reminder settings and state persist with validation', (t) => {
     enabled: false,
     recipientEmail: '',
     sendTime: '08:00',
+    smtp: {
+      useCustomSmtp: false,
+      host: '',
+      port: 465,
+      secureMode: 'ssl',
+      authUser: '',
+      fromAddress: '',
+      passwordConfigured: false,
+    },
   });
   assert.deepEqual(db.getTodoReminderState(), {
     businessDate: '',
@@ -1734,7 +1743,7 @@ test('todo reminder settings and state persist with validation', (t) => {
     enabled: true,
     recipientEmail: 'notify@example.com',
     sendTime: '08:00',
-  }, { mailReady: false }).error, /QQ mail credentials/);
+  }, { mailReady: false }).error, /SMTP/);
 
   const savedSettings = db.saveTodoReminderSettings({
     enabled: true,
@@ -1745,6 +1754,15 @@ test('todo reminder settings and state persist with validation', (t) => {
     enabled: true,
     recipientEmail: 'notify@example.com',
     sendTime: '09:15',
+    smtp: {
+      useCustomSmtp: false,
+      host: '',
+      port: 465,
+      secureMode: 'ssl',
+      authUser: '',
+      fromAddress: '',
+      passwordConfigured: false,
+    },
   });
 
   const savedState = db.saveTodoReminderState({
@@ -1827,7 +1845,143 @@ test('todo reminder settings API validates mail readiness and persists across re
     }),
   });
   assert.equal(rejected.status, 400);
-  assert.match((await rejected.json()).error, /QQ mail credentials/);
+  assert.match((await rejected.json()).error, /SMTP/);
+});
+
+test('todo SMTP settings are encrypted and redacted; temporary test mail leaves reminder data untouched', async (t) => {
+  const nodemailer = require('nodemailer');
+  const originalCreateTransport = nodemailer.createTransport;
+  let capturedOptions = null;
+  let capturedMessage = null;
+  let shouldFail = false;
+  nodemailer.createTransport = options => {
+    capturedOptions = options;
+    return {
+      async sendMail(message) {
+        if (shouldFail) throw new Error('simulated SMTP failure');
+        capturedMessage = message;
+      },
+      close() {},
+    };
+  };
+  t.after(() => { nodemailer.createTransport = originalCreateTransport; });
+
+  const service = loadFreshApp(t, { qqEmailAccount: 'legacy@qq.com', qqEmailAuthCode: 'legacy-code' });
+  const putSettings = async (smtp, { enabled = false, recipientEmail = '' } = {}) => fetch(`${service.baseUrl}/api/todo-reminder-settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, recipientEmail, sendTime: '08:00', smtp }),
+  });
+  const configured = await putSettings({
+    useCustomSmtp: true,
+    host: 'smtp.custom.example',
+    port: 587,
+    secureMode: 'starttls',
+    authUser: 'smtp-user@example.com',
+    password: 'smtp-secret-value',
+    fromAddress: 'tasks@example.com',
+  }, { enabled: true, recipientEmail: 'daily@example.net' });
+  assert.equal(configured.status, 200);
+  let configBody = await configured.json();
+  assert.equal(configBody.enabled, true);
+  assert.equal(configBody.mailReady, true);
+  assert.equal(configBody.smtp.source, 'custom');
+  assert.equal(configBody.smtp.activeFromAddress, 'tasks@example.com');
+  assert.equal(configBody.smtp.passwordConfigured, true);
+  assert.equal(JSON.stringify(configBody).includes('smtp-secret-value'), false);
+  const rawSettings = JSON.parse(service.db.sqlite.prepare('SELECT body FROM todo_reminder_settings WHERE id = 1').get().body);
+  assert.match(rawSettings.smtp.password, /^enc:v1:/);
+  assert.equal(rawSettings.smtp.password.includes('smtp-secret-value'), false);
+  assert.equal(service.db.getTodoReminderMailSettings().password, 'smtp-secret-value');
+
+  const preserved = await putSettings({
+    useCustomSmtp: true,
+    host: 'smtp.custom.example',
+    port: 587,
+    secureMode: 'starttls',
+    authUser: 'smtp-user@example.com',
+    password: '',
+    fromAddress: 'tasks@example.com',
+  }, { enabled: true, recipientEmail: 'daily@example.net' });
+  assert.equal(preserved.status, 200);
+  assert.equal(service.db.getTodoReminderMailSettings().password, 'smtp-secret-value');
+
+  const invalid = await putSettings({
+    useCustomSmtp: true,
+    host: 'smtp.custom.example',
+    port: 65536,
+    secureMode: 'ssl',
+    fromAddress: 'tasks@example.com',
+  }, { enabled: true, recipientEmail: 'daily@example.net' });
+  assert.equal(invalid.status, 400);
+
+  const cleared = await putSettings({
+    useCustomSmtp: true,
+    host: 'smtp.custom.example',
+    port: 587,
+    secureMode: 'starttls',
+    authUser: 'smtp-user@example.com',
+    clearPassword: true,
+    fromAddress: 'tasks@example.com',
+  }, { enabled: true, recipientEmail: 'daily@example.net' });
+  const clearedBody = await cleared.json();
+  assert.equal(cleared.status, 200, JSON.stringify(clearedBody));
+  assert.equal(clearedBody.smtp.passwordConfigured, false);
+  assert.equal(clearedBody.mailReady, false);
+  assert.equal(clearedBody.enabled, true);
+  assert.equal(service.db.getTodoReminderMailSettings().password, '');
+
+  const reset = await putSettings({ useCustomSmtp: false }, { enabled: true, recipientEmail: 'daily@example.net' });
+  assert.equal(reset.status, 200);
+  configBody = await reset.json();
+  assert.equal(configBody.mailReady, true);
+  assert.equal(configBody.smtp.source, 'environment');
+  assert.equal(configBody.smtp.activeFromAddress, 'legacy@qq.com');
+
+  const customNoAuth = await putSettings({
+    useCustomSmtp: true,
+    host: 'relay.custom.example',
+    port: 25,
+    secureMode: 'none',
+    authUser: '',
+    password: '',
+    fromAddress: 'sender@custom.example',
+  }, { enabled: true, recipientEmail: 'daily@example.net' });
+  assert.equal(customNoAuth.status, 200);
+  const beforeSettings = service.db.getTodoReminderSettings();
+  const beforeState = service.db.getTodoReminderState();
+  const testResponse = await fetch(`${service.baseUrl}/api/todo-reminder-settings/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to: 'one-time@example.net' }),
+  });
+  assert.equal(testResponse.status, 200);
+  assert.deepEqual(await testResponse.json(), { success: true, to: 'one-time@example.net' });
+  assert.equal(capturedOptions.secure, false);
+  assert.equal(capturedOptions.requireTLS, false);
+  assert.equal(capturedOptions.auth, undefined);
+  assert.equal(capturedMessage.from, 'sender@custom.example');
+  assert.equal(capturedMessage.to, 'one-time@example.net');
+  assert.match(capturedMessage.subject, /测试/);
+  assert.equal(service.db.getTodoReminderSettings().recipientEmail, beforeSettings.recipientEmail);
+  assert.deepEqual(service.db.getTodoReminderState(), beforeState);
+
+  const invalidTestRecipient = await fetch(`${service.baseUrl}/api/todo-reminder-settings/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to: 'not-an-email' }),
+  });
+  assert.equal(invalidTestRecipient.status, 400);
+
+  shouldFail = true;
+  const failedSend = await fetch(`${service.baseUrl}/api/todo-reminder-settings/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to: 'one-time@example.net' }),
+  });
+  assert.equal(failedSend.status, 502);
+  assert.match((await failedSend.json()).error, /simulated SMTP failure/);
+  assert.deepEqual(service.db.getTodoReminderState(), beforeState);
 });
 
 test('todo reminder mail builder includes category titles due dates and notes in utf-8 text', (t) => {
@@ -2378,6 +2532,7 @@ test('todo reminder UI loads, saves, and displays reminder status in the todo pa
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'css', 'workbench.css'), 'utf8');
   const htmlSource = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  const workbenchSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'workbench.js'), 'utf8');
 
   assert.match(htmlSource, /id="todoReminderHeading">邮件提醒/);
   assert.match(htmlSource, /所有分类中当天到期的未完成待办/);
@@ -2392,6 +2547,13 @@ test('todo reminder UI loads, saves, and displays reminder status in the todo pa
   assert.match(todoSource, /\$\('#btnTodoReminderSave'\)\.addEventListener\('click', saveTodoReminderSettings\);/);
   assert.match(todoSource, /const \[todosRes, countdownsRes, categoriesRes, reminderRes\] = await Promise\.all\(\[/);
   assert.match(todoSource, /mailReady:\s*Boolean\(data\.mailReady\)/);
+  for (const id of ['todoSmtpHost', 'todoSmtpPort', 'todoSmtpSecureMode', 'todoSmtpAuthUser', 'todoSmtpPassword', 'todoSmtpClearPassword', 'todoTestEmailDialog']) {
+    assert.match(htmlSource, new RegExp(`id="${id}"`));
+  }
+  assert.match(todoSource, /apiFetch\('\/api\/todo-reminder-settings\/test'/);
+  assert.match(workbenchSource, /if \(name === 'email\.send'\)/);
+  assert.match(workbenchSource, /escHtml\(String\(args\.text \?\? ''\)\)/);
+  assert.match(styleSource, /approval-email-risk > strong:last-of-type \+ pre \{ max-height: 220px; overflow-y: auto;/);
   assert.match(styleSource, /\.todo-reminder-card\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.todo-reminder-chip\.ready\s*\{[\s\S]*0f766e/);
   assert.match(styleSource, /\.todo-reminder-grid\s*\{[\s\S]*grid-template-columns:\s*1fr;/);

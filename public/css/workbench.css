@@ -686,6 +686,10 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .approval-card h3, .memory-card h3 { margin: 0 0 6px; font-size: 13px; }
 .approval-card p, .memory-card p, .run-error { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .approval-risk { margin: 8px 0; padding: 8px; border-radius: 7px; background: color-mix(in srgb, var(--warning) 9%, transparent); min-width: 0; }
+.approval-email-risk > strong { display: block; margin-top: 6px; color: var(--text); font-size: 11px; }
+.approval-email-risk > strong:first-child { margin-top: 0; }
+.approval-email-risk pre { padding: 5px 0; user-select: text; }
+.approval-email-risk > strong:last-of-type + pre { max-height: 220px; overflow-y: auto; overscroll-behavior: contain; }
 .approval-card pre, .memory-card pre {
   margin: 6px 0 0;
   max-width: 100%;
@@ -2123,6 +2127,19 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 }
 .todo-reminder-actions { display: flex; justify-content: flex-end; }
 .todo-reminder-actions .secondary-action { min-height: 30px; padding: 0 10px; font-size: 12px; }
+.todo-smtp-settings { padding-top: 7px; border-top: 1px solid var(--line); }
+.todo-smtp-settings > summary { color: var(--text); cursor: pointer; font-size: 11px; font-weight: 650; }
+.todo-smtp-source, .todo-smtp-password-state { margin: 6px 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+.todo-smtp-fields { display: flex; flex-direction: column; gap: 7px; padding-top: 7px; }
+.todo-smtp-fields[hidden] { display: none; }
+.todo-smtp-grid { grid-template-columns: minmax(0, 1fr) minmax(70px, .55fr); }
+.todo-smtp-grid .todo-reminder-field:nth-child(3), .todo-smtp-grid .todo-reminder-field:nth-child(4), .todo-smtp-grid .todo-reminder-field:nth-child(5), .todo-smtp-grid .todo-reminder-field:nth-child(6) { grid-column: 1 / -1; }
+.todo-reminder-field select { width: 100%; min-width: 0; height: 32px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; padding: 0 7px; }
+.todo-smtp-clear-password { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; }
+.todo-smtp-clear-password input { margin: 0; }
+.todo-smtp-actions { justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+.todo-smtp-actions button { flex: 1 1 auto; }
+.todo-reminder-field input:focus-visible, .todo-reminder-field select:focus-visible, .todo-smtp-settings summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 @media (max-width: 768px) {
   .todo-toolbar { flex-wrap: wrap; }

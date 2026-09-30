@@ -141,14 +141,26 @@ test('legacy migration re-encrypts AI secrets for the new data directory', (t) =
     }],
   };
   schedule.prepare('INSERT INTO ai_settings (id, body) VALUES (1, ?)').run(JSON.stringify(sourceSettings));
+  schedule.exec('CREATE TABLE todo_reminder_settings (id INTEGER PRIMARY KEY, body TEXT NOT NULL)');
+  const smtpPasswordAad = scope => `work-log-todo-mail:v1:${path.resolve(scope)}:smtpPassword`;
+  schedule.prepare('INSERT INTO todo_reminder_settings (id, body) VALUES (1, ?)').run(JSON.stringify({
+    enabled: false,
+    recipientEmail: '',
+    sendTime: '08:00',
+    smtp: { useCustomSmtp: true, password: encryptSecret('smtp-secret', smtpPasswordAad(source)) },
+  }));
   schedule.close();
   createDatabase(path.join(source, 'users.db'), 'users_check');
 
   const result = migrateLegacyData({ sourceDir: source, targetDir: target, Database });
-  assert.equal(result.secretsReencrypted, 2);
+  assert.equal(result.secretsReencrypted, 3);
+  assert.equal(result.smtpSecretsReencrypted, 1);
   const installed = new Database(path.join(target, 'schedule.db'), { readonly: true });
   const installedSettings = JSON.parse(installed.prepare('SELECT body FROM ai_settings WHERE id = 1').get().body);
+  const installedTodoSettings = JSON.parse(installed.prepare('SELECT body FROM todo_reminder_settings WHERE id = 1').get().body);
   installed.close();
+  assert.equal(decryptSecret(installedTodoSettings.smtp.password, smtpPasswordAad(target)), 'smtp-secret');
+  assert.throws(() => decryptSecret(installedTodoSettings.smtp.password, smtpPasswordAad(source)), /Failed to decrypt/);
   assert.equal(decryptSecret(installedSettings.apiKey, targetAad('apiKey')), 'primary-secret');
   assert.equal(
     decryptSecret(installedSettings.customProviders[0].apiKey, targetAad('customProvider:provider-1')),
@@ -158,8 +170,10 @@ test('legacy migration re-encrypts AI secrets for the new data directory', (t) =
 
   const original = new Database(path.join(source, 'schedule.db'), { readonly: true });
   const originalSettings = JSON.parse(original.prepare('SELECT body FROM ai_settings WHERE id = 1').get().body);
+  const originalTodoSettings = JSON.parse(original.prepare('SELECT body FROM todo_reminder_settings WHERE id = 1').get().body);
   original.close();
   assert.equal(decryptSecret(originalSettings.apiKey, sourceAad('apiKey')), 'primary-secret');
+  assert.equal(decryptSecret(originalTodoSettings.smtp.password, smtpPasswordAad(source)), 'smtp-secret');
 });
 
 test('legacy migration never overwrites a non-empty target', (t) => {

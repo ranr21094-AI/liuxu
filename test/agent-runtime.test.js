@@ -7,7 +7,8 @@ const { createAgentStore } = require('../lib/agent/store');
 const { createMemoryService, normalizeMemoryProposalArgs, buildMemoryRefreshUserMessage, MEMORY_CONTENT_MAX } = require('../lib/agent/memory');
 const { DEFAULT_MEMORY_SETTINGS, resolveMemorySettings } = require('../lib/agent/memory-settings');
 const { createRuntime, parseActionEnvelope, clampMaxRounds } = require('../lib/agent/runtime');
-const { toProviderTools, fromProviderName, definitions } = require('../lib/agent/tools');
+const { createToolAdapters } = require('../lib/agent/adapters');
+const { toProviderTools, fromProviderName, definitions, requiresConfirmation } = require('../lib/agent/tools');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
 const { savePolicy } = require('../lib/computer/policy');
 const { parseMentions, expandMentions } = require('../lib/agent/mentions');
@@ -121,6 +122,82 @@ test('agent runtime completes without tools and can pause for approval', async (
   assert.equal(db.getAllTodos()[0].title, '写周报');
   assert.equal(memory.listProposals().length, 0);
   assert.equal(memory.list({ layer: 'L3' }).filter(item => !item.builtinId).length, 0);
+});
+
+test('email.send is hidden without SMTP and sends only once after explicit approval', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  let configured = false;
+  let round = 0;
+  const sent = [];
+  const expected = {
+    to: 'person@example.com',
+    subject: '<Quarterly> update',
+    text: 'First line\n<script>alert("x")</script>\nLast line',
+  };
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    emailAvailable: () => configured,
+    emailSend: async message => { sent.push(message); return { ok: true }; },
+    modelClient: {
+      async complete({ tools }) {
+        round += 1;
+        if (round === 1) {
+          assert.equal(tools.some(tool => tool.name === 'email.send'), false);
+          return { text: 'SMTP 未配置', toolCalls: [] };
+        }
+        assert.ok(tools.some(tool => tool.name === 'email.send'));
+        if ([2, 4].includes(round)) return { text: '', toolCalls: [{ name: 'email.send', arguments: expected }] };
+        return { text: '邮件已处理', toolCalls: [] };
+      },
+    },
+  });
+  assert.equal(requiresConfirmation('email.send'), true);
+  const emailDefinition = definitions().find(tool => tool.name === 'email.send');
+  assert.deepEqual(emailDefinition.parameters.required, ['to', 'subject', 'text']);
+  assert.equal(emailDefinition.parameters.properties.subject.maxLength, 200);
+  assert.equal(emailDefinition.parameters.properties.text.maxLength, 20000);
+
+  const session = store.createSession('email-send');
+  let run = await runtime.start({ session, goal: '检查邮件配置', userMessage: '检查邮件工具' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(store.getRun(run.id).status, 'completed');
+
+  configured = true;
+  run = await runtime.start({ session, goal: '发送邮件', userMessage: '发送邮件' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  let waiting = store.getRun(run.id);
+  assert.equal(waiting.status, 'waiting_approval');
+  assert.deepEqual(waiting.pendingApprovals[0].call.arguments, expected);
+  assert.equal(sent.length, 0);
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: false });
+  assert.equal(sent.length, 0);
+
+  run = await runtime.start({ session, goal: '再次发送邮件', userMessage: '再次发送邮件' });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  waiting = store.getRun(run.id);
+  assert.equal(waiting.status, 'waiting_approval');
+  await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], expected);
+  assert.equal(store.getRun(run.id).status, 'completed');
+});
+
+test('email.send errors never return SMTP credentials to the model', async (t) => {
+  const db = tempDb(t);
+  const adapters = createToolAdapters({
+    db,
+    emailSend: async () => { throw new Error('SMTP rejected password super-secret-password'); },
+  });
+  const result = await adapters.execute('email.send', {
+    to: 'person@example.com', subject: 'Check', text: 'Body',
+  });
+  assert.equal(result.errorCode, 'send_failed');
+  assert.doesNotMatch(JSON.stringify(result), /super-secret-password/);
 });
 
 test('agent approval queue exposes one pending item at a time', async (t) => {
@@ -1966,6 +2043,56 @@ test('agent.delegate bubbles write approval to parent run', async (t) => {
   live = await waitForRun(store, run.id, 1200);
   assert.equal(live.status, 'completed');
   assert.ok(db.getAllTodos().some(item => item.title === '委派创建'));
+});
+
+test('agent.delegate can request email.send and bubbles its approval to the parent', async (t) => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const memory = createMemoryService(store);
+  const sent = [];
+  let parentDelegated = false;
+  const email = { to: 'reviewer@example.com', subject: 'Draft review', text: 'Please review the attached draft.' };
+  const runtime = createRuntime({
+    db,
+    store,
+    memory,
+    hasDiaryAccessFlag: false,
+    emailAvailable: () => true,
+    emailSend: async message => { sent.push(message); return { ok: true }; },
+    modelClient: {
+      async complete({ messages, tools }) {
+        const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('子任务发送邮件'));
+        if (inChild) {
+          assert.ok(tools.some(tool => tool.name === 'email.send'));
+          const sentTool = (messages || []).some(item => item.role === 'tool' && item.name === 'email.send');
+          if (!sentTool) return { text: '', toolCalls: [{ name: 'email.send', arguments: email }] };
+          return { text: '子任务邮件已处理', toolCalls: [] };
+        }
+        if (!parentDelegated) {
+          parentDelegated = true;
+          return { text: '', toolCalls: [{ name: 'agent.delegate', arguments: { prompt: '子任务发送邮件', title: '发送邮件' } }] };
+        }
+        return { text: '父任务完成', toolCalls: [] };
+      },
+    },
+  });
+  const session = store.createSession('delegate-email');
+  const run = await runtime.start({ session, goal: '委派邮件发送', userMessage: '委派邮件发送' });
+  let live = await waitForRun(store, run.id);
+  assert.equal(live.status, 'waiting_approval');
+  assert.equal(live.pendingApprovals[0].call.name, 'agent.delegate');
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 1200);
+  assert.equal(live.status, 'waiting_approval');
+  assert.equal(live.pendingApprovals[0].call.name, 'email.send');
+  assert.deepEqual(live.pendingApprovals[0].call.arguments, email);
+  assert.equal(live.pendingApprovals[0].delegatedRunId, live.activeChildRunId);
+  assert.equal(sent.length, 0);
+  await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
+  live = await waitForRun(store, run.id, 1200);
+  assert.equal(live.status, 'completed');
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], email);
 });
 
 test('nested agent.delegate is rejected inside child run', async (t) => {
