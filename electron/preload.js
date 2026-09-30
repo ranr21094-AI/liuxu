@@ -86,7 +86,17 @@ const knowledgeFolder = Object.freeze({
 });
 
 const knowledgeFiles = Object.freeze({
-  openPath: path => ipcRenderer.invoke('liuxu:knowledge-file:open-path', { path }),
+  openDocument: documentId => ipcRenderer.invoke('liuxu:knowledge-file:open-document', { documentId }),
+  openContainingFolder: documentId => ipcRenderer.invoke('liuxu:knowledge-file:open-folder', { documentId }),
 });
 
-contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote, knowledgeFolder, knowledgeFiles }));
+function readingPositionInvoke(channel, payload) {
+  return ipcRenderer.invoke(`liuxu:reading-position:${channel}`, payload || {});
+}
+const readingPositions = Object.freeze({
+  get: documentId => readingPositionInvoke('get', { documentId }),
+  set: payload => readingPositionInvoke('set', payload),
+  clear: payload => readingPositionInvoke('clear', payload),
+});
+
+contextBridge.exposeInMainWorld('liuxuDesktop', Object.freeze({ updates, browser: Object.freeze(browser), remote, knowledgeFolder, knowledgeFiles, readingPositions }));

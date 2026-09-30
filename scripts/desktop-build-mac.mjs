@@ -276,8 +276,23 @@ try {
 if (!path.resolve(outputDir).startsWith(expectedOutputParent)) {
   throw new Error(`拒绝清理项目外的输出目录：${outputDir}`);
 }
-fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(outputDir, { recursive: true });
+// Preserve artifacts from earlier releases. Only clear intermediates produced
+// by this build, after the output path has been validated above.
+for (const name of [
+  `LiuXu-${packageJson.version}-mac-arm64.dmg`,
+  `LiuXu-${packageJson.version}-mac-arm64.zip`,
+  `LiuXu-${packageJson.version}-mac-arm64.dmg.sha256`,
+  `LiuXu-${packageJson.version}-mac-arm64.zip.sha256`,
+  'desktop-build-summary-mac.json',
+  'mac',
+  'mac-arm64',
+  'builder-debug.yml',
+  'builder-effective-config.yaml',
+  'latest-mac.yml',
+]) {
+  fs.rmSync(path.join(outputDir, name), { recursive: true, force: true });
+}
 
 const builderArgs = [
   'node_modules/electron-builder/out/cli/cli.js',

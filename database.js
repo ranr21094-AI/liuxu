@@ -1654,6 +1654,60 @@ function renameCategory(oldName, newName) {
   return { success: true };
 }
 
+function moveCategory(oldName, newParent) {
+  oldName = String(oldName || '').trim();
+  newParent = String(newParent || '').trim();
+  const sourceSegments = oldName.split('/').map(value => value.trim()).filter(Boolean);
+  const parentSegments = newParent.split('/').map(value => value.trim()).filter(Boolean);
+  if (sourceSegments.length < 2 || !parentSegments.length) {
+    return { error: 'Only folders can be moved into an existing knowledge folder' };
+  }
+  const cats = readCategories();
+  const sourceBase = cats.find(category => category.name === sourceSegments[0]);
+  if (!sourceBase) return { error: 'Source folder not found' };
+
+  let sourceContainer = sourceBase.sub || [];
+  let sourceNode = null;
+  for (let index = 1; index < sourceSegments.length; index += 1) {
+    const nodeIndex = sourceContainer.findIndex(node => node.name === sourceSegments[index]);
+    if (nodeIndex < 0) return { error: 'Source folder not found' };
+    sourceNode = sourceContainer[nodeIndex];
+    if (index < sourceSegments.length - 1) sourceContainer = sourceNode.sub || [];
+  }
+
+  const parentPath = parentSegments.join('/');
+  if (parentPath === oldName || parentPath.startsWith(`${oldName}/`)) {
+    return { error: 'A folder cannot be moved into itself or one of its descendants' };
+  }
+  const parentNode = findCategoryNode(cats, parentPath);
+  if (!parentNode) return { error: 'Destination folder not found' };
+  const oldParent = sourceSegments.slice(0, -1).join('/');
+  if (oldParent === parentPath) return { success: true, moved: false, oldPath: oldName, newPath: oldName };
+  if ((parentNode.sub || []).some(node => node.name === sourceNode.name)) {
+    return { error: 'A folder with this name already exists in the destination' };
+  }
+
+  const sourceIndex = sourceContainer.indexOf(sourceNode);
+  if (sourceIndex < 0) return { error: 'Source folder not found' };
+  sourceContainer.splice(sourceIndex, 1);
+  if (!Array.isArray(parentNode.sub)) parentNode.sub = [];
+  parentNode.sub.push(sourceNode);
+  const newPath = `${parentPath}/${sourceNode.name}`;
+  writeCategories(cats);
+
+  const logs = readLogs();
+  let logsChanged = false;
+  logs.forEach(log => {
+    const category = String(log.category || '');
+    if (category === oldName || category.startsWith(`${oldName}/`)) {
+      log.category = `${newPath}${category.slice(oldName.length)}`;
+      logsChanged = true;
+    }
+  });
+  if (logsChanged) writeLogs(logs);
+  return { success: true, moved: true, oldPath: oldName, newPath };
+}
+
 function deleteCategory(name) {
   name = name.trim();
   if (name === OTHER_CATEGORY || name === DIARY_CATEGORY) return false;
@@ -2298,6 +2352,7 @@ return {
   getAllCategories,
   addCategory,
   renameCategory,
+  moveCategory,
   deleteCategory,
   reorderCategories,
   reorderSubcategories,

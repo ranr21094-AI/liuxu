@@ -28,7 +28,7 @@ test('remote browser client adds CSRF automatically and supports one-time pairin
 test('phone layout reserves touch targets, safe area, and scrollable approval content', () => {
   const css = read('public/css/workbench.css');
   assert.match(css, /body\.remote-client \.settings-card \{[^}]*100dvh/);
-  assert.match(css, /body\.remote-client \.settings-nav \{[^}]*overflow-x: auto/);
+  assert.match(css, /\.settings-nav-group\.active \{[^}]*overflow-x: auto/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
   assert.match(css, /body\.remote-client \.agent-approval-dock \.card-actions \{[^}]*position: sticky/);
 });

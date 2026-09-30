@@ -15,7 +15,7 @@ function setStatus(text) {
 
 async function refreshKeyStatus() {
   const stored = (await chrome.storage.local.get('liuxuPairingKey')).liuxuPairingKey || '';
-  setStatus(stored ? '已配置签名校验（未签名命令将被拒绝）' : '未配置密钥：接受任意本机来源命令');
+  setStatus(stored ? '已配对：仅接受有效签名命令' : '未配对：浏览器控制命令已禁用');
   if (stored) keyInput.value = '';
 }
 

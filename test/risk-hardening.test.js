@@ -929,7 +929,7 @@ test('remediation batch: routes unique, payload params independent, strict appro
     + (backupRoutesSource.match(/app\.get\('\/api\/backup'/g) || []).length;
   assert.equal(restoreCount, 1);
   assert.equal(backupCount, 1);
-  assert.match(backupRoutesSource, /invalidateKnowledgeCache/);
+  assert.match(backupRoutesSource, /finalizeWorkspaceRestore/);
 
   // CR-08: thinking params and OpenRouter-style params compose independently.
   assert.match(serverSource, /const openrouterStyle = options\.provider === 'openrouter' \|\| options\.profile\?\.zdr === true/);

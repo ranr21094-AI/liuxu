@@ -16,6 +16,8 @@ import {
   renderPreservingFocus,
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview, setFileReaderTab } from './knowledge/filePreview.js';
+import { initNoteFind } from './knowledge/note-find.js';
+import { clearAllReadingPositions, clearReadingPosition, loadReadingPosition, saveReadingPosition } from './knowledge/reading-position.js';
 import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
 import { initNoteBrowser, noteBrowserSetDocument, noteBrowserOpenUrl, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
 import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
@@ -102,6 +104,9 @@ const state = {
   knowledgeSync: null,
   knowledgeSyncLoading: false,
 };
+
+let knowledgeDragItem = null;
+let suppressKnowledgeClickUntil = 0;
 
 const RENDERED_TERMINAL_RUN_LIMIT = 32;
 
@@ -369,10 +374,57 @@ function renderMarkdown(value) {
 let documentPreviewCleanup = null;
 let knowledgeLinkCleanup = null;
 let knowledgeEnhancements = null;
+let noteFindController = null;
+let noteReadingPositionGeneration = 0;
+let pendingNotePreviewPosition = { documentId: '', top: 0 };
+const noteReadingPositionTimers = new Map();
+
+function scheduleNoteReadingPosition(document = state.activeDocument) {
+  if (!document || document.sourceType === 'file') return;
+  const id = String(document.id || '');
+  if (!id) return;
+  const position = {
+    editTop: Number($('#documentContent')?.scrollTop) || 0,
+    previewTop: Number($('#documentPreview')?.scrollTop) || 0,
+  };
+  if (pendingNotePreviewPosition.documentId === id) pendingNotePreviewPosition.top = position.previewTop;
+  const previous = noteReadingPositionTimers.get(id);
+  clearTimeout(previous?.timer);
+  const pending = { document, position, timer: null };
+  pending.timer = setTimeout(() => {
+    noteReadingPositionTimers.delete(id);
+    void saveReadingPosition(document, 'note', position);
+  }, 300);
+  noteReadingPositionTimers.set(id, pending);
+}
+
+function flushNoteReadingPosition(documentId = state.activeDocument?.id) {
+  const id = String(documentId || '');
+  const pending = noteReadingPositionTimers.get(id);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  noteReadingPositionTimers.delete(id);
+  void saveReadingPosition(pending.document, 'note', pending.position);
+}
+
+async function restoreNoteReadingPosition(document) {
+  const generation = ++noteReadingPositionGeneration;
+  const position = await loadReadingPosition(document, 'note');
+  if (generation !== noteReadingPositionGeneration || state.activeDocument?.id !== document.id || state.activeDocument?.sourceType === 'file') return;
+  pendingNotePreviewPosition = { documentId: document.id, top: Math.max(0, Number(position?.previewTop) || 0) };
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (generation !== noteReadingPositionGeneration || state.activeDocument?.id !== document.id) return;
+    const editor = $('#documentContent');
+    const preview = $('#documentPreview');
+    if (editor) editor.scrollTop = Math.max(0, Number(position?.editTop) || 0);
+    if (preview && state.editorMode !== 'edit') preview.scrollTop = pendingNotePreviewPosition.top;
+  }));
+}
 
 function renderDocumentPreview() {
   const host = $('#documentPreview');
   if (!host) return;
+  const scrollTop = host.scrollTop;
   if (documentPreviewCleanup) documentPreviewCleanup();
   if (knowledgeLinkCleanup) knowledgeLinkCleanup();
   documentPreviewCleanup = null;
@@ -381,6 +433,7 @@ function renderDocumentPreview() {
     outgoingLinks: state.activeDocument?.outgoingLinks || [],
     documentId: state.activeDocument?.id || '',
   });
+  host.scrollTop = scrollTop;
   documentPreviewCleanup = enableMarkdownImagePreview(host, '.markdown-preview img');
   knowledgeLinkCleanup = bindKnowledgeLinkClicks(host, navigate);
 }
@@ -1844,15 +1897,32 @@ async function reconcileKnowledgeSync(previousGeneration) {
   if (id) {
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
     const current = await response.json().catch(() => ({}));
+    if (state.activeDocument?.id !== id || state.mode !== 'knowledge') return;
     if (response.status === 404 || response.status === 403) {
-      showEmptyDocument();
-      showToast('本地文件已删除，知识条目已同步移除', 'error');
+      const privateDocument = state.activeDocument?.visibility === 'diary' || state.activeDocument?.knowledgeBase === '日记';
+      let diaryLocked = response.status === 403;
+      if (privateDocument && !diaryLocked) {
+        try {
+          const diaryStatus = await getDiaryStatus();
+          diaryLocked = diaryStatus.enabled !== false && diaryStatus.locked;
+        } catch { diaryLocked = true; }
+      }
+      if (state.activeDocument?.id !== id || state.mode !== 'knowledge') return;
+      if (diaryLocked) {
+        showEmptyDocument();
+        showToast('日记已锁定，当前文档已隐藏', 'error');
+      } else if (state.documentDirty) {
+        state.documentConflict = true;
+        clearTimeout(state.documentSaveTimer);
+        setDocumentSaveState('保存冲突', 'error');
+        showToast('本地文件已移除；未保存内容仍在编辑器中，请复制后新建笔记', 'error');
+      } else {
+        showEmptyDocument();
+        showToast('本地文件已删除，知识条目已同步移除', 'error');
+      }
     } else if (response.ok && Number(current.version) !== Number(state.activeDocument?.version)) {
       if (state.documentDirty) {
-        await apiFetch('/api/knowledge/sync/drafts', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ documentId: id, draft: currentDocumentPatch(), reason: '本地文件已更新' }),
-        }).catch(() => {});
+        if (!(await persistConflictDraft(id))) return;
         showToast('本地文件已更新；未保存内容已放入冲突草稿', 'error');
       } else {
         showToast('已载入本地文件的最新内容', 'success');
@@ -1942,20 +2012,57 @@ async function restoreKnowledgeDraft(id) {
   showToast('冲突草稿已恢复到编辑器，将按当前本地版本保存', 'success');
 }
 
+const SETTINGS_GROUPS = {
+  basic: { panels: ['appearance', 'sessions', 'updates'], fallback: 'appearance' },
+  ai: { panels: ['model', 'agent', 'memory', 'network', 'image', 'skills'], fallback: 'model' },
+  workspace: { panels: ['knowledge', 'data', 'computer', 'remote'], fallback: 'knowledge' },
+};
+const SETTINGS_PANEL_GROUP = Object.fromEntries(
+  Object.entries(SETTINGS_GROUPS).flatMap(([group, config]) => config.panels.map(panel => [panel, group])),
+);
+const lastSettingsPanelByGroup = Object.fromEntries(Object.entries(SETTINGS_GROUPS).map(([group, config]) => [group, config.fallback]));
+
+function setSettingsGroup(group) {
+  const config = SETTINGS_GROUPS[group];
+  if (!config) return;
+  const currentPanel = state.settingsPanel;
+  const currentButton = document.querySelector(`[data-settings-nav="${currentPanel}"]`);
+  const rememberedPanel = lastSettingsPanelByGroup[group];
+  const rememberedButton = document.querySelector(`[data-settings-nav="${rememberedPanel}"]`);
+  const next = config.panels.includes(currentPanel) && !currentButton?.hidden
+    ? currentPanel
+    : config.panels.includes(rememberedPanel) && !rememberedButton?.hidden
+      ? rememberedPanel
+      : config.panels.find(panel => !document.querySelector(`[data-settings-nav="${panel}"]`)?.hidden);
+  if (next) setSettingsPanel(next);
+}
+
 function setSettingsPanel(panel) {
-  const allowed = ['appearance', 'sessions', 'model', 'updates', 'agent', 'memory', 'network', 'image', 'skills', 'knowledge', 'data', 'computer', 'remote'];
+  const allowed = Object.keys(SETTINGS_PANEL_GROUP);
   const next = allowed.includes(panel) ? panel : 'appearance';
+  const group = SETTINGS_PANEL_GROUP[next];
   state.settingsPanel = next;
+  lastSettingsPanelByGroup[group] = next;
   document.querySelectorAll('[data-settings-nav]').forEach(button => {
     const active = button.dataset.settingsNav === next;
     button.classList.toggle('active', active);
     button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
+  document.querySelectorAll('[data-settings-group-select]').forEach(button => {
+    const active = button.dataset.settingsGroupSelect === group;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll('[data-settings-group-panel]').forEach(section => {
+    section.classList.toggle('active', section.dataset.settingsGroupPanel === group);
   });
   document.querySelectorAll('[data-settings-panel]').forEach(section => {
     section.hidden = section.dataset.settingsPanel !== next;
   });
   const saveButton = $('#saveAgentSettings');
   if (saveButton) saveButton.hidden = next === 'knowledge' || next === 'data' || next === 'updates' || next === 'remote';
+  const settingsActionFooter = saveButton?.closest('.dialog-actions');
+  if (settingsActionFooter) settingsActionFooter.hidden = saveButton.hidden;
   if (next === 'sessions') loadArchivedSessions().catch(error => showToast(error.message, 'error'));
   if (next === 'knowledge') {
     fillKnowledgeSearchOptionsForm();
@@ -4297,7 +4404,7 @@ function renderKnowledgeBaseList() {
     const canDeleteBase = !['其他', '日记'].includes(base.name);
     return `
       <div class="knowledge-base-row">
-        <button class="knowledge-base-select" type="button" data-knowledge-base-open="${escHtml(base.name)}" aria-label="进入 ${escHtml(base.name)}">
+        <button class="knowledge-base-select" type="button" data-knowledge-base-open="${escHtml(base.name)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="" aria-label="进入 ${escHtml(base.name)}">
           <span class="tree-folder-mark" aria-hidden="true">▰</span>
           <strong>${escHtml(base.name)}</strong>
           <small>${Number(base.documentCount) || 0}</small>
@@ -4333,16 +4440,16 @@ function renderKnowledgeBreadcrumb(base) {
   let crumbs = `
     <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="root">知识库</button>
     <span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>
-    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="base">${escHtml(base.name)}</button>`;
+    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="base" data-drop-base="${escHtml(base.name)}" data-drop-folder="">${escHtml(base.name)}</button>`;
   let prefix = '';
   segments.forEach((segment, index) => {
     const target = prefix ? `${prefix}/${segment}` : segment;
     prefix = target;
     crumbs += `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>`;
     if (index === segments.length - 1) {
-      crumbs += `<span class="knowledge-breadcrumb-current">${escHtml(segment)}</span>`;
+      crumbs += `<span class="knowledge-breadcrumb-current" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(target)}">${escHtml(segment)}</span>`;
     } else {
-      crumbs += `<button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="folder" data-folder-path="${escHtml(target)}">${escHtml(segment)}</button>`;
+      crumbs += `<button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="folder" data-folder-path="${escHtml(target)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(target)}">${escHtml(segment)}</button>`;
     }
   });
   nav.innerHTML = crumbs;
@@ -4422,7 +4529,7 @@ function folderRowsHtml(base) {
   const folders = currentLevelFolders(base, state.selectedFolderPath);
   const baseName = escHtml(base.name);
   return folders.map(folder => `
-    <div class="document-folder-row" role="button" tabindex="0" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}">
+    <div class="document-folder-row" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="folder" data-knowledge-drag-path="${escHtml(`${base.name}/${folder.path}`)}" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}" data-drop-base="${baseName}" data-drop-folder="${escHtml(folder.path)}">
       <span class="document-folder-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path></svg></span>
       <span class="document-folder-body">
         <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong></span>
@@ -4591,7 +4698,7 @@ function renderDocuments() {
     const subtitleHtml = documentRowSubtitleHtml(document);
     const rowIcon = document.id.startsWith('file:') ? fileRowIcon : noteRowIcon;
     return `
-      <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
+      <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="document" data-knowledge-drag-id="${escHtml(document.id)}" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
         <span class="document-row-icon" aria-hidden="true">${rowIcon}</span>
         <span class="document-row-body">
           <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
@@ -4605,6 +4712,145 @@ function renderDocuments() {
     list.innerHTML = folderRows + docRows;
   }
   $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
+}
+
+function clearKnowledgeDragUi() {
+  knowledgeDragItem = null;
+  document.body.classList.remove('knowledge-dragging');
+  document.querySelectorAll('.knowledge-drop-active').forEach(element => element.classList.remove('knowledge-drop-active'));
+  $('#knowledgeDropTargets')?.remove();
+}
+
+function knowledgeDropTarget(event) {
+  const element = event.target.closest('[data-drop-base][data-drop-folder]');
+  if (!element || !$('#knowledgeView')?.contains(element)) return null;
+  return {
+    element,
+    knowledgeBase: element.dataset.dropBase || '',
+    folderPath: element.dataset.dropFolder || '',
+  };
+}
+
+function showKnowledgeBaseDropTargets() {
+  const list = $('#knowledgeDocumentList');
+  if (!list || $('#knowledgeDropTargets') || state.knowledgeBases.length < 2) return;
+  const strip = document.createElement('div');
+  strip.id = 'knowledgeDropTargets';
+  strip.className = 'knowledge-drop-targets';
+  strip.innerHTML = `<span>移动到知识库</span>${state.knowledgeBases.map(base => `<button type="button" data-drop-base="${escHtml(base.name)}" data-drop-folder="">${escHtml(base.name)}</button>`).join('')}`;
+  list.prepend(strip);
+}
+
+function bindKnowledgeDragEvents() {
+  const view = $('#knowledgeView');
+  if (!view) return;
+  view.addEventListener('dragstart', event => {
+    if (event.target.closest('button')) return;
+    const row = event.target.closest('[data-knowledge-drag-type]');
+    if (!row) return;
+    const type = row.dataset.knowledgeDragType;
+    knowledgeDragItem = type === 'folder'
+      ? { type, path: row.dataset.knowledgeDragPath || '' }
+      : { type, id: row.dataset.knowledgeDragId || '' };
+    if (!(knowledgeDragItem.path || knowledgeDragItem.id)) return clearKnowledgeDragUi();
+    try {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('application/x-liuxu-knowledge-item', JSON.stringify(knowledgeDragItem));
+      event.dataTransfer.setData('text/plain', type === 'folder' ? knowledgeDragItem.path : knowledgeDragItem.id);
+    } catch { /* native drag still works in engines with restricted custom MIME types */ }
+    document.body.classList.add('knowledge-dragging');
+    showKnowledgeBaseDropTargets();
+  });
+  view.addEventListener('dragover', event => {
+    if (!knowledgeDragItem) return;
+    const target = knowledgeDropTarget(event);
+    if (!target) return;
+    event.preventDefault();
+    try { event.dataTransfer.dropEffect = 'move'; } catch {}
+    document.querySelectorAll('.knowledge-drop-active').forEach(element => {
+      if (element !== target.element) element.classList.remove('knowledge-drop-active');
+    });
+    target.element.classList.add('knowledge-drop-active');
+  });
+  view.addEventListener('dragleave', event => {
+    const target = knowledgeDropTarget(event);
+    if (target && !target.element.contains(event.relatedTarget)) target.element.classList.remove('knowledge-drop-active');
+  });
+  view.addEventListener('drop', event => {
+    const target = knowledgeDropTarget(event);
+    if (!target || !knowledgeDragItem) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const item = knowledgeDragItem;
+    suppressKnowledgeClickUntil = Date.now() + 500;
+    clearKnowledgeDragUi();
+    void moveKnowledgeItem(item, target).catch(error => showToast(error.message || '移动失败', 'error'));
+  });
+  view.addEventListener('dragend', clearKnowledgeDragUi);
+}
+
+async function moveKnowledgeItem(item, target) {
+  if (!target.knowledgeBase) return;
+  const destination = [target.knowledgeBase, target.folderPath].filter(Boolean).join('/');
+  if (item.type === 'document') {
+    let current = state.activeDocument?.id === item.id
+      ? state.activeDocument
+      : state.documents.find(document => document.id === item.id);
+    if (!current) throw new Error('文档已离开当前列表，请刷新后重试');
+    if (state.activeDocument?.id === item.id && !(await flushPendingSaves())) throw new Error('笔记尚未保存，移动已取消');
+    current = state.activeDocument?.id === item.id ? state.activeDocument : current;
+    const source = [current.knowledgeBase || '其他', current.folderPath].filter(Boolean).join('/');
+    if (source === destination) return;
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(item.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ knowledgeBase: target.knowledgeBase, folderPath: target.folderPath, baseVersion: current.version }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '移动文档失败');
+    if (state.activeDocument?.id === item.id) await renderActiveDocument(data);
+    await loadDocuments();
+    showToast('文档已移动', 'success');
+    return;
+  }
+
+  if (item.type !== 'folder') return;
+  if (item.path === destination || destination.startsWith(`${item.path}/`)) {
+    throw new Error('不能把文件夹移入自身或子文件夹');
+  }
+  const activePath = state.activeDocument?.collectionPath || '';
+  const activeMovesWithFolder = activePath === item.path || activePath.startsWith(`${item.path}/`);
+  if (activeMovesWithFolder && state.documentDirty && !(await flushPendingSaves())) {
+    throw new Error('笔记尚未保存，移动已取消');
+  }
+  const response = await apiFetch(`/api/categories/${encodeURIComponent(item.path)}/move`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ parent: destination }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || '移动文件夹失败');
+  if (!data.moved) return;
+
+  const selectedFullPath = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join('/');
+  if (selectedFullPath === item.path || selectedFullPath.startsWith(`${item.path}/`)) {
+    const relocated = `${data.newPath}${selectedFullPath.slice(item.path.length)}`.split('/');
+    state.selectedKnowledgeBase = relocated.shift() || target.knowledgeBase;
+    state.selectedFolderPath = relocated.join('/');
+  }
+  await loadKnowledgeTree();
+  if (activeMovesWithFolder && state.activeDocument?.id) {
+    const detailResponse = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(state.activeDocument.id)}`);
+    if (!detailResponse.ok) throw new Error('文件夹已移动，但当前笔记需要重新打开');
+    await renderActiveDocument(await detailResponse.json());
+  } else if (!state.activeDocument) {
+    history.replaceState(null, '', routeHash('knowledge', '', {
+      knowledgeBase: state.selectedKnowledgeBase,
+      folderPath: state.selectedFolderPath,
+    }));
+    rememberKnowledgeResume({ knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath });
+  }
+  await loadDocuments({ refreshTree: false });
+  showToast('文件夹已移动', 'success');
 }
 
 async function loadDocuments({ append = false, refreshTree = true } = {}) {
@@ -4637,6 +4883,7 @@ async function loadDocuments({ append = false, refreshTree = true } = {}) {
 
 function showEmptyDocument() {
   state.activeDocument = null;
+  noteFindController?.setActiveDocument(null);
   knowledgeEnhancements?.clear?.();
   noteAssistantClear();
   noteBrowserClear();
@@ -4726,6 +4973,8 @@ function setDocumentSaveState(text, className = '') {
 }
 
 async function renderActiveDocument(document) {
+  flushNoteReadingPosition(state.activeDocument?.id);
+  noteReadingPositionGeneration += 1;
   state.activeDocument = document;
   state.documentDirty = false;
   state.documentConflict = false;
@@ -4746,6 +4995,9 @@ async function renderActiveDocument(document) {
   if (metaPanel) metaPanel.open = false;
   updateDocumentMetaSummary();
   $('#documentContent').value = document.content || '';
+  $('#documentContent').scrollTop = 0;
+  $('#documentPreview').scrollTop = 0;
+  pendingNotePreviewPosition = { documentId: document.id, top: 0 };
   $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ');
   setDocumentSaveState('已保存');
   const isFile = document.sourceType === 'file';
@@ -4755,7 +5007,15 @@ async function renderActiveDocument(document) {
   $('#knowledgeLinkIssues').hidden = isFile;
   $('#knowledgeRelations').hidden = isFile;
   $('#fileOriginalPanel').hidden = !isFile;
+  const openDocumentFolder = $('#openDocumentFolderButton');
+  openDocumentFolder.hidden = !window.liuxuDesktop?.knowledgeFiles?.openContainingFolder;
+  openDocumentFolder.onclick = async () => {
+    try {
+      await window.liuxuDesktop.knowledgeFiles.openContainingFolder(document.id);
+    } catch (error) { showToast(error.message || '无法打开所在文件夹', 'error'); }
+  };
   $('#editorModeSwitch').hidden = isFile;
+  $('#noteFindToggleButton').hidden = isFile;
   $('#archiveDocumentButton').hidden = document.status === 'archived';
   $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
@@ -4765,6 +5025,8 @@ async function renderActiveDocument(document) {
   $('#documentTags').readOnly = document.status === 'archived';
   $('#documentContent').readOnly = document.status === 'archived';
   setEditorMode('edit');
+  if (!isFile) void restoreNoteReadingPosition(document);
+  noteFindController?.setActiveDocument(document);
   if (isFile) renderFileOriginalPanel(document);
   else destroyFilePreview();
   renderKnowledgeBaseList();
@@ -4789,13 +5051,10 @@ function renderFileOriginalPanel(document) {
   $('#fileMeta').textContent = metaParts.filter(Boolean).join(' · ');
   const openOriginal = $('#openOriginalFile');
   const localFiles = window.liuxuDesktop?.knowledgeFiles;
-  openOriginal.hidden = !localFiles?.openPath;
+  openOriginal.hidden = !localFiles?.openDocument;
   openOriginal.onclick = async () => {
     try {
-      const response = await apiFetch(`/api/knowledge/files/${encodeURIComponent(document.id)}/location`);
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || '文件位置读取失败');
-      await localFiles.openPath(data.path);
+      await localFiles.openDocument(document.id);
     } catch (error) { showToast(error.message || '系统打开失败', 'error'); }
   };
   const download = $('#downloadOriginalFile');
@@ -4920,6 +5179,12 @@ function setEditorMode(mode) {
   if (next === 'preview' || next === 'split') {
     preloadMarkdownLibraries();
     renderDocumentPreview();
+    const documentId = state.activeDocument?.sourceType === 'file' ? '' : state.activeDocument?.id;
+    requestAnimationFrame(() => {
+      if (documentId && pendingNotePreviewPosition.documentId === documentId && state.activeDocument?.id === documentId && state.editorMode !== 'edit') {
+        $('#documentPreview').scrollTop = pendingNotePreviewPosition.top;
+      }
+    });
   }
   else if (documentPreviewCleanup) {
     documentPreviewCleanup();
@@ -4990,16 +5255,38 @@ function scheduleDocumentSave() {
   state.documentSaveTimer = setTimeout(() => saveDocument(), 800);
 }
 
+async function persistConflictDraft(documentId) {
+  const draft = currentDocumentPatch();
+  state.documentConflict = true;
+  state.documentDirty = true;
+  clearTimeout(state.documentSaveTimer);
+  setDocumentSaveState('保存冲突', 'error');
+  try {
+    const response = await apiFetch('/api/knowledge/sync/drafts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentId, draft, reason: '本地文件已更新' }),
+    });
+    const saved = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(saved.error || '冲突草稿保存失败');
+    if (!saved.id || saved.documentId !== documentId) throw new Error('冲突草稿未确认保存');
+    if (state.activeDocument?.id !== documentId || !editorMatchesSubmitted(draft)) {
+      throw new Error('草稿保存期间内容发生变化，请重新处理冲突');
+    }
+    return true;
+  } catch (error) {
+    if (state.activeDocument?.id === documentId) {
+      showToast(`冲突草稿保存失败，当前输入仍在编辑器中：${error.message}`, 'error');
+    }
+    return false;
+  }
+}
+
 async function resolveDocumentConflict(current) {
   state.documentConflict = true;
   setDocumentSaveState('保存冲突', 'error');
   if (state.knowledgeSync?.enabled && current) {
-    const draft = currentDocumentPatch();
-    await apiFetch('/api/knowledge/sync/drafts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ documentId: state.activeDocument?.id, draft, reason: '本地文件已更新' }),
-    }).catch(() => {});
+    if (!(await persistConflictDraft(state.activeDocument?.id))) return false;
     await renderActiveDocument(current);
     await loadKnowledgeSyncStatus().catch(() => {});
     showToast('本地文件版本已载入；未保存内容已放入冲突草稿', 'error');
@@ -5304,8 +5591,8 @@ async function archiveActiveDocument() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '归档失败', 'error');
   showToast('文档已归档', 'success');
+  keepKnowledgeLocationAfterClosingDocument(document);
   await loadDocuments();
-  await navigate('knowledge');
 }
 
 async function restoreActiveDocument() {
@@ -5348,9 +5635,20 @@ async function deleteActiveDocument() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '删除失败', 'error');
   showToast('文档已删除', 'success');
+  void clearReadingPosition(document.id);
   noteBrowserClear({ deleteDocument: true });
+  keepKnowledgeLocationAfterClosingDocument(document);
   await loadDocuments();
-  await navigate('knowledge');
+}
+
+function keepKnowledgeLocationAfterClosingDocument(document) {
+  const knowledgeBase = state.selectedKnowledgeBase || document?.knowledgeBase || '其他';
+  const folderPath = state.selectedFolderPath ?? document?.folderPath ?? '';
+  state.selectedKnowledgeBase = knowledgeBase;
+  state.selectedFolderPath = folderPath;
+  rememberKnowledgeResume({ knowledgeBase, folderPath });
+  history.replaceState(null, '', routeHash('knowledge', '', { knowledgeBase, folderPath }));
+  showEmptyDocument();
 }
 
 async function syncDiaryStatus() {
@@ -5402,6 +5700,14 @@ function applyTheme(value) {
 }
 
 function bindEvents() {
+  bindKnowledgeDragEvents();
+  noteFindController = initNoteFind({
+    root: document,
+    getActiveDocument: () => state.activeDocument,
+    canSearch: () => isNoteEditorActive() && state.activeDocument?.sourceType !== 'file',
+    getEditorMode: () => state.editorMode,
+    setEditorMode,
+  });
   initKnowledgeNameDialog();
   initWorkspaceControls();
   messageFollower = createMessageFollower($('#agentMessageList'), $('#agentJumpToLatest'));
@@ -5659,6 +5965,7 @@ function bindEvents() {
   });
   $('#newKnowledgeBaseButton').addEventListener('click', () => manageKnowledgeTree('add-base'));
   $('#knowledgeBreadcrumb').addEventListener('click', event => {
+    if (Date.now() < suppressKnowledgeClickUntil) return;
     const link = event.target.closest('[data-breadcrumb]');
     if (!link) return;
     if (link.dataset.breadcrumb === 'root') {
@@ -5682,6 +5989,7 @@ function bindEvents() {
     manageKnowledgeTree('add-folder', state.selectedKnowledgeBase, state.selectedFolderPath);
   });
   $('#knowledgeBaseList').addEventListener('click', event => {
+    if (Date.now() < suppressKnowledgeClickUntil) return;
     const open = event.target.closest('[data-knowledge-base-open]');
     const renameBase = event.target.closest('[data-tree-rename-base]');
     const deleteBase = event.target.closest('[data-tree-delete-base]');
@@ -5690,6 +5998,7 @@ function bindEvents() {
     if (open) navigate('knowledge', '', { knowledgeBase: open.dataset.knowledgeBaseOpen });
   });
   $('#knowledgeDocumentList').addEventListener('click', event => {
+    if (Date.now() < suppressKnowledgeClickUntil) return;
     const renameFolder = event.target.closest('[data-tree-rename-folder]');
     const deleteFolder = event.target.closest('[data-tree-delete-folder]');
     if (renameFolder) {
@@ -5784,6 +6093,8 @@ function bindEvents() {
   $('#documentMetaPanel')?.addEventListener('toggle', syncDocumentMetaExpanded);
   initSelectControls({ ids: DOCUMENT_SELECT_IDS });
   $('#documentContent').addEventListener('input', refreshDocumentPreview);
+  $('#documentContent').addEventListener('scroll', () => scheduleNoteReadingPosition(), { passive: true });
+  $('#documentPreview').addEventListener('scroll', () => scheduleNoteReadingPosition(), { passive: true });
   $('#editorModeSwitch').addEventListener('click', event => {
     const button = event.target.closest('[data-editor-mode]');
     if (button) setEditorMode(button.dataset.editorMode);
@@ -5800,6 +6111,7 @@ function bindEvents() {
   $('#restoreDocumentButton').addEventListener('click', () => restoreActiveDocument().catch(error => showToast(error.message, 'error')));
   $('#deleteDocumentButton').addEventListener('click', deleteActiveDocument);
   document.addEventListener('keydown', event => {
+    if (noteFindController?.handleKeydown(event)) return;
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p' && isNoteEditorActive()) {
       event.preventDefault();
       cycleEditorMode();
@@ -5812,9 +6124,11 @@ function bindEvents() {
     if (event.key === 'Escape') closeMobileSidebar();
   });
   window.addEventListener('beforeunload', event => {
+    flushNoteReadingPosition();
     if (!state.documentDirty) return;
     event.preventDefault();
   });
+  window.addEventListener('pagehide', () => flushNoteReadingPosition());
   window.addEventListener('popstate', applyRoute);
   window.addEventListener('hashchange', applyRoute);
   window.addEventListener('focus', () => refreshRemoteForeground().catch(() => {}));
@@ -5867,6 +6181,11 @@ function bindEvents() {
     saveAgentSettings();
   });
   document.querySelector('.settings-nav').addEventListener('click', event => {
+    const group = event.target.closest('[data-settings-group-select]');
+    if (group) {
+      setSettingsGroup(group.dataset.settingsGroupSelect);
+      return;
+    }
     const button = event.target.closest('[data-settings-nav]');
     if (button) setSettingsPanel(button.dataset.settingsNav);
   });
@@ -6130,7 +6449,10 @@ function bindEvents() {
   } });
   createBackupActions({
     confirmAction,
-    onWorkspaceReplaced: noteBrowserResetWorkspace,
+    onWorkspaceReplaced: () => {
+      noteBrowserResetWorkspace();
+      void clearAllReadingPositions();
+    },
     reloadKnowledge: async () => {
       await loadKnowledgeTree();
       await loadDocuments();

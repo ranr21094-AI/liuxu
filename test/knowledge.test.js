@@ -447,6 +447,35 @@ test('knowledge bases and folders normalize legacy paths for migrated notes', (t
   assert.equal(rewrittenLegacy.collectionPath, '投资/事件');
 });
 
+test('moving a knowledge folder relocates its subtree and note locations', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-folder-move-');
+  const knowledge = openKnowledge(db);
+  db.addCategory('项目');
+  db.addCategory('归档区');
+  db.addCategory('待整理', '项目');
+  db.addCategory('子目录', '项目/待整理');
+  const note = knowledge.createNote({
+    title: '待移动笔记',
+    content: '保留内容',
+    knowledgeBase: '项目',
+    folderPath: '待整理/子目录',
+  }).document;
+
+  const moved = db.moveCategory('项目/待整理', '归档区');
+  assert.deepEqual(moved, {
+    success: true,
+    moved: true,
+    oldPath: '项目/待整理',
+    newPath: '归档区/待整理',
+  });
+  knowledge.rewriteCollectionPath(moved.oldPath, moved.newPath);
+
+  const updated = knowledge.getDocument(note.id);
+  assert.equal(updated.collectionPath, '归档区/待整理/子目录');
+  assert.equal(updated.content, '保留内容');
+  assert.equal(db.moveCategory('归档区/待整理', '归档区/待整理/子目录').error.includes('descendants'), true);
+});
+
 test('knowledge tree maps category roots to bases and nested folder children', () => {
   const db = { isDiaryCategory: value => value === '日记' || String(value).startsWith('日记/') };
   const tree = treeForDocuments([

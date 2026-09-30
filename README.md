@@ -15,23 +15,23 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在 [v1.4.5 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.4.5) 下载 `LiuXu-Setup-1.4.5-x64.exe`。
+1. 在 [v1.4.6 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.4.6) 下载 `LiuXu-Setup-1.4.6-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.4.5-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.4.6-x64.exe -Algorithm SHA256
 ```
 
-### macOS Apple Silicon（v1.4.5）
+### macOS Apple Silicon（v1.4.6）
 
-当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.4.5 增强笔记版本历史，支持长期保留的命名版本、正文与元数据对比，以及检查并发版本后安全恢复。构建产物为：
+当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.4.6 整理了设置页面，并改进笔记查找、阅读位置与档案阅读体验。构建产物为：
 
 ```text
-LiuXu-1.4.5-mac-arm64.dmg
-LiuXu-1.4.5-mac-arm64.zip
+LiuXu-1.4.6-mac-arm64.dmg
+LiuXu-1.4.6-mac-arm64.zip
 ```
 
 该包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。
@@ -39,8 +39,8 @@ LiuXu-1.4.5-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.4.5-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.4.5-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.4.6-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.4.6-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -68,7 +68,7 @@ shasum -a 256 -c LiuXu-1.4.5-mac-arm64.zip.sha256
 
 ZIP 恢复优先使用校验通过的 SQLite，兼容 JSON 仅供旧格式导入。导出与恢复共同限制压缩 ZIP 为 2 GiB、数据库为 120 MiB、单个附件为 250 MiB、总解压大小为 4 GiB；旧格式单份 JSON 上限为 10 MiB。大型备份在磁盘暂存并流式下载或恢复；超限导出会明确失败，替换恢复后会重新构建搜索索引。
 
-知识库档案会在正文区域打开统一阅读器，批注与提取文本可单独查看；PDF、Word、表格、CSV/TSV、演示文稿、图片、文本/代码、常见音视频及 ZIP 都有对应视图。原始文件保持不变，桌面版可用系统应用打开。单个知识库文件上限为 250 MiB，Office 文档的内嵌解析另有更小的解压预算；大型文件仍可下载或用系统应用打开。详情见[知识库文件阅读器说明](docs/knowledge-file-reader.md)。
+知识库档案会在正文区域打开统一阅读器，批注与提取文本可单独查看；PDF、Word、表格、CSV/TSV、演示文稿、图片、文本/代码、常见音视频及 ZIP 都有对应视图。笔记和档案的阅读位置会自动保存在当前设备，重开时恢复；笔记各视图、表格工作表与行、图片视图、提取文本滚动位置和媒体播放点分别记忆，音视频恢复时保持暂停。位置不进入工作区备份，也不会同步到其他设备。原始文件保持不变，桌面版可用系统应用打开。单个知识库文件上限为 250 MiB，Office 文档的内嵌解析另有更小的解压预算；大型文件仍可下载或用系统应用打开。详情见[知识库文件阅读器说明](docs/knowledge-file-reader.md)。
 
 ### 知识双链与版本历史（v1.2.0）
 
@@ -374,6 +374,7 @@ desktop-build-summary-mac.json
 - 桌面笔记浏览器由 Electron `WebContentsView` 承载，使用独立的持久化 session；远程页面没有预加载脚本、Node 或应用 IPC。标签元数据按数据目录保存在 `.note-browser-state.json`。
 - 手机远程入口与桌面本地入口共用同一个 Express 应用、数据库和 Agent 运行时，独立监听 `127.0.0.1:43140` 并由 Tailscale Serve 代理。设备与会话哈希保存在 `.remote-access.json`，不进入备份。
 - SQLite 保存知识索引、关联、历史、Agent、Memory、待办和设置；知识正文与档案同步到配置的本地知识库文件夹，数据目录保留兼容副本。
+- 阅读位置按设备本地保存：桌面端位于数据目录的 `.reading-positions.json`，网页端位于当前浏览器的本地存储，不进入工作区备份。
 - 前端使用原生 JavaScript ES Modules，没有前端框架。
 - Markdown 预览使用 marked、DOMPurify、KaTeX 和 PDF.js。
 - `better-sqlite3` 原生模块随 Windows x64 或 macOS arm64 安装包分发。
@@ -389,6 +390,7 @@ desktop-build-summary-mac.json
 - [笔记内置浏览器架构](docs/note-browser.md)
 - [本地知识库同步说明](docs/knowledge-folder-sync.md)
 - [笔记版本历史说明](docs/knowledge-revisions.md)
+- [v1.4.6 发布说明](docs/releases/v1.4.6.md)
 - [v1.4.5 发布说明](docs/releases/v1.4.5.md)
 - [v1.4.3 发布说明](docs/releases/v1.4.3.md)
 - [v1.4.2-1 发布说明](docs/releases/v1.4.2-1.md)

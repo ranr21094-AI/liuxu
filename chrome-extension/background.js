@@ -40,6 +40,9 @@ function scrub(value) {
 }
 
 const PAIRING_KEY_STORAGE = 'liuxuPairingKey';
+const usedAgentNonces = new Set();
+let nonceKey = '';
+const MAX_USED_AGENT_NONCES = 2048;
 
 function hexToBytes(hex) {
   const value = String(hex || '').trim().toLowerCase();
@@ -61,13 +64,17 @@ async function verifyAgentCommand(message) {
     stored = '';
   }
   const keyBytes = /^[a-f0-9]{64}$/i.test(stored) ? new TextEncoder().encode(stored) : null;
-  // No key configured: keep the pre-pairing behavior so the browser tools
-  // stay usable; a paired setup always enforces the signature.
-  if (!keyBytes || !keyBytes.length) return true;
+  // A loopback page is not proof that it belongs to LiuXu. Browser control
+  // must remain unavailable until the extension has a pairing key.
+  if (!keyBytes || !keyBytes.length) return false;
+  if (nonceKey !== stored) {
+    usedAgentNonces.clear();
+    nonceKey = stored;
+  }
   const nonce = typeof message?.nonce === 'string' ? message.nonce : '';
   const signatureHex = typeof message?.signature === 'string' ? message.signature : '';
   const signatureBytes = hexToBytes(signatureHex);
-  if (!nonce || !signatureBytes) return false;
+  if (!nonce || !signatureBytes || usedAgentNonces.has(nonce)) return false;
   try {
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
@@ -77,12 +84,16 @@ async function verifyAgentCommand(message) {
       ['verify'],
     );
     const payload = JSON.stringify({ name: message.name, args: message.args });
-    return await crypto.subtle.verify(
+    const valid = await crypto.subtle.verify(
       'HMAC',
       cryptoKey,
       signatureBytes,
       new TextEncoder().encode(`${nonce}.${payload}`),
     );
+    if (!valid || usedAgentNonces.has(nonce)) return false;
+    usedAgentNonces.add(nonce);
+    if (usedAgentNonces.size > MAX_USED_AGENT_NONCES) usedAgentNonces.delete(usedAgentNonces.values().next().value);
+    return true;
   } catch {
     return false;
   }

@@ -19,6 +19,8 @@ const {
 } = require('./runtime');
 const { createUpdateService } = require('./update-service');
 const { createNoteBrowserManager } = require('./note-browser');
+const { authorizedKnowledgeFilePath, authorizedKnowledgeDocumentFolder } = require('./knowledge-file');
+const { createReadingPositionStore } = require('../lib/knowledge/reading-position-state');
 const QRCode = require('qrcode');
 const { createRemoteAccessService } = require('../lib/remote/access');
 const { setRemoteAccessService } = require('../lib/remote/context');
@@ -35,6 +37,7 @@ let appOrigin = '';
 let desktopDataDir = '';
 let updateService = null;
 let noteBrowser = null;
+let readingPositionStore = null;
 let macUpdateOpened = false;
 let log = () => {};
 const startupStartedAt = performance.now();
@@ -214,24 +217,58 @@ function configureKnowledgeFolderIpc() {
 }
 
 function configureKnowledgeFileIpc() {
-  ipcMain.removeHandler('liuxu:knowledge-file:open-path');
-  ipcMain.handle('liuxu:knowledge-file:open-path', async (event, payload = {}) => {
+  ipcMain.removeHandler('liuxu:knowledge-file:open-document');
+  ipcMain.removeHandler('liuxu:knowledge-file:open-folder');
+  ipcMain.handle('liuxu:knowledge-file:open-document', async (event, payload = {}) => {
     assertTrustedIpcSender(event);
-    const target = path.resolve(String(payload.path || ''));
-    const allowedRoots = [path.join(desktopDataDir, 'knowledge-files')];
-    try {
-      const config = JSON.parse(fs.readFileSync(path.join(desktopDataDir, '.knowledge-folder.json'), 'utf8'));
-      if (config?.enabled === true && path.isAbsolute(config.rootPath)) allowedRoots.push(path.resolve(config.rootPath));
-    } catch {}
-    const inside = allowedRoots.some(root => target.startsWith(`${path.resolve(root)}${path.sep}`));
-    if (!inside || !fs.existsSync(target) || !fs.statSync(target).isFile() || fs.lstatSync(target).isSymbolicLink()) {
-      throw new Error('文件位置无效');
+    const diaryCookies = await event.sender.session.cookies.get({ url: appOrigin, name: 'diary_session' });
+    const target = await authorizedKnowledgeFilePath({
+      documentId: payload.documentId,
+      appOrigin,
+      diaryToken: diaryCookies[0]?.value || '',
+    });
+    if (!fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isFile()) {
+      throw new Error('档案文件不存在');
     }
     const actual = fs.realpathSync(target);
-    if (!allowedRoots.some(root => actual.startsWith(`${path.resolve(root)}${path.sep}`))) throw new Error('文件位置越界');
     const error = await shell.openPath(actual);
     if (error) throw new Error(error);
     return { opened: true };
+  });
+  ipcMain.handle('liuxu:knowledge-file:open-folder', async (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    const diaryCookies = await event.sender.session.cookies.get({ url: appOrigin, name: 'diary_session' });
+    const target = await authorizedKnowledgeDocumentFolder({
+      documentId: payload.documentId,
+      appOrigin,
+      diaryToken: diaryCookies[0]?.value || '',
+    });
+    if (!path.isAbsolute(target) || !fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isDirectory()) {
+      throw new Error('文档所在文件夹不存在或路径无效');
+    }
+    const actual = fs.realpathSync(target);
+    const error = await shell.openPath(actual);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
+}
+
+function configureReadingPositionIpc() {
+  for (const channel of ['get', 'set', 'clear']) ipcMain.removeHandler(`liuxu:reading-position:${channel}`);
+  ipcMain.handle('liuxu:reading-position:get', (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    if (!readingPositionStore) throw new Error('阅读位置存储尚未就绪');
+    return readingPositionStore.get(payload);
+  });
+  ipcMain.handle('liuxu:reading-position:set', (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    if (!readingPositionStore) throw new Error('阅读位置存储尚未就绪');
+    return readingPositionStore.set(payload);
+  });
+  ipcMain.handle('liuxu:reading-position:clear', (event, payload = {}) => {
+    assertTrustedIpcSender(event);
+    if (!readingPositionStore) throw new Error('阅读位置存储尚未就绪');
+    return readingPositionStore.clear(payload);
   });
 }
 
@@ -383,6 +420,7 @@ async function createMainWindow(appUrl) {
 async function startDesktop() {
   const { dataDir } = prepareRuntimeEnvironment();
   desktopDataDir = dataDir;
+  readingPositionStore = createReadingPositionStore(dataDir);
   process.env.LIUXU_DESKTOP = '1';
   process.env.LIUXU_DOCUMENTS_DIR = app.getPath('documents');
   remoteAccess = createRemoteAccessService({ statePath: path.join(dataDir, '.remote-access.json') });
@@ -509,6 +547,7 @@ if (!app.requestSingleInstanceLock()) {
     configureNoteBrowserIpc();
     configureKnowledgeFolderIpc();
     configureKnowledgeFileIpc();
+    configureReadingPositionIpc();
     configureRemoteAccessIpc();
     startupPromise = startDesktop();
     return startupPromise;

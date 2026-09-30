@@ -47,6 +47,34 @@ test('folder sync migrates notes, relative images, diary notes and empty folders
   assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(diary.id, { diaryUnlocked: true })).includes(`${path.sep}日记${path.sep}`));
 });
 
+test('moving a knowledge folder moves its synchronized Markdown subtree', (t) => {
+  const { db, root, knowledge } = setup(t);
+  db.addCategory('来源库');
+  db.addCategory('目标库');
+  db.addCategory('项目', '来源库');
+  db.addCategory('子项', '来源库/项目');
+  const note = knowledge.createNote({
+    title: '移动中的笔记',
+    content: '内容保留',
+    knowledgeBase: '来源库',
+    folderPath: '项目/子项',
+  }).document;
+  knowledge.folderSync.migrateAll({ rootPath: root });
+  const oldPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+
+  const moved = db.moveCategory('来源库/项目', '目标库');
+  knowledge.rewriteCollectionPath(moved.oldPath, moved.newPath);
+  knowledge.folderSync.removeCollectionDirectory(moved.oldPath, 'folder-moved');
+  knowledge.folderSync.ensureDirectoryTree();
+
+  const updated = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const nextPath = knowledge.folderSync.localPathFor(updated);
+  assert.equal(updated.collectionPath, '目标库/项目/子项');
+  assert.ok(nextPath.endsWith(path.join('目标库', '项目', '子项', '移动中的笔记.md')));
+  assert.equal(fs.readFileSync(nextPath, 'utf8').includes('内容保留'), true);
+  assert.equal(fs.existsSync(oldPath), false);
+});
+
 test('external edits, moves, additions and deletes reconcile by stable id', async (t) => {
   const { root, knowledge } = setup(t);
   const note = knowledge.createNote({ title: '原名', content: '旧内容', knowledgeBase: '资料' }).document;
@@ -138,6 +166,23 @@ test('disk changes win application save conflicts and preserve the draft', (t) =
   assert.equal(result.draftSaved, true);
   assert.equal(knowledge.folderSync.listDrafts().length, 1);
   assert.equal(parseFrontMatter(fs.readFileSync(notePath, 'utf8')).content, '磁盘正文');
+});
+
+test('file previews reject a symlink that escapes the synchronized knowledge root', (t) => {
+  const { root, knowledge } = setup(t);
+  const file = knowledge.saveImportedFile({
+    buffer: Buffer.from('original-file'), filename: 'guide.txt', mimeType: 'text/plain',
+    title: '指南', knowledgeBase: '资料', text: 'original-file', diaryUnlocked: false,
+  }).document;
+  knowledge.folderSync.migrateAll({ rootPath: root });
+  const synced = knowledge.getDocument(file.id);
+  const localPath = knowledge.folderSync.localPathFor(synced);
+  const outside = path.join(path.dirname(root), `${path.basename(root)}-outside.txt`);
+  fs.writeFileSync(outside, 'private-file');
+  t.after(() => fs.rmSync(outside, { force: true }));
+  fs.unlinkSync(localPath);
+  fs.symlinkSync(outside, localPath);
+  assert.equal(knowledge.filePathFor(synced), null);
 });
 
 test('folder migration stops before writing when a local image dependency is missing', (t) => {

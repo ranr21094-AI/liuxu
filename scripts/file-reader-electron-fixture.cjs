@@ -52,7 +52,8 @@ async function makeDocx() {
   const zip = new JSZip();
   zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
   zip.file('_rels/.rels', '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
-  zip.file('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>中文 Word preview sample</w:t></w:r></w:p><w:sectPr/></w:body></w:document>');
+  const paragraphs = Array.from({ length: 90 }, (_, index) => `<w:p><w:r><w:t>${index === 0 ? '中文 Word preview sample' : `Word 阅读位置测试段落 ${index + 1}`}</w:t></w:r></w:p>`).join('');
+  zip.file('word/document.xml', `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${paragraphs}<w:sectPr/></w:body></w:document>`);
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
@@ -90,11 +91,13 @@ async function main() {
     buffer, filename, mimeType, title: filename, collectionPath: '预览测试', text, diaryUnlocked: false,
   }).document;
 
-  const sheet = XLSX.utils.aoa_to_sheet([
+  const sheetRows = [
     ['表格预览', ''],
     ['编号', '00000123'],
     ['金额', 1234.5],
-  ]);
+    ...Array.from({ length: 120 }, (_, index) => [`项目 ${index + 1}`, index + 1]),
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet(sheetRows);
   sheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
   sheet.B2 = { t: 'n', v: 123, z: '00000000' };
   sheet.B3.z = '#,##0.00';
@@ -110,6 +113,10 @@ async function main() {
   const archiveZip = new JSZip(); archiveZip.file('docs/readme.txt', '压缩包只读目录');
   const archive = add('样本.zip', 'application/zip', await archiveZip.generateAsync({ type: 'nodebuffer' }));
   const pptx = add('演示.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', await makePptx(), 'Presentation preview sample');
+  const note = knowledge.createNote({
+    title: '阅读位置恢复测试',
+    content: Array.from({ length: 140 }, (_, index) => `第 ${index + 1} 段：笔记编辑器阅读位置应该在切换后恢复。`).join('\n\n'),
+  }).document;
 
   const { startServer } = require('../server');
   const server = await startServer(0, '127.0.0.1');
@@ -132,13 +139,24 @@ async function main() {
     const desktopShot = await window.webContents.capturePage();
     fs.writeFileSync('/private/tmp/liuxu-file-reader-desktop.png', desktopShot.toPNG());
 
+    await window.webContents.executeJavaScript("const viewport = document.querySelector('.file-grid-viewport'); viewport.scrollTop = 620; viewport.dispatchEvent(new Event('scroll'))");
+    await new Promise(resolve => setTimeout(resolve, 450));
+
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(csv.id)}'`);
     await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '导入清单.csv' && document.querySelector('.file-grid-table tbody')?.textContent.includes('第二行')", 'quoted CSV with a newline');
     assert.equal(await window.webContents.executeJavaScript("[...document.querySelectorAll('.file-grid-table td')].some(cell => cell.textContent === '00001234')"), true, 'CSV keeps leading zeros');
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(xlsx.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '季度数据.xlsx' && document.querySelector('.file-grid-viewport')?.scrollTop > 400", 'spreadsheet reading position restore');
 
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(docx.id)}'`);
     await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '检查报告.docx' && document.querySelector('.file-docx-frame')?.srcdoc.includes('中文 Word preview sample')", 'sandboxed Word preview');
     assert.equal(await window.webContents.executeJavaScript("document.querySelector('.file-docx-frame')?.hasAttribute('sandbox')"), true, 'Word preview is isolated');
+    await window.webContents.executeJavaScript("const frame = document.querySelector('.file-docx-frame'); frame.contentWindow.scrollTo(0, 420); frame.contentWindow.dispatchEvent(new Event('scroll'))");
+    await new Promise(resolve => setTimeout(resolve, 450));
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(csv.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '导入清单.csv'", 'leave Word preview');
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(docx.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '检查报告.docx' && document.querySelector('.file-docx-frame')?.contentWindow?.scrollY >= 350", 'Word reading position restore');
 
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(pdf.id)}'`);
     await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '合同.pdf' && document.querySelector('.file-pdf-page-shell[data-rendered=true]')", 'PDF page rendering', 30000);
@@ -146,6 +164,8 @@ async function main() {
 
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(png.id)}'`);
     await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '透明图.png' && document.querySelector('.file-preview-image')?.naturalWidth === 1", 'image preview');
+    await window.webContents.executeJavaScript("document.querySelector('[data-file-action=zoom-in]')?.click()");
+    await new Promise(resolve => setTimeout(resolve, 450));
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(text.id)}'`);
     await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '代码.py' && document.querySelector('.file-preview-code')?.textContent.includes('安全文本')", 'safe code text preview');
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(audio.id)}'`);
@@ -160,15 +180,26 @@ async function main() {
     await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '演示.pptx' && document.querySelector('.file-preview-stage')?.textContent.includes('Presentation preview sample')", 'PPTX preview', 30000);
     await waitFor(window.webContents, "[...document.querySelectorAll('.file-preview-stage *')].some(element => element.textContent.trim() === 'Presentation preview sample' && element.getBoundingClientRect().width > 50)", 'visible PPTX text');
 
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(png.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '透明图.png' && document.querySelector('.file-preview-image')?.style.transform.includes('scale(1.2)')", 'image view restore');
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(note.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#documentContent')?.value.includes('第 140 段')", 'long note editor');
+    await window.webContents.executeJavaScript("const editor = document.querySelector('#documentContent'); editor.scrollTop = 550; editor.dispatchEvent(new Event('scroll'))");
+    await new Promise(resolve => setTimeout(resolve, 450));
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(csv.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '导入清单.csv'", 'leave note editor');
+    await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(note.id)}'`);
+    await waitFor(window.webContents, "document.querySelector('#documentContent')?.scrollTop >= 500", 'note editor reading position restore');
+
     await window.webContents.executeJavaScript(`location.hash = '#knowledge/${encodeURIComponent(xlsx.id)}'`);
-    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '季度数据.xlsx' && document.querySelector('.file-grid-table tbody tr:not(.file-grid-spacer) td')?.textContent.includes('表格预览')", 'mobile spreadsheet restore');
+    await waitFor(window.webContents, "document.querySelector('#fileName')?.textContent === '季度数据.xlsx' && document.querySelector('.file-grid-table') && document.querySelector('.file-grid-viewport')?.scrollTop > 400", 'mobile spreadsheet position restore');
     window.setSize(390, 844);
     await new Promise(resolve => setTimeout(resolve, 250));
     const mobileLayout = await window.webContents.executeJavaScript("({ width: document.querySelector('#fileOriginalPanel')?.getBoundingClientRect().width, reader: document.querySelector('#filePreviewHost')?.getBoundingClientRect().height, clipped: document.querySelector('#fileOriginalPanel')?.scrollWidth > document.querySelector('#fileOriginalPanel')?.clientWidth })");
     assert.ok(mobileLayout.width > 0 && mobileLayout.reader > 200 && !mobileLayout.clipped, JSON.stringify(mobileLayout));
     const mobileShot = await window.webContents.capturePage();
     fs.writeFileSync('/private/tmp/liuxu-file-reader-mobile.png', mobileShot.toPNG());
-    process.stdout.write(JSON.stringify({ result: 'ok', desktopScreenshot: '/private/tmp/liuxu-file-reader-desktop.png', mobileScreenshot: '/private/tmp/liuxu-file-reader-mobile.png', documents: [xlsx.id, csv.id, docx.id, pdf.id, png.id, text.id, audio.id, brokenVideo.id, archive.id, pptx.id] }) + '\n');
+    process.stdout.write(JSON.stringify({ result: 'ok', desktopScreenshot: '/private/tmp/liuxu-file-reader-desktop.png', mobileScreenshot: '/private/tmp/liuxu-file-reader-mobile.png', documents: [xlsx.id, csv.id, docx.id, pdf.id, png.id, text.id, audio.id, brokenVideo.id, archive.id, pptx.id, note.id] }) + '\n');
   } finally {
     if (window && !window.isDestroyed()) window.destroy();
     await new Promise(resolve => server.close(resolve));

@@ -1,4 +1,5 @@
 import { apiFetch } from '../auth.js';
+import { loadReadingPosition, saveReadingPosition } from './reading-position.js';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif']);
 const SHEET_EXTENSIONS = new Set(['.xlsx', '.xls', '.ods']);
@@ -10,6 +11,32 @@ let activeCleanup = () => {};
 let activeDocument = null;
 let fileReaderTab = 'preview';
 let cachedModules = {};
+let activePositionSaver = null;
+let activeStoredPosition = null;
+let activeTextPositionListener = null;
+
+function createPositionSaver(doc, kind) {
+  let timer = null;
+  let latest = null;
+  let snapshot = {};
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    if (!latest) return;
+    const value = latest;
+    latest = null;
+    void saveReadingPosition(doc, kind, value);
+  };
+  const save = position => {
+    snapshot = { ...snapshot, ...position };
+    latest = { ...snapshot };
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(flush, 300);
+  };
+  save.setInitial = position => { snapshot = position && typeof position === 'object' ? { ...position } : {}; };
+  save.flush = flush;
+  return save;
+}
 
 function extension(value) {
   const name = String(value || '').split(/[?#]/)[0];
@@ -128,6 +155,7 @@ function renderGrid(host, rows, options = {}) {
   const maxColumns = Math.min(160, rows.reduce((width, row) => Math.max(width, row.length), 1));
   const searchable = rows.map(row => row.slice(0, maxColumns));
   let query = '';
+  const initialScrollTop = Math.max(0, Number(options.initialScrollTop) || 0);
   let scrollTop = 0;
   let start = 0;
   const viewport = host.querySelector('.file-grid-viewport');
@@ -195,11 +223,16 @@ function renderGrid(host, rows, options = {}) {
       if (copyState) copyState.textContent = '已复制';
     } catch { if (copyState) copyState.textContent = '复制失败'; }
   });
-  viewport.addEventListener('scroll', () => { scrollTop = viewport.scrollTop; renderRows(); }, { passive: true });
+  viewport.addEventListener('scroll', () => { scrollTop = viewport.scrollTop; renderRows(); options.onPosition?.(scrollTop); }, { passive: true });
   renderRows();
+  if (initialScrollTop > 0) {
+    viewport.scrollTop = initialScrollTop;
+    scrollTop = viewport.scrollTop;
+    renderRows();
+  }
 }
 
-async function renderDelimited(doc, host, token, controller) {
+async function renderDelimited(doc, host, token, controller, position, savePosition) {
   const data = await fetchArrayBuffer(doc, token, controller);
   const ext = extension(doc.fileMeta?.filename || doc.title);
   const defaultDelimiter = ext === '.tsv' ? '\t' : ',';
@@ -208,18 +241,23 @@ async function renderDelimited(doc, host, token, controller) {
   toolbar.querySelector('[data-file-delimiter]').value = defaultDelimiter;
   const stage = host.querySelector('.file-preview-stage');
   stage.innerHTML = '<div class="file-grid-viewport"><table class="file-grid-table"></table></div>';
+  let firstDraw = true;
   const draw = () => {
     if (token !== previewToken) return;
     const text = decodeBytes(data, toolbar.querySelector('[data-file-encoding]').value);
     const rows = parseDelimited(text, toolbar.querySelector('[data-file-delimiter]').value);
-    renderGrid(host, rows);
+    renderGrid(host, rows, {
+      initialScrollTop: firstDraw ? position?.top : 0,
+      onPosition: top => savePosition({ top }),
+    });
+    firstDraw = false;
   };
   toolbar.querySelector('[data-file-encoding]').addEventListener('change', draw);
   toolbar.querySelector('[data-file-delimiter]').addEventListener('change', draw);
   draw();
 }
 
-async function renderSpreadsheet(doc, host, token, controller) {
+async function renderSpreadsheet(doc, host, token, controller, position, savePosition) {
   const buffer = await fetchArrayBuffer(doc, token, controller);
   const XLSX = await loadScript('/vendor/sheetjs/xlsx.full.min.js', 'xlsx', 'XLSX');
   if (token !== previewToken) return;
@@ -228,13 +266,17 @@ async function renderSpreadsheet(doc, host, token, controller) {
   toolbar.insertAdjacentHTML('afterbegin', `<select data-sheet aria-label="工作表"></select><input data-grid-search type="search" placeholder="搜索单元格" aria-label="搜索单元格"><span class="file-grid-summary"></span><span class="file-grid-cell-value" data-grid-cell-value>选择单元格查看内容</span><button type="button" data-grid-copy disabled>复制单元格</button><small data-grid-copy-state aria-live="polite"></small>`);
   const select = toolbar.querySelector('[data-sheet]');
   for (const name of book.SheetNames) select.add(new Option(name, name));
+  if (book.SheetNames.includes(position?.sheet)) select.value = position.sheet;
   const stage = host.querySelector('.file-preview-stage');
   stage.innerHTML = '<div class="file-grid-viewport"><table class="file-grid-table"></table></div>';
+  let firstDraw = true;
   const draw = () => {
     if (token !== previewToken) return;
     const sheet = book.Sheets[select.value];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: true, defval: '' });
     renderGrid(host, rows, {
+      initialScrollTop: firstDraw && select.value === position?.sheet ? position?.top : 0,
+      onPosition: top => savePosition({ sheet: select.value, top }),
       rowLabel: index => XLSX.utils.encode_row((XLSX.utils.decode_range(sheet['!ref'] || 'A1').s.r) + index),
       columnLabel: index => XLSX.utils.encode_col((XLSX.utils.decode_range(sheet['!ref'] || 'A1').s.c) + index),
       merges: (sheet['!merges'] || []).map(range => {
@@ -242,8 +284,9 @@ async function renderSpreadsheet(doc, host, token, controller) {
         return { s: { r: range.s.r - bounds.s.r, c: range.s.c - bounds.s.c }, e: { r: range.e.r - bounds.s.r, c: range.e.c - bounds.s.c } };
       }),
     });
+    firstDraw = false;
   };
-  select.addEventListener('change', draw);
+  select.addEventListener('change', () => { draw(); savePosition({ sheet: select.value, top: 0 }); });
   draw();
 }
 
@@ -256,12 +299,12 @@ function appendPdfPage(stage, pageNumber) {
   return shell;
 }
 
-async function renderPdf(doc, host, token, controller) {
+async function renderPdf(doc, host, token, controller, position, savePosition) {
   const pdfjs = await import('/vendor/pdfjs/pdf.min.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
   if (token !== previewToken) return;
   const loadingTask = pdfjs.getDocument({ url: contentUrl(doc), withCredentials: true, isEvalSupported: false, rangeChunkSize: 65536 });
-  activeCleanup = () => loadingTask.destroy?.();
+  controller.signal.addEventListener('abort', () => loadingTask.destroy?.(), { once: true });
   const pdf = await loadingTask.promise;
   if (token !== previewToken) return;
   const toolbar = host.querySelector('.file-preview-toolbar');
@@ -353,11 +396,30 @@ async function renderPdf(doc, host, token, controller) {
     const shell = event.target.closest('.file-pdf-page-shell');
     if (shell) toolbar.querySelector('[data-pdf-page]').value = shell.dataset.pageNumber;
   });
-  activeCleanup = () => { observer.disconnect(); resizeObserver.disconnect(); loadingTask.destroy?.(); host._filePreviewActions = null; };
-  await renderPage(1);
+  stage.addEventListener('scroll', () => {
+    const stageTop = stage.getBoundingClientRect().top;
+    const page = pages.find(shell => shell.getBoundingClientRect().bottom > stageTop + 8) || pages.at(-1);
+    if (!page) return;
+    savePosition({ page: Number(page.dataset.pageNumber), offset: Math.max(0, stageTop - page.getBoundingClientRect().top) });
+  }, { passive: true });
+  controller.signal.addEventListener('abort', () => { observer.disconnect(); resizeObserver.disconnect(); host._filePreviewActions = null; }, { once: true });
+  const pageNumber = Math.max(1, Math.min(pdf.numPages, Number(position?.page) || 1));
+  await renderPage(pageNumber);
+  const target = pages[pageNumber - 1];
+  if (target && (pageNumber > 1 || Number(position?.offset) > 0)) {
+    const placeholderHeight = Math.max(0, target.getBoundingClientRect().height);
+    if (placeholderHeight) {
+      pages.slice(0, pageNumber - 1).forEach(shell => {
+        if (shell.dataset.rendered !== 'true') shell.style.minHeight = `${placeholderHeight}px`;
+      });
+    }
+    target.scrollIntoView({ block: 'start' });
+    stage.scrollTop = Math.max(0, stage.scrollTop + (Number(position?.offset) || 0));
+  }
+  toolbar.querySelector('[data-pdf-page]').value = String(pageNumber);
 }
 
-async function renderDocx(doc, host, token, controller) {
+async function renderDocx(doc, host, token, controller, position, savePosition) {
   const buffer = await fetchArrayBuffer(doc, token, controller);
   await loadScript('/vendor/jszip/jszip.min.js', 'jszip', 'JSZip');
   const docx = await loadScript('/vendor/docx-preview/docx-preview.min.js', 'docx', 'docx');
@@ -377,9 +439,19 @@ async function renderDocx(doc, host, token, controller) {
   const frame = window.document.createElement('iframe');
   frame.className = 'file-docx-frame';
   frame.title = `${doc.title || doc.fileMeta?.filename || 'Word 文件'}预览`;
-  frame.setAttribute('sandbox', '');
+  frame.setAttribute('sandbox', 'allow-same-origin');
   frame.referrerPolicy = 'no-referrer';
   frame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; font-src data: blob:; style-src 'unsafe-inline' data: blob:; media-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'"><style>${css}</style><style>html,body{margin:0;min-height:100%;background:#e9ebee}body{padding:20px;box-sizing:border-box}.docx-wrapper{min-height:100%;padding:0;background:transparent}.docx-wrapper>section.docx{margin:0 auto 20px;box-shadow:0 2px 14px rgba(0,0,0,.12)}img{max-width:100%;height:auto}</style></head><body>${html}</body></html>`;
+  frame.addEventListener('load', () => {
+    try {
+      const view = frame.contentWindow;
+      const innerDocument = frame.contentDocument;
+      if (!view || !innerDocument) return;
+      const top = Math.max(0, Number(position?.innerTop) || 0);
+      view.scrollTo(0, top);
+      view.addEventListener('scroll', () => savePosition({ innerTop: view.scrollY || innerDocument.documentElement.scrollTop || innerDocument.body.scrollTop || 0 }), { passive: true });
+    } catch { /* browser sandbox may disallow frame inspection */ }
+  }, { once: true });
   stage.replaceChildren(frame);
   let zoom = 1;
   host._filePreviewActions = {
@@ -389,59 +461,75 @@ async function renderDocx(doc, host, token, controller) {
   controller.signal.addEventListener('abort', () => { frame.removeAttribute('srcdoc'); frame.remove(); host._filePreviewActions = null; }, { once: true });
 }
 
-async function renderPresentation(doc, host, token, controller) {
+async function renderPresentation(doc, host, token, controller, position, savePosition) {
   const buffer = await fetchArrayBuffer(doc, token, controller);
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('/vendor/pptx-renderer/aiden0z-pptx-renderer.browser.es.js');
   if (token !== previewToken) return;
   const stage = host.querySelector('.file-preview-stage');
   const viewer = await PptxViewer.open(buffer, stage, { renderMode: 'list', fitMode: 'contain', lazySlides: true, lazyMedia: true, listOptions: { windowed: true, initialSlides: 4, batchSize: 4 }, zipLimits: RECOMMENDED_ZIP_LIMITS, pdfjs: false, signal: controller.signal });
   if (token !== previewToken) { viewer.destroy(); return; }
+  stage.scrollTop = Math.max(0, Number(position?.top) || 0);
+  stage.addEventListener('scroll', () => savePosition({ top: stage.scrollTop }), { passive: true });
   host._filePreviewActions = { zoom: delta => viewer.setZoom(Math.max(40, Math.min(200, viewer.zoomPercent + delta * 10))), fit: () => viewer.setFitMode('contain') };
-  activeCleanup = () => { viewer.destroy(); stage.replaceChildren(); };
   controller.signal.addEventListener('abort', () => viewer.destroy(), { once: true });
 }
 
-function renderImage(doc, host, controller) {
+function renderImage(doc, host, controller, position, savePosition) {
   const stage = host.querySelector('.file-preview-stage');
   stage.classList.add('file-image-stage');
   stage.innerHTML = `<div class="file-image-scroller"><img class="file-preview-image" src="${esc(contentUrl(doc))}" alt="${esc(doc.title || doc.fileMeta?.filename || '图片')}" draggable="false"></div>`;
   const image = stage.querySelector('img');
-  let scale = 1;
-  let rotation = 0;
-  let pan = { x: 0, y: 0 };
+  let scale = Math.max(.1, Math.min(8, Number(position?.scale) || 1));
+  let rotation = ((Number(position?.rotation) || 0) % 360 + 360) % 360;
+  let pan = { x: Number(position?.x) || 0, y: Number(position?.y) || 0 };
   const paint = () => { image.style.transform = `translate(${pan.x}px, ${pan.y}px) scale(${scale}) rotate(${rotation}deg)`; };
+  const save = () => savePosition({ scale, rotation, x: pan.x, y: pan.y, top: scroller.scrollTop, left: scroller.scrollLeft });
+  const scroller = stage.querySelector('.file-image-scroller');
   host._filePreviewActions = {
-    zoom: delta => { scale = Math.max(.1, Math.min(8, scale + delta * .2)); paint(); },
-    fit: () => { scale = 1; rotation = 0; pan = { x: 0, y: 0 }; paint(); },
-    rotate: () => { rotation = (rotation + 90) % 360; paint(); },
-    natural: () => { scale = 2; paint(); },
+    zoom: delta => { scale = Math.max(.1, Math.min(8, scale + delta * .2)); paint(); save(); },
+    fit: () => { scale = 1; rotation = 0; pan = { x: 0, y: 0 }; paint(); save(); },
+    rotate: () => { rotation = (rotation + 90) % 360; paint(); save(); },
+    natural: () => { scale = 2; paint(); save(); },
   };
+  scroller.scrollTop = Math.max(0, Number(position?.top) || 0);
+  scroller.scrollLeft = Math.max(0, Number(position?.left) || 0);
+  scroller.addEventListener('scroll', save, { passive: true });
   let pointer = null;
   image.addEventListener('pointerdown', event => { if (scale <= 1) return; pointer = { x: event.clientX - pan.x, y: event.clientY - pan.y }; image.setPointerCapture(event.pointerId); });
   image.addEventListener('pointermove', event => { if (!pointer) return; pan = { x: event.clientX - pointer.x, y: event.clientY - pointer.y }; paint(); });
+  image.addEventListener('pointerup', save);
   image.addEventListener('pointerup', () => { pointer = null; });
+  paint();
   image.addEventListener('error', () => setMessage(stage, '图片读取失败或格式无法解码。'));
   controller.signal.addEventListener('abort', () => { image.removeAttribute('src'); host._filePreviewActions = null; }, { once: true });
 }
 
-function renderMedia(doc, host) {
+function renderMedia(doc, host, position, savePosition) {
   const stage = host.querySelector('.file-preview-stage');
   const isVideo = inferPreviewKind(doc) === 'video';
   const media = window.document.createElement(isVideo ? 'video' : 'audio');
   media.controls = true;
   media.preload = 'metadata';
-  media.src = contentUrl(doc);
   media.className = isVideo ? 'file-preview-video' : 'file-preview-audio';
   const error = window.document.createElement('p');
   error.className = 'file-preview-note';
   error.textContent = '此格式可能不受当前系统支持。请下载后使用系统应用打开。';
   error.hidden = true;
   media.addEventListener('error', () => { error.hidden = false; });
+  const restoreTime = () => {
+    if (!Number.isFinite(media.duration) || !Number.isFinite(Number(position?.currentTime))) return;
+    media.currentTime = Math.max(0, Math.min(Number(position.currentTime), Math.max(0, media.duration - .1)));
+  };
+  media.addEventListener('loadedmetadata', restoreTime, { once: true });
+  const save = () => savePosition({ currentTime: Number(media.currentTime) || 0 });
+  media.addEventListener('timeupdate', save);
+  media.addEventListener('seeked', save);
   stage.replaceChildren(media, error);
+  media.src = contentUrl(doc);
   return () => { media.pause(); media.removeAttribute('src'); media.load(); };
 }
 
-async function renderArchive(doc, host, token, controller) {
+async function renderArchive(doc, host, token, controller, position, savePosition) {
   const stage = host.querySelector('.file-preview-stage');
   stage.innerHTML = '<input class="file-archive-search" type="search" placeholder="搜索文件名"><div class="file-archive-list" aria-live="polite"></div><button type="button" data-archive-more>加载更多</button>';
   const list = stage.querySelector('.file-archive-list');
@@ -454,6 +542,10 @@ async function renderArchive(doc, host, token, controller) {
     const term = search.value.toLocaleLowerCase();
     const matched = entries.filter(entry => entry.name.toLocaleLowerCase().includes(term));
     list.innerHTML = matched.map(entry => `<div class="file-archive-row"><span>▤ ${esc(entry.name)}</span><small>${(Number(entry.bytes) || 0).toLocaleString()} B</small></div>`).join('') || '<p class="file-preview-note">没有匹配的文件。</p>';
+    if (entries.length && !list.dataset.positionRestored) {
+      list.dataset.positionRestored = 'true';
+      list.scrollTop = Math.max(0, Number(position?.listTop) || 0);
+    }
     more.hidden = finished;
   };
   const load = async () => {
@@ -472,11 +564,12 @@ async function renderArchive(doc, host, token, controller) {
     finally { more.disabled = false; }
   };
   search.addEventListener('input', paint);
+  list.addEventListener('scroll', () => savePosition({ listTop: list.scrollTop }), { passive: true });
   more.addEventListener('click', load);
   await load();
 }
 
-function renderText(doc, host) {
+function renderText(doc, host, position, savePosition) {
   const stage = host.querySelector('.file-preview-stage');
   stage.innerHTML = `<div class="file-text-controls"><input type="search" data-text-search placeholder="搜索文本"><label><input type="checkbox" data-text-wrap checked> 自动换行</label></div><pre class="file-preview-code"></pre>`;
   const pre = stage.querySelector('pre');
@@ -497,6 +590,8 @@ function renderText(doc, host) {
   query.addEventListener('input', paint);
   stage.querySelector('[data-text-wrap]').addEventListener('change', paint);
   paint();
+  stage.scrollTop = Math.max(0, Number(position?.top) || 0);
+  stage.addEventListener('scroll', () => savePosition({ top: stage.scrollTop }), { passive: true });
 }
 
 function renderUnsupported(doc, host) {
@@ -517,13 +612,13 @@ function bindToolbar(host, doc, token, controller) {
     else if (action === 'natural') actions.natural?.();
     else if (action === 'pdf-go') actions.go?.();
     else if (action === 'pdf-find') await actions.find?.();
-    else if (action === 'retry') void renderKind(doc, host, token, controller);
+    else if (action === 'retry') void renderFilePreview(doc, host);
   };
   host.addEventListener('click', listener);
   controller.signal.addEventListener('abort', () => host.removeEventListener('click', listener), { once: true });
 }
 
-async function renderKind(doc, host, token, controller) {
+async function renderKind(doc, host, token, controller, position, savePosition) {
   const kind = inferPreviewKind(doc);
   const stage = host.querySelector('.file-preview-stage');
   if (doc.fileMeta?.previewLimited && ['spreadsheet', 'delimited', 'docx', 'presentation', 'text'].includes(kind)) {
@@ -531,15 +626,15 @@ async function renderKind(doc, host, token, controller) {
     return;
   }
   try {
-    if (kind === 'image') return renderImage(doc, host, controller);
-    if (kind === 'pdf') return await renderPdf(doc, host, token, controller);
-    if (kind === 'docx') return await renderDocx(doc, host, token, controller);
-    if (kind === 'spreadsheet') return await renderSpreadsheet(doc, host, token, controller);
-    if (kind === 'delimited') return await renderDelimited(doc, host, token, controller);
-    if (kind === 'presentation') return await renderPresentation(doc, host, token, controller);
-    if (kind === 'archive') return await renderArchive(doc, host, token, controller);
-    if (kind === 'audio' || kind === 'video') return renderMedia(doc, host);
-    if (kind === 'text') return renderText(doc, host);
+    if (kind === 'image') return renderImage(doc, host, controller, position, savePosition);
+    if (kind === 'pdf') return await renderPdf(doc, host, token, controller, position, savePosition);
+    if (kind === 'docx') return await renderDocx(doc, host, token, controller, position, savePosition);
+    if (kind === 'spreadsheet') return await renderSpreadsheet(doc, host, token, controller, position, savePosition);
+    if (kind === 'delimited') return await renderDelimited(doc, host, token, controller, position, savePosition);
+    if (kind === 'presentation') return await renderPresentation(doc, host, token, controller, position, savePosition);
+    if (kind === 'archive') return await renderArchive(doc, host, token, controller, position, savePosition);
+    if (kind === 'audio' || kind === 'video') return renderMedia(doc, host, position, savePosition);
+    if (kind === 'text') return renderText(doc, host, position, savePosition);
     return renderUnsupported(doc, host);
   } catch (error) {
     if (token !== previewToken || error?.name === 'AbortError') return;
@@ -548,6 +643,12 @@ async function renderKind(doc, host, token, controller) {
 }
 
 export function destroyFilePreview() {
+  activePositionSaver?.flush?.();
+  activePositionSaver = null;
+  const textHost = window.document.querySelector('#fileExtractedText');
+  if (textHost && activeTextPositionListener) textHost.removeEventListener('scroll', activeTextPositionListener);
+  activeTextPositionListener = null;
+  activeStoredPosition = null;
   previewToken += 1;
   try { activeCleanup(); } catch {}
   activeCleanup = () => {};
@@ -569,6 +670,12 @@ export function setFileReaderTab(tab) {
     const pane = window.document.querySelector(selector);
     if (pane) pane.hidden = key !== fileReaderTab;
   }
+  if (fileReaderTab === 'text' && activeStoredPosition) {
+    requestAnimationFrame(() => {
+      const textHost = window.document.querySelector('#fileExtractedText');
+      if (textHost && activeStoredPosition) textHost.scrollTop = Math.max(0, Number(activeStoredPosition.textTop) || 0);
+    });
+  }
   window.document.querySelectorAll('[data-file-reader-tab]').forEach(button => {
     const active = button.dataset.fileReaderTab === fileReaderTab;
     button.classList.toggle('active', active);
@@ -583,13 +690,19 @@ export function renderFilePreview(doc, host) {
   const kind = inferPreviewKind(doc);
   const token = previewToken;
   const controller = new AbortController();
-  activeCleanup = () => controller.abort();
+  const textHost = window.document.querySelector('#fileExtractedText');
+  activeCleanup = () => {
+    controller.abort();
+    if (textHost && activeTextPositionListener) textHost.removeEventListener('scroll', activeTextPositionListener);
+    activeTextPositionListener = null;
+  };
+  const savePosition = createPositionSaver(doc, kind);
+  activePositionSaver = savePosition;
   host.dataset.previewKind = kind;
   const extra = kind === 'image' ? '<button type="button" data-file-action="rotate">旋转</button><button type="button" data-file-action="natural">原始尺寸</button>' : '';
   host.innerHTML = `${toolbarMarkup(extra)}<div class="file-preview-stage" tabindex="0"></div>`;
   bindToolbar(host, doc, token, controller);
   setFileReaderTab(fileReaderTab);
-  const textHost = window.document.querySelector('#fileExtractedText');
   if (textHost) textHost.textContent = String(doc.content || '').trim() || '没有提取到正文。';
   const search = window.document.querySelector('#fileTextSearch');
   if (search) search.oninput = () => {
@@ -602,10 +715,20 @@ export function renderFilePreview(doc, host) {
       textHost.textContent = lines.map((line, index) => line.toLocaleLowerCase().includes(query.toLocaleLowerCase()) ? `${index + 1}: ${line}` : '').filter(Boolean).join('\n') || '没有匹配内容。';
     }
   };
-  void renderKind(doc, host, token, controller).then(dispose => {
+  const renderTask = loadReadingPosition(doc, kind).then(position => {
+    if (token !== previewToken) return;
+    activeStoredPosition = position || {};
+    savePosition.setInitial(position);
+    if (textHost) {
+      activeTextPositionListener = () => savePosition({ textTop: textHost.scrollTop });
+      textHost.addEventListener('scroll', activeTextPositionListener, { passive: true });
+      if (fileReaderTab === 'text') textHost.scrollTop = Math.max(0, Number(position?.textTop) || 0);
+    }
+    return renderKind(doc, host, token, controller, position, savePosition);
+  }).then(dispose => {
     if (token !== previewToken || typeof dispose !== 'function') return;
     const previous = activeCleanup;
     activeCleanup = () => { previous(); dispose(); };
   });
-  return Promise.resolve();
+  return renderTask;
 }

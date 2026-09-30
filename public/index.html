@@ -313,6 +313,9 @@
                   <button type="button" data-editor-mode="split" title="分屏 (Ctrl+Shift+P 切换)">分屏</button>
                   <button type="button" data-editor-mode="preview" title="预览 (Ctrl+Shift+P 切换)">预览</button>
                 </div>
+                <button class="icon-button" id="noteFindToggleButton" type="button" title="查找正文 (⌘F / Ctrl+F)" aria-label="查找正文" aria-expanded="false" aria-controls="noteFindBar" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
+                </button>
                 <button class="icon-button" id="insertImageButton" type="button" title="插入图片" aria-label="插入图片" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <rect x="3" y="4" width="18" height="16" rx="2"></rect>
@@ -321,6 +324,9 @@
                   </svg>
                 </button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
+                <button class="icon-button" id="openDocumentFolderButton" type="button" title="在 Finder / 文件管理器中打开所在文件夹" aria-label="打开所在文件夹" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path><path d="M3.7 10h16.6"></path></svg>
+                </button>
                 <button class="icon-button" id="assistantToggleButton" type="button" title="留序 LiuXu" aria-label="留序 LiuXu" aria-expanded="false" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.3l-1.8-5.7L4.5 10.8 10.2 9z"></path>
@@ -382,7 +388,14 @@
 
           <div class="note-editor" id="noteEditor">
             <textarea id="documentContent" aria-label="Markdown 正文" aria-controls="knowledgeLinkPicker" aria-expanded="false" spellcheck="true"></textarea>
-            <div class="markdown-preview prose" id="documentPreview" hidden></div>
+            <div class="markdown-preview prose" id="documentPreview" tabindex="0" aria-label="Markdown 预览" hidden></div>
+            <div class="note-find-bar" id="noteFindBar" role="search" aria-label="查找当前笔记正文" hidden>
+              <input id="noteFindInput" type="search" autocomplete="off" aria-label="查找正文" placeholder="查找正文…">
+              <span id="noteFindCount" class="note-find-count" role="status" aria-live="polite">输入关键词</span>
+              <button id="noteFindPrevious" type="button" aria-label="上一个匹配项" title="上一个 (Shift+Enter)">↑</button>
+              <button id="noteFindNext" type="button" aria-label="下一个匹配项" title="下一个 (Enter)">↓</button>
+              <button id="noteFindClose" type="button" aria-label="关闭查找" title="关闭 (Esc)">×</button>
+            </div>
             <div class="knowledge-link-picker" id="knowledgeLinkPicker" role="listbox" aria-label="插入知识链接" hidden></div>
           </div>
           <div class="knowledge-link-issues" id="knowledgeLinkIssues" role="status" aria-live="polite" hidden></div>
@@ -651,28 +664,45 @@
     <form class="dialog-card settings-card" id="settingsForm">
       <header><div><span class="dialog-eyebrow">WORKSPACE</span><h2>设置</h2></div><button class="icon-button" id="closeSettingsDialog" type="button" aria-label="关闭">×</button></header>
       <div class="settings-shell">
-        <nav class="settings-nav" aria-label="设置分类">
-          <button type="button" data-settings-nav="appearance" class="active" aria-current="page">外观</button>
-          <button type="button" data-settings-nav="sessions">会话</button>
-          <button type="button" data-settings-nav="model">模型</button>
-          <button type="button" data-settings-nav="updates">更新</button>
-          <button type="button" data-settings-nav="agent">Agent</button>
-          <button type="button" data-settings-nav="memory">Memory</button>
-          <button type="button" data-settings-nav="network">联网</button>
-          <button type="button" data-settings-nav="image">生图</button>
-          <button type="button" data-settings-nav="skills">技能</button>
-          <button type="button" data-settings-nav="knowledge">知识库搜索</button>
-          <button type="button" data-settings-nav="data">数据</button>
-          <button type="button" data-settings-nav="computer">电脑</button>
-          <button type="button" data-settings-nav="remote">远程访问</button>
+        <nav class="settings-nav" id="settingsNav" aria-label="设置分类">
+          <div class="settings-group-switcher" role="group" aria-label="设置分组">
+            <button type="button" data-settings-group-select="basic" class="active" aria-pressed="true">基础</button>
+            <button type="button" data-settings-group-select="ai" aria-pressed="false">AI 能力</button>
+            <button type="button" data-settings-group-select="workspace" aria-pressed="false">工作区</button>
+          </div>
+          <div class="settings-nav-groups">
+            <section class="settings-nav-group active" data-settings-group-panel="basic" aria-label="基础设置">
+              <h3>基础</h3>
+              <button type="button" data-settings-nav="appearance" class="active" aria-current="page">外观</button>
+              <button type="button" data-settings-nav="sessions">会话</button>
+              <button type="button" data-settings-nav="updates">更新</button>
+            </section>
+            <section class="settings-nav-group" data-settings-group-panel="ai" aria-label="AI 能力设置">
+              <h3>AI 能力</h3>
+              <button type="button" data-settings-nav="model">模型</button>
+              <button type="button" data-settings-nav="agent">Agent</button>
+              <button type="button" data-settings-nav="memory">Memory</button>
+              <button type="button" data-settings-nav="network">联网</button>
+              <button type="button" data-settings-nav="image">生图</button>
+              <button type="button" data-settings-nav="skills">技能</button>
+            </section>
+            <section class="settings-nav-group" data-settings-group-panel="workspace" aria-label="工作区设置">
+              <h3>工作区</h3>
+              <button type="button" data-settings-nav="knowledge">知识库</button>
+              <button type="button" data-settings-nav="data">数据</button>
+              <button type="button" data-settings-nav="computer">电脑</button>
+              <button type="button" data-settings-nav="remote">远程访问</button>
+            </section>
+          </div>
         </nav>
         <div class="settings-content">
           <section class="settings-section" data-settings-panel="appearance">
             <h3>外观</h3>
+            <p class="settings-copy">调整留序的显示主题。</p>
             <label class="settings-row" for="themeSelect"><span><strong>主题</strong><small>跟随系统或固定显示</small></span><select id="themeSelect"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
           </section>
           <section class="settings-section" data-settings-panel="sessions" hidden>
-            <h3>归档会话</h3>
+            <h3>会话</h3>
             <p class="settings-copy">归档后的会话会从侧栏隐藏。可以恢复到列表，或永久删除（含运行记录）。</p>
             <div id="archivedSessionList" class="archived-session-list"></div>
           </section>
@@ -715,7 +745,7 @@
           </section>
           <section class="settings-section" data-settings-panel="updates" hidden>
             <h3>更新</h3>
-            <p class="settings-copy">检查项目 GitHub Releases 中的最新桌面安装包。下载完成并校验后，再由你确认打开安装程序。</p>
+            <p class="settings-copy">检查桌面版更新。下载和校验完成后，由你确认打开安装程序。</p>
             <div id="desktopUpdatePanel" class="desktop-update-panel"></div>
           </section>
           <section class="settings-section" data-settings-panel="agent" hidden>
@@ -733,9 +763,10 @@
               <input id="agentDelegateMaxRounds" type="number" min="1" max="32" step="1" value="8">
               <small>agent.delegate 子 run 默认上限，与父 run 轮数/工具预算独立。至少 1，默认 8。</small>
             </label>
-            <div class="settings-subsection">
-              <h4>高级 Agent 限制</h4>
-              <p class="settings-copy">护栏、并发与工具结果上限。至少 1；各项另有上限，防止把内存或超时拖得过大。</p>
+            <details class="settings-advanced settings-subsection">
+              <summary><span>高级 Agent 限制</span><small>护栏、并发与工具结果上限</small></summary>
+              <div class="settings-advanced-content">
+              <p class="settings-copy">各项均有上限，避免设置过大导致内存占用或等待时间增加。</p>
               <label class="settings-field" for="agentMaxToolFailures">连续工具失败暂停
                 <input id="agentMaxToolFailures" type="number" min="1" max="20" step="1" value="3">
                 <small>同一 run 内连续工具失败后等待你补充说明。默认 3，最大 20。</small>
@@ -780,12 +811,14 @@
               <label class="settings-field" for="agentMemoryListMaxLimit">memory.list 最大条数
                 <input id="agentMemoryListMaxLimit" type="number" min="1" max="200" step="1" value="100">
               </label>
-            </div>
+              </div>
+            </details>
           </section>
           <section class="settings-section" data-settings-panel="memory" hidden>
             <h3>Memory</h3>
             <p class="settings-copy">控制「根据近期对话更新」与长期记忆的扫描、写入上限。L2/L3 不再自动注入 Agent，需通过 memory.list / memory.search / memory.read 按需读取。</p>
-            <h4 class="settings-subhead">刷新运行</h4>
+            <div class="settings-subsection settings-memory-common">
+            <h4>刷新运行</h4>
             <label class="settings-field" for="memoryRefreshMaxRounds">最大循环轮数
               <input id="memoryRefreshMaxRounds" type="number" min="1" step="1" value="4">
               <small>记忆刷新专用，与主 Agent 轮数无关。默认 4。</small>
@@ -794,6 +827,10 @@
               <input id="memoryRefreshMaxProposals" type="number" min="1" step="1" value="5">
               <small>单次刷新最多 memory.propose 条数。默认 5。</small>
             </label>
+            </div>
+            <details class="settings-advanced settings-subsection">
+              <summary><span>高级 Memory 参数</span><small>扫描预算、记忆长度和上下文说明</small></summary>
+              <div class="settings-advanced-content">
             <h4 class="settings-subhead">对话扫描</h4>
             <label class="settings-field" for="memoryRefreshSessionLimit">扫描会话数
               <input id="memoryRefreshSessionLimit" type="number" min="1" step="1" value="8">
@@ -824,6 +861,8 @@
             <p class="settings-copy">仅 L0 安全规则会自动注入 Agent。L2/L3 请用 memory.list 浏览标题、memory.read 读取正文；memory.list 条数在「模型 → 高级 Agent 限制」中配置。</p>
             <input id="memoryContextMaxL2" type="hidden" value="20">
             <input id="memoryContextMaxL3" type="hidden" value="20">
+              </div>
+            </details>
           </section>
           <section class="settings-section" data-settings-panel="network" hidden>
             <h3>联网</h3>
@@ -845,12 +884,13 @@
           </section>
           <section class="settings-section" data-settings-panel="skills" hidden>
             <h3>技能</h3>
+            <p class="settings-copy">管理 Agent 可调用的外部数据与搜索服务。</p>
             <label class="settings-row" for="agentWestockToggle"><span><strong>WeStock Data</strong><small>A股、港股、美股行情与财务数据查询</small></span><input id="agentWestockToggle" type="checkbox"></label>
             <label class="settings-row" for="agentPerplexityToggle"><span><strong>Perplexity Search</strong><small>Agent 网页搜索可同时走 Perplexity</small></span><input id="agentPerplexityToggle" type="checkbox"></label>
             <label class="settings-field" for="agentPerplexityKey">Perplexity API Key<input id="agentPerplexityKey" type="password" autocomplete="off" spellcheck="false" placeholder="pplx-..."></label>
           </section>
           <section class="settings-section" data-settings-panel="knowledge" hidden>
-            <h3>本地文件夹</h3>
+            <h3>知识库</h3>
             <p class="settings-copy">笔记和档案保存在电脑上的真实文件夹。外部修改会自动同步到留序。</p>
             <label class="settings-field" for="knowledgeFolderPath">知识库根目录
               <input id="knowledgeFolderPath" type="text" readonly spellcheck="false">
@@ -948,7 +988,7 @@
             <div id="remotePhoneSettings" hidden><p class="settings-copy">此设备已通过电脑授权。远程端口、设备授权和目录白名单只能在电脑端修改。</p><button type="button" class="danger-action compact" id="remoteSettingsLogout">退出此设备</button></div>
           </section>
           <section class="settings-section" data-settings-panel="data" hidden>
-            <h3>备份与恢复</h3>
+            <h3>数据与备份</h3>
             <p class="settings-copy">JSON 备份仅含结构数据（分类、待办、倒计时等，不含知识附件）；ZIP 工作区包含笔记、附件与 Agent 数据。恢复含日记的数据前请先解锁日记。</p>
             <div class="settings-actions">
               <button type="button" class="secondary-action compact" id="exportJsonBackupButton">导出 JSON</button>

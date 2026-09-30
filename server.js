@@ -901,7 +901,11 @@ express.static.mime.define({ 'application/javascript': ['mjs'] }, true);
 app.use(express.static(path.join(__dirname, 'public'), {
   index: false,
   setHeaders: (res, filePath) => {
-    if (/\.(?:js|mjs|css|png|svg|woff2?)$/i.test(filePath)) {
+    if (/\.(?:js|mjs|css)$/i.test(filePath)) {
+      // These URLs are stable across desktop upgrades, so revalidate before
+      // loading a new page or an older cached bundle can run against new APIs.
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (/\.(?:png|svg|woff2?)$/i.test(filePath)) {
       res.setHeader('Cache-Control', 'public, max-age=86400');
     }
   },
@@ -2925,6 +2929,45 @@ app.put('/api/categories/:parent/subcategories/reorder', (req, res) => {
     }
     const result = db.reorderSubcategories(parent, orderedSubs);
     if (!result) return res.status(404).json({ error: 'Parent category not found' });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/categories/:oldName/move', (req, res) => {
+  try {
+    const sourceSegments = String(req.params.oldName || '').split('/').map(cleanCategorySegment);
+    const rawParent = typeof req.body?.parent === 'string' ? req.body.parent : '';
+    const parentSegments = rawParent.split('/').map(cleanCategorySegment);
+    if (!sourceSegments.length || sourceSegments.some(segment => !segment)
+      || !parentSegments.length || parentSegments.some(segment => !segment)) {
+      return res.status(400).json({ error: 'Source folder and destination parent are required' });
+    }
+    const oldName = sourceSegments.join('/');
+    const parent = parentSegments.join('/');
+    if ((isDiaryCategory(oldName) || isDiaryCategory(parent)) && !hasDiaryAccess(req)) {
+      return rejectLockedDiary(res);
+    }
+    const result = db.moveCategory(oldName, parent);
+    if (result?.error) {
+      const status = /not found/i.test(result.error) ? 404
+        : /already exists|itself|descendants|protected/i.test(result.error) ? 409
+          : 400;
+      return res.status(status).json({ error: result.error });
+    }
+    if (!result?.moved) return res.json(result || { success: true });
+
+    const knowledge = knowledgeServiceFor(db).knowledge;
+    try {
+      knowledge.rewriteCollectionPath(result.oldPath, result.newPath);
+    } catch (error) {
+      const oldParent = result.oldPath.split('/').slice(0, -1).join('/');
+      try { db.moveCategory(result.newPath, oldParent); } catch { /* next sync can reconcile the category tree */ }
+      throw error;
+    }
+    knowledge.folderSync.removeCollectionDirectory(result.oldPath, 'folder-moved');
+    knowledge.folderSync.ensureDirectoryTree();
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

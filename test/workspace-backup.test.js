@@ -75,6 +75,40 @@ test('workspace zip carries the portable knowledge folder tree and restores it t
   fs.rmSync(result.knowledgeFolderBackupPath, { recursive: true, force: true });
 });
 
+test('workspace merge refuses knowledge-folder symlink escapes and rolls back partial file installation', async (t) => {
+  const { db: sourceDb } = createTempDatabase(t, 'workspace-merge-folder-source-');
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-merge-folder-source-root-'));
+  t.after(() => fs.rmSync(sourceRoot, { recursive: true, force: true }));
+  const sourceKnowledge = createKnowledgeService(sourceDb);
+  sourceKnowledge.createNote({ title: '先写入', content: 'A', knowledgeBase: 'A' });
+  sourceKnowledge.createNote({ title: '后写入', content: 'B', knowledgeBase: 'B' });
+  sourceKnowledge.folderSync.migrateAll({ rootPath: sourceRoot });
+  sourceKnowledge.folderSync.stop();
+  const buffer = await exportWorkspace(sourceDb);
+
+  const { db: targetDb, dir: targetDir } = createTempDatabase(t, 'workspace-merge-folder-target-');
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-merge-folder-target-root-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-merge-folder-outside-'));
+  t.after(() => {
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+  fs.writeFileSync(path.join(targetDir, '.knowledge-folder.json'), JSON.stringify({ enabled: true, rootPath: targetRoot }));
+  fs.mkdirSync(path.join(targetRoot, 'B'));
+  fs.symlinkSync(path.join(outside, 'secret.txt'), path.join(targetRoot, 'B', '后写入.md'));
+
+  await assert.rejects(() => restoreWorkspace(targetDb, buffer, 'merge'), /unsafe file/);
+  assert.equal(fs.existsSync(path.join(targetRoot, 'A', '先写入.md')), false);
+  assert.equal(fs.existsSync(path.join(outside, 'secret.txt')), false);
+  assert.equal(createKnowledgeService(targetDb, { startFolderSync: false }).allDocuments().length, 0);
+
+  fs.unlinkSync(path.join(targetRoot, 'B', '后写入.md'));
+  fs.rmdirSync(path.join(targetRoot, 'B'));
+  fs.symlinkSync(outside, path.join(targetRoot, 'B'));
+  await assert.rejects(() => restoreWorkspace(targetDb, buffer, 'merge'), /unsafe directory/);
+  assert.equal(fs.existsSync(path.join(outside, '后写入.md')), false);
+});
+
 test('SQLite workspace replace does not replay incompatible compatibility JSON', async (t) => {
   const { db } = tempDb(t);
   const zip = await JSZip.loadAsync(await exportWorkspace(db));
