@@ -324,6 +324,9 @@
                     <path d="m5 18 4.5-4.5 3 3 2.5-2.5 4 4"></path>
                   </svg>
                 </button>
+                <button class="icon-button" id="markdownTocToggle" type="button" title="打开或关闭目录" aria-label="目录" aria-controls="markdownToc" aria-pressed="false" aria-expanded="false" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"></path></svg>
+                </button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
                 <button class="icon-button" id="openDocumentFolderButton" type="button" title="在 Finder / 文件管理器中打开所在文件夹" aria-label="打开所在文件夹" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path><path d="M3.7 10h16.6"></path></svg>
@@ -920,6 +923,13 @@
               <button type="button" class="primary-action compact" id="chooseKnowledgeFolderButton">选择文件夹</button>
               <button type="button" class="secondary-action compact" id="openKnowledgeFolderSettingsButton">打开文件夹</button>
               <button type="button" class="secondary-action compact" id="syncKnowledgeFolderSettingsButton">立即同步</button>
+            </div>
+            <div id="knowledgeSyncExtensionSettings">
+              <label class="settings-field" for="knowledgeSyncExtensions">同步文件后缀
+                <textarea id="knowledgeSyncExtensions" rows="3" spellcheck="false"></textarea>
+              </label>
+              <p class="settings-copy">用空格或逗号分隔。默认同步文档、图片、音视频和代码；Markdown 笔记始终同步。其余文件仅显示名称，程序包不展开内部文件。</p>
+              <button type="button" class="secondary-action compact" id="saveKnowledgeSyncExtensions">保存同步后缀</button>
             </div>
             <p class="settings-copy knowledge-folder-status" id="knowledgeFolderStatus">正在读取同步状态…</p>
             <div class="settings-subsection" id="knowledgeSyncErrorSection" hidden>

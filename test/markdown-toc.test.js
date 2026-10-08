@@ -64,3 +64,31 @@ test('clears old toc in its host and heading ids in preview before rebuilding', 
     dom.window.close();
   }
 });
+
+test('source toc tracks offsets, setext headings and ignores fenced or indented code', async () => {
+  const { sourceHeadings } = await loadModule();
+  const source = '# One\r\n\r\nSetext\r\n------\r\n\r\n```md\r\n# fake\r\n```\r\n    # indented\r\n~~~\r\n# fake too\r\n~~~\r\n## One\r\n';
+  assert.deepEqual(sourceHeadings(source), [
+    { text: 'One', level: 1, offset: source.indexOf('# One') },
+    { text: 'Setext', level: 2, offset: source.indexOf('Setext') },
+    { text: 'One', level: 2, offset: source.indexOf('## One') },
+  ]);
+  assert.deepEqual(sourceHeadings('First\nsecond\n===\n'), [{ text: 'First second', level: 1, offset: 0 }]);
+});
+
+test('source toc shows an empty message and locates the editor without changing the hash', async () => {
+  const { renderSourceToc, locateEditorHeading } = await loadModule();
+  const { dom, tocHost } = makeDom('');
+  try {
+    const editor = dom.window.document.createElement('textarea');
+    editor.value = 'text\n\n# Target'; dom.window.document.body.append(editor);
+    dom.window.location.hash = '#knowledge?base=Test&document=note:1';
+    renderSourceToc('', tocHost, () => {});
+    assert.equal(tocHost.querySelector('.markdown-toc-empty').textContent, '暂无标题');
+    renderSourceToc(editor.value, tocHost, offset => locateEditorHeading(editor, offset));
+    tocHost.querySelector('a').click();
+    assert.equal(editor.selectionStart, editor.value.indexOf('# Target'));
+    assert.equal(dom.window.document.activeElement, editor);
+    assert.equal(dom.window.location.hash, '#knowledge?base=Test&document=note:1');
+  } finally { dom.window.close(); }
+});

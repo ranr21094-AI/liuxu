@@ -320,3 +320,118 @@ test('HTML image dimensions survive colocated copying, note moves and external s
  assert.equal(restored.status,undefined);assert.match(knowledge.getDocument(note.id).content,/width="350"/);
  assert.match(fs.readFileSync(local,'utf8'),/width="350"/);
 });
+
+test('sync skips nested app bundles but preserves ordinary files and excluded legacy records', async t => {
+  const { root, knowledge } = setup(t);
+  knowledge.folderSync.configure({ enabled: true, rootPath: root });
+  await knowledge.folderSync.syncNow();
+  knowledge.folderSync.stop();
+  for (const bundle of ['Blender.app', 'nested/OTHER.APP']) {
+    fs.mkdirSync(path.join(root, '项目', bundle, 'Contents'), { recursive: true });
+    fs.writeFileSync(path.join(root, '项目', bundle, 'Contents', 'secret.txt'), 'bundle internals');
+  }
+  fs.writeFileSync(path.join(root, '项目', 'ordinary.txt'), 'ordinary content');
+  fs.writeFileSync(path.join(root, '项目', 'ordinary.app'), 'ordinary app-named file');
+  await knowledge.folderSync.syncNow();
+  assert.equal(knowledge.allDocuments({ diaryUnlocked: true }).length, 1);
+  assert.ok(knowledge.folderSync.scanFiles().nameOnlyEntries.some(file => file.relativePath === '项目/ordinary.app'));
+  fs.unlinkSync(path.join(root, '项目', 'ordinary.app'));
+  const old = knowledge.createNote({ title: 'legacy' }).document;
+  fs.unlinkSync(knowledge.folderSync.localPathFor(old));
+  const excluded = '项目/Blender.app/Contents/legacy.txt';
+  knowledge.folderSync.manifest[old.id] = { relativePath: excluded, sourceType: 'file' };
+  fs.rmSync(path.join(root, '项目', 'Blender.app'), { recursive: true });
+  const second = await knowledge.folderSync.syncNow();
+  assert.equal(second.report.deleted, 0);
+  assert.ok(knowledge.getDocument(old.id));
+  assert.equal(knowledge.folderSync.manifest[old.id].relativePath, excluded);
+  assert.ok(!knowledge.folderSync.scanFiles().directories.some(value => /\.app(?:\/|$)/i.test(value)));
+});
+
+test('bundle filesystem notifications do not schedule a sync', async t => {
+  let notify;
+  t.mock.method(fs, 'watch', (_root, _options, callback) => {
+    notify = callback;
+    return { close() {}, on() {} };
+  });
+  const { root, knowledge } = setup(t);
+  knowledge.folderSync.configure({ enabled: true, rootPath: root });
+  await knowledge.folderSync.syncNow();
+  knowledge.folderSync.stop();
+  const bundle = path.join(root, 'Blender.APP', 'Contents');
+  fs.mkdirSync(bundle, { recursive: true });
+  knowledge.folderSync.restartWatcher();
+  notify('change', 'Blender.APP/Contents/changed.txt');
+  notify('rename', 'Blender.APP');
+  notify('rename', 'removed.app');
+  assert.equal(knowledge.folderSync.debounceTimer, null);
+  notify('change', 'ordinary.txt');
+  assert.ok(knowledge.folderSync.debounceTimer);
+});
+
+test('bulk sync serves an HTTP request before imports finish and uses the parent index', async t => {
+  const http = require('node:http');
+  const { db, root, knowledge } = setup(t);
+  knowledge.folderSync.configure({ enabled: true, rootPath: root });
+  await knowledge.folderSync.syncNow();
+  knowledge.folderSync.stop();
+  fs.mkdirSync(path.join(root, '批量'), { recursive: true });
+  for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(root, '批量', `${i}.txt`), `content ${i}`);
+  const server = http.createServer((_req, res) => res.end('responsive'));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  let done = false;
+  const response = fetch(`http://127.0.0.1:${server.address().port}`).then(async result => {
+    assert.equal(await result.text(), 'responsive');
+    assert.equal(done, false);
+  });
+  const sync = knowledge.folderSync.syncNow().then(result => { done = true; return result; });
+  await response;
+  assert.equal((await sync).report.added, 100);
+  const plan = db.sqlite.prepare("EXPLAIN QUERY PLAN SELECT body FROM knowledge_documents WHERE json_extract(body, '$.parentDocumentId') = ? ORDER BY rowid").all('file:1');
+  assert.ok(plan.some(row => row.detail.includes('idx_knowledge_documents_parent')));
+});
+
+test('extension whitelist keeps excluded files as read-only names without copying or extracting', async t => {
+  const { db, dir, root, knowledge } = setup(t);
+  fs.mkdirSync(path.join(root, '项目', 'Tool.app', 'Contents'), { recursive: true });
+  fs.writeFileSync(path.join(root, '项目', 'Tool.app', 'Contents', 'internal.py'), 'internal');
+  fs.writeFileSync(path.join(root, '项目', 'main.CPP'), 'int main() { return 0; }');
+  fs.writeFileSync(path.join(root, '项目', 'data.zip'), 'not a zip');
+  fs.writeFileSync(path.join(root, '项目', 'unknown.bin'), 'unknown');
+  fs.writeFileSync(path.join(root, '项目', 'README'), 'no extension');
+  fs.mkdirSync(path.join(root, '日记'));
+  fs.writeFileSync(path.join(root, '日记', 'secret.bin'), 'private');
+  knowledge.folderSync.configure({ enabled: true, rootPath: root });
+  await knowledge.folderSync.syncNow();
+  const docs = knowledge.allDocuments({ diaryUnlocked: true });
+  assert.equal(docs.length, 1);
+  assert.equal(docs[0].title, 'main.CPP');
+  assert.equal(docs[0].content, 'int main() { return 0; }');
+  assert.equal(fs.readdirSync(path.join(dir, 'knowledge-files')).length, 1);
+  assert.deepEqual(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '项目' }).map(entry => entry.name).sort(), ['README', 'Tool.app', 'data.zip', 'unknown.bin']);
+  assert.deepEqual(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记' }), []);
+  assert.equal(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记', diaryUnlocked: true }).length, 1);
+  const before = knowledge.folderSync.snapshot().syncExtensions;
+  assert.throws(() => knowledge.folderSync.configure({ enabled: true, rootPath: root, syncExtensions: ['.exe'] }), /不支持/);
+  assert.deepEqual(knowledge.folderSync.snapshot().syncExtensions, before);
+  // Excluding an existing imported file preserves its last stored snapshot.
+  knowledge.folderSync.configure({ enabled: true, rootPath: root, syncExtensions: ['.TXT'] });
+  await knowledge.folderSync.syncNow();
+  fs.unlinkSync(path.join(root, '项目', 'main.CPP'));
+  await knowledge.folderSync.syncNow();
+  assert.ok(knowledge.getDocument(docs[0].id));
+  assert.deepEqual(knowledge.folderSync.snapshot().syncExtensions, ['.md', '.txt']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.knowledge-folder.json'))).syncExtensions, ['.md', '.txt']);
+  assert.equal(db.sqlite.prepare('SELECT count(*) n FROM knowledge_documents').get().n, 1);
+});
+
+test('bundle names do not duplicate expandable historical folders while retained notes remain readable', t => {
+  const { db, knowledge } = setup(t);
+  const note = knowledge.createNote({ title: 'Retained README', knowledgeBase: '项目', folderPath: 'Tool.APP/Contents', content: 'keep' }).document;
+  const { treeForDocuments } = require('../lib/knowledge/routes');
+  const tree = treeForDocuments([{ name: '项目', sub: [{ name: 'Tool.APP', sub: [{ name: 'Contents', sub: [] }] }, { name: '正常', sub: [] }] }], [note], db, { hideAppBundles: true });
+  assert.deepEqual(tree[0].folders.map(folder => folder.name), ['正常']);
+  assert.equal(tree[0].documentCount, 0);
+  assert.equal(knowledge.getDocument(note.id).content, 'keep');
+});

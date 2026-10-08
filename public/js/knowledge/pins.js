@@ -24,3 +24,21 @@ export function arrangePinnedRows(list) {
 export function mergeDocumentPages(current, page) {
   return [...new Map([...current, ...page].map(document => [document.id, document])).values()];
 }
+
+export function arrangeKnowledgeRows(list) {
+  const rows = [...list.children];
+  const groups = [
+    ['置顶', rows.filter(row => row.dataset.pinnedAt).sort((a, b) => comparePinned({ pinnedAt: a.dataset.pinnedAt }, { pinnedAt: b.dataset.pinnedAt }))],
+    ['文件夹', rows.filter(row => !row.dataset.pinnedAt && row.dataset.listGroup === 'folder')],
+    ['文件', rows.filter(row => !row.dataset.pinnedAt && row.dataset.listGroup === 'file')],
+    ['未同步项', rows.filter(row => row.dataset.listGroup === 'local')],
+  ];
+  list.replaceChildren();
+  for (const [title, group] of groups) {
+    if (!group.length) continue;
+    const heading = list.ownerDocument.createElement('div');
+    heading.className = 'knowledge-pin-section knowledge-list-section';
+    heading.textContent = title;
+    list.append(heading, ...group);
+  }
+}

@@ -3218,3 +3218,25 @@ html[data-theme="dark"] .agent-empty-hero__frame {
 .knowledge-base-select { padding-right: 88px; }
 @media (max-width: 640px), (hover: none) { .knowledge-base-select { padding-right: 112px; } }
 .document-row > .tree-actions { grid-column: 3; grid-row: 1; }
+
+.local-name-only-row { width: 100%; text-align: left; font: inherit; color: inherit; }
+#knowledgeSyncExtensions { width: 100%; resize: vertical; min-height: 72px; }
+
+/* Distinct folder navigation and file types, without relying only on color. */
+.document-folder-row { background: color-mix(in srgb, var(--accent) 6%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 13%, var(--line)); }
+.document-folder-mark svg { width: 22px; height: 22px; }
+.document-folder-chevron { margin-left: auto; color: var(--muted); font-size: 22px; }
+.document-type-label { flex: 0 0 auto; color: var(--muted); font-size: 10px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 5px; }
+.document-row-icon svg { width: 20px; height: 20px; }
+.document-row[data-document-type="image"] .document-row-icon { color: #3b9274; }
+.document-row[data-document-type="code"] .document-row-icon { color: #8b6dc0; }
+.document-row[data-document-type="audio"] .document-row-icon, .document-row[data-document-type="video"] .document-row-icon { color: #b37a39; }
+.knowledge-list-section { margin-top: 12px; }
+#markdownTocToggle.active { color: var(--accent); background: var(--surface-active); }
+.markdown-toc-empty { color: var(--muted); font-size: 12px; padding: 8px 0; }
+.note-editor.has-markdown-toc:not(.is-split) > textarea { grid-column: 2; grid-row: 1; min-width: 0; }
+@media (max-width: 640px) {
+  .note-editor.has-markdown-toc:not(.is-split) > textarea { grid-column: 1; grid-row: 2; }
+  .note-editor.is-split.has-markdown-toc > textarea { grid-column: 1; grid-row: 2; }
+  .note-editor.is-split.has-markdown-toc > .markdown-preview { grid-row: 3; }
+}
