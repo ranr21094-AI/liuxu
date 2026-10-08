@@ -1,3 +1,4 @@
+import { imageTokens, escapeAttr } from './note-images.js';
 import { escHtml, showToast } from '../helpers.js';
 import { renderToHtmlUncached } from '../markdown.js';
 
@@ -6,21 +7,26 @@ const DOCUMENT_ID_RE = /^(?:note|file):[1-9]\d*$/;
 
 export function rewriteRelativeImages(markdown, documentId) {
   if (!DOCUMENT_ID_RE.test(String(documentId || ''))) return markdown;
-  return String(markdown || '').replace(/(!\[[^\]\n]*\]\(\s*)(<?)([^)\s>]+)(>?)([^)]*\))/g, (raw, prefix, left, source, right, suffix) => {
-    if (/^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(source)) return raw;
+  let result = String(markdown || '');
+  for (const token of imageTokens(result).reverse()) {
+    const source = token.src.replace(/&amp;/gi, '&');
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/|#)/i.test(source)) continue;
     const match = source.match(/^([^?#]*)([?#].*)?$/);
-    if (!match?.[1]) return raw;
+    if (!match?.[1]) continue;
     let pathname;
     try {
       const segments = match[1].split('/').map(segment => decodeURIComponent(segment));
       while (segments[0] === '.') segments.shift();
-      if (!segments.length || segments.some(segment => !segment || segment === '.' || segment === '..' || /[\\/\0]/.test(segment))) return raw;
+      if (!segments.length || segments.some(segment => !segment || segment === '.' || segment === '..' || /[\\/\0]/.test(segment))) continue;
       pathname = segments.map(segment => encodeURIComponent(segment)).join('/');
-    } catch {
-      return raw;
-    }
-    return `${prefix}${left}/api/knowledge/assets/${encodeURIComponent(documentId)}/${pathname}${match[2] || ''}${right}${suffix}`;
-  });
+    } catch { continue; }
+    const target = `/api/knowledge/assets/${encodeURIComponent(documentId)}/${pathname}${match[2] || ''}`;
+    const replacement = token.html
+      ? token.raw.replace(/(\ssrc\s*=\s*)(?:"[^"]*"|'[^']*'|[^\s>]+)/i, (_raw, prefix) => `${prefix}"${escapeAttr(target)}"`)
+      : token.raw.replace(token.src, target);
+    result = result.slice(0, token.start) + replacement + result.slice(token.end);
+  }
+  return result;
 }
 
 function safeLabel(value) {

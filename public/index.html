@@ -103,6 +103,7 @@
                     <path d="M14 2v6h6M8 13h8M8 17h8"></path>
                   </svg>
                 </button>
+                <button class="icon-button tree-add" id="newMindmapButton" type="button" title="创建思维导图" aria-label="创建思维导图">⌘</button>
                 <button class="icon-button tree-add" id="importFileButton" type="button" title="导入文件" aria-label="导入文件">↑</button>
                 <input id="knowledgeFileInput" type="file" accept=".md,.txt,.log,.csv,.tsv,.json,.xml,.yaml,.yml,.html,.htm,.css,.js,.mjs,.ts,.tsx,.py,.sh,.sql,.ini,.toml,.diff,.patch,.pdf,.docx,.xlsx,.xls,.ods,.pptx,.zip,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.avif,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov" hidden>
                 <button class="icon-button tree-add" id="newFolderButton" type="button" title="新建文件夹" aria-label="新建文件夹">
@@ -388,6 +389,26 @@
 
           <div class="note-editor" id="noteEditor">
             <textarea id="documentContent" aria-label="Markdown 正文" aria-controls="knowledgeLinkPicker" aria-expanded="false" spellcheck="true"></textarea>
+            <div id="mindmapEditor" class="mindmap-editor" hidden>
+              <div class="mindmap-toolbar" role="toolbar" aria-label="思维导图操作">
+                <button type="button" data-mindmap-action="child" title="Tab">子节点</button>
+                <button type="button" data-mindmap-action="sibling" title="Enter">同级节点</button>
+                <button type="button" data-mindmap-action="edit" title="F2">编辑</button>
+                <button type="button" data-mindmap-action="collapse">折叠分支</button>
+                <button type="button" data-mindmap-action="delete">删除</button>
+                <span class="mindmap-toolbar-divider"></span>
+                <button type="button" data-mindmap-action="undo" title="⌘/Ctrl+Z">撤销</button>
+                <button type="button" data-mindmap-action="redo" title="⌘/Ctrl+Shift+Z">重做</button>
+                <button type="button" data-mindmap-action="zoom-out" aria-label="缩小">−</button>
+                <button type="button" data-mindmap-action="zoom-in" aria-label="放大">＋</button>
+                <button type="button" data-mindmap-action="fit">适应画布</button>
+                <button type="button" data-mindmap-action="expand">展开全部</button>
+                <button type="button" data-mindmap-action="export">导出 PNG</button>
+              </div>
+              <div class="mindmap-stage"><svg id="mindmapCanvas" role="application" aria-label="思维导图画布，Tab 添加子节点，Enter 添加同级节点，F2 编辑" tabindex="0"></svg></div>
+              <div class="mindmap-footer"><span data-mindmap-status role="status"></span><span>双击编辑 · 拖动分支 · 空白处平移 · 滚轮缩放</span></div>
+            </div>
+            <aside class="markdown-toc-host" id="markdownToc" aria-label="Markdown 目录" hidden></aside>
             <div class="markdown-preview prose" id="documentPreview" tabindex="0" aria-label="Markdown 预览" hidden></div>
             <div class="note-find-bar" id="noteFindBar" role="search" aria-label="查找当前笔记正文" hidden>
               <input id="noteFindInput" type="search" autocomplete="off" aria-label="查找正文" placeholder="查找正文…">
@@ -1087,6 +1108,14 @@
         <button class="secondary-action" type="button" id="todoTestEmailCancel">取消</button>
         <button class="primary-action compact" type="submit" id="todoTestEmailSend">发送测试邮件</button>
       </div>
+    </form>
+  </dialog>
+
+  <dialog class="workspace-dialog quick-switcher-dialog" id="knowledgeQuickSwitcher" aria-labelledby="knowledgeQuickSwitcherTitle">
+    <form class="dialog-card quick-switcher-card" id="knowledgeQuickSwitcherForm" autocomplete="off">
+      <header><div><span class="dialog-eyebrow">快速打开</span><h2 id="knowledgeQuickSwitcherTitle">切换知识</h2></div><button class="icon-button" id="knowledgeQuickSwitcherClose" type="button" aria-label="关闭">×</button></header>
+      <label class="quick-switcher-input-wrap" for="knowledgeQuickSwitcherInput"><span aria-hidden="true">⌕</span><input id="knowledgeQuickSwitcherInput" type="search" autocomplete="off" placeholder="搜索知识库、文件夹、笔记或文件" aria-controls="knowledgeQuickSwitcherList" aria-autocomplete="list"></label>
+      <div class="quick-switcher-list" id="knowledgeQuickSwitcherList" role="listbox" aria-label="快速打开结果"></div>
     </form>
   </dialog>
 

@@ -20,6 +20,27 @@ function setup(t) {
   return { db, dir, root, knowledge };
 }
 
+test('graphical mindmaps retain metadata through sync, conflicts, revisions and backup', async (t) => {
+  const { db, root, knowledge } = setup(t);
+  const model = { version: 1, rootId: 'r', nodes: [{ id: 'r', text: '中心', x: 0, y: 0 }, { id: 'a', text: '分支', x: -200, y: 0, side: 'left', collapsed: true }], edges: [{ source: 'r', target: 'a' }], canvas: { width: 500, height: 300 } };
+  const note = knowledge.createNote({ title: '导图同步', documentRole: 'mindmap', content: JSON.stringify(model) }).document;
+  knowledge.folderSync.migrateAll({ rootPath: root });
+  const current = knowledge.getDocument(note.id);
+  const localPath = knowledge.folderSync.localPathFor(current);
+  assert.equal(parseFrontMatter(fs.readFileSync(localPath, 'utf8')).content, current.content);
+  const external = structuredClone(model); external.nodes[1].text = '本地更新';
+  fs.writeFileSync(localPath, serializeMarkdown({ ...current, content: JSON.stringify(external) }));
+  const draft = structuredClone(model); draft.nodes[1].text = '未写入草稿';
+  const conflict = knowledge.updateDocument(note.id, { content: JSON.stringify(draft), baseVersion: current.version });
+  assert.equal(conflict.status, 409); assert.equal(conflict.draftSaved, true);
+  await knowledge.folderSync.syncNow({ reason: 'mindmap-test' });
+  const synced = knowledge.getDocument(note.id);
+  assert.deepEqual(JSON.parse(synced.content), external);
+  assert.equal(synced.documentRole, 'mindmap');
+  const snapshot = db.backup(); db.restore(snapshot);
+  assert.deepEqual(JSON.parse(knowledge.getDocument(note.id).content), external);
+});
+
 test('folder sync migrates notes, relative images, diary notes and empty folders', async (t) => {
   const { db, dir, root, knowledge } = setup(t);
   db.addCategory('项目');
@@ -148,8 +169,8 @@ test('sync backfills database-only notes and copies legacy HTML images as local 
   const notePath = knowledge.folderSync.localPathFor(synced);
   assert.equal(snapshot.report.added, 1);
   assert.ok(notePath.endsWith(path.join('虎扑', '工作', '9.21.md')));
-  assert.match(synced.content, /!\[image\]\(\.\/legacy\.png\)/);
-  assert.match(fs.readFileSync(notePath, 'utf8'), /!\[image\]\(\.\/legacy\.png\)/);
+  assert.match(synced.content, /<img src="\.\/legacy\.png" width="300">/);
+  assert.match(fs.readFileSync(notePath, 'utf8'), /<img src="\.\/legacy\.png" width="300">/);
   assert.deepEqual(fs.readFileSync(path.join(path.dirname(notePath), 'legacy.png')), Buffer.from('legacy-image-bytes'));
   assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(existing.id, { diaryUnlocked: true })));
 });
@@ -283,4 +304,19 @@ test('offline migration records missing dependencies and leaves the source datab
   assert.equal(restoredDb.prepare('SELECT COUNT(*) AS count FROM knowledge_documents').get().count, 1);
   assert.equal(restoredDb.pragma('integrity_check', { simple: true }), 'ok');
   restoredDb.close();
+});
+
+test('HTML image dimensions survive colocated copying, note moves and external synchronization',async(t)=>{
+ const {dir,root,knowledge}=setup(t);fs.mkdirSync(path.join(dir,'uploads'),{recursive:true});fs.writeFileSync(path.join(dir,'uploads','尺寸.png'),Buffer.from('image'));
+ const note=knowledge.createNote({title:'图片尺寸',content:'<img src="/uploads/%E5%B0%BA%E5%AF%B8.png" width="350" alt="中文">\n<img src="/uploads/%E5%B0%BA%E5%AF%B8.png" style="width:50%;height:auto">\n`<img src="/uploads/example.png">`',knowledgeBase:'图片'}).document;
+ knowledge.folderSync.migrateAll({rootPath:root});let current=knowledge.getDocument(note.id);
+ assert.match(current.content,/width="350"/);assert.match(current.content,/style="width:50%;height:auto"/);assert(current.content.includes('`<img src="/uploads/example.png">`'));
+ const moved=knowledge.updateDocument(note.id,{folderPath:'新目录',baseVersion:current.version});assert.equal(moved.status,undefined);current=knowledge.getDocument(note.id);
+ const local=knowledge.folderSync.localPathFor(current);assert(fs.existsSync(path.join(path.dirname(local),'尺寸.png')));
+ const named=knowledge.createNamedRevision(note.id,{baseVersion:current.version,name:'原始图片尺寸'});
+ const external=current.content.replace('width="350"','width="280"');fs.writeFileSync(local,serializeMarkdown({...current,content:external}));await knowledge.folderSync.syncNow({reason:'size-test'});
+ assert.match(knowledge.getDocument(note.id).content,/width="280"/);assert.match(knowledge.getDocument(note.id).content,/style="width:50%;height:auto"/);
+ const restored=knowledge.restoreRevision(note.id,named.revision.id,{baseVersion:knowledge.getDocument(note.id).version,restoreLocation:false});
+ assert.equal(restored.status,undefined);assert.match(knowledge.getDocument(note.id).content,/width="350"/);
+ assert.match(fs.readFileSync(local,'utf8'),/width="350"/);
 });

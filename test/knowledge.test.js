@@ -389,6 +389,20 @@ test('chunks keep document id and heading', () => {
   assert.ok(chunks.some(chunk => chunk.heading === '步骤'));
 });
 
+test('mindmap documents validate JSON, preserve role, and reject stale updates', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-mindmap-');
+  const knowledge = openKnowledge(db);
+  const invalid = knowledge.createNote({ title: '图', documentRole: 'mindmap', content: '{"version":1}' });
+  assert.equal(invalid.status, 400);
+  const content = JSON.stringify({ version: 1, nodes: [{ id: 'root', text: '根', x: 10, y: 20 }], edges: [], canvas: { width: 800, height: 500 } });
+  const created = knowledge.createNote({ title: '图', documentRole: 'mindmap', content }).document;
+  assert.equal(created.documentRole, 'mindmap');
+  const updated = knowledge.updateDocument(created.id, { content: JSON.stringify({ version: 1, nodes: [{ id: 'root', text: '新根', x: 40, y: 50 }], edges: [], canvas: { width: 800, height: 500 } }), baseVersion: created.version }).document;
+  assert.equal(updated.documentRole, 'mindmap');
+  assert.equal(JSON.parse(updated.content).nodes[0].text, '新根');
+  assert.equal(knowledge.updateDocument(created.id, { content, baseVersion: created.version }).status, 409);
+});
+
 test('knowledge notes reject stale versions and imported file content is editable', (t) => {
   const { db } = tempDb(t);
   const knowledge = openKnowledge(db);
@@ -493,6 +507,27 @@ test('knowledge tree maps category roots to bases and nested folder children', (
   assert.equal(folder.documentCount, 1);
   assert.ok(Array.isArray(folder.children));
   assert.equal(tree[1].visibility, 'diary');
+});
+
+test('quick open searches bases, folders and documents across locations while respecting visibility', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-quick-open-');
+  const knowledge = openKnowledge(db);
+  db.addCategory('项目');
+  db.addCategory('资料', '项目');
+  const note = knowledge.createNote({ title: '跨库方案', content: '正文', knowledgeBase: '项目', folderPath: '资料' }).document;
+  const diary = knowledge.createNote({ title: '秘密方案', content: '秘密', knowledgeBase: '日记' }, { diaryUnlocked: true }).document;
+  const file = knowledge.saveImportedFile({ buffer: Buffer.from('file'), filename: 'source.txt', mimeType: 'text/plain', title: '来源文件', collectionPath: '项目/资料', text: '文件正文', status: 'active', diaryUnlocked: false }).document;
+  const annotation = knowledge.upsertAnnotation(file.id, { title: '批注结果', content: '不应导航' }).document;
+  const categories = db.getAllCategories(false, false);
+  const locked = knowledge.quickOpen({ query: '方案', categories, diaryUnlocked: false, limit: 10 });
+  assert.ok(locked.some(item => item.id === note.id));
+  assert.equal(locked.some(item => item.id === diary.id), false);
+  assert.equal(locked.some(item => item.id === annotation.id), false);
+  assert.ok(knowledge.quickOpen({ query: '资料', categories, diaryUnlocked: false }).some(item => item.type === 'folder'));
+  assert.equal(knowledge.quickOpen({ query: '项目', categories, diaryUnlocked: false, limit: 1 }).length, 1);
+  assert.equal(knowledge.quickOpen({ query: '方案', categories, diaryUnlocked: true }).some(item => item.id === diary.id), true);
+  knowledge.archiveDocument(note.id);
+  assert.equal(knowledge.quickOpen({ query: '跨库方案', categories, diaryUnlocked: false }).length, 0);
 });
 
 test('knowledge tree folder counts distinguish direct and subtree totals', () => {
@@ -818,4 +853,28 @@ test('restoring a revision outside diary demotes visibility', (t) => {
   assert.equal(restored.document.knowledgeBase, '开发');
   assert.equal(restored.document.visibility, 'standard');
   assert.equal(restored.document.content, '第一版');
+});
+
+test('rooted mindmap metadata validates trees and survives history and local sync; legacy graphs stay readable', (t) => {
+  const { db } = createTempDatabase(t, 'knowledge-mindmap-tree-');
+  const knowledge = openKnowledge(db);
+  const map = { version: 1, rootId: 'r', nodes: [{ id: 'r', text: '中心', x: 0, y: 0 }, { id: 'a', text: '分支', x: 200, y: 0, side: 'left', collapsed: true }], edges: [{ source: 'r', target: 'a' }], canvas: { width: 700, height: 300 } };
+  const created = knowledge.createNote({ title: '图形编辑', documentRole: 'mindmap', content: JSON.stringify(map) }).document;
+  assert.equal(JSON.parse(created.content).nodes[1].collapsed, true);
+  const named = knowledge.createNamedRevision(created.id, { baseVersion: created.version, name: '分支快照' });
+  assert.equal(named.revision.snapshot.content, created.content);
+  const bad = JSON.parse(JSON.stringify(map)); bad.edges.push({ source: 'a', target: 'r' });
+  assert.equal(knowledge.updateDocument(created.id, { content: JSON.stringify(bad), baseVersion: created.version }).status, 400);
+  bad.edges = [{ source: 'r', target: 'a' }, { source: 'r', target: 'a' }];
+  assert.equal(knowledge.createNote({ title: '坏图', documentRole: 'mindmap', content: JSON.stringify(bad) }).status, 400);
+  bad.edges = []; assert.equal(knowledge.createNote({ title: '孤立图', documentRole: 'mindmap', content: JSON.stringify(bad) }).status, 400);
+  bad.edges = map.edges; bad.nodes[1].collapsed = 'yes';
+  assert.equal(knowledge.createNote({ title: '坏字段', documentRole: 'mindmap', content: JSON.stringify(bad) }).status, 400);
+  const legacy = JSON.parse(JSON.stringify(map)); delete legacy.rootId; legacy.edges.push({ source: 'a', target: 'r' });
+  const imported = knowledge.folderSync.adapter.importMarkdown({ title: '旧图', documentRole: 'mindmap', content: JSON.stringify(legacy), knowledgeBase: '其他' });
+  assert.equal(knowledge.getDocument(imported.id).content, JSON.stringify(legacy));
+  const renamed = knowledge.updateDocument(imported.id, { title: '保留旧图', content: imported.content, baseVersion: imported.version });
+  assert.equal(renamed.document.content, imported.content);
+  const archived = knowledge.archiveDocument(created.id); assert(archived.document || !archived.error);
+  assert.equal(knowledge.updateDocument(created.id, { content: created.content }).status, 403);
 });

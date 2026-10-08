@@ -1,3 +1,4 @@
+const { nextPinTime, pinValue } = require('./lib/knowledge/pins');
 const fs = require('fs');
 const path = require('path');
 const { businessDateString, daysInMonth, parseDateParts, startOfWeekMonday } = require('./business-date');
@@ -1425,6 +1426,7 @@ function normalizeCategoryNode(node) {
   if (!node || typeof node !== 'object' || !node.name) return null;
   return {
     name: String(node.name).trim(),
+    ...(pinValue(node.pinnedAt) ? { pinnedAt: pinValue(node.pinnedAt) } : {}),
     sub: Array.isArray(node.sub)
       ? node.sub.map(normalizeCategoryNode).filter(Boolean)
       : [],
@@ -1493,6 +1495,7 @@ function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
     .filter(category => diaryUnlocked || category.name !== DIARY_CATEGORY)
     .map(category => ({
       name: category.name,
+      ...(pinValue(category.pinnedAt) ? { pinnedAt: pinValue(category.pinnedAt) } : {}),
       sub: (category.sub || []).map(node => cloneCategoryNode(node)),
       log_count: counts.get(category.name) || 0,
       sub_log_counts: Object.fromEntries(
@@ -1586,6 +1589,16 @@ function addCategory(name, parent) {
   cats.push(emptyCategoryNode(name));
   writeCategories(cats);
   return { name, sub: [], calendar_day_visible: true };
+}
+
+function setCategoryPinned(categoryPath, pinned, pinnedAt = nextPinTime()) {
+  const categories = readCategories();
+  const node = findCategoryNode(categories, categoryPath);
+  if (!node) return { error: '目录不存在', status: 404 };
+  if (pinned && !pinValue(node.pinnedAt)) node.pinnedAt = pinnedAt;
+  if (!pinned) delete node.pinnedAt;
+  writeCategories(categories);
+  return { pinnedAt: node.pinnedAt || '' };
 }
 
 function setCategoryCalendarDayVisible(name, visible) {
@@ -1690,6 +1703,7 @@ function moveCategory(oldName, newParent) {
   const sourceIndex = sourceContainer.indexOf(sourceNode);
   if (sourceIndex < 0) return { error: 'Source folder not found' };
   sourceContainer.splice(sourceIndex, 1);
+  delete sourceNode.pinnedAt;
   if (!Array.isArray(parentNode.sub)) parentNode.sub = [];
   parentNode.sub.push(sourceNode);
   const newPath = `${parentPath}/${sourceNode.name}`;
@@ -1787,10 +1801,35 @@ function checkDataIntegrity() {
   return issues;
 }
 
+function readKnowledgePins() {
+  return sqlite.prepare(`SELECT id, json_extract(body, '$.createdAt') AS createdAt,
+    json_extract(body, '$.collectionPath') AS collectionPath,
+    json_extract(body, '$.pinnedAt') AS pinnedAt FROM knowledge_documents`).all()
+    .map(row => ({ ...row, pinnedAt: pinValue(row.pinnedAt) }));
+}
+
+function writeKnowledgePins(entries, merge = false) {
+  if (!Array.isArray(entries)) return; // Old structural backups leave this metadata alone.
+  sqlite.transaction(() => {
+    for (const entry of entries) {
+      const row = sqlite.prepare('SELECT body FROM knowledge_documents WHERE id = ?').get(entry.id);
+      if (!row) continue;
+      const doc = parseJson(row.body, {});
+      // Structural JSON does not carry notes: never attach metadata to an unrelated reused ID.
+      if (doc.createdAt !== entry.createdAt || doc.collectionPath !== entry.collectionPath) continue;
+      if (merge && (!entry.pinnedAt || pinValue(doc.pinnedAt) >= entry.pinnedAt)) continue;
+      if (entry.pinnedAt && doc.status !== 'archived' && doc.documentRole !== 'annotation') doc.pinnedAt = entry.pinnedAt;
+      else delete doc.pinnedAt;
+      sqlite.prepare('UPDATE knowledge_documents SET body = ? WHERE id = ?').run(JSON.stringify(doc), entry.id);
+    }
+  })();
+}
+
 function backup() {
   return {
     format: 'structure',
     includesBinaries: false,
+    knowledgePins: readKnowledgePins(),
     logs: readLogs(),
     todos: getAllTodos(),
     countdowns: getAllCountdowns(),
@@ -1862,7 +1901,7 @@ function normalizeCategoryNodeForRestore(node, parentName = '') {
     if (child.error) return child;
     sub.push(child.node);
   }
-  return { node: { name, sub, calendar_day_visible: node.calendar_day_visible !== false } };
+  return { node: { name, sub, calendar_day_visible: node.calendar_day_visible !== false, ...(pinValue(node.pinnedAt) ? { pinnedAt: pinValue(node.pinnedAt) } : {}) } };
 }
 
 function normalizeCategoriesForRestore(categories) {
@@ -2068,7 +2107,9 @@ function normalizeRestoreData(data) {
   const privateUploads = normalizePrivateUploadsForRestore(data.privateUploads);
   if (privateUploads.error) return privateUploads;
 
+  if (data.knowledgePins !== undefined && (!Array.isArray(data.knowledgePins) || data.knowledgePins.some(item => !item || !/^(note|file):[1-9]\d*$/.test(String(item.id || '')) || typeof item.createdAt !== 'string' || typeof item.collectionPath !== 'string' || typeof item.pinnedAt !== 'string' || (item.pinnedAt && !pinValue(item.pinnedAt))))) return { error: 'Invalid knowledge pins' };
   return {
+    knowledgePins: data.knowledgePins,
     logs: logs.logs,
     todos: todos.todos,
     countdowns: countdowns.countdowns,
@@ -2081,6 +2122,7 @@ function normalizeRestoreData(data) {
 
 function capturePersistentState() {
   return {
+    knowledgePins: readKnowledgePins(),
     logs: readLogs(),
     todos: readTodos(),
     countdowns: readCountdowns(),
@@ -2127,6 +2169,7 @@ function writePersistentState(next) {
     writeTodoCategories(next.todoCategories);
     writeCategories(next.categories);
     writePrivateUploads(next.privateUploads);
+    writeKnowledgePins(next.knowledgePins, next.mergePins);
   } catch (err) {
     try {
       writeLogs(previous.logs);
@@ -2135,6 +2178,7 @@ function writePersistentState(next) {
       writeTodoCategories(previous.todoCategories);
       writeCategories(previous.categories);
       writePrivateUploads(previous.privateUploads);
+      writeKnowledgePins(previous.knowledgePins);
     } catch (rollbackError) {
       rollbackFailed = true;
       err.message += `; rollback failed: ${rollbackError.message}`;
@@ -2209,6 +2253,8 @@ function restore(data, mode = 'replace') {
       countdowns: mergedCountdowns,
       todoCategories: mergedTodoCategories,
       categories: mergedCats,
+      knowledgePins: data.knowledgePins,
+      mergePins: true,
       privateUploads: [...new Set([...mergedPrivateUploads, ...historicalPrivateUploads, ...diaryUploads])],
     });
     stageLegacyAiChatsForMigration(data);
@@ -2227,6 +2273,7 @@ function restore(data, mode = 'replace') {
     countdowns: data.countdowns,
     todoCategories: data.todoCategories,
     categories,
+    knowledgePins: data.knowledgePins,
     privateUploads: [...new Set([...data.privateUploads, ...historicalPrivateUploads, ...diaryUploads])],
   });
   stageLegacyAiChatsForMigration(data);
@@ -2279,6 +2326,7 @@ function mergeCategoryTrees(existing, incoming) {
     (children || []).forEach(child => {
       const existingChild = findNode(target.sub, child.name);
       if (existingChild) {
+        if (pinValue(child.pinnedAt) > pinValue(existingChild.pinnedAt)) existingChild.pinnedAt = child.pinnedAt;
         unionChildren(existingChild, child.sub);
       } else {
         target.sub.push(cloneCategoryNode(child));
@@ -2288,6 +2336,7 @@ function mergeCategoryTrees(existing, incoming) {
   source.forEach(c => {
     const existingCat = findNode(merged, c.name);
     if (existingCat) {
+      if (pinValue(c.pinnedAt) > pinValue(existingCat.pinnedAt)) existingCat.pinnedAt = c.pinnedAt;
       unionChildren(existingCat, c.sub);
     } else {
       merged.push(cloneCategoryNode(c));
@@ -2357,6 +2406,7 @@ return {
   reorderCategories,
   reorderSubcategories,
   setCategoryCalendarDayVisible,
+  setCategoryPinned,
   getAiSettings: readAiSettings,
   saveAiSettings: writeAiSettings,
   backup,

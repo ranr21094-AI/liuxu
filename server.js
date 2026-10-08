@@ -2949,6 +2949,9 @@ app.put('/api/categories/:oldName/move', (req, res) => {
     if ((isDiaryCategory(oldName) || isDiaryCategory(parent)) && !hasDiaryAccess(req)) {
       return rejectLockedDiary(res);
     }
+    let originalFolder = { sub: db.getAllCategories(true, true) };
+    for (const segment of sourceSegments) originalFolder = originalFolder?.sub?.find(node => node.name === segment);
+    const originalFolderPin = originalFolder?.pinnedAt;
     const result = db.moveCategory(oldName, parent);
     if (result?.error) {
       const status = /not found/i.test(result.error) ? 404
@@ -2963,7 +2966,7 @@ app.put('/api/categories/:oldName/move', (req, res) => {
       knowledge.rewriteCollectionPath(result.oldPath, result.newPath);
     } catch (error) {
       const oldParent = result.oldPath.split('/').slice(0, -1).join('/');
-      try { db.moveCategory(result.newPath, oldParent); } catch { /* next sync can reconcile the category tree */ }
+      try { db.moveCategory(result.newPath, oldParent); if (originalFolderPin) db.setCategoryPinned(oldName, true, originalFolderPin); } catch { /* next sync can reconcile the category tree */ }
       throw error;
     }
     knowledge.folderSync.removeCollectionDirectory(result.oldPath, 'folder-moved');

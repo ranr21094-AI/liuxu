@@ -17,11 +17,16 @@ import {
 } from './helpers.js';
 import { destroyFilePreview, renderFilePreview, setFileReaderTab } from './knowledge/filePreview.js';
 import { initNoteFind } from './knowledge/note-find.js';
+import { clearMarkdownToc, renderMarkdownToc } from './knowledge/markdown-toc.js';
+import { getRecentItems, rememberRecentItem, removeRecentItem } from './knowledge/recent-items.js';
 import { clearAllReadingPositions, clearReadingPosition, loadReadingPosition, saveReadingPosition } from './knowledge/reading-position.js';
 import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
 import { initNoteBrowser, noteBrowserSetDocument, noteBrowserOpenUrl, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
 import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
 import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
+import { comparePinned, pinActionHtml, arrangePinnedRows, mergeDocumentPages } from './knowledge/pins.js';
+import { createMindmapEditor, emptyMindmap } from './knowledge/mindmap.js';
+import { imageHtml, bindNoteImageSizing } from './knowledge/note-images.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { preloadMarkdownLibraries, renderToHtml, renderToHtmlUncached } from './markdown.js';
 import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
@@ -427,14 +432,20 @@ function renderDocumentPreview() {
   const scrollTop = host.scrollTop;
   if (documentPreviewCleanup) documentPreviewCleanup();
   if (knowledgeLinkCleanup) knowledgeLinkCleanup();
+  const tocHost = $('#markdownToc');
+  clearMarkdownToc(host, tocHost);
   documentPreviewCleanup = null;
   knowledgeLinkCleanup = null;
   host.innerHTML = renderKnowledgeMarkdown($('#documentContent').value || '*暂无正文*', {
     outgoingLinks: state.activeDocument?.outgoingLinks || [],
     documentId: state.activeDocument?.id || '',
   });
+  const toc = renderMarkdownToc(host, tocHost);
+  if (tocHost) tocHost.hidden = !toc;
   host.scrollTop = scrollTop;
-  documentPreviewCleanup = enableMarkdownImagePreview(host, '.markdown-preview img');
+  const cleanupView = enableMarkdownImagePreview(host, '.markdown-preview img');
+  const cleanupSizing = bindNoteImageSizing({ host, getSource: () => $('#documentContent').value, getDocumentId: () => state.activeDocument?.id, getVersion: () => state.activeDocument?.version, canEdit: () => !!state.activeDocument && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock && !(state.activeDocument.visibility === 'diary' && !state.diaryUnlocked), openOriginal: openMarkdownImagePreview, onChange: content => { $('#documentContent').value = content; state.documentDirty = true; scheduleDocumentSave(); renderDocumentPreview(); } });
+  documentPreviewCleanup = () => { cleanupSizing(); cleanupView(); };
   knowledgeLinkCleanup = bindKnowledgeLinkClicks(host, navigate);
 }
 
@@ -916,6 +927,99 @@ function rememberKnowledgeResume({ id = '', knowledgeBase = '', folderPath = '' 
   state.knowledgeResume = { id, knowledgeBase, folderPath };
 }
 
+function quickSwitcherIcon(type) {
+  return type === 'document' ? '▤' : type === 'folder' ? '▱' : '▰';
+}
+
+function quickSwitcherLabel(item) {
+  return item.type === 'document' ? (item.id.startsWith('file:') ? '文件' : '笔记') : item.type === 'folder' ? '文件夹' : '知识库';
+}
+
+let quickSwitcherFocus = null;
+let quickSwitcherItems = [];
+let quickSwitcherIndex = 0;
+let quickSwitcherRequest = 0;
+
+function renderQuickSwitcher(items, message = '') {
+  const list = $('#knowledgeQuickSwitcherList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (message) {
+    const empty = document.createElement('p'); empty.className = 'quick-switcher-empty'; empty.textContent = message; list.append(empty); return;
+  }
+  items.forEach((item, index) => {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'quick-switcher-option'; button.role = 'option';
+    button.dataset.quickOpenIndex = String(index); button.setAttribute('aria-selected', String(index === quickSwitcherIndex));
+    const icon = document.createElement('span'); icon.className = 'quick-switcher-option-icon'; icon.setAttribute('aria-hidden', 'true'); icon.textContent = quickSwitcherIcon(item.type);
+    const copy = document.createElement('span'); copy.className = 'quick-switcher-option-copy';
+    const title = document.createElement('strong'); title.textContent = item.title || '未命名';
+    const subtitle = document.createElement('small'); subtitle.textContent = item.subtitle || item.path || quickSwitcherLabel(item);
+    copy.append(title, subtitle); button.append(icon, copy); list.append(button);
+  });
+}
+
+async function loadQuickSwitcherResults(query) {
+  const requestId = ++quickSwitcherRequest;
+  if (!query) {
+    quickSwitcherItems = getRecentItems();
+    quickSwitcherIndex = 0;
+    renderQuickSwitcher(quickSwitcherItems, quickSwitcherItems.length ? '' : '暂无最近访问');
+    return;
+  }
+  renderQuickSwitcher([], '正在搜索…');
+  try {
+    const response = await apiFetch(`/api/knowledge/quick-open?q=${encodeURIComponent(query)}&limit=20`);
+    const data = await response.json().catch(() => ({}));
+    if (requestId !== quickSwitcherRequest) return;
+    if (!response.ok) throw new Error(data.error || '快速搜索失败');
+    quickSwitcherItems = Array.isArray(data.results) ? data.results : [];
+    quickSwitcherIndex = 0;
+    renderQuickSwitcher(quickSwitcherItems, quickSwitcherItems.length ? '' : '没有匹配的知识');
+  } catch (error) {
+    if (requestId === quickSwitcherRequest) renderQuickSwitcher([], error.message || '快速搜索失败');
+  }
+}
+
+function closeQuickSwitcher() {
+  const dialog = $('#knowledgeQuickSwitcher');
+  if (dialog?.open) dialog.close();
+  quickSwitcherItems = [];
+  quickSwitcherIndex = 0;
+  quickSwitcherFocus?.focus?.(); quickSwitcherFocus = null;
+}
+
+async function openQuickSwitcherItem(item) {
+  if (!item) return;
+  const dialog = $('#knowledgeQuickSwitcher');
+  try {
+    if (item.type === 'document') {
+      await navigate('knowledge', item.id);
+      if (state.activeDocument?.id !== item.id) throw new Error('文档不存在或仍处于锁定状态');
+    } else {
+      await navigate('knowledge', '', { knowledgeBase: item.knowledgeBase, folderPath: item.folderPath || '' });
+      if (state.selectedKnowledgeBase !== item.knowledgeBase || state.selectedFolderPath !== (item.folderPath || '')) throw new Error('知识库或文件夹不存在');
+    }
+    rememberRecentItem(item);
+    closeQuickSwitcher();
+  } catch (error) {
+    if (error?.status === 404 || error?.status === 403) removeRecentItem(item);
+    showToast(error.message || '无法打开目标', 'error');
+    if (dialog?.open) $('#knowledgeQuickSwitcherInput')?.focus();
+  }
+}
+
+function openQuickSwitcher() {
+  const dialog = $('#knowledgeQuickSwitcher');
+  if (!dialog) return;
+  quickSwitcherFocus = document.activeElement;
+  dialog.showModal();
+  const input = $('#knowledgeQuickSwitcherInput');
+  input.value = '';
+  loadQuickSwitcherResults('');
+  requestAnimationFrame(() => input.focus());
+}
+
 function knowledgeSwitchTarget() {
   const id = state.activeDocument?.id || state.knowledgeResume?.id || '';
   if (id) return { id, options: {} };
@@ -966,6 +1070,10 @@ async function applyRoute() {
     showEmptyDocument();
     if (state.selectedKnowledgeBase) await loadDocuments();
     else clearKnowledgeDocuments();
+    if (state.selectedKnowledgeBase) {
+      const title = state.selectedFolderPath || state.selectedKnowledgeBase;
+      rememberRecentItem({ type: state.selectedFolderPath ? 'folder' : 'knowledgeBase', id: [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join('/'), title, path: [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join('/'), knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath, subtitle: state.selectedFolderPath ? `${state.selectedKnowledgeBase} / 文件夹` : '知识库' });
+    }
   }
   if (route.mode === 'knowledge') {
     renderKnowledgeBaseList();
@@ -1915,6 +2023,7 @@ async function reconcileKnowledgeSync(previousGeneration) {
         state.documentConflict = true;
         clearTimeout(state.documentSaveTimer);
         setDocumentSaveState('保存冲突', 'error');
+  state.mindmapEditor?.refreshAccess();
         showToast('本地文件已移除；未保存内容仍在编辑器中，请复制后新建笔记', 'error');
       } else {
         showEmptyDocument();
@@ -2502,7 +2611,9 @@ async function handleMemoryProposalAction(id, action) {
   const path = action === 'approve' ? 'approve' : 'dismiss';
   const response = await apiFetch(`/api/agent/memory-proposals/${encodeURIComponent(id)}/${path}`, { method: 'POST' });
   if (!response.ok) {
-    showToast(action === 'approve' ? '长期记忆保存失败' : '无法忽略这项记忆草稿', 'error');
+    showToast(action === 'approve'
+      ? (response.status === 409 ? '原记忆已变化，请重新生成替换草稿' : '长期记忆保存失败')
+      : '无法忽略这项记忆草稿', 'error');
     return;
   }
   document.querySelector(`[data-memory-card="${CSS.escape(id)}"]`)?.remove();
@@ -4393,6 +4504,20 @@ function clearKnowledgeDocuments() {
   renderDocuments();
 }
 
+async function toggleKnowledgePin(button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  const kind = button.dataset.knowledgePinKind, target = button.dataset.knowledgePinTarget;
+  const body = { kind, pinned: button.dataset.knowledgePinValue === 'true', ...(kind === 'document' ? { id: target, collectionPath: button.dataset.knowledgePinParent } : { path: target }) };
+  try {
+    const response = await apiFetch('/api/knowledge/pin', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || '置顶操作失败');
+    await loadDocuments();
+  } catch (error) { showToast(error.message, 'error'); }
+  finally { button.disabled = false; }
+}
+
 function renderKnowledgeBaseList() {
   const list = $('#knowledgeBaseList');
   if (!list) return;
@@ -4400,17 +4525,18 @@ function renderKnowledgeBaseList() {
     list.innerHTML = '<p class="empty-list">还没有知识库。</p>';
     return;
   }
-  list.innerHTML = state.knowledgeBases.map(base => {
+  list.innerHTML = [...state.knowledgeBases].sort(comparePinned).map(base => {
     const canDeleteBase = !['其他', '日记'].includes(base.name);
     return `
       <div class="knowledge-base-row">
         <button class="knowledge-base-select" type="button" data-knowledge-base-open="${escHtml(base.name)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="" aria-label="进入 ${escHtml(base.name)}">
           <span class="tree-folder-mark" aria-hidden="true">▰</span>
-          <strong>${escHtml(base.name)}</strong>
+          <strong>${escHtml(base.name)}</strong>${base.pinnedAt ? '<span class="knowledge-pin-mark" title="置顶">置顶</span>' : ''}
           <small>${Number(base.documentCount) || 0}</small>
           <span class="knowledge-base-chevron" aria-hidden="true">›</span>
         </button>
         <span class="tree-actions">
+          ${pinActionHtml({ kind: 'knowledgeBase', target: base.name, pinnedAt: base.pinnedAt, escape: escHtml })}
           <button class="tree-action" type="button" data-tree-rename-base="${escHtml(base.name)}" title="重命名知识库" aria-label="重命名 ${escHtml(base.name)}">✎</button>
           ${canDeleteBase ? `<button class="tree-action" type="button" data-tree-delete-base="${escHtml(base.name)}" title="删除知识库" aria-label="删除 ${escHtml(base.name)}">⌫</button>` : ''}
         </span>
@@ -4529,13 +4655,14 @@ function folderRowsHtml(base) {
   const folders = currentLevelFolders(base, state.selectedFolderPath);
   const baseName = escHtml(base.name);
   return folders.map(folder => `
-    <div class="document-folder-row" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="folder" data-knowledge-drag-path="${escHtml(`${base.name}/${folder.path}`)}" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}" data-drop-base="${baseName}" data-drop-folder="${escHtml(folder.path)}">
+    <div class="document-folder-row" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="folder" data-knowledge-drag-path="${escHtml(`${base.name}/${folder.path}`)}" data-pinned-at="${escHtml(folder.pinnedAt || '')}" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}" data-drop-base="${baseName}" data-drop-folder="${escHtml(folder.path)}">
       <span class="document-folder-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path></svg></span>
       <span class="document-folder-body">
-        <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong></span>
+        <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong>${folder.pinnedAt ? '<span class="knowledge-pin-mark" title="置顶">置顶</span>' : ''}</span>
         <small class="document-folder-count">${Number(folder.documentCount) || 0} 篇</small>
       </span>
       <span class="tree-actions">
+        ${!knowledgeFiltersActive() ? pinActionHtml({ kind: 'folder', target: `${base.name}/${folder.path}`, pinnedAt: folder.pinnedAt, escape: escHtml }) : ''}
         <button class="tree-action" type="button" data-tree-rename-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button>
         <button class="tree-action" type="button" data-tree-delete-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">⌫</button>
       </span>
@@ -4698,18 +4825,20 @@ function renderDocuments() {
     const subtitleHtml = documentRowSubtitleHtml(document);
     const rowIcon = document.id.startsWith('file:') ? fileRowIcon : noteRowIcon;
     return `
-      <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="document" data-knowledge-drag-id="${escHtml(document.id)}" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
+      <div class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="document" data-knowledge-drag-id="${escHtml(document.id)}" data-pinned-at="${escHtml(document.pinnedAt || '')}" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
         <span class="document-row-icon" aria-hidden="true">${rowIcon}</span>
         <span class="document-row-body">
-          <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
+          <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong>${document.pinnedAt && !knowledgeFiltersActive() ? '<span class="knowledge-pin-mark" title="置顶">置顶</span>' : ''}${document.documentRole === 'mindmap' ? '<span class="private-mark" title="思维导图">图</span>' : ''}${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
           ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}
         </span>
+        ${state.selectedKnowledgeBase && !knowledgeFiltersActive() ? `<span class="tree-actions">${pinActionHtml({ kind: 'document', target: document.id, scope: document.collectionPath, pinnedAt: document.pinnedAt, escape: escHtml })}</span>` : ''}
       </div>`;
   }).join('');
   if (!folderRows && !docRows) {
     list.innerHTML = '<p class="empty-list">没有符合条件的知识文档。</p>';
   } else {
     list.innerHTML = folderRows + docRows;
+    if (state.selectedKnowledgeBase && !knowledgeFiltersActive()) arrangePinnedRows(list);
   }
   $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
 }
@@ -4745,7 +4874,7 @@ function bindKnowledgeDragEvents() {
   const view = $('#knowledgeView');
   if (!view) return;
   view.addEventListener('dragstart', event => {
-    if (event.target.closest('button')) return;
+    if (event.target.closest('button')) { event.preventDefault(); return; }
     const row = event.target.closest('[data-knowledge-drag-type]');
     if (!row) return;
     const type = row.dataset.knowledgeDragType;
@@ -4871,7 +5000,7 @@ async function loadDocuments({ append = false, refreshTree = true } = {}) {
     const response = await apiFetch(`/api/knowledge/documents?${knowledgeQuery(cursor, { includeSearchText: archived && Boolean(q) })}`);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '知识库加载失败');
-    state.documents = append ? [...state.documents, ...(data.documents || [])] : (data.documents || []);
+    state.documents = append ? mergeDocumentPages(state.documents, data.documents || []) : (data.documents || []);
     state.knowledgeTotal = Number(data.total) || 0;
     state.knowledgeNextCursor = data.nextCursor || null;
   }
@@ -4882,12 +5011,19 @@ async function loadDocuments({ append = false, refreshTree = true } = {}) {
 }
 
 function showEmptyDocument() {
+  documentPreviewCleanup?.();
+  documentPreviewCleanup = null;
+  state.mindmapEditor?.destroy();
+  state.mindmapEditor = null;
   state.activeDocument = null;
   noteFindController?.setActiveDocument(null);
   knowledgeEnhancements?.clear?.();
   noteAssistantClear();
   noteBrowserClear();
   destroyFilePreview();
+  clearMarkdownToc($('#documentPreview'), $('#markdownToc'));
+  const tocHost = $('#markdownToc');
+  if (tocHost) { tocHost.hidden = true; tocHost.innerHTML = ''; }
   clearTimeout(state.documentSaveTimer);
   state.documentDirty = false;
   $('#knowledgeEmptyState').hidden = false;
@@ -4973,6 +5109,10 @@ function setDocumentSaveState(text, className = '') {
 }
 
 async function renderActiveDocument(document) {
+  documentPreviewCleanup?.();
+  documentPreviewCleanup = null;
+  state.mindmapEditor?.destroy();
+  state.mindmapEditor = null;
   flushNoteReadingPosition(state.activeDocument?.id);
   noteReadingPositionGeneration += 1;
   state.activeDocument = document;
@@ -4996,6 +5136,23 @@ async function renderActiveDocument(document) {
   updateDocumentMetaSummary();
   $('#documentContent').value = document.content || '';
   $('#documentContent').scrollTop = 0;
+  const isMindmap = document.documentRole === 'mindmap';
+  const mindmapHost = $('#mindmapEditor');
+  if (mindmapHost) mindmapHost.hidden = !isMindmap;
+  if (isMindmap) {
+    const parsed = (() => { try { return JSON.parse(document.content || '{}'); } catch { return emptyMindmap(); } })();
+    state.mindmapEditor = createMindmapEditor({
+      canvas: $('#mindmapCanvas'), initial: parsed,
+      canEdit: () => state.activeDocument?.id === document.id && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock && !(state.activeDocument.visibility === 'diary' && !state.diaryUnlocked),
+      confirmDelete: confirmAction,
+      onError: message => showToast(message, 'error'),
+      onChange: content => {
+        if (state.activeDocument?.id !== document.id) return;
+        $('#documentContent').value = content;
+        scheduleDocumentSave();
+      },
+    });
+  }
   $('#documentPreview').scrollTop = 0;
   pendingNotePreviewPosition = { documentId: document.id, top: 0 };
   $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ');
@@ -5004,8 +5161,11 @@ async function renderActiveDocument(document) {
   $('#documentWorkspace').classList.toggle('is-file-document', isFile);
   $('#noteEditor').hidden = false;
   $('#noteEditor').hidden = isFile;
-  $('#knowledgeLinkIssues').hidden = isFile;
-  $('#knowledgeRelations').hidden = isFile;
+  $('#documentContent').hidden = isMindmap;
+  $('#documentPreview').hidden = isMindmap;
+  $('#editorModeSwitch').hidden = isFile || isMindmap;
+  $('#knowledgeLinkIssues').hidden = isFile || isMindmap;
+  $('#knowledgeRelations').hidden = isFile || isMindmap;
   $('#fileOriginalPanel').hidden = !isFile;
   const openDocumentFolder = $('#openDocumentFolderButton');
   openDocumentFolder.hidden = !window.liuxuDesktop?.knowledgeFiles?.openContainingFolder;
@@ -5014,8 +5174,7 @@ async function renderActiveDocument(document) {
       await window.liuxuDesktop.knowledgeFiles.openContainingFolder(document.id);
     } catch (error) { showToast(error.message || '无法打开所在文件夹', 'error'); }
   };
-  $('#editorModeSwitch').hidden = isFile;
-  $('#noteFindToggleButton').hidden = isFile;
+  $('#noteFindToggleButton').hidden = isFile || isMindmap;
   $('#archiveDocumentButton').hidden = document.status === 'archived';
   $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
@@ -5134,6 +5293,7 @@ async function openKnowledgeDocument(id, { block = '', offset = 0, serial = stat
     return;
   }
   await renderActiveDocument(data);
+  rememberRecentItem({ type: 'document', id: data.id, title: data.title || data.id, path: [data.knowledgeBase, data.folderPath].filter(Boolean).join('/'), knowledgeBase: data.knowledgeBase || '', folderPath: data.folderPath || '', subtitle: [data.knowledgeBase, data.folderPath].filter(Boolean).join(' / ') || '其他' });
   if (block || offset) locateDocumentPosition(offset, data.content || '');
 }
 
@@ -5165,6 +5325,14 @@ function locateDocumentPosition(offset, content) {
 }
 
 function setEditorMode(mode) {
+  if (state.activeDocument?.documentRole === 'mindmap') {
+    state.editorMode = 'edit';
+    $('#noteEditor')?.classList.remove('is-split', 'has-markdown-toc');
+    $('#documentContent').hidden = true;
+    $('#documentPreview').hidden = true;
+    const toc = $('#markdownToc'); if (toc) toc.hidden = true;
+    return;
+  }
   const next = mode === 'preview' ? 'preview' : mode === 'split' ? 'split' : 'edit';
   state.editorMode = next;
   document.querySelectorAll('[data-editor-mode]').forEach(button => {
@@ -5173,9 +5341,12 @@ function setEditorMode(mode) {
   const editor = $('#noteEditor');
   const textarea = $('#documentContent');
   const preview = $('#documentPreview');
+  const tocHost = $('#markdownToc');
   editor?.classList.toggle('is-split', next === 'split');
+  editor?.classList.toggle('has-markdown-toc', next !== 'edit');
   textarea.hidden = next === 'preview';
   preview.hidden = next === 'edit';
+  if (tocHost && next === 'edit') tocHost.hidden = true;
   if (next === 'preview' || next === 'split') {
     preloadMarkdownLibraries();
     renderDocumentPreview();
@@ -5213,6 +5384,7 @@ function currentDocumentPatch() {
     documentDate: $('#documentDate').value || '',
     tags: $('#documentTags').value.split(/[,，]/).map(tag => tag.trim()).filter(Boolean),
     content: $('#documentContent').value,
+    documentRole: state.activeDocument?.documentRole || 'normal',
     baseVersion: state.activeDocument?.version,
   };
   return patch;
@@ -5261,6 +5433,7 @@ async function persistConflictDraft(documentId) {
   state.documentDirty = true;
   clearTimeout(state.documentSaveTimer);
   setDocumentSaveState('保存冲突', 'error');
+  state.mindmapEditor?.refreshAccess();
   try {
     const response = await apiFetch('/api/knowledge/sync/drafts', {
       method: 'POST',
@@ -5285,6 +5458,7 @@ async function persistConflictDraft(documentId) {
 async function resolveDocumentConflict(current) {
   state.documentConflict = true;
   setDocumentSaveState('保存冲突', 'error');
+  state.mindmapEditor?.refreshAccess();
   if (state.knowledgeSync?.enabled && current) {
     if (!(await persistConflictDraft(state.activeDocument?.id))) return false;
     await renderActiveDocument(current);
@@ -5396,6 +5570,7 @@ async function beforeNoteMutation(id) {
     .filter(control => !control.closest('#noteAssistantPanel'));
   noteMutationLock = { id, controls: controls.map(control => [control, control.disabled]) };
   controls.forEach(control => { control.disabled = true; });
+  state.mindmapEditor?.refreshAccess();
   return true;
 }
 async function afterNoteMutation(id, payload = {}) {
@@ -5423,11 +5598,13 @@ async function afterNoteMutation(id, payload = {}) {
     if (!payload.disconnected && noteMutationLock === lock) {
       for (const [control, disabled] of lock.controls) control.disabled = disabled;
       noteMutationLock = null;
+      state.mindmapEditor?.refreshAccess();
     }
   }
 }
 
 async function flushPendingSaves() {
+  state.mindmapEditor?.commitEdit();
   const id = state.activeDocument?.id;
   if (!id) return true;
   do {
@@ -5435,6 +5612,17 @@ async function flushPendingSaves() {
     if (state.activeDocument?.id !== id || state.documentConflict) return false;
   } while (state.documentDirty || documentSaveRequests.has(id));
   return true;
+}
+
+async function createMindmap() {
+  const response = await apiFetch('/api/knowledge/documents', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '未命名思维导图', content: JSON.stringify(emptyMindmap()), documentRole: 'mindmap', knowledgeBase: state.selectedKnowledgeBase || '其他', folderPath: state.selectedFolderPath || '' }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showToast(data.error || '思维导图创建失败', 'error');
+  await loadDocuments();
+  await navigate('knowledge', data.id);
 }
 
 async function createNote() {
@@ -5549,17 +5737,21 @@ function updateInsertImageButton() {
   const button = $('#insertImageButton');
   if (!button) return;
   const doc = state.activeDocument;
-  button.hidden = !(doc && doc.sourceType !== 'file' && doc.status !== 'archived' && !$('#noteEditor').hidden);
+  button.hidden = !(doc && doc.sourceType !== 'file' && doc.documentRole !== 'mindmap' && doc.status !== 'archived' && !$('#noteEditor').hidden);
 }
 
 async function handleDocumentImageUpload(file) {
-  if (!file || !state.activeDocument || state.activeDocument.sourceType === 'file') return;
+  if (!file || !state.activeDocument || state.activeDocument.sourceType === 'file' || state.activeDocument.documentRole === 'mindmap' || state.activeDocument.status === 'archived' || state.documentConflict || noteMutationLock) return;
+  const editor = $('#documentContent'), documentId = state.activeDocument.id, source = editor.value, start = editor.selectionStart, end = editor.selectionEnd;
   const button = $('#insertImageButton');
   button.disabled = true;
   try {
     const url = await uploadNoteImage(file);
     const alt = noteImageAltFromFile(file);
-    insertTextAtCursor($('#documentContent'), `\n![${alt}](${url})\n`);
+    if (state.activeDocument?.id !== documentId || editor.value !== source || state.activeDocument.status === 'archived' || state.documentConflict || noteMutationLock || (state.activeDocument.visibility === 'diary' && !state.diaryUnlocked)) throw new Error('图片已上传，但笔记或插入位置已变化，请重新插入');
+    editor.setSelectionRange(start, end);
+    insertTextAtCursor(editor, `\n${imageHtml(url, alt)}\n`);
+    refreshDocumentPreview();
     if (state.editorMode === 'preview') setEditorMode('edit');
     showToast('图片已插入', 'success');
   } catch (error) {
@@ -5654,6 +5846,7 @@ function keepKnowledgeLocationAfterClosingDocument(document) {
 async function syncDiaryStatus() {
   const status = await getDiaryStatus();
   state.diaryUnlocked = status.enabled === false || !status.locked;
+  state.mindmapEditor?.refreshAccess();
   if (!state.diaryUnlocked) {
     noteAssistantLockPrivate();
     noteBrowserLockPrivate();
@@ -5989,6 +6182,7 @@ function bindEvents() {
     manageKnowledgeTree('add-folder', state.selectedKnowledgeBase, state.selectedFolderPath);
   });
   $('#knowledgeBaseList').addEventListener('click', event => {
+    if (event.target.closest('[data-knowledge-pin-kind]')) { event.preventDefault(); return toggleKnowledgePin(event.target.closest('[data-knowledge-pin-kind]')); }
     if (Date.now() < suppressKnowledgeClickUntil) return;
     const open = event.target.closest('[data-knowledge-base-open]');
     const renameBase = event.target.closest('[data-tree-rename-base]');
@@ -5998,6 +6192,7 @@ function bindEvents() {
     if (open) navigate('knowledge', '', { knowledgeBase: open.dataset.knowledgeBaseOpen });
   });
   $('#knowledgeDocumentList').addEventListener('click', event => {
+    if (event.target.closest('[data-knowledge-pin-kind]')) { event.preventDefault(); return toggleKnowledgePin(event.target.closest('[data-knowledge-pin-kind]')); }
     if (Date.now() < suppressKnowledgeClickUntil) return;
     const renameFolder = event.target.closest('[data-tree-rename-folder]');
     const deleteFolder = event.target.closest('[data-tree-delete-folder]');
@@ -6019,6 +6214,7 @@ function bindEvents() {
     }
   });
   $('#knowledgeDocumentList').addEventListener('keydown', event => {
+    if (event.target.closest('button')) return;
     const folderRow = event.target.closest('[data-folder-open]');
     if (folderRow && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault();
@@ -6033,6 +6229,7 @@ function bindEvents() {
     }
   });
   $('#newNoteButton').addEventListener('click', createNote);
+  $('#newMindmapButton')?.addEventListener('click', createMindmap);
   $('#emptyNewNoteButton').addEventListener('click', createNote);
   $('#importFileButton').addEventListener('click', () => $('#knowledgeFileInput').click());
   $('#knowledgeFileInput').addEventListener('change', event => {
@@ -6110,7 +6307,41 @@ function bindEvents() {
   $('#archiveDocumentButton').addEventListener('click', archiveActiveDocument);
   $('#restoreDocumentButton').addEventListener('click', () => restoreActiveDocument().catch(error => showToast(error.message, 'error')));
   $('#deleteDocumentButton').addEventListener('click', deleteActiveDocument);
+  $('#knowledgeQuickSwitcherInput')?.addEventListener('input', event => loadQuickSwitcherResults(event.target.value.trim()));
+  $('#knowledgeQuickSwitcherClose')?.addEventListener('click', closeQuickSwitcher);
+  $('#knowledgeQuickSwitcher')?.addEventListener('click', event => {
+    if (event.target === event.currentTarget) closeQuickSwitcher();
+    const option = event.target.closest('[data-quick-open-index]');
+    if (option) openQuickSwitcherItem(quickSwitcherItems[Number(option.dataset.quickOpenIndex)]);
+  });
+  $('#knowledgeQuickSwitcher')?.addEventListener('cancel', event => { event.preventDefault(); closeQuickSwitcher(); });
+  $('#knowledgeQuickSwitcherList')?.addEventListener('mousemove', event => {
+    const option = event.target.closest('[data-quick-open-index]');
+    if (!option) return;
+    quickSwitcherIndex = Number(option.dataset.quickOpenIndex) || 0;
+    renderQuickSwitcher(quickSwitcherItems);
+  });
   document.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'p') {
+      event.preventDefault();
+      if ($('#knowledgeQuickSwitcher')?.open) return;
+      openQuickSwitcher();
+      return;
+    }
+    if ($('#knowledgeQuickSwitcher')?.open) {
+      if (event.key === 'Escape') { event.preventDefault(); closeQuickSwitcher(); return; }
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        quickSwitcherIndex = (quickSwitcherIndex + delta + Math.max(quickSwitcherItems.length, 1)) % Math.max(quickSwitcherItems.length, 1);
+        renderQuickSwitcher(quickSwitcherItems, quickSwitcherItems.length ? '' : '没有匹配的知识');
+        $('#knowledgeQuickSwitcherList [aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (event.key === 'Enter' && quickSwitcherItems[quickSwitcherIndex]) {
+        event.preventDefault(); openQuickSwitcherItem(quickSwitcherItems[quickSwitcherIndex]); return;
+      }
+    }
     if (noteFindController?.handleKeydown(event)) return;
     if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'p' && isNoteEditorActive()) {
       event.preventDefault();
