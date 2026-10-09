@@ -1825,11 +1825,38 @@ function writeKnowledgePins(entries, merge = false) {
   })();
 }
 
+function readKnowledgeReading() {
+  return sqlite.prepare("SELECT body FROM knowledge_documents WHERE json_extract(body, '$.sourceType') = 'file'").all()
+    .map(row => JSON.parse(row.body)).filter(doc => doc.readingData)
+    .map(doc => ({ id: doc.id, fingerprint: doc.fileMeta?.sha256 || '', data: doc.readingData }));
+}
+
+function writeKnowledgeReading(records, merge = false) {
+  if (!records) return;
+  const knowledge = require('./lib/knowledge/documents').createKnowledgeService({ dataDir: DATA_DIR, sqlite,
+    isDiaryCategory, markPrivateUploadsFromContent, getAllCategories, addCategory, deleteCategory }, { startFolderSync: false });
+  const before = knowledge.readStore();
+  try {
+    for (const record of records) {
+      const parent = knowledge.nativeDocuments().find(doc => doc.sourceType === 'file' && doc.fileMeta?.sha256 === record.fingerprint);
+      if (!parent || parent.status === 'archived') continue;
+      const current = knowledge.getReadingData(parent.id, { diaryUnlocked: true });
+      const entries = merge ? [...new Map([...record.data.entries, ...current.entries].map(entry => [entry.id, entry])).values()] : record.data.entries;
+      const result = knowledge.updateReadingData(parent.id, { ...current, entries, baseRevision: current.revision }, { diaryUnlocked: true, restoringReading: true });
+      if (result.error) throw new Error(result.error);
+    }
+  } catch (error) {
+    knowledge.writeStore(before);
+    throw error;
+  } finally { knowledge.folderSync.stop(); }
+}
+
 function backup() {
   return {
     format: 'structure',
     includesBinaries: false,
     knowledgePins: readKnowledgePins(),
+    knowledgeReading: readKnowledgeReading(),
     logs: readLogs(),
     todos: getAllTodos(),
     countdowns: getAllCountdowns(),
@@ -2108,8 +2135,18 @@ function normalizeRestoreData(data) {
   if (privateUploads.error) return privateUploads;
 
   if (data.knowledgePins !== undefined && (!Array.isArray(data.knowledgePins) || data.knowledgePins.some(item => !item || !/^(note|file):[1-9]\d*$/.test(String(item.id || '')) || typeof item.createdAt !== 'string' || typeof item.collectionPath !== 'string' || typeof item.pinnedAt !== 'string' || (item.pinnedAt && !pinValue(item.pinnedAt))))) return { error: 'Invalid knowledge pins' };
+  if (data.knowledgeReading !== undefined) {
+    try {
+      if (!Array.isArray(data.knowledgeReading) || data.knowledgeReading.length > 10000) throw new Error('Invalid reading backup');
+      for (const record of data.knowledgeReading) {
+        if (!record || !/^[a-f0-9]{64}$/.test(record.fingerprint)) throw new Error('Invalid reading fingerprint');
+        require('./lib/knowledge/reading-data').normalizeReadingData(record.data);
+      }
+    } catch (error) { return { error: error.message }; }
+  }
   return {
     knowledgePins: data.knowledgePins,
+    knowledgeReading: data.knowledgeReading,
     logs: logs.logs,
     todos: todos.todos,
     countdowns: countdowns.countdowns,
@@ -2123,6 +2160,7 @@ function normalizeRestoreData(data) {
 function capturePersistentState() {
   return {
     knowledgePins: readKnowledgePins(),
+    knowledgeReading: readKnowledgeReading(),
     logs: readLogs(),
     todos: readTodos(),
     countdowns: readCountdowns(),
@@ -2170,6 +2208,7 @@ function writePersistentState(next) {
     writeCategories(next.categories);
     writePrivateUploads(next.privateUploads);
     writeKnowledgePins(next.knowledgePins, next.mergePins);
+    writeKnowledgeReading(next.knowledgeReading, next.mergePins);
   } catch (err) {
     try {
       writeLogs(previous.logs);
@@ -2179,6 +2218,7 @@ function writePersistentState(next) {
       writeCategories(previous.categories);
       writePrivateUploads(previous.privateUploads);
       writeKnowledgePins(previous.knowledgePins);
+      writeKnowledgeReading(previous.knowledgeReading);
     } catch (rollbackError) {
       rollbackFailed = true;
       err.message += `; rollback failed: ${rollbackError.message}`;
@@ -2254,6 +2294,7 @@ function restore(data, mode = 'replace') {
       todoCategories: mergedTodoCategories,
       categories: mergedCats,
       knowledgePins: data.knowledgePins,
+    knowledgeReading: data.knowledgeReading,
       mergePins: true,
       privateUploads: [...new Set([...mergedPrivateUploads, ...historicalPrivateUploads, ...diaryUploads])],
     });
@@ -2274,6 +2315,7 @@ function restore(data, mode = 'replace') {
     todoCategories: data.todoCategories,
     categories,
     knowledgePins: data.knowledgePins,
+    knowledgeReading: data.knowledgeReading,
     privateUploads: [...new Set([...data.privateUploads, ...historicalPrivateUploads, ...diaryUploads])],
   });
   stageLegacyAiChatsForMigration(data);

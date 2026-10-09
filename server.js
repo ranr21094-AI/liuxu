@@ -879,7 +879,7 @@ function concurrencyLimiter(maxConcurrent, keyFn = () => 'global') {
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' blob:; img-src 'self' data: blob:; connect-src 'self' blob:; frame-src 'self' blob:; font-src 'self' data: blob:; worker-src 'self' blob:");
   next();
 });
 

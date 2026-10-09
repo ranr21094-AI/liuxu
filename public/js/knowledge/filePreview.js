@@ -1,3 +1,5 @@
+import { renderBook } from './book-reader.js';
+import { pdfReading } from './pdf-reading.js';
 import { apiFetch } from '../auth.js';
 import { loadReadingPosition, saveReadingPosition } from './reading-position.js';
 
@@ -46,6 +48,8 @@ function extension(value) {
 }
 
 export function inferPreviewKind(document) {
+  const ebookExt = extension(document?.fileMeta?.filename || document?.title);
+  if (['.epub', '.mobi', '.azw3', '.fb2', '.cbz'].includes(ebookExt)) return 'ebook';
   const stored = String(document?.fileMeta?.previewKind || '').trim();
   if (['image', 'pdf', 'docx', 'spreadsheet', 'delimited', 'presentation', 'audio', 'video', 'archive', 'text', 'unsupported'].includes(stored)) return stored;
   const ext = extension(document?.fileMeta?.filename || document?.fileMeta?.storedName || document?.title);
@@ -312,18 +316,24 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
   const stage = host.querySelector('.file-preview-stage');
   stage.classList.add('file-preview-pdf-pages');
   const pages = Array.from({ length: pdf.numPages }, (_, index) => appendPdfPage(stage, index + 1));
+  let pdfTools;
   let scale = 1;
   let rotation = 0;
   const rendering = new Map();
-  const renderPage = async pageNumber => {
-    if (token !== previewToken || rendering.has(pageNumber)) return;
-    rendering.set(pageNumber, true);
+  let renderGeneration = 0;
+  const canvasTasks = new Set();
+  const renderPage = pageNumber => {
+    if (token !== previewToken) return Promise.resolve();
+    if (rendering.has(pageNumber)) return rendering.get(pageNumber);
+    if (pages[pageNumber - 1]?.dataset.rendered === 'true') return Promise.resolve();
+    const generation = renderGeneration;
+    const task = (async () => {
     const page = await pdf.getPage(pageNumber);
     if (token !== previewToken) { page.cleanup?.(); return; }
     const shell = pages[pageNumber - 1];
     const wrap = shell.querySelector('.file-pdf-canvas-wrap');
     const baseViewport = page.getViewport({ scale: 1, rotation: (rotation + page.rotate) % 360 });
-    const fit = Math.max(.3, Math.min(2.5, (stage.clientWidth - 32) / baseViewport.width));
+    const fit = Math.max(.3, Math.min(2.5, (stage.clientWidth / (stage.classList.contains('book-pdf-spread') ? 2 : 1) - 32) / baseViewport.width));
     const viewport = page.getViewport({ scale: fit * scale, rotation: (rotation + page.rotate) % 360 });
     const ratio = Math.min(2, window.devicePixelRatio || 1);
     const canvas = shell.querySelector('canvas');
@@ -332,8 +342,10 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     const ctx = canvas.getContext('2d');
-    await page.render({ canvasContext: ctx, viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] }).promise;
-    if (token !== previewToken) return;
+    const canvasTask = page.render({ canvasContext: ctx, viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0] });
+    canvasTasks.add(canvasTask);
+    try { await canvasTask.promise; } finally { canvasTasks.delete(canvasTask); }
+    if (token !== previewToken || generation !== renderGeneration) return;
     const textContent = await page.getTextContent();
     const textLayer = shell.querySelector('.file-pdf-text-layer');
     textLayer.replaceChildren();
@@ -342,15 +354,22 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     try { await new pdfjs.TextLayer({ textContentSource: textContent, container: textLayer, viewport }).render(); } catch {}
     wrap.style.width = `${viewport.width}px`;
     shell.dataset.rendered = 'true';
-    rendering.delete(pageNumber);
+    pdfTools?.paint();
     page.cleanup?.();
+    })();
+    rendering.set(pageNumber, task);
+    return task.finally(() => { if (rendering.get(pageNumber) === task) rendering.delete(pageNumber); });
   };
   const observer = new IntersectionObserver(entries => entries.forEach(entry => {
     if (entry.isIntersecting) renderPage(Number(entry.target.dataset.pageNumber)).catch(() => {});
   }), { root: stage, rootMargin: '800px 0px' });
   pages.forEach(page => observer.observe(page));
   controller.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
-  const rerender = () => {
+  const rerender = async () => {
+    const generation = ++renderGeneration;
+    for (const task of canvasTasks) task.cancel();
+    await Promise.allSettled([...rendering.values()]);
+    if (token !== previewToken || generation !== renderGeneration) return;
     rendering.clear();
     pages.forEach(page => { page.dataset.rendered = ''; page.querySelector('.file-pdf-text-layer').replaceChildren(); });
     const visible = pages.filter(page => {
@@ -359,27 +378,9 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     });
     visible.forEach(page => renderPage(Number(page.dataset.pageNumber)).catch(() => {}));
   };
-  const resizeObserver = new ResizeObserver(() => rerender());
+  let previousWidth = stage.clientWidth;
+  const resizeObserver = new ResizeObserver(() => { if (Math.abs(stage.clientWidth - previousWidth) > 1) { previousWidth = stage.clientWidth; void rerender(); } });
   resizeObserver.observe(stage);
-  const search = async () => {
-    const query = toolbar.querySelector('[data-pdf-search]').value.trim().toLocaleLowerCase();
-    const result = toolbar.querySelector('[data-pdf-result]');
-    if (!query) { result.textContent = ''; return; }
-    result.textContent = '搜索中…';
-    const hits = [];
-    for (let i = 1; i <= pdf.numPages; i += 1) {
-      if (token !== previewToken) return;
-      const page = await pdf.getPage(i);
-      const text = await page.getTextContent();
-      if (text.items.some(item => String(item.str || '').toLocaleLowerCase().includes(query))) hits.push(i);
-      page.cleanup?.();
-    }
-    result.textContent = hits.length ? `共 ${hits.length} 页匹配` : '未找到';
-    if (hits.length) {
-      toolbar.querySelector('[data-pdf-page]').value = String(hits[0]);
-      pages[hits[0] - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
   host._filePreviewActions = {
     zoom(delta) { scale = Math.max(.5, Math.min(3, scale + delta)); rerender(); },
     fit() { scale = 1; rerender(); },
@@ -389,7 +390,6 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
       pages[number - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
       renderPage(number).catch(() => {});
     },
-    find: search,
   };
   if (doc.status === 'needs_ocr') host.querySelector('.file-preview-toolbar').insertAdjacentHTML('beforeend', '<span class="file-preview-note">扫描件暂不可搜索</span>');
   stage.addEventListener('click', event => {
@@ -400,9 +400,10 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     const stageTop = stage.getBoundingClientRect().top;
     const page = pages.find(shell => shell.getBoundingClientRect().bottom > stageTop + 8) || pages.at(-1);
     if (!page) return;
-    savePosition({ page: Number(page.dataset.pageNumber), offset: Math.max(0, stageTop - page.getBoundingClientRect().top) });
+    savePosition({ fingerprint: doc.fileMeta?.sha256 || '', page: Number(page.dataset.pageNumber), offset: Math.max(0, stageTop - page.getBoundingClientRect().top) });
   }, { passive: true });
   controller.signal.addEventListener('abort', () => { observer.disconnect(); resizeObserver.disconnect(); host._filePreviewActions = null; }, { once: true });
+  if (position?.fingerprint && position.fingerprint !== doc.fileMeta?.sha256) position = {};
   const pageNumber = Math.max(1, Math.min(pdf.numPages, Number(position?.page) || 1));
   await renderPage(pageNumber);
   const target = pages[pageNumber - 1];
@@ -417,6 +418,7 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     stage.scrollTop = Math.max(0, stage.scrollTop + (Number(position?.offset) || 0));
   }
   toolbar.querySelector('[data-pdf-page]').value = String(pageNumber);
+  pdfTools = await pdfReading({ doc, host, toolbar, stage, pages, pdf, renderPage, rerender, signal: controller.signal, position });
 }
 
 async function renderDocx(doc, host, token, controller, position, savePosition) {
@@ -626,6 +628,7 @@ async function renderKind(doc, host, token, controller, position, savePosition) 
     return;
   }
   try {
+    if (kind === 'ebook' || extension(doc.fileMeta?.filename) === '.txt') return await renderBook(doc, host, controller.signal, position, savePosition);
     if (kind === 'image') return renderImage(doc, host, controller, position, savePosition);
     if (kind === 'pdf') return await renderPdf(doc, host, token, controller, position, savePosition);
     if (kind === 'docx') return await renderDocx(doc, host, token, controller, position, savePosition);
@@ -660,7 +663,7 @@ export function destroyFilePreview() {
 }
 
 export function shouldCollapseExtractText(doc) {
-  return ['image', 'pdf', 'docx', 'spreadsheet', 'delimited', 'presentation', 'audio', 'video', 'archive'].includes(inferPreviewKind(doc));
+  return ['ebook', 'image', 'pdf', 'docx', 'spreadsheet', 'delimited', 'presentation', 'audio', 'video', 'archive'].includes(inferPreviewKind(doc));
 }
 
 export function setFileReaderTab(tab) {

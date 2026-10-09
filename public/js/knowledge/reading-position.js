@@ -15,12 +15,12 @@ function sourceType(document) {
 
 function cleanPosition(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const allowed = new Set(['top', 'left', 'editTop', 'previewTop', 'page', 'offset', 'sheet', 'scale', 'rotation', 'x', 'y', 'currentTime', 'innerTop', 'listTop', 'textTop', 'scrollLeft']);
+  const allowed = new Set(['anchor', 'fingerprint', 'top', 'left', 'editTop', 'previewTop', 'page', 'offset', 'sheet', 'scale', 'rotation', 'x', 'y', 'currentTime', 'innerTop', 'listTop', 'textTop', 'scrollLeft']);
   const output = {};
   for (const [key, item] of Object.entries(value)) {
     if (!allowed.has(key)) continue;
     if (typeof item === 'number' && Number.isFinite(item)) output[key] = Math.max(-1e9, Math.min(1e9, item));
-    else if (key === 'sheet' && typeof item === 'string') output[key] = item.slice(0, 200);
+    else if (['sheet', 'anchor', 'fingerprint'].includes(key) && typeof item === 'string') output[key] = item.slice(0, key === 'anchor' ? 4096 : 200);
   }
   return output;
 }

@@ -5269,6 +5269,7 @@ async function renderActiveDocument(document) {
 
 function renderFileOriginalPanel(document) {
   const meta = document.fileMeta || {};
+  window.document.querySelector('[data-file-reader-tab=annotation]').hidden = /\.cbz$/i.test(meta.filename || '') || document.status === 'needs_ocr';
   $('#fileName').textContent = meta.filename || document.title || '文件';
   const metaParts = [formatBytes(meta.bytes)];
   if (document.status === 'needs_ocr') metaParts.push('扫描型 PDF');

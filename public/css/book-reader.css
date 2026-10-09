@@ -1,0 +1,30 @@
+.book-reader { display:flex; flex-direction:column; position:relative; min-height:480px; height:100%; background:#f8f1e3; color:#302b25; }
+.book-reader .file-preview-stage { flex:1; min-height:320px; overflow:hidden; padding:0; position:relative; }
+.book-reader foliate-view { display:block; height:100%; min-height:360px; width:100%; }
+.book-reader .file-preview-toolbar { background:inherit; color:inherit; flex-wrap:wrap; gap:8px; padding:10px 14px; }
+.book-reader button,.book-reader select,.book-reader input { color:inherit; background:transparent; border:1px solid #8885; border-radius:6px; padding:5px 8px; }
+.book-reader input[type=number] { width:68px; }
+.book-reader input[type=search] { width:150px; }
+.book-reader[data-theme=dark] { background:#232522; color:#dadbd3; }
+.book-reader[data-theme=light] { background:#fff; color:#252525; }
+.book-focus { position:fixed!important; inset:0!important; z-index:5000!important; width:100vw!important; height:100dvh!important; background:var(--bg,#faf8f3); display:flex; flex-direction:column; }
+.book-focus .file-preview-stage { flex:1; min-height:0; }
+.book-status { font-size:12px; max-width:350px; }
+.book-notes,.book-nav { position:absolute; z-index:10; right:0; top:100px; bottom:0; width:min(380px,100%); overflow:auto; padding:18px; background:#faf8f3; color:#302b25; box-shadow:-5px 0 22px #0002; }
+.book-notes[hidden],.book-nav[hidden] { display:none; }
+.book-notes article { padding:14px 0; border-bottom:1px solid #aaa5; }
+.book-notes p { white-space:pre-wrap; overflow-wrap:anywhere; }
+.book-notes button { margin:3px; }
+.book-nav button { display:block; width:100%; text-align:left; margin-bottom:8px; }
+.book-edit-dialog { border:1px solid #ccc; border-radius:12px; width:min(520px,90vw); padding:24px; }
+.book-edit-dialog::backdrop { background:#0005; }
+.book-edit-dialog label { display:block; margin:12px 0; }
+.book-edit-dialog input,.book-edit-dialog textarea { display:block; width:100%; box-sizing:border-box; padding:10px; }
+.book-edit-dialog textarea { min-height:100px; }
+.book-edit-dialog blockquote { max-height:180px; overflow:auto; white-space:pre-wrap; }
+.book-progress { margin-left:auto; font-size:12px; }
+.file-preview-host { position:relative; }
+.file-preview-pdf-pages.book-pdf-spread { display:grid; grid-template-columns:1fr 1fr; align-items:start; }
+.file-pdf-canvas-wrap { position:relative; }
+.book-pdf-highlight { position:absolute; background:#ffd54f70; pointer-events:none; }
+@media(max-width:600px) { .book-reader .file-preview-toolbar { gap:5px; padding:6px; } .book-reader { min-height:360px; } .book-reader foliate-view { min-height:260px; } }
