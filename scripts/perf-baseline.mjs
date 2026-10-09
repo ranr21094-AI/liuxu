@@ -68,19 +68,19 @@ try {
   seedKnowledge(db.sqlite);
   const knowledge = createKnowledgeService(db);
   const search = createSearchIndex(knowledge);
-  const coldSearch = elapsed(() => search.search('知识库', { diaryUnlocked: false, limit: 20 }));
+  const coldSearch = elapsed(() => search.search('知识库', { limit: 20 }));
   const searchSamples = [];
   for (let index = 0; index < 40; index += 1) {
     searchSamples.push(elapsed(() => search.search(`alpha-${index % 17}`, { limit: 20 })).ms);
   }
 
-  const first = knowledge.getDocument('note:1', { diaryUnlocked: true });
+  const first = knowledge.getDocument('note:1');
   const documentSamples = [];
   for (let index = 0; index < 30; index += 1) {
     documentSamples.push(elapsed(() => knowledge.updateDocument('note:1', {
       content: `${first.content} update-${index}`,
       baseVersion: first.version + index,
-    }, { diaryUnlocked: true })).ms);
+    })).ms);
   }
 
   const todo = db.createTodo({ title: '性能基线待办' });

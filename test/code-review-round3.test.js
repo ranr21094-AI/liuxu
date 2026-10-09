@@ -64,7 +64,6 @@ test('cancelling during a model call prevents pending tools from executing', asy
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         modelCalled += 1;
@@ -96,7 +95,6 @@ test('cancel does not rewrite terminal runs and re-resolving needs no live map',
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: { async complete() { return { text: '完成', toolCalls: [] }; } },
   });
   const session = store.createSession('terminal');
@@ -152,31 +150,6 @@ test('active run detection reads SQLite and the legacy JSON fallback', (t) => {
     runs: [{ id: 'legacy', status: 'waiting_user' }],
   }));
   assert.equal(hasActiveAgentRuns(db), true, 'pre-SQLite layout still blocks restores');
-});
-
-test('category moves into the diary collection lock their documents', (t) => {
-  const db = tempDb(t);
-  ensureLogsMigrated(db);
-  const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({
-    title: '普通笔记',
-    content: '正文',
-    knowledgeBase: '工作',
-  }, { diaryUnlocked: true });
-  assert.equal(document.visibility, 'standard');
-
-  knowledge.rewriteCollectionPath('工作', '日记/归档');
-  const moved = knowledge.getDocument(document.id, { diaryUnlocked: true });
-  assert.equal(moved.visibility, 'diary', 'documents moved into 日记 must be diary-locked');
-  assert.equal(knowledge.getDocument(document.id, { diaryUnlocked: false }), null);
-
-  // Moving back out is promote-only: a lock is never silently lifted.
-  knowledge.rewriteCollectionPath('日记/归档', '工作');
-  assert.equal(knowledge.getDocument(document.id, { diaryUnlocked: false }), null,
-    'moving a diary document out of the diary must not unlock it');
-  const restored = knowledge.getDocument(document.id, { diaryUnlocked: true });
-  assert.equal(restored.visibility, 'diary');
-  assert.equal(restored.knowledgeBase, '工作');
 });
 
 test('legacy migration re-encrypts image provider keys for the new scope', (t) => {
@@ -257,7 +230,7 @@ test('legacy migration aborts when a secret cannot be re-encrypted', (t) => {
 test('client tool results return 404 for unknown or finished runs', async (t) => {
   const db = tempDb(t);
   const app = express();
-  registerAgentRoutes(app, { db, hasDiaryAccess: () => false });
+  registerAgentRoutes(app, { db });
   const server = await new Promise(resolve => {
     const started = app.listen(0, '127.0.0.1', () => resolve(started));
   });

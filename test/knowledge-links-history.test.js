@@ -128,7 +128,7 @@ test('knowledge link targets exclude archived documents and backlinks hide archi
   assert.equal(knowledge.backlinks(target.id).total, 0);
 });
 
-test('direct links validate local targets and hide locked diary ids', (t) => {
+test('direct links validate local targets', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-link-validation-'));
   const db = createDatabase(dir);
   const knowledge = createKnowledgeService(db);
@@ -139,11 +139,11 @@ test('direct links validate local targets and hide locked diary ids', (t) => {
   const missing = knowledge.createNote({ title: '断链来源', content: '[[不存在|note:999]]' });
   assert.equal(missing.linkIssues[0].status, 'missing');
   assert.equal(knowledge.outgoingLinks(missing.document.id).links[0].status, 'missing');
-  const diary = knowledge.createNote({ title: '私密目标', content: '', knowledgeBase: '日记' }, { diaryUnlocked: true }).document;
-  const source = knowledge.createNote({ title: '来源', content: `[[私密目标|${diary.id}]]` });
+  const target = knowledge.createNote({ title: '私密目标', content: '', knowledgeBase: '日记' }).document;
+  const source = knowledge.createNote({ title: '来源', content: `[[私密目标|${target.id}]]` });
   const outgoing = knowledge.outgoingLinks(source.document.id);
-  assert.equal(outgoing.links[0].status, 'locked');
-  assert.equal(outgoing.links[0].targetId, '');
+  assert.equal(outgoing.links[0].status, 'resolved');
+  assert.equal(outgoing.links[0].targetId, target.id);
 });
 
 test('a damaged title index is rebuilt lazily on first link target query', (t) => {

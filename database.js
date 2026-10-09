@@ -15,8 +15,6 @@ const {
   updateIdRows,
   readSingleton,
   writeSingleton,
-  readStringList,
-  writeStringList,
 } = require('./lib/db/helpers');
 
 function createDatabase(dataDirectory = (process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data')), options = {}) {
@@ -24,9 +22,7 @@ const DATA_DIR = path.resolve(dataDirectory);
 let sqlite = openAccountDatabase(DATA_DIR);
 const SECRET_SCOPE = typeof options.secretScope === 'string' && options.secretScope ? options.secretScope : DATA_DIR;
 const DATA_FILE = path.join(DATA_DIR, 'logs.json');
-const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
-const PRIVATE_UPLOADS_FILE = path.join(DATA_DIR, 'private-uploads.json');
 const AI_SETTINGS_FILE = path.join(DATA_DIR, 'ai-settings.json');
 const LEGACY_AI_CHATS_FILE = path.join(DATA_DIR, 'ai-chats.json');
 const TODO_REMINDER_SETTINGS_FILE = path.join(DATA_DIR, 'todo-reminder-settings.json');
@@ -108,7 +104,6 @@ const cache = {
   countdowns: null,
   todoCategories: null,
   categories: null,
-  privateUploads: null,
   aiSettings: null,
   todoReminderSettings: null,
   todoReminderState: null,
@@ -116,7 +111,6 @@ const cache = {
   maxTodoId: 0,
   maxCountdownId: 0,
 };
-let diaryUploadIndexHealed = false;
 const AI_SECRET_FIELDS = Object.freeze([
   'apiKey', 'moonshotApiKey', 'openrouterApiKey', 'tavilyApiKey', 'perplexityApiKey', 'seedreamApiKey', 'getokenApiKey', 'getokenGrokImagineApiKey', 'getokenNanoBananaApiKey',
 ]);
@@ -127,14 +121,12 @@ function resetCache() {
   cache.countdowns = null;
   cache.todoCategories = null;
   cache.categories = null;
-  cache.privateUploads = null;
   cache.aiSettings = null;
   cache.todoReminderSettings = null;
   cache.todoReminderState = null;
   cache.maxLogId = 0;
   cache.maxTodoId = 0;
   cache.maxCountdownId = 0;
-  diaryUploadIndexHealed = false;
 }
 
 function maxPositiveId(items) {
@@ -248,10 +240,6 @@ function ensureDataDir() {
   if (!fs.existsSync(DATA_FILE)) {
     fs.writeFileSync(DATA_FILE, '[]', 'utf-8');
   }
-}
-
-function isDiaryCategory(category) {
-  return typeof category === 'string' && (category === DIARY_CATEGORY || category.startsWith(DIARY_CATEGORY + '/'));
 }
 
 function isSafeUploadFilename(filename) {
@@ -444,23 +432,6 @@ function writeLogs(logs) {
   writeIdTable(sqlite, 'logs', next);
   cache.logs = next;
   syncMaxIds();
-}
-
-function readPrivateUploads() {
-  if (cache.privateUploads !== null) return [...cache.privateUploads];
-  ensureDataDir();
-  try {
-    cache.privateUploads = [...new Set(readStringList(sqlite, 'private_uploads', 'filename').filter(isSafeUploadFilename))];
-    return [...cache.privateUploads];
-  } catch (err) {
-    return failCorruptData('private-uploads.json', PRIVATE_UPLOADS_FILE, err);
-  }
-}
-
-function writePrivateUploads(filenames) {
-  const next = [...new Set(filenames.filter(isSafeUploadFilename))];
-  writeStringList(sqlite, 'private_uploads', 'filename', next);
-  cache.privateUploads = next;
 }
 
 function isStoredAiModel(value, settings = null) {
@@ -773,86 +744,10 @@ function writeTodoReminderState(data) {
   return cloneJson(next);
 }
 
-function markPrivateUpload(filename) {
-  const normalized = normalizeUploadFilename(filename);
-  if (!normalized) return false;
-  const filenames = readPrivateUploads();
-  if (!filenames.includes(normalized)) {
-    writePrivateUploads([...filenames, normalized]);
-  }
-  return true;
-}
-
-function markPrivateUploadsFromContent(content) {
-  const filenames = extractLocalUploadFilenames(content);
-  filenames.forEach(markPrivateUpload);
-  return filenames;
-}
-
-function unmarkPrivateUpload(filename) {
-  const normalized = normalizeUploadFilename(filename);
-  if (!normalized) return;
-  const filenames = readPrivateUploads();
-  if (filenames.includes(normalized)) {
-    writePrivateUploads(filenames.filter(item => item !== normalized));
-  }
-}
-
-function healDiaryKnowledgeUploads() {
-  if (diaryUploadIndexHealed) return;
-  diaryUploadIndexHealed = true;
-  try {
-    const rows = sqlite.prepare(`
-      SELECT body FROM knowledge_documents
-      WHERE json_extract(body, '$.visibility') = 'diary'
-    `).all();
-    for (const row of rows) {
-      markPrivateUploadsFromContent(parseJson(row.body, {}).content);
-    }
-  } catch {
-    diaryUploadIndexHealed = false;
-  }
-}
-
-function diaryKnowledgeContainsUpload(filename) {
-  try {
-    const needle = `/uploads/${filename}`;
-    const rows = sqlite.prepare(`
-      SELECT body FROM knowledge_documents
-      WHERE json_extract(body, '$.visibility') = 'diary'
-        AND instr(body, ?) > 0
-    `).all(needle);
-    return rows.some(row => extractLocalUploadFilenames(parseJson(row.body, {}).content).includes(filename));
-  } catch {
-    return false;
-  }
-}
-
-function isPrivateUpload(filename) {
-  const normalized = normalizeUploadFilename(filename);
-  if (!normalized) return false;
-  healDiaryKnowledgeUploads();
-  if (readPrivateUploads().includes(normalized)) return true;
-  if (readLogs().some(log =>
-    isDiaryCategory(log.category) &&
-    extractLocalUploadFilenames(log.content).includes(normalized)
-  )) return true;
-  if (diaryKnowledgeContainsUpload(normalized)) {
-    markPrivateUpload(normalized);
-    return true;
-  }
-  return false;
-}
-
 // CRUD operations
 
-function getFilteredLogs(query = {}, diaryUnlocked = true) {
+function getFilteredLogs(query = {}) {
   let logs = readLogs();
-
-  // Hide diary logs if locked
-  if (!diaryUnlocked) {
-    logs = logs.filter(l => !isDiaryCategory(l.category));
-  }
 
   // Filter by date
   if (query.date) {
@@ -906,12 +801,12 @@ function getFilteredLogs(query = {}, diaryUnlocked = true) {
   return logs;
 }
 
-function getAllUnpaginated(query = {}, diaryUnlocked = true) {
-  return getFilteredLogs(query, diaryUnlocked).map(log => ({ ...log }));
+function getAllUnpaginated(query = {}) {
+  return getFilteredLogs(query).map(log => ({ ...log }));
 }
 
-function getAll(query = {}, diaryUnlocked = true) {
-  const logs = getFilteredLogs(query, diaryUnlocked);
+function getAll(query = {}) {
+  const logs = getFilteredLogs(query);
 
   // Pagination
   const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
@@ -950,7 +845,6 @@ function create(data, referenceDate = new Date()) {
   upsertIdRow(sqlite, 'logs', entry);
   cache.logs = logs;
   syncMaxIds();
-  if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
   return entry;
 }
 
@@ -961,7 +855,6 @@ function update(id, data) {
 
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const entry = logs[index];
-  if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
   if (data.title !== undefined) entry.title = data.title;
   if (data.content !== undefined) entry.content = data.content;
   if (data.category !== undefined) entry.category = data.category;
@@ -976,7 +869,6 @@ function update(id, data) {
   upsertIdRow(sqlite, 'logs', entry);
   cache.logs = logs;
   syncMaxIds();
-  if (isDiaryCategory(entry.category)) markPrivateUploadsFromContent(entry.content);
   return entry;
 }
 
@@ -984,7 +876,6 @@ function remove(id) {
   const logs = readLogs();
   const index = logs.findIndex(l => l.id === id);
   if (index === -1) return false;
-  if (isDiaryCategory(logs[index].category)) markPrivateUploadsFromContent(logs[index].content);
   logs.splice(index, 1);
   deleteIdRow(sqlite, 'logs', id);
   cache.logs = logs;
@@ -997,11 +888,8 @@ function clearLogs() {
   return true;
 }
 
-function getStats(diaryUnlocked = true, referenceDate = new Date()) {
-  let logs = readLogs();
-  if (!diaryUnlocked) {
-    logs = logs.filter(l => !isDiaryCategory(l.category));
-  }
+function getStats(referenceDate = new Date()) {
+  const logs = readLogs();
   const today = businessDateString(referenceDate);
   const todayParts = parseDateParts(today);
 
@@ -1470,14 +1358,11 @@ function writeCategories(cats) {
   cache.categories = next;
 }
 
-function getCategoryLogCounts(diaryUnlocked = true) {
+function getCategoryLogCounts() {
   const counts = new Map();
   const subCounts = new Map();
-  const logs = diaryUnlocked
-    ? readLogs()
-    : readLogs().filter(log => !isDiaryCategory(log.category));
 
-  logs.forEach(log => {
+  readLogs().forEach(log => {
     const parsed = parseCategoryPath(log.category);
     counts.set(parsed.parent, (counts.get(parsed.parent) || 0) + 1);
     if (parsed.sub) {
@@ -1489,10 +1374,9 @@ function getCategoryLogCounts(diaryUnlocked = true) {
   return { counts, subCounts };
 }
 
-function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
-  const { counts, subCounts } = getCategoryLogCounts(diaryUnlocked);
-  const categories = readCategories()
-    .filter(category => diaryUnlocked || category.name !== DIARY_CATEGORY)
+function getAllCategories() {
+  const { counts, subCounts } = getCategoryLogCounts();
+  return readCategories()
     .map(category => ({
       name: category.name,
       ...(pinValue(category.pinnedAt) ? { pinnedAt: pinValue(category.pinnedAt) } : {}),
@@ -1503,16 +1387,6 @@ function getAllCategories(diaryUnlocked = true, includeDiaryRoot = false) {
       ),
       calendar_day_visible: category.calendar_day_visible !== false,
     }));
-  if (includeDiaryRoot && !categories.some(category => category.name === DIARY_CATEGORY)) {
-    categories.push({
-      name: DIARY_CATEGORY,
-      sub: [],
-      log_count: counts.get(DIARY_CATEGORY) || 0,
-      sub_log_counts: {},
-      calendar_day_visible: true,
-    });
-  }
-  return categories;
 }
 
 /** Locate a category node by full path ("开发" or "开发/前端"), including the base */
@@ -1534,15 +1408,11 @@ function emptyCategoryNode(name) {
   return { name, sub: [], calendar_day_visible: true };
 }
 
-/** Walk or create folder segments under an existing knowledge base (mkdir -p). Does not create a new base except the diary root. */
+/** Walk or create folder segments under an existing knowledge base (mkdir -p). Does not create a new base. */
 function ensureCategoryPath(cats, fullPath) {
   const segments = String(fullPath || '').split('/').map(s => s.trim()).filter(Boolean);
   if (!segments.length) return null;
   let node = cats.find(c => c.name === segments[0]);
-  if (!node && segments[0] === DIARY_CATEGORY) {
-    node = emptyCategoryNode(DIARY_CATEGORY);
-    cats.push(node);
-  }
   if (!node) return null;
   for (let i = 1; i < segments.length; i += 1) {
     if (!Array.isArray(node.sub)) node.sub = [];
@@ -1603,11 +1473,7 @@ function setCategoryPinned(categoryPath, pinned, pinnedAt = nextPinTime()) {
 
 function setCategoryCalendarDayVisible(name, visible) {
   const cats = readCategories();
-  let category = cats.find(item => item.name === name);
-  if (!category && name === DIARY_CATEGORY) {
-    category = { name: DIARY_CATEGORY, sub: [], calendar_day_visible: true };
-    cats.push(category);
-  }
+  const category = cats.find(item => item.name === name);
   if (!category) return null;
   category.calendar_day_visible = visible !== false;
   writeCategories(cats);
@@ -1623,9 +1489,6 @@ function renameCategory(oldName, newName) {
   newName = newName.trim();
   if (!oldName || !newName || newName.includes('/') || newName.includes('\\')) {
     return { error: 'Invalid names' };
-  }
-  if (oldName === DIARY_CATEGORY || newName === DIARY_CATEGORY) {
-    return { error: 'Diary root category is protected' };
   }
   const cats = readCategories();
   const segments = oldName.split('/').map(s => s.trim()).filter(Boolean);
@@ -1724,7 +1587,7 @@ function moveCategory(oldName, newParent) {
 
 function deleteCategory(name) {
   name = name.trim();
-  if (name === OTHER_CATEGORY || name === DIARY_CATEGORY) return false;
+  if (name === OTHER_CATEGORY) return false;
   const cats = readCategories();
   const segments = name.split('/').map(s => s.trim()).filter(Boolean);
   if (!segments.length) return false;
@@ -1770,7 +1633,6 @@ function checkDataIntegrity() {
   readTodos();
   readCountdowns();
   readTodoCategories();
-  readPrivateUploads();
   readAiSettings();
   readTodoReminderSettings();
   readTodoReminderState();
@@ -1834,15 +1696,15 @@ function readKnowledgeReading() {
 function writeKnowledgeReading(records, merge = false) {
   if (!records) return;
   const knowledge = require('./lib/knowledge/documents').createKnowledgeService({ dataDir: DATA_DIR, sqlite,
-    isDiaryCategory, markPrivateUploadsFromContent, getAllCategories, addCategory, deleteCategory }, { startFolderSync: false });
+    getAllCategories, addCategory, deleteCategory }, { startFolderSync: false });
   const before = knowledge.readStore();
   try {
     for (const record of records) {
       const parent = knowledge.nativeDocuments().find(doc => doc.sourceType === 'file' && doc.fileMeta?.sha256 === record.fingerprint);
       if (!parent || parent.status === 'archived') continue;
-      const current = knowledge.getReadingData(parent.id, { diaryUnlocked: true });
+      const current = knowledge.getReadingData(parent.id);
       const entries = merge ? [...new Map([...record.data.entries, ...current.entries].map(entry => [entry.id, entry])).values()] : record.data.entries;
-      const result = knowledge.updateReadingData(parent.id, { ...current, entries, baseRevision: current.revision }, { diaryUnlocked: true, restoringReading: true });
+      const result = knowledge.updateReadingData(parent.id, { ...current, entries, baseRevision: current.revision }, { restoringReading: true });
       if (result.error) throw new Error(result.error);
     }
   } catch (error) {
@@ -1862,7 +1724,6 @@ function backup() {
     countdowns: getAllCountdowns(),
     todoCategories: getTodoCategories(),
     categories: readCategories(),
-    privateUploads: readPrivateUploads(),
     exportedAt: new Date().toISOString(),
   };
 }
@@ -1871,22 +1732,6 @@ function stageLegacyAiChatsForMigration(data) {
   if (!data?.aiChats || typeof data.aiChats !== 'object' || Array.isArray(data.aiChats)) return;
   if (!Array.isArray(data.aiChats.conversations) || !data.aiChats.conversations.length) return;
   atomicWriteJson(LEGACY_AI_CHATS_FILE, data.aiChats);
-}
-
-function normalizePrivateUploadsForRestore(privateUploads) {
-  if (privateUploads === undefined) return { privateUploads: [] };
-  if (!Array.isArray(privateUploads)) return { error: 'Invalid privateUploads data' };
-  const normalized = [];
-  const seen = new Set();
-  for (const filename of privateUploads) {
-    const safeName = normalizeUploadFilename(filename);
-    if (!safeName) return { error: 'Invalid private upload filename' };
-    if (!seen.has(safeName)) {
-      seen.add(safeName);
-      normalized.push(safeName);
-    }
-  }
-  return { privateUploads: normalized };
 }
 
 function duplicateSubcategoryPath(node, prefix = '') {
@@ -2131,9 +1976,6 @@ function normalizeRestoreData(data) {
   const categories = normalizeCategoriesForRestore(data.categories);
   if (categories.error) return categories;
 
-  const privateUploads = normalizePrivateUploadsForRestore(data.privateUploads);
-  if (privateUploads.error) return privateUploads;
-
   if (data.knowledgePins !== undefined && (!Array.isArray(data.knowledgePins) || data.knowledgePins.some(item => !item || !/^(note|file):[1-9]\d*$/.test(String(item.id || '')) || typeof item.createdAt !== 'string' || typeof item.collectionPath !== 'string' || typeof item.pinnedAt !== 'string' || (item.pinnedAt && !pinValue(item.pinnedAt))))) return { error: 'Invalid knowledge pins' };
   if (data.knowledgeReading !== undefined) {
     try {
@@ -2152,7 +1994,6 @@ function normalizeRestoreData(data) {
     countdowns: countdowns.countdowns,
     todoCategories: todoCategories.todoCategories,
     categories: categories.categories,
-    privateUploads: privateUploads.privateUploads,
     legacyAiChats: data.aiChats,
   };
 }
@@ -2166,7 +2007,6 @@ function capturePersistentState() {
     countdowns: readCountdowns(),
     todoCategories: readTodoCategories(),
     categories: readCategories(),
-    privateUploads: readPrivateUploads(),
   };
 }
 
@@ -2175,7 +2015,7 @@ function capturePersistentState() {
 function snapshotPersistentFiles() {
   const files = [
     DATA_FILE, TODOS_FILE, COUNTDOWNS_FILE, TODO_CATEGORIES_FILE,
-    CATEGORIES_FILE, PRIVATE_UPLOADS_FILE,
+    CATEGORIES_FILE,
   ];
   const snapshots = [];
   for (const file of files) {
@@ -2206,7 +2046,6 @@ function writePersistentState(next) {
     writeCountdowns(next.countdowns);
     writeTodoCategories(next.todoCategories);
     writeCategories(next.categories);
-    writePrivateUploads(next.privateUploads);
     writeKnowledgePins(next.knowledgePins, next.mergePins);
     writeKnowledgeReading(next.knowledgeReading, next.mergePins);
   } catch (err) {
@@ -2216,7 +2055,6 @@ function writePersistentState(next) {
       writeCountdowns(previous.countdowns);
       writeTodoCategories(previous.todoCategories);
       writeCategories(previous.categories);
-      writePrivateUploads(previous.privateUploads);
       writeKnowledgePins(previous.knowledgePins);
       writeKnowledgeReading(previous.knowledgeReading);
     } catch (rollbackError) {
@@ -2239,10 +2077,6 @@ function restore(data, mode = 'replace') {
   const normalized = normalizeRestoreData(data);
   if (normalized.error) return normalized;
   data = normalized;
-  const previous = capturePersistentState();
-  const historicalPrivateUploads = previous.logs
-    .filter(log => isDiaryCategory(log.category))
-    .flatMap(log => extractLocalUploadFilenames(log.content));
 
   if (mode === 'merge') {
     // Merge: upsert by ID, keeping newer data when conflicts
@@ -2281,12 +2115,7 @@ function restore(data, mode = 'replace') {
       ? migrateToTree(data.categories)
       : data.categories;
     const mergedCats = mergeCategoryTrees(existingCats, restoreCats);
-    const mergedPrivateUploads = [...new Set([...readPrivateUploads(), ...data.privateUploads])];
     const mergedTodoCategories = [...new Set([...readTodoCategories(), ...data.todoCategories])];
-
-    const diaryUploads = mergedLogs
-      .filter(log => isDiaryCategory(log.category))
-      .flatMap(log => extractLocalUploadFilenames(log.content));
     writePersistentState({
       logs: mergedLogs,
       todos: mergedTodos,
@@ -2296,7 +2125,6 @@ function restore(data, mode = 'replace') {
       knowledgePins: data.knowledgePins,
     knowledgeReading: data.knowledgeReading,
       mergePins: true,
-      privateUploads: [...new Set([...mergedPrivateUploads, ...historicalPrivateUploads, ...diaryUploads])],
     });
     stageLegacyAiChatsForMigration(data);
     return { success: true, format: 'structure', includesBinaries: false, logs: mergedLogs.length, todos: mergedTodos.length, countdowns: mergedCountdowns.length, categories: mergedCats.length };
@@ -2305,9 +2133,6 @@ function restore(data, mode = 'replace') {
   const categories = (data.categories.length > 0 && typeof data.categories[0] === 'string')
     ? migrateToTree(data.categories)
     : data.categories;
-  const diaryUploads = data.logs
-    .filter(log => isDiaryCategory(log.category))
-    .flatMap(log => extractLocalUploadFilenames(log.content));
   writePersistentState({
     logs: data.logs,
     todos: data.todos,
@@ -2316,7 +2141,6 @@ function restore(data, mode = 'replace') {
     categories,
     knowledgePins: data.knowledgePins,
     knowledgeReading: data.knowledgeReading,
-    privateUploads: [...new Set([...data.privateUploads, ...historicalPrivateUploads, ...diaryUploads])],
   });
   stageLegacyAiChatsForMigration(data);
   return { success: true, format: 'structure', includesBinaries: false, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };
@@ -2456,12 +2280,7 @@ return {
   stageLegacyAiChatsForMigration,
   checkDataIntegrity,
   resetCache,
-  isDiaryCategory,
   isSafeUploadFilename,
-  isPrivateUpload,
-  markPrivateUpload,
-  markPrivateUploadsFromContent,
-  unmarkPrivateUpload,
   extractLocalUploadFilenames,
 };
 }

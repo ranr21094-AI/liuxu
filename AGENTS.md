@@ -83,7 +83,6 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 - **Settings → Memory**: tunables in the `ai_settings` SQLite row via `lib/agent/memory-settings.js` (refresh rounds/proposals/scan limits, title & content caps). L2/L3 不再全量注入 Agent；仅 L0 规则在 system prompt。Agent 通过 `memory.list` / `memory.search` / `memory.read` 按需读取（`memoryContextMaxL2/L3` 保留兼容但不再控制注入）。
 - **Settings → 模型**: provider cards only (built-in providers removed from the UI; legacy keys auto-migrated once at startup by `lib/agent/migrate-builtin-providers.js`, marker `.builtin-providers-migrated.json`). Each card holds baseUrl / apiFormat / apiKey / models (fetch via `POST /api/ai/custom-providers/models`, cap 200) plus capability flags `supportsMedia` / `thinking` (''/deepseek/k3/optional/fixed) / `zdr`; provider count is uncapped. `resolveAiModelProfile` maps these onto the profile so thinking params / ZDR work identically for migrated providers.
 - **Settings → 模型 → 高级 Agent 限制**: `lib/agent/agent-settings.js` — `agentDelegateMaxRounds`（子 run 独立轮数/tool 预算，与父 run 脱钩），护栏（连续失败、只读并发、重复写检测），`web.fetch` 上限，以及 `knowledge.search` / `knowledge.list` / `memory.list` / `memory.search` 条数限制。`web.search` 同 session 24h 内相同 query 会缓存（最多 32 条），同 run 内重复请求直接返回缓存并跳过审批。Merged into `DEFAULT_AI_SETTINGS` / `normalizeAiSettings`.
-- **Diary**: Unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 
 ### Key Patterns
 
@@ -96,7 +95,6 @@ Default categories are hardcoded in `database.js`. When a category is deleted, d
 
 See `README.md` § Relevant API for the full table. Notable groups:
 
-- **Diary**: `/api/auth/diary*` unlock routes; unlock via `#diaryDialog` and magic phrase; locked diary excluded from lists/search/Agent `@`.
 - **Logs (compat)**: `/api/logs`, `/api/stats` — no CSV export
 - **Knowledge**: `/api/knowledge/tree`, `/api/knowledge/documents`, `/api/knowledge/search`, `/api/knowledge/imports`, `/api/knowledge/link-targets`, backlinks/revisions/restore, archive/restore, `/api/knowledge/sync*`, protected relative assets
 - **Agent**: `/api/agent/sessions`, `/api/agent/runs`, `/api/agent/memories`, `/api/agent/note-assist/:documentId/session|messages` (per-document assistant, `kind: note_assist`), `/api/ai/settings`
@@ -115,7 +113,7 @@ See `README.md` § Relevant API for the full table. Notable groups:
 
 - `workbench.js` tracks in-flight saves per document; `flushPendingSaves()` drains later edits and stops navigation on failure/conflict. Direct assistant mutations use `beforeNoteMutation` / `afterNoteMutation`.
 - `knowledge/note-assistant.js` reuses the main Markdown renderer, approval details, memory actions and Chrome relay. It keeps the run ID across `waiting_user` and transient SSE disconnects; event replay is deduplicated. The existing note message route returns `resumed: true` when answering a pending question.
-- Delegates persist optional `noteDocumentId` (old runs default to empty), inherit model/diary context, and forward tools/proposals to their parent. Terminal runs cannot be driven again; each delegated completion is consumed once.
+- Delegates persist optional `noteDocumentId` (old runs default to empty), inherit model context, and forward tools/proposals to their parent. Terminal runs cannot be driven again; each delegated completion is consumed once.
 - `lib/workspace/zip.js` centralizes ZIP limits: compressed 2 GiB, SQLite 120 MiB, each binary 250 MiB, legacy JSON 10 MiB, total expansion 4 GiB, 20,000 entries. Export and multipart restore use disk staging and streams. Native ZIP imports use validated SQLite, ignoring redundant JSON; legacy imports stage all JSON in isolation. Restore snapshots, rolls back on installation failure, removes the derived search index, and invalidates service/runtime caches.
 - File parent moves and revision restoration synchronize annotation location/visibility/version/index in the transaction; annotation reads also check the parent.
 - Regression coverage: `test/review-regressions.test.js`, `test/note-assistant.test.js`, and mocked DOM/HTTP interaction tests in `test/note-assistant-ui.test.js`.

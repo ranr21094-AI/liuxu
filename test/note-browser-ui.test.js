@@ -86,16 +86,3 @@ test('sidebar normalizes search text, resizes by keyboard, and clears restored w
     assert.ok(ctx.calls.closed.length >= 1);
   } finally { cleanup(ctx); }
 });
-
-test('diary lock hides private browser but leaves a public note browser available', async () => {
-  const ctx = setup();
-  try {
-    const browser = await load(); ctx.controller = browser.initNoteBrowser();
-    browser.noteBrowserSetDocument({ id: 'note:1', status: 'active', visibility: 'standard' }); browser.noteBrowserLockPrivate();
-    assert.equal(document.querySelector('#noteBrowserToggleButton').hidden, false);
-    browser.noteBrowserSetDocument({ id: 'note:2', status: 'active', visibility: 'diary' }); browser.noteBrowserLockPrivate();
-    await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(document.querySelector('#noteBrowserToggleButton').hidden, true);
-    assert.equal(ctx.calls.activated.at(-1).visible, false);
-  } finally { cleanup(ctx); }
-});

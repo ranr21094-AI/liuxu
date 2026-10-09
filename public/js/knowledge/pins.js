@@ -1,3 +1,12 @@
+const svg = body => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+export const KNOWLEDGE_ICONS = {
+  base: svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"></path>'),
+  rename: svg('<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
+  archive: svg('<path d="M3.5 5.5h17v4h-17zM5 9.5V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.5M10 13.5h4"></path>'),
+  delete: svg('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"></path>'),
+};
+export const PIN_ICON = svg('<path d="M8 3h8l-1 7 4 4H5l4-4zM12 14v7"></path>');
+
 export function comparePinned(a, b) {
   const time = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : '';
   return time(b.pinnedAt).localeCompare(time(a.pinnedAt));

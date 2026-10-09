@@ -78,7 +78,6 @@ test('agent status reports unconfigured when no model key is present', async (t)
   const app = express();
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => false,
     agentStatusFor: async () => ({ configured: false, provider: '', model: '' }),
   });
   const server = await new Promise(resolve => {
@@ -99,7 +98,6 @@ test('agent runtime completes without tools and can pause for approval', async (
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -140,7 +138,6 @@ test('email.send is hidden without SMTP and sends only once after explicit appro
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     emailAvailable: () => configured,
     emailSend: async message => { sent.push(message); return { ok: true }; },
     modelClient: {
@@ -209,7 +206,6 @@ test('agent approval queue exposes one pending item at a time', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -276,7 +272,6 @@ test('agent attach replays only the current approval.required event', async (t) 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -321,7 +316,6 @@ test('agent task.create adapter stores recurrence', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -362,7 +356,6 @@ test('agent approved tools increment run.toolCalls', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -387,31 +380,6 @@ test('agent approved tools increment run.toolCalls', async (t) => {
   assert.equal(live.toolCalls, 1);
 });
 
-test('run snapshots diary permission at start', async (t) => {
-  const db = tempDb(t);
-  const store = createAgentStore(db);
-  const memory = createMemoryService(store);
-  let diaryOpen = true;
-  const runtime = createRuntime({
-    db,
-    store,
-    memory,
-    hasDiaryAccessFlag: () => diaryOpen,
-    modelClient: {
-      async complete() {
-        diaryOpen = false; // another tab locks the diary mid-run
-        return { text: '回答完成', toolCalls: [] };
-      },
-    },
-  });
-  const session = store.createSession('diary-snapshot');
-  const run = await runtime.start({ session, goal: '读私密内容', userMessage: '开始' });
-  await new Promise(resolve => setTimeout(resolve, 50));
-  const live = store.getRun(run.id);
-  assert.equal(live.diaryUnlocked, true, 'run keeps the permission it started with');
-  assert.equal(live.status, 'completed');
-});
-
 test('duplicate client tool submissions return the first outcome', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);
@@ -421,7 +389,6 @@ test('duplicate client tool submissions return the first outcome', async (t) => 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     chrome: {
       request(name) {
         return {
@@ -467,7 +434,6 @@ test('agent web.search rejects empty query before approval', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     webSearch: async () => {
       searched = true;
       return { ok: true, summary: 'Found 1 web source', data: {}, evidence: [] };
@@ -503,7 +469,6 @@ test('agent web.search rejects oversized query before approval', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     webSearch: async () => {
       searched = true;
       return { ok: true, summary: 'Found 1 web source', data: {}, evidence: [] };
@@ -545,7 +510,6 @@ test('agent web.search uses the injected Tavily adapter after confirmation', asy
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     webSearch: async (args) => {
       searched = String(args.query || '');
       return {
@@ -587,7 +551,6 @@ test('agent web.search duplicate in same run returns cache', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     webSearch: async (args) => {
       searchCount += 1;
       return {
@@ -634,7 +597,6 @@ test('agent web.search session cache survives new run', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     webSearch: async () => {
       searchCount += 1;
       return {
@@ -686,7 +648,6 @@ test('agent image.generate waits for approval then returns a local upload url', 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     imageGenerate: async (args) => {
       generated = String(args.prompt || '');
       return {
@@ -757,7 +718,6 @@ test('run records the model used and emits it on completion', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: '直接回答', toolCalls: [], model: 'test-model-x' };
@@ -784,7 +744,6 @@ test('session API returns a trace for each conversation round', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         answers += 1;
@@ -800,7 +759,7 @@ test('session API returns a trace for each conversation round', async (t) => {
   assert.equal(store.listRunsForSession(session.id).length, 2);
 
   const app = express();
-  registerAgentRoutes(app, { db, hasDiaryAccess: () => false });
+  registerAgentRoutes(app, { db });
   const server = await new Promise(resolve => {
     const started = app.listen(0, '127.0.0.1', () => resolve(started));
   });
@@ -825,7 +784,7 @@ test('archived sessions can be listed and deleted over HTTP, but active sessions
   store.updateSession(archived.id, { status: 'archived' });
 
   const app = express();
-  registerAgentRoutes(app, { db, hasDiaryAccess: () => false });
+  registerAgentRoutes(app, { db });
   const server = await new Promise(resolve => {
     const started = app.listen(0, '127.0.0.1', () => resolve(started));
   });
@@ -933,19 +892,6 @@ test('@ mentions parse multiple knowledge bases and dates', () => {
   ]);
 });
 
-test('@ mentions inject matching documents and skip locked diary', (t) => {
-  const db = tempDb(t);
-  db.create({ title: '发布流程', content: '先评审再发布', category: '开发', log_date: '2026-05-16' });
-  db.create({ title: '日记秘密', content: '不应出现', category: '日记', log_date: '2026-05-16' });
-  const knowledge = openKnowledge(db);
-  const locked = expandMentions('@开发 @2026-05-16', { knowledge, db, diaryUnlocked: false });
-  assert.equal(locked.documents.some(doc => doc.title === '发布流程'), true);
-  assert.match(locked.context, /先评审再发布/);
-  assert.equal(locked.documents.some(doc => /秘密/.test(doc.title)), false);
-  const open = expandMentions('@2026-05-16', { knowledge, db, diaryUnlocked: true });
-  assert.equal(open.documents.some(doc => doc.title === '日记秘密'), true);
-});
-
 test('runtime injects @ knowledge for the model without storing it in the session', async (t) => {
   const db = tempDb(t);
   db.create({ title: '发布流程', content: '先评审再发布', category: '开发', log_date: '2026-05-16' });
@@ -956,7 +902,6 @@ test('runtime injects @ knowledge for the model without storing it in the sessio
     store,
     memory: createMemoryService(store),
     knowledgeSearch: { knowledge: openKnowledge(db) },
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         seen = messages.findLast?.(item => item.role === 'user')?.content
@@ -983,7 +928,6 @@ test('runtime maps provider underscore tool names back to dotted names', async (
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1049,9 +993,8 @@ test('listSessionSummaries omits document-bound note-assist sessions', (t) => {
 
 test('agent runtime picks up the model client after a read-only session listing initializes its cache', async (t) => {
   const db = tempDb(t);
-  runtimeFor(db, { hasDiaryAccessFlag: false });
+  runtimeFor(db);
   const pack = runtimeFor(db, {
-    hasDiaryAccessFlag: false,
     modelClient: { async complete() { return { text: '动态模型已连接', toolCalls: [] }; } },
   });
   const session = pack.store.createSession('生命周期');
@@ -1084,7 +1027,6 @@ test('runtime honors saved agentMaxRounds', async (t) => {
     db,
     store,
     memory: createMemoryService(store),
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: '', toolCalls: [{ name: 'task.list', arguments: {} }] };
@@ -1113,7 +1055,6 @@ test('runtime honors high saved agentMaxRounds without an upper cap', async (t) 
     db,
     store,
     memory: createMemoryService(store),
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: 'done', toolCalls: [] };
@@ -1178,7 +1119,6 @@ test('memory refresh proposes drafts without exposing write tools or creating a 
   const app = express();
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => false,
     agentStatusFor: async () => ({ configured: true, provider: 'test', model: 'stub' }),
     modelClientFor: async () => ({
       async complete({ tools }) {
@@ -1205,7 +1145,6 @@ test('memory refresh proposes drafts without exposing write tools or creating a 
   const unconfigured = express();
   registerAgentRoutes(unconfigured, {
     db,
-    hasDiaryAccess: () => false,
     agentStatusFor: async () => ({ configured: false, provider: '', model: '' }),
   });
   const blockedServer = await new Promise(resolve => {
@@ -1218,7 +1157,7 @@ test('memory refresh proposes drafts without exposing write tools or creating a 
   const started = await fetch(`${base}/api/agent/memory/refresh`, { method: 'POST' });
   assert.equal(started.status, 202);
   const body = await started.json();
-  const pack = runtimeFor(db, { hasDiaryAccessFlag: false });
+  const pack = runtimeFor(db);
   const done = await waitForRun(pack.store, body.runId, 800);
   assert.equal(done.status, 'completed');
   assert.equal(done.kind, 'memory_refresh');
@@ -1271,7 +1210,6 @@ test('memory refresh honors memoryRefreshMaxProposals setting', async (t) => {
   const app = express();
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => false,
     agentStatusFor: async () => ({ configured: true, provider: 'test', model: 'stub' }),
     modelClientFor: async () => ({
       async complete() {
@@ -1294,7 +1232,7 @@ test('memory refresh honors memoryRefreshMaxProposals setting', async (t) => {
   const started = await fetch(`${base}/api/agent/memory/refresh`, { method: 'POST' });
   assert.equal(started.status, 202);
   const body = await started.json();
-  const pack = runtimeFor(db, { hasDiaryAccessFlag: false });
+  const pack = runtimeFor(db);
   const done = await waitForRun(pack.store, body.runId, 800);
   assert.equal(done.status, 'completed');
   const memories = await (await fetch(`${base}/api/agent/memories`)).json();
@@ -1332,7 +1270,6 @@ test('knowledge.import from content waits for approval then stores a document', 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1353,11 +1290,11 @@ test('knowledge.import from content waits for approval then stores a document', 
   const run = await runtime.start({ session, goal: '导入', userMessage: '导入笔记' });
   const live = await waitForRun(store, run.id);
   assert.equal(live.status, 'waiting_approval');
-  assert.equal(knowledge.allDocuments({ diaryUnlocked: true }).some(doc => doc.sourceType === 'file'), false);
+  assert.equal(knowledge.allDocuments().some(doc => doc.sourceType === 'file'), false);
   await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
   const done = await waitForRun(store, run.id);
   assert.equal(done.status, 'completed');
-  const imported = knowledge.allDocuments({ diaryUnlocked: true }).filter(doc => doc.sourceType === 'file');
+  const imported = knowledge.allDocuments().filter(doc => doc.sourceType === 'file');
   assert.equal(imported.length, 1);
   assert.equal(imported[0].title, '导入笔记');
   assert.match(imported[0].content, /Hello import/);
@@ -1378,7 +1315,6 @@ test('knowledge.import from an allowlisted path stores a document after approval
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1393,11 +1329,11 @@ test('knowledge.import from an allowlisted path stores a document after approval
   const run = await runtime.start({ session, goal: '导入文件', userMessage: '导入文件' });
   const live = await waitForRun(store, run.id);
   assert.equal(live.status, 'waiting_approval');
-  assert.equal(knowledge.allDocuments({ diaryUnlocked: true }).some(doc => doc.sourceType === 'file'), false);
+  assert.equal(knowledge.allDocuments().some(doc => doc.sourceType === 'file'), false);
   await runtime.resolveApproval(run.id, live.pendingApprovals[0].id, { approved: true });
   const done = await waitForRun(store, run.id);
   assert.equal(done.status, 'completed');
-  const imported = knowledge.allDocuments({ diaryUnlocked: true }).filter(doc => doc.sourceType === 'file');
+  const imported = knowledge.allDocuments().filter(doc => doc.sourceType === 'file');
   assert.equal(imported.length, 1);
   assert.equal(imported[0].fileMeta.filename, 'from-disk.md');
   assert.match(imported[0].content, /disk import body/);
@@ -1413,7 +1349,6 @@ test('update_working_checkpoint merges model progress and injects checkpoint int
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ checkpoint }) {
         seenCheckpoints.push(checkpoint);
@@ -1456,7 +1391,6 @@ test('ask_user pauses the run until the user replies', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1491,7 +1425,6 @@ test('ask_user in the same turn still queues confirm tools', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1530,7 +1463,6 @@ test('concurrent approval of the same item only runs the tool once', async (t) =
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1563,7 +1495,6 @@ test('repeated tool failures pause for user input instead of a dead approval', a
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: '', toolCalls: [{ name: 'knowledge.read', arguments: { id: 'note:missing' } }] };
@@ -1586,7 +1517,6 @@ test('action envelope ask pauses the run for user input', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: '{"action":"ask","question":"需要哪个日期？"}', toolCalls: [] };
@@ -1609,7 +1539,6 @@ test('countdown.create stores a birthday countdown after approval', async (t) =>
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1653,7 +1582,6 @@ test('task.create with empty title does not enter approval queue', async (t) => 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1682,7 +1610,6 @@ test('task.create is rejected for countdown goals before approval', async (t) =>
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1724,7 +1651,6 @@ test('duplicate countdown.create in the same run does not create a second entry'
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1760,7 +1686,6 @@ test('premature countdown success checkpoint is rejected', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -1792,7 +1717,6 @@ test('cancel clears pending approvals', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: '测试' } }] };
@@ -1830,7 +1754,6 @@ test('knowledge.search finds matching documents via MiniSearch', async (t) => {
   const adapters = createToolAdapters({
     db,
     knowledgeSearch: serviceFor(db),
-    hasDiaryAccessFlag: false,
   });
   const result = await adapters.execute('knowledge.search', { query: 'xyzzy-agent-search-test' });
   assert.equal(result.ok, true);
@@ -1852,7 +1775,6 @@ test('knowledge.tree lists knowledge base structure', async (t) => {
   const adapters = createToolAdapters({
     db,
     knowledgeSearch: serviceFor(db),
-    hasDiaryAccessFlag: false,
   });
   const result = await adapters.execute('knowledge.tree', {});
   assert.equal(result.ok, true);
@@ -1872,7 +1794,6 @@ test('knowledge.list paginates documents in a folder', async (t) => {
   const adapters = createToolAdapters({
     db,
     knowledgeSearch: serviceFor(db),
-    hasDiaryAccessFlag: false,
     memory,
   });
   const result = await adapters.execute('knowledge.list', {
@@ -1897,7 +1818,7 @@ test('memory.search finds matching L2 items with snippets only', async (t) => {
     evidence: [{ type: 'test' }],
   }).proposal.id);
   const { createToolAdapters } = require('../lib/agent/adapters');
-  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const adapters = createToolAdapters({ db, memory });
   const result = await adapters.execute('memory.search', { query: '简洁中文', layer: 'L2' });
   assert.equal(result.ok, true);
   const match = result.data.items.find(item => item.title === '写作偏好');
@@ -1920,7 +1841,7 @@ test('memory.list returns titles without content', async (t) => {
     evidence: [{ type: 'test' }],
   }).proposal.id);
   const { createToolAdapters } = require('../lib/agent/adapters');
-  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const adapters = createToolAdapters({ db, memory });
   const result = await adapters.execute('memory.list', { layer: 'L2' });
   assert.equal(result.ok, true);
   const item = result.data.items.find(entry => entry.id === approved.memory.id);
@@ -1942,7 +1863,7 @@ test('memory.read returns full content after search', async (t) => {
     evidence: [{ type: 'test' }],
   }).proposal.id);
   const { createToolAdapters, buildMemorySearchSnippet, MEMORY_SEARCH_SNIPPET_MAX } = require('../lib/agent/adapters');
-  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const adapters = createToolAdapters({ db, memory });
   const search = await adapters.execute('memory.search', { query: '命中关键词' });
   assert.equal(search.ok, true);
   const hit = search.data.items.find(item => item.id === approved.memory.id);
@@ -1966,7 +1887,6 @@ test('agent.delegate completes a read-only sub-task', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('列出所有待办'));
@@ -2011,7 +1931,6 @@ test('agent.delegate bubbles write approval to parent run', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('创建待办'));
@@ -2056,7 +1975,6 @@ test('agent.delegate can request email.send and bubbles its approval to the pare
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     emailAvailable: () => true,
     emailSend: async message => { sent.push(message); return { ok: true }; },
     modelClient: {
@@ -2104,7 +2022,6 @@ test('nested agent.delegate is rejected inside child run', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('嵌套委派'));
@@ -2147,7 +2064,6 @@ test('cancel cascades to active delegate child run', async (t) => {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('慢子任务'));
@@ -2173,29 +2089,6 @@ test('cancel cascades to active delegate child run', async (t) => {
   const childAfter = store.getRun(live.activeChildRunId);
   assert.equal(childAfter.status, 'cancelled');
   assert.equal((childBefore.pendingApprovals || []).length >= 0, true);
-});
-
-test('agent tools exclude locked diary from search, tree, and list', async (t) => {
-  const db = tempDb(t);
-  const knowledge = openKnowledge(db);
-  db.create({ title: '日记秘密', content: 'agent-diary-marker-xyzzy', category: '日记', log_date: '2026-05-16' });
-  knowledge.createNote({ title: '普通笔记', content: 'agent-diary-marker-visible', knowledgeBase: '开发' });
-  const { createToolAdapters } = require('../lib/agent/adapters');
-  const { serviceFor } = require('../lib/knowledge/routes');
-  const adapters = createToolAdapters({
-    db,
-    knowledgeSearch: serviceFor(db),
-    hasDiaryAccessFlag: false,
-  });
-  const search = await adapters.execute('knowledge.search', { query: 'agent-diary-marker' });
-  assert.equal(search.ok, true);
-  assert.equal(search.data.documents.some(item => item.title === '日记秘密'), false);
-  assert.equal(search.data.documents.some(item => item.title === '普通笔记'), true);
-  const tree = await adapters.execute('knowledge.tree', {});
-  assert.equal(tree.ok, true);
-  const list = await adapters.execute('knowledge.list', { knowledgeBase: '开发' });
-  assert.equal(list.ok, true);
-  assert.equal(list.data.documents.some(item => item.title === '日记秘密'), false);
 });
 
 test('web.fetch uses injected fetch handler', async (t) => {
@@ -2230,7 +2123,6 @@ test('agent.delegate child tool budget is independent of parent usage', async (t
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('耗尽预算'));
@@ -2283,7 +2175,6 @@ test('session API includes delegate run traces nested under parent run', async (
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('列出待办'));
@@ -2314,7 +2205,7 @@ test('session API includes delegate run traces nested under parent run', async (
   assert.equal(child.delegateTitle, '待办子任务');
 
   const app = express();
-  registerAgentRoutes(app, { db, hasDiaryAccess: () => false });
+  registerAgentRoutes(app, { db });
   const server = await new Promise(resolve => {
     const started = app.listen(0, '127.0.0.1', () => resolve(started));
   });
@@ -2368,7 +2259,6 @@ test('agentDelegateMaxRounds setting caps child delegate run rounds', async (t) 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('两轮子任务'));
@@ -2408,7 +2298,6 @@ test('rejecting delegated approval restores parent run to running while child co
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('拒绝后续'));
@@ -2460,7 +2349,6 @@ test('delegated memory.propose bubbles proposal event to parent run', async (t) 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete({ messages }) {
         const inChild = (messages || []).some(item => typeof item.content === 'string' && item.content.includes('记忆提案'));
@@ -2520,7 +2408,6 @@ test('runtime.start rejects a second active run for the same session', async (t)
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         return { text: '', toolCalls: [{ name: 'task.create', arguments: { title: 'hang' } }] };
@@ -2550,7 +2437,6 @@ test('agent messages API allows parallel runs across sessions but not within one
   app.use(express.json());
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => false,
     agentStatusFor: async () => ({ configured: true, provider: 'test', model: 'stub' }),
     modelClientFor: async () => ({
       async complete() {
@@ -2652,7 +2538,6 @@ test('checkpoint updates keep the full persisted session history', async (t) => 
     db,
     store,
     memory,
-    hasDiaryAccessFlag: false,
     modelClient: {
       async complete() {
         round += 1;
@@ -2681,7 +2566,7 @@ test('checkpoint updates keep the full persisted session history', async (t) => 
 test('agent and note-assist runs keep their own model clients', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '绑定', content: '正文' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '绑定', content: '正文' });
   let releaseAgent;
   const agentGate = new Promise(resolve => { releaseAgent = resolve; });
   const agentClient = {
@@ -2697,7 +2582,7 @@ test('agent and note-assist runs keep their own model clients', async (t) => {
       return { text: 'note-reply', toolCalls: [] };
     },
   };
-  const pack = runtimeFor(db, { hasDiaryAccessFlag: true, modelClient: agentClient });
+  const pack = runtimeFor(db, { modelClient: agentClient });
   const session = pack.store.createSession('agent-run');
   const agentRun = await pack.runtime.start({
     session,
@@ -2706,7 +2591,7 @@ test('agent and note-assist runs keep their own model clients', async (t) => {
     modelClient: agentClient,
   });
   const noteSession = pack.store.createSession('note-run', { documentId: document.id });
-  const notePack = runtimeFor(db, { hasDiaryAccessFlag: true, modelClient: noteClient });
+  const notePack = runtimeFor(db, { modelClient: noteClient });
   const noteRun = await notePack.runtime.startNoteAssist({
     session: noteSession,
     documentId: document.id,

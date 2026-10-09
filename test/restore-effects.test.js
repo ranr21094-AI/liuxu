@@ -15,9 +15,6 @@ function captureRestoreRoute(register, db) {
   };
   register(app, {
     db,
-    hasDiaryAccess: () => true,
-    rejectLockedDiary: () => { throw new Error('unexpected diary rejection'); },
-    restoreRequiresDiaryAccess: () => false,
   });
   return routes;
 }

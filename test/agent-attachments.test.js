@@ -7,7 +7,6 @@ const path = require('path');
 const {
   classifyAttachment,
   inspectUploadedAttachment,
-  readAttachmentForProvider,
 } = require('../lib/agent/attachments');
 const { buildAiProviderMessages } = require('../lib/agent/provider-messages');
 const { convertOpenAiMessagesToResponsesInput } = require('../lib/agent/custom-api');
@@ -74,7 +73,6 @@ test('provider messages include local text attachments for any chat protocol', a
     }, {
       dataDir: fixture.dir,
       isSafeUploadFilename: name => name === filename,
-      allowPrivate: true,
     });
     assert.ok(Array.isArray(output[0].content));
     assert.match(output[0].content.map(item => item.text || '').join('\n'), /Local note/);
@@ -100,7 +98,6 @@ test('Responses native file mode emits input_file without exposing a local path'
     }, {
       dataDir: fixture.dir,
       isSafeUploadFilename: name => name === filename,
-      allowPrivate: true,
     });
     const converted = convertOpenAiMessagesToResponsesInput(output);
     const parts = converted.input[0].content;
@@ -108,23 +105,6 @@ test('Responses native file mode emits input_file without exposing a local path'
     assert.equal(parts[1].type, 'input_file');
     assert.match(parts[1].file_data, /^data:application\/pdf;base64,/);
     assert.doesNotMatch(JSON.stringify(parts), /123-report\.pdf.*uploads/);
-  } finally {
-    fixture.cleanup();
-  }
-});
-
-test('readAttachmentForProvider blocks private files when diary access is absent', async () => {
-  const fixture = fixtureDirectory();
-  try {
-    const filename = '123-secret.md';
-    fs.writeFileSync(path.join(fixture.uploads, filename), 'private');
-    const item = await readAttachmentForProvider({ url: `/uploads/${filename}`, filename, kind: 'text' }, {
-      dataDir: fixture.dir,
-      isSafeUploadFilename: name => name === filename,
-      isPrivateUpload: name => name === filename,
-      allowPrivate: false,
-    });
-    assert.equal(item, null);
   } finally {
     fixture.cleanup();
   }

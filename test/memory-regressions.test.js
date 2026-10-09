@@ -127,7 +127,7 @@ test('refresh keeps newest corrections under message, session and total limits',
 test('memory approval HTTP route returns 409 for stale replacement', async t => {
   const { db } = setup(t);
   const app = express();
-  registerAgentRoutes(app, { db, hasDiaryAccess: () => false });
+  registerAgentRoutes(app, { db });
   const { memory } = runtimeFor(db);
   const old = memory.approve(memory.propose(args).proposal.id).memory;
   const draft = memory.propose({ ...args, existingId: old.id }).proposal;

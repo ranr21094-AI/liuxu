@@ -188,9 +188,6 @@ const businessClockFormatter = new Intl.DateTimeFormat('en-GB', {
   hourCycle: 'h23',
 });
 
-// Diary is always hidden; unlock by typing the magic phrase in the search box.
-// The phrase is fixed in code and kept in sync with public/js/state.js.
-const DIARY_MAGIC_PHRASE = '如意如意';
 database.checkDataIntegrity();
 database.resetCache();
 const databaseContext = new AsyncLocalStorage();
@@ -225,24 +222,8 @@ const db = new Proxy(database, {
   },
 });
 
-const diaryTokens = new Map(); // token -> { userId, createdAt }
 const moonshotFormulaToolCache = new Map(); // key fingerprint -> { expiresAt, tools }
 const openrouterModelCatalogCache = new Map(); // key fingerprint -> normalized user model catalog
-const DIARY_TOKEN_TTL = 24 * 60 * 60 * 1000; // 24h
-const DIARY_COOKIE_NAME = 'diary_session';
-
-// Clean expired diary tokens every hour
-const diaryTokenCleanup = setInterval(() => {
-  const now = Date.now();
-  for (const [t, entry] of diaryTokens) {
-    if (now - entry.createdAt > DIARY_TOKEN_TTL) diaryTokens.delete(t);
-  }
-}, 3600000);
-if (diaryTokenCleanup.unref) diaryTokenCleanup.unref();
-
-function generateToken() {
-  return crypto.randomBytes(24).toString('hex');
-}
 
 function isValidDate(str) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || '');
@@ -252,48 +233,6 @@ function isValidDate(str) {
   return date.getFullYear() === Number(y) &&
     date.getMonth() === Number(m) - 1 &&
     date.getDate() === Number(d);
-}
-
-function getCookie(req, name) {
-  const cookies = String(req.headers.cookie || '').split(';');
-  for (const cookie of cookies) {
-    const separator = cookie.indexOf('=');
-    if (separator === -1) continue;
-    const key = cookie.substring(0, separator).trim();
-    if (key !== name) continue;
-    try {
-      return decodeURIComponent(cookie.substring(separator + 1).trim());
-    } catch {
-      return '';
-    }
-  }
-  return '';
-}
-
-function getDiaryToken(req) {
-  return getCookie(req, DIARY_COOKIE_NAME);
-}
-
-function diaryCookieOptions(req, token, maxAge) {
-  const parts = [
-    `${DIARY_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Strict',
-    `Max-Age=${maxAge}`,
-  ];
-  // Only trust req.secure: Express gates forwarded headers behind app.set('trust proxy'),
-  // so a client-injected X-Forwarded-Proto on a plain HTTP connection cannot force Secure.
-  if (req.secure) parts.push('Secure');
-  return parts.join('; ');
-}
-
-function setDiaryCookie(req, res, token) {
-  res.setHeader('Set-Cookie', diaryCookieOptions(req, token, Math.floor(DIARY_TOKEN_TTL / 1000)));
-}
-
-function clearDiaryCookie(req, res) {
-  res.setHeader('Set-Cookie', diaryCookieOptions(req, '', 0));
 }
 
 function parsePositiveId(value) {
@@ -484,41 +423,6 @@ async function readJsonWithLimit(response, maxBytes = 8 * 1024 * 1024, errorMess
   const text = await readResponseTextWithLimit(response, maxBytes, errorMessage);
   if (!text) return {};
   try { return JSON.parse(text); } catch { return {}; }
-}
-
-function isValidDiaryToken(req, token) {
-  if (!token) return false;
-  const entry = diaryTokens.get(token);
-  const remoteDeviceId = req.remoteAuth?.device?.id || '';
-  if (!entry || entry.userId !== req.user.id || entry.remoteDeviceId !== remoteDeviceId || Date.now() - entry.createdAt > DIARY_TOKEN_TTL) {
-    diaryTokens.delete(token);
-    return false;
-  }
-  return true;
-}
-
-function hasDiaryAccess(req) {
-  return isValidDiaryToken(req, getDiaryToken(req));
-}
-
-function isDiaryCategory(category) {
-  return db.isDiaryCategory(category);
-}
-
-function rejectLockedDiary(res) {
-  return res.status(403).json({ error: 'Diary is locked' });
-}
-
-function logRequiresDiaryAccess(log) {
-  return log && isDiaryCategory(log.category);
-}
-
-function restoreRequiresDiaryAccess(req) {
-  return true;
-}
-
-function isDiaryRoot(category) {
-  return category === '\u65e5\u8bb0';
 }
 
 function cleanCategorySegment(value) {
@@ -945,42 +849,6 @@ function uploadedImageMatchesExtension(file) {
 function agentUploadedImageMatchesExtension(file) {
   return matchesUploadedImage(file, { allowExtended: true });
 }
-
-// Diary unlock — the magic phrase replaces the old per-account password. The
-// limit is generous so unlock/lock toggling via the search box never trips it.
-app.post('/api/auth/diary', rateLimiter(20, 15 * 60 * 1000), (req, res) => {
-  const { password } = req.body;
-  if (!password) return res.status(400).json({ error: '请输入密码' });
-  if (typeof password === 'string' && password.trim() === DIARY_MAGIC_PHRASE) {
-    const token = generateToken();
-    diaryTokens.set(token, {
-      userId: req.user.id,
-      remoteDeviceId: req.remoteAuth?.device?.id || '',
-      createdAt: Date.now(),
-    });
-    setDiaryCookie(req, res, token);
-    return res.json({ unlocked: true });
-  }
-  res.status(403).json({ unlocked: false, error: '密码错误' });
-});
-
-// Diary lock
-app.post('/api/auth/diary/lock', (req, res) => {
-  const token = getDiaryToken(req);
-  if (token) diaryTokens.delete(token);
-  clearDiaryCookie(req, res);
-  res.json({ locked: true });
-});
-
-// Diary status — diary protection is always enabled now.
-app.get('/api/auth/diary/status', (req, res) => {
-  const token = getDiaryToken(req);
-  res.json({ enabled: true, locked: !token || !isValidDiaryToken(req, token) });
-});
-
-
-
-
 
 function normalizeOpenRouterReasoningDetailsInput(value) {
   if (value === undefined) return [];
@@ -1486,7 +1354,6 @@ function publicAiSettings(settings, user) {
     stream: _stream,
     userProfile: _userProfile,
     logContextEnabled: _logContextEnabled,
-    diaryContextEnabled: _diaryContextEnabled,
     logAccessPolicy: _logAccessPolicy,
     customProviders: rawCustomProviders,
     imageProviders: rawImageProviders,
@@ -1652,10 +1519,7 @@ async function persistSeedreamItem(item) {
 async function requestSeedreamGeneration(options, signal) {
   const preferPublicUrl = process.env.SEEDREAM_PREFER_PUBLIC_URL === '1';
   const publicOrigin = options.req ? `${options.req.protocol}://${options.req.get('host')}` : '';
-  let referenceImages = Array.isArray(options.images) ? options.images : [];
-  if (typeof db.isPrivateUpload === 'function' && !(options.req && hasDiaryAccess(options.req))) {
-    referenceImages = referenceImages.filter(url => !db.isPrivateUpload(String(url || '').replace(/^\/uploads\//, '')));
-  }
+  const referenceImages = Array.isArray(options.images) ? options.images : [];
   const resolvedImages = await resolveReferenceImages(referenceImages, {
     dataDir: options.dataDir,
     isSafeUploadFilename: db.isSafeUploadFilename,
@@ -2505,10 +2369,9 @@ app.post('/api/ai/custom-providers/models', async (req, res) => {
 // List logs with filters
 app.get('/api/logs', (req, res) => {
   try {
-    const diaryUnlocked = hasDiaryAccess(req);
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
     const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
-    const result = db.getAll({ ...req.query, page, limit }, diaryUnlocked);
+    const result = db.getAll({ ...req.query, page, limit });
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2523,10 +2386,6 @@ app.put('/api/logs/reorder', (req, res) => {
     if (!Array.isArray(orderedIds) || ids.some(id => !id) || new Set(ids).size !== ids.length) {
       return res.status(400).json({ error: 'orderedIds must contain unique positive integers' });
     }
-    const touchesDiary = ids
-      .map(id => db.getById(id))
-      .some(logRequiresDiaryAccess);
-    if (touchesDiary && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     db.reorderLogs(ids);
     res.json({ success: true });
   } catch (err) {
@@ -2541,7 +2400,6 @@ app.get('/api/logs/:id', (req, res) => {
     if (!id) return res.status(400).json({ error: 'Invalid log id' });
     const log = db.getById(id);
     if (!log) return res.status(404).json({ error: 'Log not found' });
-    if (logRequiresDiaryAccess(log) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     res.json(log);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2553,7 +2411,6 @@ app.post('/api/logs', (req, res) => {
   try {
     const validated = validateLogInput(req.body);
     if (validated.error) return res.status(400).json({ error: validated.error });
-    if (isDiaryCategory(validated.payload.category) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const entry = db.create(validated.payload);
     res.status(201).json(entry);
   } catch (err) {
@@ -2571,7 +2428,6 @@ app.put('/api/logs/:id', (req, res) => {
     if (!Object.keys(validated.payload).length) return res.status(400).json({ error: 'No log fields to update' });
     const existing = db.getById(id);
     if (!existing) return res.status(404).json({ error: 'Log not found' });
-    if ((logRequiresDiaryAccess(existing) || isDiaryCategory(validated.payload.category)) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const entry = db.update(id, validated.payload);
     res.json(entry);
   } catch (err) {
@@ -2586,7 +2442,6 @@ app.delete('/api/logs/:id', (req, res) => {
     if (!id) return res.status(400).json({ error: 'Invalid log id' });
     const log = db.getById(id);
     if (!log) return res.status(404).json({ error: 'Log not found' });
-    if (logRequiresDiaryAccess(log) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const ok = db.remove(id);
     if (!ok) return res.status(404).json({ error: 'Log not found' });
     res.json({ success: true });
@@ -2598,8 +2453,7 @@ app.delete('/api/logs/:id', (req, res) => {
 // Statistics
 app.get('/api/stats', (req, res) => {
   try {
-    const diaryUnlocked = hasDiaryAccess(req);
-    const stats = db.getStats(diaryUnlocked);
+    const stats = db.getStats();
     res.json(stats);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2810,12 +2664,6 @@ app.post('/api/upload', (req, res) => {
       fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: '文件内容与图片格式不匹配' });
     }
-    const privateUpload = req.body.private === 'true' || req.body.private === '1';
-    if (privateUpload && !hasDiaryAccess(req)) {
-      fs.unlinkSync(req.file.path);
-      return rejectLockedDiary(res);
-    }
-    if (privateUpload) db.markPrivateUpload(req.file.filename);
     res.json({ url: `/uploads/${req.file.filename}`, filename: req.file.filename });
   });
 });
@@ -2829,13 +2677,12 @@ function resolveUploadPath(filename) {
   return resolved.startsWith(root + path.sep) && resolved !== root ? resolved : null;
 }
 
-// Uploaded image access; diary-linked images require an unlocked diary session.
+// Uploaded image access
 app.get('/uploads/:filename', (req, res) => {
   try {
     const filePath = resolveUploadPath(req.params.filename);
     if (!filePath) return res.status(403).json({ error: 'Invalid filename' });
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: '文件不存在' });
-    if (db.isPrivateUpload(req.params.filename) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     res.sendFile(filePath);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2848,10 +2695,8 @@ app.delete('/api/uploads/:filename', (req, res) => {
     const filename = req.params.filename;
     const filePath = resolveUploadPath(filename);
     if (!filePath) return res.status(403).json({ error: 'Invalid filename' });
-    if (db.isPrivateUpload(filename) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
-      db.unmarkPrivateUpload(filename);
       res.json({ success: true });
     } else {
       res.status(404).json({ error: '文件不存在' });
@@ -2864,8 +2709,7 @@ app.delete('/api/uploads/:filename', (req, res) => {
 // Category routes
 app.get('/api/categories', (req, res) => {
   try {
-    const diaryUnlocked = hasDiaryAccess(req);
-    res.json(db.getAllCategories(diaryUnlocked, diaryUnlocked));
+    res.json(db.getAllCategories());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2886,9 +2730,6 @@ app.post('/api/categories', (req, res) => {
         return res.status(400).json({ error: 'Invalid category parent' });
       }
       parentPath = segments.join('/');
-    }
-    if ((isDiaryCategory(cleanName) || isDiaryCategory(parentPath)) && !hasDiaryAccess(req)) {
-      return rejectLockedDiary(res);
     }
     const result = db.addCategory(cleanName, parentPath || null);
     if (!result) return res.status(400).json({ error: 'Invalid category name' });
@@ -2923,7 +2764,6 @@ app.put('/api/categories/:parent/subcategories/reorder', (req, res) => {
   try {
     const parent = req.params.parent;
     const { orderedSubs } = req.body;
-    if (isDiaryCategory(parent) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     if (!Array.isArray(orderedSubs)) {
       return res.status(400).json({ error: 'orderedSubs array required' });
     }
@@ -2946,10 +2786,7 @@ app.put('/api/categories/:oldName/move', (req, res) => {
     }
     const oldName = sourceSegments.join('/');
     const parent = parentSegments.join('/');
-    if ((isDiaryCategory(oldName) || isDiaryCategory(parent)) && !hasDiaryAccess(req)) {
-      return rejectLockedDiary(res);
-    }
-    let originalFolder = { sub: db.getAllCategories(true, true) };
+    let originalFolder = { sub: db.getAllCategories() };
     for (const segment of sourceSegments) originalFolder = originalFolder?.sub?.find(node => node.name === segment);
     const originalFolderPin = originalFolder?.pinnedAt;
     const result = db.moveCategory(oldName, parent);
@@ -2980,7 +2817,6 @@ app.put('/api/categories/:oldName/move', (req, res) => {
 app.patch('/api/categories/:name/calendar-day-visibility', (req, res) => {
   try {
     const name = req.params.name;
-    if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     if (typeof req.body.visible !== 'boolean') {
       return res.status(400).json({ error: 'visible boolean required' });
     }
@@ -2997,12 +2833,6 @@ app.put('/api/categories/:oldName', (req, res) => {
     const oldName = req.params.oldName;
     const newName = cleanCategorySegment(req.body.name);
     if (!newName) return res.status(400).json({ error: 'Invalid category name' });
-    if (isDiaryRoot(oldName) || isDiaryRoot(newName)) {
-      return res.status(409).json({ error: 'Diary root category is protected' });
-    }
-    if ((isDiaryCategory(oldName) || isDiaryCategory(newName)) && !hasDiaryAccess(req)) {
-      return rejectLockedDiary(res);
-    }
     const result = db.renameCategory(oldName, newName);
     if (result.error) return res.status(400).json(result);
     const categorySeparator = oldName.lastIndexOf('/');
@@ -3022,8 +2852,6 @@ app.put('/api/categories/:oldName', (req, res) => {
 app.delete('/api/categories/:name', (req, res) => {
   try {
     const name = req.params.name;
-    if (isDiaryRoot(name)) return res.status(409).json({ error: 'Diary root category is protected' });
-    if (isDiaryCategory(name) && !hasDiaryAccess(req)) return rejectLockedDiary(res);
     const ok = db.deleteCategory(name);
     if (!ok) return res.status(404).json({ error: 'Category not found' });
     const knowledge = knowledgeServiceFor(db).knowledge;
@@ -3483,8 +3311,6 @@ function createAgentModelClient(req, { systemPreset = 'agent', systemAddition = 
       ], options, {
         dataDir: userDb.dataDir,
         isSafeUploadFilename: userDb.isSafeUploadFilename.bind(userDb),
-        isPrivateUpload: userDb.isPrivateUpload.bind(userDb),
-        allowPrivate: hasDiaryAccess(req),
       });
       const providerTools = toProviderTools(tools || []);
       const reply = await fetchAiProviderReply({
@@ -3653,13 +3479,6 @@ function createAgentWestock(req) {
 
 async function executeUnifiedImage(settings, args, req, signal) {
   const safeArgs = { ...args };
-  const rawReferences = safeArgs.images ?? safeArgs.image;
-  if (rawReferences && typeof db.isPrivateUpload === 'function' && !(req && hasDiaryAccess(req))) {
-    const filtered = (Array.isArray(rawReferences) ? rawReferences : [rawReferences])
-      .filter(url => !db.isPrivateUpload(String(url || '').replace(/^\/uploads\//, '')));
-    if (safeArgs.images !== undefined) safeArgs.images = filtered;
-    else safeArgs.image = Array.isArray(rawReferences) ? filtered : (filtered[0] || '');
-  }
   const request = normalizeUnifiedImageRequest(settings, safeArgs, serverImageEnvLookup(req?.user));
   const endpointCheck = await validateProviderBaseUrl(request.provider.baseUrl);
   if (endpointCheck.error) throw new Error(endpointCheck.error);
@@ -3755,9 +3574,6 @@ function createAgentImageGenerate(req) {
 const { mountNewApis } = require('./lib/http/mount');
 mountNewApis(app, {
   db,
-  hasDiaryAccess,
-  rejectLockedDiary,
-  restoreRequiresDiaryAccess,
   modelClientFor: createAgentModelClient,
   noteAssistModelClientFor: (req) => createAgentModelClient(req, { systemPreset: 'note_assist' }),
   agentStatusFor: createAgentStatus,
@@ -3828,8 +3644,6 @@ module.exports = {
   app,
   startServer,
   startRemoteServer,
-  hasDiaryAccess,
-  isDiaryCategory,
   createTodoReminderService,
   buildTodoReminderMail,
   createTodoReminderEmailMessage,

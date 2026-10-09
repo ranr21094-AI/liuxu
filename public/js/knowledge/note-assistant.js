@@ -843,9 +843,6 @@ async function send() {
     state.newSessionRequested = false;
     const data = await response.json().catch(() => ({}));
     if (serial !== contextSerial) return;
-    if (response.status === 403) {
-      throw new Error('日记已锁定，无法使用留序 LiuXu。');
-    }
     if (!response.ok) throw new Error(data.error || '发送失败');
     clearInteraction();
     state.sessionId = data.sessionId || state.sessionId;
@@ -1153,6 +1150,3 @@ export function noteAssistantClear() {
 }
 
 export function noteAssistantSetMode(mode) { layout?.setMode(mode); }
-export function noteAssistantLockPrivate() {
-  if (state?.activeDocument?.visibility === 'diary' || state?.activeDocument?.knowledgeBase === '日记') noteAssistantClear();
-}

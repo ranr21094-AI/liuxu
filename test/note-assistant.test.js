@@ -34,7 +34,6 @@ function makeRuntime(db, complete, extras = {}) {
     db,
     store,
     memory,
-    hasDiaryAccessFlag: true,
     modelClient: { async complete(request) { return complete(request); } },
     ...extras,
   });
@@ -44,7 +43,7 @@ function makeRuntime(db, complete, extras = {}) {
 test('remote note runs persist their capability boundary and omit browser tools', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '远程笔记', content: '内容' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '远程笔记', content: '内容' });
   const store = createAgentStore(db);
   const session = store.createSession('远程笔记', { documentId: document.id });
   let tools = [];
@@ -77,7 +76,7 @@ test('note.propose_edit validates matches and emits a proposal without touching 
   const { document } = knowledge.createNote({
     title: '助手笔记',
     content: '第一段。\n\n第二段包含关键词苹果。\n\n第二段包含关键词苹果。复述。\n\n第三段。',
-  }, { diaryUnlocked: true });
+  });
   const { runtime } = makeRuntime(db, () => ({ text: '', toolCalls: [] }));
   const session = knowledge.createNote ? undefined : undefined;
   const store = createAgentStore(db);
@@ -124,14 +123,14 @@ test('note.propose_edit validates matches and emits a proposal without touching 
   assert.equal(toolResults[4].ok, true, 'append proposal succeeds');
 
   // 服务端绝不直接写文档
-  assert.ok(knowledge.getDocument(document.id, { diaryUnlocked: true }).content.includes('第二段包含关键词苹果。复述。'), 'document content is untouched');
+  assert.ok(knowledge.getDocument(document.id).content.includes('第二段包含关键词苹果。复述。'), 'document content is untouched');
   assert.equal(runtimeWithScript.store.findLatestSessionForDocument(document.id).id, noteSession.id);
 });
 
 test('note_assist runs expose the full registered tool set plus bound note tools', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '工具集', content: '正文' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '工具集', content: '正文' });
   let seenTools = [];
   const { runtime, store } = makeRuntime(db, ({ tools }) => {
     seenTools = (tools || []).map(tool => tool.name);
@@ -147,7 +146,7 @@ test('note_assist runs expose the full registered tool set plus bound note tools
 test('desktop note browser tools are bound to note-assist runs and relayed through the client', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '浏览器助手', content: '正文' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '浏览器助手', content: '正文' });
   let noteRound = 0;
   let mainTools = [];
   const noteBrowser = {
@@ -185,7 +184,7 @@ test('desktop note browser tools are bound to note-assist runs and relayed throu
 test('note browser mutations retain approved tab and page version before client execution', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '浏览器审批', content: '正文' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '浏览器审批', content: '正文' });
   let round = 0;
   const { runtime, store } = makeRuntime(db, () => {
     round += 1;
@@ -208,12 +207,11 @@ test('note browser mutations retain approved tab and page version before client 
   assert.equal(store.getRun(run.id).status, 'completed');
 });
 
-test('note browser screenshots are stored as private visual attachments for diary runs', (t) => {
+test('note browser screenshots are stored as visual attachments', (t) => {
   const db = tempDb(t);
   const result = persistNoteBrowserScreenshot(
     db,
     { call: { name: 'note_browser.screenshot' } },
-    { noteDocumentVisibility: 'diary' },
     { ok: true, data: { image: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'), mimeType: 'image/jpeg', title: '网页', url: 'https://example.com/' } },
   );
   assert.match(result.data.imageUrl, /^\/uploads\/note-browser-/);
@@ -221,26 +219,18 @@ test('note browser screenshots are stored as private visual attachments for diar
   assert.equal(result.data.pageUrl, 'https://example.com/');
   const filename = result.data.imageUrl.split('/').pop();
   assert.equal(fs.existsSync(path.join(db.dataDir, 'uploads', filename)), true);
-  assert.equal(db.isPrivateUpload(filename), true);
 });
 
-test('note-assist routes serve sessions and gate locked documents', async (t) => {
+test('note-assist routes serve sessions and reject unknown documents', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '路由笔记', content: '路由正文' }, { diaryUnlocked: true });
-  const diaryNote = knowledge.createNote({
-    title: '日记',
-    content: '私密',
-    knowledgeBase: '日记',
-    visibility: 'diary',
-  }, { diaryUnlocked: true }).document;
+  const { document } = knowledge.createNote({ title: '路由笔记', content: '路由正文' });
 
   const app = express();
   app.use(express.json());
   let round = 0;
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => true,
     noteAssistModelClientFor: async () => ({
       async complete() {
         round += 1;
@@ -280,14 +270,7 @@ test('note-assist routes serve sessions and gate locked documents', async (t) =>
   assert.equal(sessionData.session.messages.filter(message => message.role === 'user').length, 1);
   assert.equal(sessionData.activeRun, null, 'terminal run is not reported as active');
 
-  // 锁定日记 → 403；未知文档 → 404
-  const locked = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: 'hi', __diaryUnlockedOverride: false }),
-  });
-  // hasDiaryAccess 在此测试中恒为 true，因此日记可访问；用未知文档验证 404
-  assert.notEqual(locked.status, 500);
+  // 未知文档 → 404
   const unknown = await fetch(`${base}/api/agent/note-assist/note:99999/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -301,13 +284,12 @@ test('note-assist routes serve sessions and gate locked documents', async (t) =>
 test('note-assist sessions list, explicit fetch, and hard delete', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '多会话', content: '正文' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '多会话', content: '正文' });
 
   const app = express();
   app.use(express.json());
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => true,
     noteAssistModelClientFor: async () => ({ async complete() { return { text: '好', toolCalls: [] }; } }),
   });
   const server = await new Promise(resolve => {
@@ -378,7 +360,7 @@ test('note-assist sessions list, explicit fetch, and hard delete', async (t) => 
 test('note-assist sessions stay out of Agent history and memory refresh', async (t) => {
   const db = tempDb(t);
   const knowledge = createKnowledgeService(db);
-  const { document } = knowledge.createNote({ title: '隔离笔记', content: '正文' }, { diaryUnlocked: true });
+  const { document } = knowledge.createNote({ title: '隔离笔记', content: '正文' });
   const store = createAgentStore(db);
   const agentSession = store.createSession('Agent 任务');
   store.saveSession({ ...agentSession, messages: [{ role: 'user', content: 'Agent 问题' }] });
@@ -387,7 +369,6 @@ test('note-assist sessions stay out of Agent history and memory refresh', async 
   app.use(express.json());
   registerAgentRoutes(app, {
     db,
-    hasDiaryAccess: () => true,
     noteAssistModelClientFor: async () => ({ async complete() { return { text: '好', toolCalls: [] }; } }),
   });
   const server = await new Promise(resolve => {
@@ -443,72 +424,6 @@ test('note-assist sessions stay out of Agent history and memory refresh', async 
   assert.match(prompt, new RegExp(agentSession.id));
 });
 
-test('locked diary note-assist events and session delete return 403', async (t) => {
-  const db = tempDb(t);
-  const knowledge = createKnowledgeService(db);
-  const diaryNote = knowledge.createNote({
-    title: '私密日记',
-    content: '秘密正文',
-    knowledgeBase: '日记',
-    visibility: 'diary',
-  }, { diaryUnlocked: true }).document;
-  const publicNote = knowledge.createNote({ title: '公开笔记', content: '公开正文' }, { diaryUnlocked: true }).document;
-
-  let diaryUnlocked = true;
-  let round = 0;
-  const app = express();
-  app.use(express.json());
-  registerAgentRoutes(app, {
-    db,
-    hasDiaryAccess: () => diaryUnlocked,
-    noteAssistModelClientFor: async () => ({
-      async complete() {
-        round += 1;
-        if (round === 1) {
-          return { text: '', toolCalls: [{ name: 'note.propose_edit', arguments: { find: '秘密正文', replace: '改写后的正文' } }] };
-        }
-        return { text: '已提出修改', toolCalls: [] };
-      },
-    }),
-  });
-  const server = await new Promise(resolve => {
-    const started = app.listen(0, '127.0.0.1', () => resolve(started));
-  });
-  t.after(() => new Promise(resolve => server.close(resolve)));
-  const base = `http://127.0.0.1:${server.address().port}`;
-
-  const sent = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: '润色这一段' }),
-  });
-  assert.equal(sent.status, 202);
-  const sentData = await sent.json();
-  await new Promise(resolve => setTimeout(resolve, 250));
-
-  diaryUnlocked = false;
-  const lockedSession = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/session`);
-  assert.equal(lockedSession.status, 403);
-  const lockedEvents = await fetch(`${base}/api/agent/runs/${encodeURIComponent(sentData.runId)}/events`);
-  assert.equal(lockedEvents.status, 403);
-  const lockedDelete = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(diaryNote.id)}/sessions/${encodeURIComponent(sentData.sessionId)}`, { method: 'DELETE' });
-  assert.equal(lockedDelete.status, 403);
-
-  diaryUnlocked = true;
-  const publicSent = await fetch(`${base}/api/agent/note-assist/${encodeURIComponent(publicNote.id)}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: '你好' }),
-  });
-  assert.equal(publicSent.status, 202);
-  const publicData = await publicSent.json();
-  await new Promise(resolve => setTimeout(resolve, 150));
-  diaryUnlocked = false;
-  const publicEvents = await fetch(`${base}/api/agent/runs/${encodeURIComponent(publicData.runId)}/events`);
-  assert.equal(publicEvents.status, 200);
-  publicEvents.body?.cancel?.();
-});
-
 test('note assistant direct writes require confirmation and preserve original baseVersion', async t => {
   const db = tempDb(t), knowledge = createKnowledgeService(db);
   const doc = knowledge.createNote({ title: '版本', content: 'original' }).document;
@@ -558,7 +473,7 @@ test('standalone note route initializes full dependencies and resumes an existin
   const app = express(); app.use(express.json());
   let rounds = 0; let seen = []; let webCalls = 0;
   registerAgentRoutes(app, {
-    db, hasDiaryAccess: () => false,
+    db,
     modelClient: { complete: async ({ tools }) => { seen = tools.map(tool => tool.name); return ++rounds === 1 ? { toolCalls: [{ name: 'ask_user', arguments: { question: '继续？' } }] } : { text: 'complete' }; } },
     webSearchFor: () => { webCalls++; return async () => ({ ok: true }); },
     computerFor: () => ({ execute: async () => ({ ok: true }) }),

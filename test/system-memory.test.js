@@ -114,7 +114,7 @@ test('system memory HTTP update, restore, and isolation from Agent tools', async
   const db = tempDb(t);
   const app = express();
   app.use(express.json());
-  registerAgentRoutes(app, { db, hasDiaryAccess: () => true });
+  registerAgentRoutes(app, { db });
   const base = await listen(app, t);
   const listed = await fetch(`${base}/api/agent/memories`);
   const listedData = await listed.json();
@@ -155,7 +155,7 @@ test('system memory HTTP update, restore, and isolation from Agent tools', async
 
   const store = createAgentStore(db);
   const memory = createMemoryService(store);
-  const adapters = createToolAdapters({ db, hasDiaryAccessFlag: false, memory });
+  const adapters = createToolAdapters({ db, memory });
   const listedTools = await adapters.execute('memory.list', {});
   assert.equal(listedTools.data.items.some(item => item.id === agent.id), false);
   const readSystem = await adapters.execute('memory.read', { id: agent.id });

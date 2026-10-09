@@ -32,7 +32,6 @@ function persistedRun(store, session, status, extra = {}) {
     round: 1,
     toolCalls: 0,
     depth: 0,
-    diaryUnlocked: false,
     createdAt: Date.now(),
     ...extra,
   };
@@ -52,7 +51,7 @@ test('runtime startup closes orphaned execution and browser waits without replay
   const pack = runtimeFor(db, { modelClient: { complete: async () => {
     modelCalls += 1;
     return { text: 'done', toolCalls: [] };
-  } }, hasDiaryAccessFlag: false });
+  } } });
 
   for (const run of [queued, running, browser]) {
     const recovered = pack.store.getRun(run.id);
@@ -76,7 +75,7 @@ test('approval and user-input waits remain actionable after runtime startup', as
   });
   const questionSession = store.createSession('question');
   const question = persistedRun(store, questionSession, 'waiting_user', { pendingQuestion: 'Continue?' });
-  const pack = runtimeFor(db, { modelClient: { complete: async () => ({ text: 'done', toolCalls: [] }) }, hasDiaryAccessFlag: false });
+  const pack = runtimeFor(db, { modelClient: { complete: async () => ({ text: 'done', toolCalls: [] }) } });
 
   assert.equal(pack.store.getRun(approval.id).status, 'waiting_approval');
   assert.equal(pack.store.getRun(question.id).status, 'waiting_user');

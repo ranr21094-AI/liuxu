@@ -1,16 +1,29 @@
 /* Agent / knowledge refinement. Other content pages keep their own layouts. */
 :root { --topbar-height: 52px; --doc-pad-x: clamp(24px, 3vw, 40px); }
 .workspace-topbar { flex: 0 0 var(--topbar-height); height: var(--topbar-height); backdrop-filter: none; background: var(--bg); padding: 0 24px; }
-.workspace-brand { height: 48px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: 100%; padding: 0 20px; }
-.workspace-brand strong { font-size: 16px; letter-spacing: -.03em; }
-.workspace-brand strong span { color: var(--muted); font-size: 13px; margin-left: 4px; font-weight: 500; }
-.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-text); font-weight: 700; }
-.workspace-mode-nav { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0 12px 12px; padding: 0; border: 0; border-radius: 0; background: transparent; }
-.workspace-mode-nav button { display: flex; position: relative; align-items: center; justify-content: center; min-width: 0; min-height: 36px; padding: 0 4px; font-size: 13px; font-weight: 500; white-space: nowrap; }
-.workspace-mode-nav button.active { background: var(--accent-soft); font-weight: 650; box-shadow: none; }
-.workspace-mode-nav button:hover { background: var(--surface-hover); }
-.workspace-sidebar-footer svg, .document-more svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.workspace-sidebar-footer svg, .document-more svg { width: 18px; height: 18px; flex: none; }
+.workspace-brand { height: 44px; flex: 0 0 auto; display: flex; align-items: center; gap: 10px; width: 100%; padding: 0 20px; }
+.workspace-brand strong { display: flex; align-items: baseline; gap: 6px; font-size: 16px; letter-spacing: -.03em; }
+.workspace-brand strong span { display: inline-flex; align-items: baseline; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0; }
+.workspace-brand strong span::before { content: "·"; color: var(--faint); }
+.workspace-brand strong span.is-changing { animation: brand-mode-in .28s ease both; }
+@keyframes brand-mode-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.brand-mark { position: relative; display: grid; flex: 0 0 auto; place-items: center; overflow: hidden; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-text); font: inherit; font-weight: 700; cursor: pointer; transition: transform .28s cubic-bezier(.34, 1.4, .64, 1); }
+.brand-mark > * { grid-area: 1 / 1; transition: opacity .22s ease, transform .32s cubic-bezier(.34, 1.4, .64, 1); }
+.brand-mark-gear { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; opacity: 0; transform: rotate(-60deg) scale(.6); }
+.brand-mark::after { content: ""; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.38) 50%, transparent 70%); transform: translateX(-120%); transition: transform .6s ease; pointer-events: none; }
+.brand-mark:is(:hover, :focus-visible) { transform: scale(1.06); }
+.brand-mark:is(:hover, :focus-visible) .brand-mark-letter { opacity: 0; transform: scale(.5); }
+.brand-mark:is(:hover, :focus-visible) .brand-mark-gear { opacity: 1; transform: none; }
+.brand-mark:is(:hover, :focus-visible)::after { transform: translateX(120%); }
+.brand-mark:active { transform: scale(.96); }
+.workspace-mode-nav { position: relative; flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; margin: 0 12px 8px; padding: 2px; border: 0; border-radius: 10px; background: var(--surface-active); }
+.mode-indicator { position: absolute; top: 2px; bottom: 2px; left: 0; width: var(--indicator-w, 0); border-radius: 8px; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.05); transform: translateX(var(--indicator-x, 0)); transition: transform .34s cubic-bezier(.34, 1.36, .64, 1), width .34s cubic-bezier(.34, 1.36, .64, 1); pointer-events: none; }
+.workspace-mode-nav.no-anim .mode-indicator { transition: none; }
+.workspace-mode-nav button { display: flex; position: relative; z-index: 1; align-items: center; justify-content: center; min-width: 0; min-height: 30px; padding: 0 4px; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12.5px; font-weight: 500; white-space: nowrap; transition: color .2s ease; }
+.workspace-mode-nav button.active { background: transparent; color: var(--text); font-weight: 650; box-shadow: none; }
+.workspace-mode-nav button:hover { background: transparent; color: var(--text); }
+.document-more svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.document-more svg { width: 18px; height: 18px; flex: none; }
 .workspace-mode-nav .mode-pending-badge { position: absolute; top: -7px; right: 0; margin: 0; }
 .workspace-sidebar .search-field,
 #agentSidebarPanel .agent-sidebar-toolbar {
@@ -23,8 +36,6 @@
 .workspace-sidebar :is(.sidebar-status,.knowledge-panel-heading,.knowledge-tree-heading,.knowledge-base-select small,.empty-list) { color: var(--muted); font-size: 12px; }
 .workspace-sidebar input::placeholder { color: var(--muted); }
 .workspace-sidebar .sidebar-panel { padding-top: 0; }
-.workspace-sidebar-footer { flex: 0 0 auto; display: flex; gap: 4px; padding: 12px; border-top: 1px solid var(--line); }
-.workspace-sidebar-footer .icon-button { display: flex; width: auto; flex: 1; justify-content: center; gap: 8px; font-size: 12px; }
 .topbar-leading > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .topbar-subtitle { margin: 0; font-size: 12px; color: var(--muted); }
 .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -167,9 +178,12 @@ body.note-browser-open { --note-browser-width: 420px; }
   }
 }
 @media (pointer: coarse) {
-  .workspace-mode-nav button, .workspace-sidebar-footer .icon-button,
+  .workspace-mode-nav button,
   .agent-view button, .knowledge-view button, .note-assistant-panel button { min-height: 44px; min-width: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .agent-view *, .knowledge-view *, .note-assistant-panel * { scroll-behavior: auto; transition: none; }
+  .mode-indicator, .brand-mark, .brand-mark > *, .brand-mark::after { transition: none; }
+  .brand-mark-gear { transform: none; }
+  .workspace-brand strong span.is-changing { animation: none; }
 }

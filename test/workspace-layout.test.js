@@ -73,7 +73,10 @@ test('compact mode nav stays visible and keeps independent sidebar controls', ()
   assert.equal(brand?.tagName, 'DIV');
   assert.equal(brand?.getAttribute('aria-controls'), null);
   assert.equal(brand?.getAttribute('aria-expanded'), null);
-  assert.equal(brand?.querySelector('svg'), null);
+  const settings = brand?.querySelector('#settingsButton.brand-mark');
+  assert.equal(settings?.tagName, 'BUTTON');
+  assert.ok(settings.querySelector('.brand-mark-letter') && settings.querySelector('svg.brand-mark-gear'));
+  assert.equal(document.querySelector('.workspace-sidebar-footer, #diaryButton, #diaryDialog'), null);
   assert.equal(nav.hidden, false);
   const buttons = [...nav.querySelectorAll('[data-mode]')];
   assert.deepEqual(buttons.map(button => button.textContent), ['Agent', '知识库', 'Memory', '待办']);
@@ -88,10 +91,11 @@ test('compact mode nav stays visible and keeps independent sidebar controls', ()
   assert.match(source, /\$\('#sidebarToggle'\)\.addEventListener\('click', \(\) => toggleDesktopSidebar\(\)\)/);
   assert.doesNotMatch(source, /\$\('#workspaceBrand'\)\.addEventListener\('click', \(\) => toggleDesktopSidebar/);
   assert.doesNotMatch(css, /mode-nav-collapsed|brand-toggle-caret/);
-  assert.match(css, /\.workspace-brand \{[^}]*height:\s*48px/);
+  assert.match(css, /\.workspace-brand \{[^}]*height:\s*44px/);
   assert.match(css, /\.workspace-mode-nav \{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\)/);
-  assert.match(css, /\.workspace-mode-nav \{[^}]*margin:\s*0 12px 12px; padding:\s*0/);
-  assert.match(css, /\.workspace-mode-nav button \{[^}]*min-height:\s*36px[^}]*font-size:\s*13px[^}]*white-space:\s*nowrap/);
+  assert.match(css, /\.workspace-mode-nav \{[^}]*margin:\s*0 12px 8px; padding:\s*2px/);
+  assert.ok(nav.querySelector('.mode-indicator[aria-hidden="true"]'));
+  assert.match(css, /\.workspace-mode-nav button \{[^}]*min-height:\s*30px[^}]*font-size:\s*12.5px[^}]*white-space:\s*nowrap/);
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*\.workspace-mode-nav button[\s\S]*min-height:\s*44px/);
   assert.match(css, /\.workspace-mode-nav button:focus-visible/);
   assert.match(css, /\.workspace-mode-nav \.mode-pending-badge \{[^}]*position:\s*absolute/);

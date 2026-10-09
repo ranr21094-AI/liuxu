@@ -295,14 +295,6 @@ test('assistant preserves same-document drafts across modes and isolates new or 
     assert.equal(panel.hidden, false); assert.equal(panel.dataset.layout, 'floating');
     ui.noteAssistantSetMode('knowledge'); ui.noteAssistantSetActiveDocument({ ...doc, title: '新标题' });
     assert.equal(panel.hidden, false); assert.equal(field.value, '未发送的草稿'); assert.equal(field.selectionStart, 2);
-    ui.noteAssistantSetActiveDocument({ id: 'note:2', visibility: 'diary', status: 'active' });
-    assert.equal(panel.hidden, true); assert.equal(field.value, '');
-    document.querySelector('#assistantToggleButton').click();
-    await new Promise(resolve => setTimeout(resolve, 10));
-    field.value = '私密草稿';
-    ui.noteAssistantLockPrivate();
-    assert.equal(panel.hidden, true); assert.equal(field.value, '');
-    assert.equal(document.querySelector('#noteAssistantMessages').textContent, '');
   } finally { dom.window.close(); restore(previous); }
 });
 

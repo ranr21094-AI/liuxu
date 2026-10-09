@@ -33,7 +33,6 @@ function readKnowledgeDocument(knowledge, id) {
 function tempDb(t) {
   const { db, dir } = createTempDatabase(t, 'knowledge-');
   db.create({ title: '公开日志', content: '混合检索正文苹果香蕉', category: '开发', hours: 2, pinned: true, log_date: '2026-05-16' });
-  db.create({ title: '日记秘密', content: '不应出现', category: '日记', log_date: '2026-05-16' });
   return { db, dir };
 }
 
@@ -41,27 +40,22 @@ test('knowledge migrates legacy logs into native notes', (t) => {
   const { db, dir } = tempDb(t);
   ensureLogsMigrated(db);
   const knowledge = createKnowledgeService(db);
-  const docs = knowledge.allDocuments({ diaryUnlocked: false });
+  const docs = knowledge.allDocuments();
   assert.equal(docs.some(doc => doc.id === 'note:1'), true);
   assert.equal(docs.find(doc => doc.id === 'note:1').knowledgeBase, '开发');
   assert.equal(docs.find(doc => doc.id === 'note:1').folderPath, '');
   assert.equal(docs.find(doc => doc.id === 'note:1').documentDate, '2026-05-16');
-  assert.equal(docs.some(doc => doc.visibility === 'diary'), false);
-  const unlocked = knowledge.allDocuments({ diaryUnlocked: true });
-  assert.equal(unlocked.some(doc => doc.visibility === 'diary'), true);
   assert.equal(db.getAllUnpaginated().length, 0);
   assert.ok(fs.existsSync(path.join(dir, 'logs.migrated.json')));
   const again = createKnowledgeService(db);
   assert.equal(again.nativeDocuments().filter(doc => doc.title === '公开日志').length, 1);
 });
 
-test('knowledge search filters diary chunks and returns citations', (t) => {
+test('knowledge search returns citations', (t) => {
   const { db } = tempDb(t);
   const knowledge = openKnowledge(db);
   const search = createSearchIndex(knowledge);
-  const locked = search.search('秘密', { diaryUnlocked: false });
-  assert.equal(locked.some(item => item.documentId.startsWith('note:2')), false);
-  const open = search.search('苹果', { diaryUnlocked: false });
+  const open = search.search('苹果');
   assert.equal(open.some(item => item.documentId === 'note:1'), true);
   assert.ok(open[0].id.includes('#'));
 });
@@ -71,12 +65,12 @@ test('knowledge search applies document index deltas without stale hits', (t) =>
   const knowledge = openKnowledge(db);
   const search = createSearchIndex(knowledge);
   const created = knowledge.createNote({ title: '旧标题', content: 'legacyalpha' }).document;
-  assert.ok(search.search('legacyalpha', { diaryUnlocked: false }).some(item => item.documentId === created.id));
+  assert.ok(search.search('legacyalpha', {}).some(item => item.documentId === created.id));
   knowledge.updateDocument(created.id, { title: '新标题', content: 'freshomega' });
-  assert.equal(search.search('legacyalpha', { diaryUnlocked: false }).length, 0);
-  assert.ok(search.search('freshomega', { diaryUnlocked: false }).some(item => item.documentId === created.id));
+  assert.equal(search.search('legacyalpha', {}).length, 0);
+  assert.ok(search.search('freshomega', {}).some(item => item.documentId === created.id));
   knowledge.deleteDocument(created.id);
-  assert.equal(search.search('freshomega', { diaryUnlocked: false }).length, 0);
+  assert.equal(search.search('freshomega', {}).length, 0);
 });
 
 test('knowledge searchDocuments applies tag and date filters before minisearch', (t) => {
@@ -96,7 +90,6 @@ test('knowledge searchDocuments applies tag and date filters before minisearch',
   });
   const search = createSearchIndex(knowledge);
   const tagged = search.searchDocuments('苹果', { tag: 'fruit', status: 'active' }, {
-    diaryUnlocked: false,
     summarize: documentSummary,
   });
   assert.equal(tagged.length, 1);
@@ -104,7 +97,6 @@ test('knowledge searchDocuments applies tag and date filters before minisearch',
   assert.ok(tagged[0].searchSnippet);
 
   const dated = search.searchDocuments('苹果', { date: '2026-05-16', status: 'active' }, {
-    diaryUnlocked: false,
     summarize: documentSummary,
   });
   assert.equal(dated.some(item => item.title === '苹果笔记'), true);
@@ -119,10 +111,9 @@ test('knowledge searchDocuments aggregates chunk hits by document', (t) => {
     content: `${'苹果'.repeat(700)}\n\n中间\n\n${'苹果'.repeat(700)}`,
   });
   const search = createSearchIndex(knowledge);
-  const raw = search.search('苹果', { diaryUnlocked: false, limit: 100 });
+  const raw = search.search('苹果', { limit: 100 });
   assert.ok(raw.filter(item => item.documentId.startsWith('note:')).length >= 2);
   const docs = search.searchDocuments('苹果', { status: 'active' }, {
-    diaryUnlocked: false,
     summarize: documentSummary,
   });
   const noteHits = docs.filter(item => item.title === '长文');
@@ -157,7 +148,6 @@ test('searchDocuments honors strict mode and field filters', (t) => {
   const { documentSummary } = require('../lib/knowledge/routes');
 
   const titleOnly = search.searchDocuments('会议', { status: 'active' }, {
-    diaryUnlocked: false,
     summarize: documentSummary,
     searchOptions: {
       preset: 'custom',
@@ -172,7 +162,6 @@ test('searchDocuments honors strict mode and field filters', (t) => {
   assert.equal(titleOnly.some(item => item.title === '其他'), false);
 
   const bodyOnly = search.searchDocuments('会议', { status: 'active' }, {
-    diaryUnlocked: false,
     summarize: documentSummary,
     searchOptions: {
       preset: 'custom',
@@ -186,7 +175,6 @@ test('searchDocuments honors strict mode and field filters', (t) => {
   assert.equal(bodyOnly.some(item => item.title === '会议摘要'), false);
 
   const strictApple = search.searchDocuments('苹果', { status: 'active' }, {
-    diaryUnlocked: false,
     summarize: documentSummary,
     searchOptions: {
       preset: 'exact',
@@ -228,7 +216,6 @@ test('image imports are recognized and stored with preview metadata', async (t) 
     text: '',
     status: 'active',
     previewKind: 'image',
-    diaryUnlocked: false,
   }).document;
   assert.equal(saved.fileMeta.previewKind, 'image');
   assert.equal(saved.previewHtml, '');
@@ -343,7 +330,6 @@ test('imported files keep Unicode stored filenames', (t) => {
     previewHtml: '<p>正文</p>',
     previewKind: 'docx',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   assert.equal(imported.fileMeta.filename, '高质量学科标签数据.docx');
   assert.match(imported.fileMeta.storedName, /高质量学科标签数据\.docx$/);
@@ -366,7 +352,6 @@ test('legacy imported files infer preview kind from filename and hydrate missing
     collectionPath: '其他',
     text: '提取出的纯文本',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   writeKnowledgeStore(knowledge, (store) => {
     const record = store.documents.find(item => item.id === saved.id);
@@ -421,7 +406,6 @@ test('knowledge notes reject stale versions and imported file content is editabl
     collectionPath: '开发',
     text: '只读原文',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   const edited = knowledge.updateDocument(file.id, { content: '改写原文', baseVersion: file.version }).document;
   assert.equal(edited.content, '改写原文');
@@ -450,7 +434,7 @@ test('knowledge bases and folders normalize legacy paths for migrated notes', (t
     knowledgeBase: '投资',
     folderPath: '行业洞悉',
     documentDate: '2026-08-18',
-  }, { diaryUnlocked: false }).document;
+  }).document;
   assert.equal(moved.collectionPath, '投资/行业洞悉');
   assert.equal(moved.documentDate, '2026-08-18');
 
@@ -491,7 +475,7 @@ test('moving a knowledge folder relocates its subtree and note locations', (t) =
 });
 
 test('knowledge tree maps category roots to bases and nested folder children', () => {
-  const db = { isDiaryCategory: value => value === '日记' || String(value).startsWith('日记/') };
+  const db = {};
   const tree = treeForDocuments([
     { name: '投资', sub: [{ name: '行业洞悉', sub: [] }, { name: '事件', sub: [] }] },
     { name: '日记', sub: [{ name: '人', sub: [] }] },
@@ -506,32 +490,28 @@ test('knowledge tree maps category roots to bases and nested folder children', (
   assert.equal(folder.path, '行业洞悉');
   assert.equal(folder.documentCount, 1);
   assert.ok(Array.isArray(folder.children));
-  assert.equal(tree[1].visibility, 'diary');
 });
 
-test('quick open searches bases, folders and documents across locations while respecting visibility', (t) => {
+test('quick open searches bases, folders and documents across locations', (t) => {
   const { db } = createTempDatabase(t, 'knowledge-quick-open-');
   const knowledge = openKnowledge(db);
   db.addCategory('项目');
   db.addCategory('资料', '项目');
   const note = knowledge.createNote({ title: '跨库方案', content: '正文', knowledgeBase: '项目', folderPath: '资料' }).document;
-  const diary = knowledge.createNote({ title: '秘密方案', content: '秘密', knowledgeBase: '日记' }, { diaryUnlocked: true }).document;
-  const file = knowledge.saveImportedFile({ buffer: Buffer.from('file'), filename: 'source.txt', mimeType: 'text/plain', title: '来源文件', collectionPath: '项目/资料', text: '文件正文', status: 'active', diaryUnlocked: false }).document;
+  const file = knowledge.saveImportedFile({ buffer: Buffer.from('file'), filename: 'source.txt', mimeType: 'text/plain', title: '来源文件', collectionPath: '项目/资料', text: '文件正文', status: 'active' }).document;
   const annotation = knowledge.upsertAnnotation(file.id, { title: '批注结果', content: '不应导航' }).document;
-  const categories = db.getAllCategories(false, false);
-  const locked = knowledge.quickOpen({ query: '方案', categories, diaryUnlocked: false, limit: 10 });
-  assert.ok(locked.some(item => item.id === note.id));
-  assert.equal(locked.some(item => item.id === diary.id), false);
-  assert.equal(locked.some(item => item.id === annotation.id), false);
-  assert.ok(knowledge.quickOpen({ query: '资料', categories, diaryUnlocked: false }).some(item => item.type === 'folder'));
-  assert.equal(knowledge.quickOpen({ query: '项目', categories, diaryUnlocked: false, limit: 1 }).length, 1);
-  assert.equal(knowledge.quickOpen({ query: '方案', categories, diaryUnlocked: true }).some(item => item.id === diary.id), true);
+  const categories = db.getAllCategories();
+  const found = knowledge.quickOpen({ query: '方案', categories, limit: 10 });
+  assert.ok(found.some(item => item.id === note.id));
+  assert.equal(found.some(item => item.id === annotation.id), false);
+  assert.ok(knowledge.quickOpen({ query: '资料', categories }).some(item => item.type === 'folder'));
+  assert.equal(knowledge.quickOpen({ query: '项目', categories, limit: 1 }).length, 1);
   knowledge.archiveDocument(note.id);
-  assert.equal(knowledge.quickOpen({ query: '跨库方案', categories, diaryUnlocked: false }).length, 0);
+  assert.equal(knowledge.quickOpen({ query: '跨库方案', categories }).length, 0);
 });
 
 test('knowledge tree folder counts distinguish direct and subtree totals', () => {
-  const db = { isDiaryCategory: () => false };
+  const db = {};
   const tree = treeForDocuments([
     { name: '投资', sub: [{ name: '行业洞悉', sub: [] }] },
   ], [
@@ -621,7 +601,6 @@ test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', asy
     text: '',
     status: 'active',
     previewKind: 'image',
-    diaryUnlocked: false,
   }).document;
   assert.equal(imported.title, chinese);
   assert.equal(imported.fileMeta.filename, chinese);
@@ -635,7 +614,6 @@ test('uploaded filenames recover UTF-8 Chinese from multer latin1 mojibake', asy
     text: '',
     status: 'active',
     previewKind: 'image',
-    diaryUnlocked: false,
   }).document;
   writeKnowledgeStore(knowledge, (store) => {
     const record = store.documents.find(item => item.id === ascii.id);
@@ -672,7 +650,6 @@ test('knowledge documents can be permanently deleted', (t) => {
     collectionPath: '开发',
     text: '原文',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   const annotation = knowledge.upsertAnnotation(file.id, { content: '批注' }).document;
   const storedPath = knowledge.filePathFor(file);
@@ -688,17 +665,6 @@ test('knowledge documents can be permanently deleted', (t) => {
   assert.equal(deletedLegacyNote.deleted, true);
   assert.equal(knowledge.getDocument('note:1'), null);
 
-  const diaryNote = knowledge.createNote({
-    title: '日记笔记',
-    content: '秘密',
-    collectionPath: '日记',
-  }, { diaryUnlocked: true }).document;
-  const locked = knowledge.deleteDocument(diaryNote.id, { diaryUnlocked: false });
-  assert.equal(locked.status, 403);
-  assert.equal(knowledge.getDocument(diaryNote.id, { diaryUnlocked: true }) !== null, true);
-  const unlockedDelete = knowledge.deleteDocument(diaryNote.id, { diaryUnlocked: true });
-  assert.equal(unlockedDelete.deleted, true);
-  assert.equal(knowledge.getDocument(diaryNote.id, { diaryUnlocked: true }), null);
 });
 
 test('knowledge archive hides documents and blocks updates', (t) => {
@@ -735,7 +701,6 @@ test('knowledge restore brings archived notes back and cascades file annotations
     collectionPath: '开发',
     text: '原文',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   const annotation = knowledge.upsertAnnotation(file.id, { content: '批注' }).document;
   knowledge.archiveDocument(file.id);
@@ -761,7 +726,6 @@ test('archived imports dedupe by sha256 without creating duplicate files', (t) =
     collectionPath: '开发',
     text: '原文',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   knowledge.archiveDocument(first.id);
   const second = knowledge.saveImportedFile({
@@ -772,7 +736,6 @@ test('archived imports dedupe by sha256 without creating duplicate files', (t) =
     collectionPath: '开发',
     text: '原文',
     status: 'active',
-    diaryUnlocked: false,
   });
   assert.equal(second.duplicate, true);
   assert.equal(second.archived, true);
@@ -793,7 +756,6 @@ test('docx hydrate does not rewrite store when preview html already exists', asy
     previewHtml: '<p>预览正文</p>',
     previewKind: 'docx',
     status: 'active',
-    diaryUnlocked: false,
   }).document;
   const before = readKnowledgeDocument(knowledge, saved.id);
   const updatedAt = before.updatedAt;
@@ -819,18 +781,7 @@ test('workbench settings include backup and restore controls', () => {
   assert.match(source, /\/api\/workspace\/restore/);
 });
 
-test('diary knowledge notes mark embedded uploads as private', (t) => {
-  const { db } = createTempDatabase(t, 'knowledge-diary-upload-');
-  const knowledge = openKnowledge(db);
-  knowledge.createNote({
-    title: '日记图',
-    content: '![secret](/uploads/diary-note.png)',
-    knowledgeBase: '日记',
-  }, { diaryUnlocked: true });
-  assert.equal(db.isPrivateUpload('diary-note.png'), true);
-});
-
-test('restoring a revision outside diary demotes visibility', (t) => {
+test('restoring a revision restores its knowledge base and content', (t) => {
   const { db } = createTempDatabase(t, 'knowledge-restore-vis-');
   const knowledge = openKnowledge(db);
   const note = knowledge.createNote({
@@ -839,19 +790,15 @@ test('restoring a revision outside diary demotes visibility', (t) => {
     knowledgeBase: '开发',
   }).document;
   const moved = knowledge.updateDocument(note.id, {
-    knowledgeBase: '日记',
-    content: '日记版',
+    knowledgeBase: '归档',
+    content: '归档版',
     baseVersion: note.version,
-  }, { diaryUnlocked: true }).document;
-  assert.equal(moved.visibility, 'diary');
-  const listed = knowledge.listRevisions(note.id, { diaryUnlocked: true });
+  }).document;
+  assert.equal(moved.knowledgeBase, '归档');
+  const listed = knowledge.listRevisions(note.id);
   assert.ok(listed.revisions && listed.revisions.length >= 1);
-  const restored = knowledge.restoreRevision(note.id, listed.revisions[0].id, {
-    baseVersion: moved.version,
-    diaryUnlocked: true,
-  });
+  const restored = knowledge.restoreRevision(note.id, listed.revisions[0].id, { baseVersion: moved.version });
   assert.equal(restored.document.knowledgeBase, '开发');
-  assert.equal(restored.document.visibility, 'standard');
   assert.equal(restored.document.content, '第一版');
 });
 

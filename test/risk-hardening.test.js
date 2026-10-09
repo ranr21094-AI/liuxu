@@ -15,9 +15,7 @@ const { SEEDREAM_DEFAULT_SETTINGS } = require('../lib/agent/seedream');
 const { GETOKEN_DEFAULT_SETTINGS } = require('../lib/agent/getoken');
 
 const ROOT = path.resolve(__dirname, '..');
-const DIARY_CATEGORY = '\u65e5\u8bb0';
 const OTHER_CATEGORY = '\u5176\u4ed6';
-const DIARY_MAGIC_PHRASE = '\u5982\u610f\u5982\u610f'; // 如意如意 — the fixed diary unlock phrase
 
 function validPngBlob() {
   return new Blob([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])], { type: 'image/png' });
@@ -118,24 +116,6 @@ function loadFreshDb(t) {
   return db;
 }
 
-async function unlockDiary(baseUrl, password = DIARY_MAGIC_PHRASE, cookie) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (cookie) headers.Cookie = cookie;
-  const res = await fetch(`${baseUrl}/api/auth/diary`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ password }),
-  });
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.token, undefined);
-  const setCookie = res.headers.get('set-cookie') || '';
-  assert.match(setCookie, /^diary_session=/);
-  assert.match(setCookie, /HttpOnly/);
-  assert.match(setCookie, /SameSite=Strict/);
-  return setCookie.split(';')[0];
-}
-
 async function jsonRequest(baseUrl, route, cookie = '', { method = 'GET', body } = {}) {
   const headers = {};
   if (cookie) headers.Cookie = cookie;
@@ -147,14 +127,13 @@ async function jsonRequest(baseUrl, route, cookie = '', { method = 'GET', body }
   });
 }
 
-function restoreTestLogs(db, logs, categoryNames = ['开发', '会议', DIARY_CATEGORY]) {
+function restoreTestLogs(db, logs, categoryNames = ['开发', '会议']) {
   const result = db.restore({
     logs,
     todos: [],
     countdowns: [],
     categories: categoryNames.map(name => ({ name, sub: [], calendar_day_visible: true })),
     todoCategories: ['默认'],
-    privateUploads: [],
   }, 'replace');
   assert.equal(result.success, true, result.error || 'failed to restore test logs');
 }
@@ -174,178 +153,6 @@ function parseSseEvents(text) {
     })
     .filter(Boolean);
 }
-
-test('diary lock protects detail, mutation, backup, restore, and reorder routes', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t);
-  const diary = db.create({
-    title: 'private',
-    content: 'hidden',
-    category: DIARY_CATEGORY,
-    log_date: '2026-05-16',
-  });
-  const normal = db.create({
-    title: 'public',
-    content: 'visible',
-    category: '\u5f00\u53d1',
-    log_date: '2026-05-16',
-  });
-
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: 'changed' }),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`, { method: 'DELETE' })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs/reorder`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderedIds: [diary.id, normal.id] }),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: 'new private',
-      content: 'hidden',
-      category: DIARY_CATEGORY,
-      log_date: '2026-05-16',
-    }),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/backup`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/restore`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ logs: [], todos: [], categories: [{ name: OTHER_CATEGORY, sub: [] }] }),
-  })).status, 403);
-  const lockedCategoryNames = (await (await fetch(`${baseUrl}/api/categories`)).json()).map(category => category.name);
-  assert.equal(lockedCategoryNames.includes(DIARY_CATEGORY), false);
-
-  let cookie = await unlockDiary(baseUrl);
-  const formerToken = cookie.substring(cookie.indexOf('=') + 1);
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}?diary_token=${formerToken}`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`, {
-    headers: { Cookie: cookie },
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/backup`, {
-    headers: { Cookie: cookie },
-  })).status, 200);
-  const unlockedCategoryNames = (await (await fetch(`${baseUrl}/api/categories`, {
-    headers: { Cookie: cookie },
-  })).json()).map(category => category.name);
-  assert.equal(unlockedCategoryNames.includes(DIARY_CATEGORY), true);
-  const diaryList = await (await fetch(`${baseUrl}/api/logs?category=${encodeURIComponent(DIARY_CATEGORY)}`, {
-    headers: { Cookie: cookie },
-  })).json();
-  assert.equal(diaryList.total, 1);
-  assert.equal(diaryList.items[0].id, diary.id);
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    headers: { Cookie: cookie },
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      diary_token: formerToken,
-      title: 'body token private',
-      content: 'hidden',
-      category: `${DIARY_CATEGORY}/notes`,
-      log_date: '2026-05-16',
-    }),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({
-      title: 'new private',
-      content: 'hidden',
-      category: `${DIARY_CATEGORY}/notes`,
-      log_date: '2026-05-16',
-    }),
-  })).status, 201);
-});
-
-test('diary category root is reserved and subcategory details require unlock', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t);
-  db.addCategory(DIARY_CATEGORY, null);
-  db.addCategory('notes', DIARY_CATEGORY);
-  const diary = db.create({
-    title: 'private',
-    content: 'hidden',
-    category: `${DIARY_CATEGORY}/notes`,
-    log_date: '2026-05-16',
-  });
-
-  const lockedCategories = await (await fetch(`${baseUrl}/api/categories`)).json();
-  assert.equal(lockedCategories.some(c => c.name === DIARY_CATEGORY), false);
-  assert.equal((await fetch(`${baseUrl}/api/categories`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'secret', parent: DIARY_CATEGORY }),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(`${DIARY_CATEGORY}/notes`)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'renamed' }),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(`${DIARY_CATEGORY}/notes`)}`, {
-    method: 'DELETE',
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(DIARY_CATEGORY)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'public' }),
-  })).status, 409);
-  assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(DIARY_CATEGORY)}`, {
-    method: 'DELETE',
-  })).status, 409);
-  assert.equal((await (await fetch(`${baseUrl}/api/logs`)).json()).total, 0);
-
-  const cookie = await unlockDiary(baseUrl);
-  const unlockedCategories = await (await fetch(`${baseUrl}/api/categories`, {
-    headers: { Cookie: cookie },
-  })).json();
-  assert.deepEqual(unlockedCategories.find(c => c.name === DIARY_CATEGORY).sub.map(item => item.name), ['notes']);
-  assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(DIARY_CATEGORY)}`, {
-    method: 'DELETE',
-    headers: { Cookie: cookie },
-  })).status, 409);
-  assert.equal((await fetch(`${baseUrl}/api/categories/${encodeURIComponent(`${DIARY_CATEGORY}/notes`)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ name: 'renamed' }),
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/knowledge/documents/note:1`, {
-    headers: { Cookie: cookie },
-  })).status, 200);
-});
-
-test('unlocked system diary category can receive a new subcategory without prior stored root', async (t) => {
-  const { baseUrl } = loadFreshApp(t);
-  const cookie = await unlockDiary(baseUrl);
-
-  const categories = await (await fetch(`${baseUrl}/api/categories`, {
-    headers: { Cookie: cookie },
-  })).json();
-  assert.deepEqual(categories.find(category => category.name === DIARY_CATEGORY), {
-    name: DIARY_CATEGORY,
-    sub: [],
-    log_count: 0,
-    sub_log_counts: {},
-    calendar_day_visible: true,
-  });
-
-  const created = await fetch(`${baseUrl}/api/categories`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ name: 'notes', parent: DIARY_CATEGORY }),
-  });
-  assert.equal(created.status, 201);
-  const after = await (await fetch(`${baseUrl}/api/categories`, {
-    headers: { Cookie: cookie },
-  })).json();
-  assert.deepEqual(after.find(category => category.name === DIARY_CATEGORY).sub.map(item => item.name), ['notes']);
-});
 
 test('creating a folder under a document-only path materializes the parent category', async (t) => {
   const { db, baseUrl } = loadFreshApp(t);
@@ -495,40 +302,6 @@ test('category route parameters are decoded exactly once', async (t) => {
   assert.equal(categories.some(category => category.name === literalName), false);
 });
 
-test('diary routes are always protected until the magic phrase unlocks them', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t);
-  const diary = db.create({
-    title: 'private',
-    content: 'hidden until unlocked',
-    category: DIARY_CATEGORY,
-    log_date: '2026-05-16',
-  });
-
-  assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/diary/status`)).json(), {
-    enabled: true,
-    locked: true,
-  });
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/backup`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: 'new private',
-      content: 'not allowed while locked',
-      category: DIARY_CATEGORY,
-      log_date: '2026-05-16',
-    }),
-  })).status, 403);
-
-  const cookie = await unlockDiary(baseUrl);
-  assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/diary/status`, { headers: { Cookie: cookie } })).json(), {
-    enabled: true,
-    locked: false,
-  });
-  assert.equal((await fetch(`${baseUrl}/api/logs/${diary.id}`, { headers: { Cookie: cookie } })).status, 200);
-});
-
 test('single-user workspace opens without login and serves backup/uploads directly', async (t) => {
   const { baseUrl } = loadFreshApp(t);
 
@@ -536,8 +309,7 @@ test('single-user workspace opens without login and serves backup/uploads direct
   assert.equal((await fetch(`${baseUrl}/login`)).status, 404);
   assert.equal((await fetch(`${baseUrl}/api/logs`)).status, 200);
 
-  const diaryCookie = await unlockDiary(baseUrl);
-  const authorized = await fetch(`${baseUrl}/api/backup`, { headers: { Cookie: diaryCookie } });
+  const authorized = await fetch(`${baseUrl}/api/backup`);
   assert.equal(authorized.status, 200);
   assert.match(
     authorized.headers.get('content-disposition') || '',
@@ -572,43 +344,6 @@ test('startup validates existing data before opening the workspace database', (t
   assert.throws(() => require(path.join(ROOT, 'server.js')), /Failed to read todos\.json/);
   assert.equal(fs.readFileSync(path.join(dataDir, 'todos.json'), 'utf8'), '{broken');
   assert.equal(fs.readdirSync(dataDir).some(name => name.startsWith('todos.json.corrupt-')), true);
-});
-
-test('diary unlock uses the shared magic phrase without account login', async (t) => {
-  const { baseUrl } = loadFreshApp(t);
-
-  assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/diary/status`)).json(), { enabled: true, locked: true });
-
-  const diaryCookie = await unlockDiary(baseUrl);
-  assert.deepEqual(await (await fetch(`${baseUrl}/api/auth/diary/status`, { headers: { Cookie: diaryCookie } })).json(), {
-    enabled: true,
-    locked: false,
-  });
-
-  const wrongPhrase = await fetch(`${baseUrl}/api/auth/diary`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password: 'not-the-phrase' }),
-  });
-  assert.equal(wrongPhrase.status, 403);
-
-  const diaryLog = {
-    title: 'local diary',
-    content: 'local diary secret',
-    category: DIARY_CATEGORY,
-    hours: 0,
-    log_date: '2026-07-14',
-  };
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(diaryLog),
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: diaryCookie },
-    body: JSON.stringify(diaryLog),
-  })).status, 201);
 });
 
 test('AI settings persist to local data storage and validate options', async (t) => {
@@ -1221,7 +956,6 @@ test('log pinning persists and is promoted only within category-filtered results
   const newest = db.create({ title: 'newest normal', content: 'normal', category: '开发', log_date: '2026-12-01' });
   const firstPinned = db.create({ title: 'first pinned', content: 'pin one', category: '开发', log_date: '2025-01-01' });
   const nestedPinned = db.create({ title: 'nested pinned', content: 'pin two', category: '开发/前端', log_date: '2024-01-01' });
-  const diary = db.create({ title: 'private', content: 'secret', category: DIARY_CATEGORY, log_date: '2026-01-01' });
 
   const setPinned = async (id, pinned) => fetch(`${baseUrl}/api/logs/${id}`, {
     method: 'PUT',
@@ -1232,7 +966,6 @@ test('log pinning persists and is promoted only within category-filtered results
   assert.equal((await setPinned(firstPinned.id, 'yes')).status, 400);
   assert.equal((await setPinned('invalid', true)).status, 400);
   assert.equal((await setPinned(999999, true)).status, 404);
-  assert.equal((await setPinned(diary.id, true)).status, 403);
 
   const firstPinResponse = await setPinned(firstPinned.id, true);
   assert.equal(firstPinResponse.status, 200);
@@ -1302,133 +1035,6 @@ test('image upload rejects svg and still accepts allowed extensions', async (t) 
   assert.equal((await fetch(`${baseUrl}${body.url}`)).status, 200);
 });
 
-test('diary images require unlocked cookie and remain private after reclassification', async (t) => {
-  const { baseUrl } = loadFreshApp(t);
-
-  const rejectedPrivate = new FormData();
-  rejectedPrivate.append('image', validPngBlob(), 'locked.png');
-  rejectedPrivate.append('private', 'true');
-  assert.equal((await fetch(`${baseUrl}/api/upload`, {
-    method: 'POST',
-    body: rejectedPrivate,
-  })).status, 403);
-
-  let cookie = await unlockDiary(baseUrl);
-  const privateForm = new FormData();
-  privateForm.append('image', validPngBlob(), 'private.png');
-  privateForm.append('private', 'true');
-  const privateResponse = await fetch(`${baseUrl}/api/upload`, {
-    method: 'POST',
-    headers: { Cookie: cookie },
-    body: privateForm,
-  });
-  assert.equal(privateResponse.status, 200);
-  const privateImage = await privateResponse.json();
-  assert.equal((await fetch(`${baseUrl}${privateImage.url}`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}${privateImage.url}`, {
-    headers: { Cookie: cookie },
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}/api/auth/diary/lock`, {
-    method: 'POST',
-    headers: { Cookie: cookie },
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}${privateImage.url}`, {
-    headers: { Cookie: cookie },
-  })).status, 403);
-  cookie = await unlockDiary(baseUrl);
-  assert.equal((await fetch(`${baseUrl}/api/uploads/${privateImage.filename}`, {
-    method: 'DELETE',
-  })).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/uploads/${privateImage.filename}`, {
-    method: 'DELETE',
-    headers: { Cookie: cookie },
-  })).status, 200);
-
-  const ordinaryForm = new FormData();
-  ordinaryForm.append('image', validPngBlob(), 'ordinary.png');
-  const ordinaryImage = await (await fetch(`${baseUrl}/api/upload`, {
-    method: 'POST',
-    body: ordinaryForm,
-  })).json();
-  const created = await fetch(`${baseUrl}/api/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      title: 'ordinary',
-      content: `![attached](${ordinaryImage.url})`,
-      category: OTHER_CATEGORY,
-      log_date: '2026-05-16',
-    }),
-  });
-  const log = await created.json();
-  assert.equal((await fetch(`${baseUrl}${ordinaryImage.url}`)).status, 200);
-
-  assert.equal((await fetch(`${baseUrl}/api/logs/${log.id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ category: DIARY_CATEGORY }),
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}${ordinaryImage.url}`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}/api/logs/${log.id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ category: OTHER_CATEGORY }),
-  })).status, 200);
-  assert.equal((await fetch(`${baseUrl}${ordinaryImage.url}`)).status, 403);
-});
-
-test('historical diary image references are protected without a saved private marker', async (t) => {
-  const { db, baseUrl } = loadFreshApp(t);
-  const markdownForm = new FormData();
-  markdownForm.append('image', validPngBlob(), 'markdown.png');
-  const markdownImage = await (await fetch(`${baseUrl}/api/upload`, {
-    method: 'POST',
-    body: markdownForm,
-  })).json();
-  const htmlForm = new FormData();
-  htmlForm.append('image', validPngBlob(), 'html.png');
-  const htmlImage = await (await fetch(`${baseUrl}/api/upload`, {
-    method: 'POST',
-    body: htmlForm,
-  })).json();
-
-  db.create({
-    title: 'historical',
-    content: `![](${markdownImage.url})\n<img src="${htmlImage.url}">`,
-    category: DIARY_CATEGORY,
-    hours: 0,
-    log_date: '2026-05-16',
-  });
-
-  assert.equal((await fetch(`${baseUrl}${markdownImage.url}`)).status, 403);
-  assert.equal((await fetch(`${baseUrl}${htmlImage.url}`)).status, 403);
-  const cookie = await unlockDiary(baseUrl);
-  assert.equal((await fetch(`${baseUrl}${markdownImage.url}`, {
-    headers: { Cookie: cookie },
-  })).status, 200);
-});
-
-test('diary knowledge notes protect images even without the private upload flag', async (t) => {
-  const { baseUrl } = loadFreshApp(t);
-  const cookie = await unlockDiary(baseUrl);
-  const form = new FormData();
-  form.append('image', validPngBlob(), 'note-diary.png');
-  const uploaded = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', body: form })).json();
-  assert.equal((await fetch(`${baseUrl}${uploaded.url}`)).status, 200);
-  const created = await fetch(`${baseUrl}/api/knowledge/documents`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({
-      title: '日记笔记图',
-      content: `![secret](${uploaded.url})`,
-      knowledgeBase: DIARY_CATEGORY,
-    }),
-  });
-  assert.equal(created.status, 201, await created.text());
-  await fetch(`${baseUrl}/api/auth/diary/lock`, { method: 'POST', headers: { Cookie: cookie } });
-  assert.equal((await fetch(`${baseUrl}${uploaded.url}`)).status, 403);
-});
-
 test('restore validation rejects unsafe or malformed backup data', (t) => {
   const db = loadFreshDb(t);
   const base = {
@@ -1451,9 +1057,9 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.match(db.restore({ ...base, countdowns: [{ id: 1, title: 'bad', target_date: '2026-05-18', repeat_yearly: 'yes' }] }).error, /Invalid repeat_yearly/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: 'not-array' }] }).error, /Invalid subcategories/);
   assert.match(db.restore({ ...base, categories: [{ name: 'Bad', sub: [], calendar_day_visible: 'no' }] }).error, /Invalid calendar day visibility/);
-  assert.match(db.restore({ ...base, privateUploads: ['../secret.png'] }).error, /Invalid private upload filename/);
 
   assert.deepEqual(db.restore({ ...base, privateUploads: ['secret.png'] }).success, true);
+  assert.equal(Object.hasOwn(db.backup(), 'privateUploads'), false);
   assert.equal(db.backup().format, 'structure');
   assert.equal(db.backup().includesBinaries, false);
   assert.equal(Object.hasOwn(db.backup(), 'aiChats'), false);
@@ -1473,10 +1079,8 @@ test('restore validation rejects unsafe or malformed backup data', (t) => {
   assert.equal(db.backup().logs[0].pinned_at, null);
   assert.equal(db.getAllTodos()[0].notes, '');
   assert.equal(db.getAllTodos()[0].recurrence, 'none');
-  assert.deepEqual(db.backup().privateUploads, ['secret.png']);
   db.createCountdown({ title: 'removed by old replace backup', target_date: '2026-08-20' });
   assert.deepEqual(db.restore(base).success, true);
-  assert.deepEqual(db.backup().privateUploads, []);
   assert.deepEqual(db.getAllCountdowns(), []);
   assert.equal(db.create({ title: 'next log', category: OTHER_CATEGORY }).id, 2);
   assert.equal(db.createTodo({ title: 'next todo' }).id, 2);
@@ -2311,7 +1915,7 @@ test('default log dates and stats use the Hong Kong business day', (t) => {
   });
 
   assert.equal(defaulted.log_date, '2026-05-25');
-  const stats = db.getStats(true, instant);
+  const stats = db.getStats(instant);
   assert.equal(stats.weekHours, 1);
   assert.equal(stats.monthHours, 12);
   assert.equal(stats.dailyAvg, 0.5);
@@ -2384,7 +1988,7 @@ test('workbench exposes settings without account login UI', () => {
   assert.doesNotMatch(indexSource, /btnSaveDiaryPassword|diaryPasswordSettingsTitle|newDiaryPassword|disableDiaryPassword/);
   assert.doesNotMatch(workbenchSource, /checkAuth|initAccounts|logoutSite|accounts\.js|openSettings\('account'\)/);
   assert.match(workbenchSource, /#settingsButton/);
-  assert.match(authSource, /unlockDiary/);
+  assert.doesNotMatch(authSource, /unlockDiary|getDiaryStatus|lockDiary/);
   assert.doesNotMatch(authSource, /redirectToLogin|logoutSite|checkAuth/);
   assert.match(indexSource, /sidebar-toolbar-row[\s\S]*agent-sidebar-toolbar[\s\S]*id="newSessionButton"[\s\S]*<svg/);
 });
@@ -2837,8 +2441,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /initKnowledgeNameDialog/);
   assert.doesNotMatch(source, /window\.prompt/);
   assert.match(source, /uploadNoteImage/);
-  assert.match(source, /visibility === 'diary'/);
-  assert.match(source, /body.append\('private', 'true'\)/);
+  assert.doesNotMatch(source, /visibility === 'diary'/);
+  assert.doesNotMatch(source, /body.append\('private', 'true'\)/);
   assert.match(source, /handleDocumentImageUpload/);
   assert.match(html, /image\/png/);
   assert.match(source, /renderFilePreview/);

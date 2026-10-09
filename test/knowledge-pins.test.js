@@ -39,8 +39,8 @@ test('unified pinned rows mix folders and documents, retain unpinned order and e
  assert.deepEqual(mergeDocumentPages([{id:'note:1',title:'旧'},{id:'note:2'}],[{id:'note:1',title:'新'},{id:'note:3'}]),[{id:'note:1',title:'新'},{id:'note:2'},{id:'note:3'}]);
  assert(pinActionHtml({kind:'folder',target:'"<x>',pinnedAt:'',escape:v=>v.replace(/"/g,'&quot;').replace(/</g,'&lt;')}).includes('&quot;&lt;x>'));dom.window.close();
 });
-test('pin API protects diary, validates targets, returns directory metadata and sorts before pagination only in normal browsing',async(t)=>{
- const {db,knowledge}=setup(t);const express=require('express'),app=express();app.use(express.json());registerKnowledgeRoutes(app,{db,hasDiaryAccess:req=>req.headers['x-unlocked']==='yes',rejectLockedDiary:res=>res.status(403).json({error:'locked'})});
+test('pin API validates targets, returns directory metadata and sorts before pagination only in normal browsing',async(t)=>{
+ const {db,knowledge}=setup(t);const express=require('express'),app=express();app.use(express.json());registerKnowledgeRoutes(app,{db});
  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));t.after(async()=>{invalidateKnowledgeCache(db.dataDir);await new Promise(r=>server.close(r))});const base=`http://127.0.0.1:${server.address().port}`;
  const request=async body=>{const response=await fetch(base+'/api/knowledge/pin',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return {status:response.status,body:await response.json()}};
  const notes=[];for(let i=0;i<65;i++)notes.push(knowledge.createNote({title:'笔记 '+i,content:'正文',knowledgeBase:'项目'}).document);
@@ -52,8 +52,6 @@ test('pin API protects diary, validates targets, returns directory metadata and 
  assert.equal((await request({kind:'folder',path:'项目/分支',pinned:true})).status,200);assert.equal((await request({kind:'knowledgeBase',path:'项目',pinned:true})).status,200);
  const tree=await(await fetch(base+'/api/knowledge/tree')).json();assert(tree.knowledgeBases.find(b=>b.name==='项目').pinnedAt);assert(tree.knowledgeBases.find(b=>b.name==='项目').folders[0].pinnedAt);
  for(const body of [{kind:'folder',path:'项目/不存在',pinned:true},{kind:'document',id:'note:99999',pinned:true}])assert.equal((await request(body)).status,404);
- assert.equal((await request({kind:'folder',path:'日记/私密',pinned:true})).status,403);
- const diary=knowledge.createNote({title:'私密',knowledgeBase:'日记'},{diaryUnlocked:true}).document;assert.equal((await request({kind:'document',id:diary.id,pinned:true})).status,403);
  for(const body of [{kind:'bad',pinned:true},{kind:'document',id:notes[0].id,pinned:'yes'},{kind:'folder',path:'项目/../x',pinned:true}])assert.equal((await request(body)).status,400);
 });
 test('mindmaps and imported files pin normally; stale parent targets cannot pin moved documents',t=>{

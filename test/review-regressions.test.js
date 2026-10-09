@@ -17,7 +17,7 @@ const { restoreWorkspace, exportWorkspace } = require('../lib/workspace/zip');
 const JSZip = require('jszip');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function dbFor(t) { const db = createDatabase(fs.mkdtempSync(path.join(root, 'db-'))); t.after(() => db.close()); return db; }
-function runtimeFor(db, complete) { const store = createAgentStore(db); return { store, runtime: createRuntime({ db, store, memory: createMemoryService(store), modelClient: { complete }, hasDiaryAccessFlag: false }) }; }
+function runtimeFor(db, complete) { const store = createAgentStore(db); return { store, runtime: createRuntime({ db, store, memory: createMemoryService(store), modelClient: { complete } }) }; }
 test.after(() => { require('../lib/db/connection').closeAllDatabases(); fs.rmSync(root, { recursive: true, force: true }); });
 
 test('real extension verifier accepts server signature and rejects changed arguments/signature', async () => {
@@ -102,16 +102,15 @@ test('database replacement discards same-version persisted search index', async 
   assert.equal(fresh.search.searchDocuments('OLDORANGE').length, 0);
 });
 
-test('file diary move hides annotation and synchronizes its version and images', t => {
+test('moving an imported file keeps its annotation visible and synchronizes its version', t => {
   const db = dbFor(t), knowledge = createKnowledgeService(db);
-  const file = knowledge.saveImportedFile({ buffer: Buffer.from('file'), filename: 'sample.txt', mimeType: 'text/plain', text: 'file', diaryUnlocked: true }).document;
-  const annotation = knowledge.upsertAnnotation(file.id, { content: 'secret ![](/uploads/secret.png)' }, { diaryUnlocked: true }).document;
-  knowledge.updateDocument(file.id, { knowledgeBase: '日记' }, { diaryUnlocked: true });
-  assert.equal(knowledge.getDocument(file.id), null);
-  assert.equal(knowledge.getDocument(annotation.id), null);
-  const privateNote = knowledge.getDocument(annotation.id, { diaryUnlocked: true });
-  assert.equal(privateNote.knowledgeBase, '日记'); assert.ok(privateNote.version > annotation.version);
-  assert.ok(db.isPrivateUpload('secret.png'));
+  const file = knowledge.saveImportedFile({ buffer: Buffer.from('file'), filename: 'sample.txt', mimeType: 'text/plain', text: 'file' }).document;
+  const annotation = knowledge.upsertAnnotation(file.id, { content: 'note ![](/uploads/secret.png)' }).document;
+  knowledge.updateDocument(file.id, { knowledgeBase: '归档' });
+  const moved = knowledge.getDocument(file.id);
+  assert.equal(moved.knowledgeBase, '归档');
+  const movedNote = knowledge.getDocument(annotation.id);
+  assert.equal(movedNote.knowledgeBase, '归档'); assert.ok(movedNote.version > annotation.version);
 });
 
 test('delegated repeated questions resume each child and parent only once', async t => {

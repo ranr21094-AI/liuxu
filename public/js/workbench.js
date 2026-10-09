@@ -1,10 +1,5 @@
 import { documentType } from './knowledge/document-types.js';
-import {
-  apiFetch,
-  getDiaryStatus,
-  unlockDiary,
-  lockDiary,
-} from './auth.js';
+import { apiFetch } from './auth.js';
 import {
   debounce,
   dedupeImageMarkdown,
@@ -21,11 +16,11 @@ import { initNoteFind } from './knowledge/note-find.js';
 import { clearMarkdownToc, renderMarkdownToc, renderSourceToc, locateEditorHeading } from './knowledge/markdown-toc.js';
 import { getRecentItems, rememberRecentItem, removeRecentItem } from './knowledge/recent-items.js';
 import { clearAllReadingPositions, clearReadingPosition, loadReadingPosition, saveReadingPosition } from './knowledge/reading-position.js';
-import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode, noteAssistantLockPrivate } from './knowledge/note-assistant.js';
-import { initNoteBrowser, noteBrowserSetDocument, noteBrowserOpenUrl, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserLockPrivate, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
+import { initNoteAssistant, noteAssistantClear, noteAssistantSetActiveDocument, noteAssistantSetMode } from './knowledge/note-assistant.js';
+import { initNoteBrowser, noteBrowserSetDocument, noteBrowserOpenUrl, noteBrowserClear, noteBrowserDeleteDocument, noteBrowserResetWorkspace, relayNoteBrowserTool } from './knowledge/note-browser.js';
 import { createMessageFollower, initWorkspaceControls } from './app/workspace-ui.js';
 import { bindKnowledgeLinkClicks, initKnowledgeEnhancements, renderKnowledgeMarkdown } from './knowledge/links-history.js';
-import { comparePinned, pinActionHtml, arrangeKnowledgeRows, mergeDocumentPages } from './knowledge/pins.js';
+import { comparePinned, pinActionHtml, arrangeKnowledgeRows, mergeDocumentPages, KNOWLEDGE_ICONS, PIN_ICON } from './knowledge/pins.js';
 import { createMindmapEditor, emptyMindmap } from './knowledge/mindmap.js';
 import { imageHtml, bindNoteImageSizing } from './knowledge/note-images.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
@@ -60,7 +55,6 @@ const BLOCKING_RUN_STATES = new Set(['queued', 'running', 'waiting_approval', 'w
 
 const state = {
   mode: 'agent',
-  diaryUnlocked: false,
   sessions: [],
   archivedSessions: [],
   activeSession: null,
@@ -469,7 +463,7 @@ function renderDocumentPreview() {
   syncMarkdownToc();
   host.scrollTop = scrollTop;
   const cleanupView = enableMarkdownImagePreview(host, '.markdown-preview img');
-  const cleanupSizing = bindNoteImageSizing({ host, getSource: () => $('#documentContent').value, getDocumentId: () => state.activeDocument?.id, getVersion: () => state.activeDocument?.version, canEdit: () => !!state.activeDocument && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock && !(state.activeDocument.visibility === 'diary' && !state.diaryUnlocked), openOriginal: openMarkdownImagePreview, onChange: content => { $('#documentContent').value = content; state.documentDirty = true; scheduleDocumentSave(); renderDocumentPreview(); } });
+  const cleanupSizing = bindNoteImageSizing({ host, getSource: () => $('#documentContent').value, getDocumentId: () => state.activeDocument?.id, getVersion: () => state.activeDocument?.version, canEdit: () => !!state.activeDocument && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock, openOriginal: openMarkdownImagePreview, onChange: content => { $('#documentContent').value = content; state.documentDirty = true; scheduleDocumentSave(); renderDocumentPreview(); } });
   documentPreviewCleanup = () => { cleanupSizing(); cleanupView(); };
   knowledgeLinkCleanup = bindKnowledgeLinkClicks(host, navigate);
 }
@@ -919,6 +913,23 @@ async function navigate(mode, id = '', options = {}, { replace = false } = {}) {
   await applyRoute();
 }
 
+function syncModeIndicator() {
+  const nav = $('#workspaceModeNav');
+  const active = nav?.querySelector('[data-mode].active');
+  if (!nav || !active) return;
+  nav.style.setProperty('--indicator-x', `${active.offsetLeft}px`);
+  nav.style.setProperty('--indicator-w', `${active.offsetWidth}px`);
+}
+
+function initModeIndicator() {
+  const nav = $('#workspaceModeNav');
+  if (!nav) return;
+  nav.classList.add('no-anim');
+  syncModeIndicator();
+  requestAnimationFrame(() => requestAnimationFrame(() => nav.classList.remove('no-anim')));
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => syncModeIndicator()).observe(nav);
+}
+
 function setModeUI(mode) {
   state.mode = mode;
   document.body.dataset.mode = mode;
@@ -927,6 +938,15 @@ function setModeUI(mode) {
     button.classList.toggle('active', button.dataset.mode === mode);
     button.setAttribute('aria-current', button.dataset.mode === mode ? 'page' : 'false');
   });
+  syncModeIndicator();
+  const brandMode = $('#workspaceBrandMode');
+  const modeLabel = document.querySelector(`.workspace-mode-nav [data-mode="${mode}"]`)?.firstChild?.textContent?.trim() || '';
+  if (brandMode && brandMode.textContent !== modeLabel) {
+    brandMode.textContent = modeLabel;
+    brandMode.classList.remove('is-changing');
+    void brandMode.offsetWidth;
+    brandMode.classList.add('is-changing');
+  }
   document.querySelectorAll('[data-sidebar-mode]').forEach(panel => { panel.hidden = panel.dataset.sidebarMode !== mode; });
   document.querySelectorAll('[data-main-mode]').forEach(panel => { panel.hidden = panel.dataset.mainMode !== mode; });
   syncKnowledgeDocumentActions();
@@ -1151,8 +1171,8 @@ function renderSessions() {
             <small>${escHtml(formatSessionMeta(session))}</small>
           </button>
           <span class="session-actions">
-            <button class="session-action" type="button" data-session-rename="${escHtml(session.id)}" title="重命名" aria-label="重命名 ${escHtml(session.title || '会话')}">✎</button>
-            <button class="session-action" type="button" data-session-archive="${escHtml(session.id)}" title="归档" aria-label="归档 ${escHtml(session.title || '会话')}">⌁</button>
+            <button class="session-action" type="button" data-session-rename="${escHtml(session.id)}" title="重命名" aria-label="重命名 ${escHtml(session.title || '会话')}">${KNOWLEDGE_ICONS.rename}</button>
+            <button class="session-action" type="button" data-session-archive="${escHtml(session.id)}" title="归档" aria-label="归档 ${escHtml(session.title || '会话')}">${KNOWLEDGE_ICONS.archive}</button>
           </span>
         </div>`;
       }).join('')}
@@ -1989,6 +2009,7 @@ function formatSyncTime(value) {
 function renderKnowledgeSyncStatus() {
   const sync = state.knowledgeSync;
   const sidebar = $('#knowledgeSyncStatus');
+  const header = $('#knowledgeSyncHeader');
   const status = $('#knowledgeFolderStatus');
   const pathInput = $('#knowledgeFolderPath');
   const bridge = knowledgeFolderBridge();
@@ -2004,6 +2025,11 @@ function renderKnowledgeSyncStatus() {
   if (sidebar) {
     sidebar.querySelector('span:last-child').textContent = label;
     sidebar.classList.toggle('error', sync?.status === 'error' || sync?.status === 'warning');
+  }
+  if (header) {
+    const statusText = header.querySelector('.sync-status-text');
+    if (statusText) statusText.textContent = label;
+    header.classList.toggle('error', sync?.status === 'error' || sync?.status === 'warning');
   }
   if (status) status.textContent = [label, sync?.error].filter(Boolean).join('：');
   if (pathInput) pathInput.value = sync?.rootPath || sync?.defaultRootPath || '';
@@ -2040,19 +2066,7 @@ async function reconcileKnowledgeSync(previousGeneration) {
     const current = await response.json().catch(() => ({}));
     if (state.activeDocument?.id !== id || state.mode !== 'knowledge') return;
     if (response.status === 404 || response.status === 403) {
-      const privateDocument = state.activeDocument?.visibility === 'diary' || state.activeDocument?.knowledgeBase === '日记';
-      let diaryLocked = response.status === 403;
-      if (privateDocument && !diaryLocked) {
-        try {
-          const diaryStatus = await getDiaryStatus();
-          diaryLocked = diaryStatus.enabled !== false && diaryStatus.locked;
-        } catch { diaryLocked = true; }
-      }
-      if (state.activeDocument?.id !== id || state.mode !== 'knowledge') return;
-      if (diaryLocked) {
-        showEmptyDocument();
-        showToast('日记已锁定，当前文档已隐藏', 'error');
-      } else if (state.documentDirty) {
+      if (state.documentDirty) {
         state.documentConflict = true;
         clearTimeout(state.documentSaveTimer);
         setDocumentSaveState('保存冲突', 'error');
@@ -4575,18 +4589,17 @@ function renderKnowledgeBaseList() {
     return;
   }
   list.innerHTML = [...state.knowledgeBases].sort(comparePinned).map(base => {
-    const canDeleteBase = !['其他', '日记'].includes(base.name);
+    const canDeleteBase = base.name !== '其他';
     return `
       <div class="knowledge-base-row">
         <button class="knowledge-base-select" type="button" data-knowledge-base-open="${escHtml(base.name)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="" aria-label="进入 ${escHtml(base.name)}">
-          <span class="tree-folder-mark" aria-hidden="true">▰</span>
-          <strong>${escHtml(base.name)}</strong>${base.pinnedAt ? '<span class="knowledge-pin-mark" title="置顶">置顶</span>' : ''}
-          <span class="knowledge-base-chevron" aria-hidden="true">›</span>
+          <span class="tree-folder-mark${base.pinnedAt ? ' is-pinned' : ''}"${base.pinnedAt ? ' title="已置顶"' : ' aria-hidden="true"'}>${base.pinnedAt ? PIN_ICON : KNOWLEDGE_ICONS.base}</span>
+          <strong>${escHtml(base.name)}</strong>
         </button>
         <span class="tree-actions">
           ${pinActionHtml({ kind: 'knowledgeBase', target: base.name, pinnedAt: base.pinnedAt, escape: escHtml })}
-          <button class="tree-action" type="button" data-tree-rename-base="${escHtml(base.name)}" title="重命名知识库" aria-label="重命名 ${escHtml(base.name)}">✎</button>
-          ${canDeleteBase ? `<button class="tree-action" type="button" data-tree-delete-base="${escHtml(base.name)}" title="删除知识库" aria-label="删除 ${escHtml(base.name)}">⌫</button>` : ''}
+          <button class="tree-action" type="button" data-tree-rename-base="${escHtml(base.name)}" title="重命名知识库" aria-label="重命名 ${escHtml(base.name)}">${KNOWLEDGE_ICONS.rename}</button>
+          ${canDeleteBase ? `<button class="tree-action danger" type="button" data-tree-delete-base="${escHtml(base.name)}" title="删除知识库" aria-label="删除 ${escHtml(base.name)}">${KNOWLEDGE_ICONS.delete}</button>` : ''}
         </span>
       </div>`;
   }).join('');
@@ -4704,16 +4717,16 @@ function folderRowsHtml(base) {
   const baseName = escHtml(base.name);
   return folders.map(folder => `
     <div class="document-folder-row" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="folder" data-knowledge-drag-path="${escHtml(`${base.name}/${folder.path}`)}" data-pinned-at="${escHtml(folder.pinnedAt || '')}" data-list-group="folder" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}" data-drop-base="${baseName}" data-drop-folder="${escHtml(folder.path)}">
-      <span class="document-folder-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path></svg></span>
+      <span class="document-folder-mark${folder.pinnedAt ? ' is-pinned' : ''}"${folder.pinnedAt ? ' title="已置顶"' : ' aria-hidden="true"'}>${folder.pinnedAt ? PIN_ICON : '<svg viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path></svg>'}</span>
       <span class="document-folder-body">
-        <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong>${folder.pinnedAt ? '<span class="knowledge-pin-mark" title="置顶">置顶</span>' : ''}</span>
+        <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong></span>
         <small class="document-folder-count">${Number(folder.documentCount) || 0} 篇</small>
       </span>
       <span class="document-folder-chevron" aria-hidden="true">›</span>
       <span class="tree-actions">
         ${!knowledgeFiltersActive() ? pinActionHtml({ kind: 'folder', target: `${base.name}/${folder.path}`, pinnedAt: folder.pinnedAt, escape: escHtml }) : ''}
-        <button class="tree-action" type="button" data-tree-rename-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">✎</button>
-        <button class="tree-action" type="button" data-tree-delete-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">⌫</button>
+        <button class="tree-action" type="button" data-tree-rename-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">${KNOWLEDGE_ICONS.rename}</button>
+        <button class="tree-action danger" type="button" data-tree-delete-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="删除文件夹" aria-label="删除 ${escHtml(folder.name)}">${KNOWLEDGE_ICONS.delete}</button>
       </span>
     </div>`).join('');
 }
@@ -4872,12 +4885,13 @@ function renderDocuments() {
   const docRows = state.documents.map(document => {
     const subtitleHtml = documentRowSubtitleHtml(document);
     const type = documentType(document);
-    const rowIcon = type.icon;
+    const showPinned = Boolean(document.pinnedAt) && !knowledgeFiltersActive();
+    const rowIcon = showPinned ? PIN_ICON : type.icon;
     return `
       <div data-list-group="file" data-document-type="${type.kind}" class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="document" data-knowledge-drag-id="${escHtml(document.id)}" data-pinned-at="${escHtml(document.pinnedAt || '')}" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
-        <span class="document-row-icon" aria-hidden="true">${rowIcon}</span>
+        <span class="document-row-icon${showPinned ? ' is-pinned' : ''}"${showPinned ? ' title="已置顶"' : ' aria-hidden="true"'}>${rowIcon}</span>
         <span class="document-row-body">
-          <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong><span class="document-type-label">${type.label}</span>${document.pinnedAt && !knowledgeFiltersActive() ? '<span class="knowledge-pin-mark" title="置顶">置顶</span>' : ''}${document.documentRole === 'mindmap' ? '<span class="private-mark" title="思维导图">图</span>' : ''}${document.visibility === 'diary' ? '<span class="private-mark" title="私密知识">◆</span>' : ''}</span>
+          <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong><span class="document-type-label">${type.label}</span>${document.documentRole === 'mindmap' ? '<span class="private-mark" title="思维导图">图</span>' : ''}</span>
           ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}
         </span>
         ${state.selectedKnowledgeBase && !knowledgeFiltersActive() ? `<span class="tree-actions">${pinActionHtml({ kind: 'document', target: document.id, scope: document.collectionPath, pinnedAt: document.pinnedAt, escape: escHtml })}</span>` : ''}
@@ -5208,7 +5222,7 @@ async function renderActiveDocument(document) {
     const parsed = (() => { try { return JSON.parse(document.content || '{}'); } catch { return emptyMindmap(); } })();
     state.mindmapEditor = createMindmapEditor({
       canvas: $('#mindmapCanvas'), initial: parsed,
-      canEdit: () => state.activeDocument?.id === document.id && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock && !(state.activeDocument.visibility === 'diary' && !state.diaryUnlocked),
+      canEdit: () => state.activeDocument?.id === document.id && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock,
       confirmDelete: confirmAction,
       onError: message => showToast(message, 'error'),
       onChange: content => {
@@ -5793,7 +5807,6 @@ function noteImageAltFromFile(file) {
 async function uploadNoteImage(file) {
   const body = new FormData();
   body.append('image', file);
-  if (state.activeDocument?.visibility === 'diary') body.append('private', 'true');
   const response = await apiFetch('/api/upload', { method: 'POST', body });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || '图片上传失败');
@@ -5815,7 +5828,7 @@ async function handleDocumentImageUpload(file) {
   try {
     const url = await uploadNoteImage(file);
     const alt = noteImageAltFromFile(file);
-    if (state.activeDocument?.id !== documentId || editor.value !== source || state.activeDocument.status === 'archived' || state.documentConflict || noteMutationLock || (state.activeDocument.visibility === 'diary' && !state.diaryUnlocked)) throw new Error('图片已上传，但笔记或插入位置已变化，请重新插入');
+    if (state.activeDocument?.id !== documentId || editor.value !== source || state.activeDocument.status === 'archived' || state.documentConflict || noteMutationLock) throw new Error('图片已上传，但笔记或插入位置已变化，请重新插入');
     editor.setSelectionRange(start, end);
     insertTextAtCursor(editor, `\n${imageHtml(url, alt)}\n`);
     refreshDocumentPreview();
@@ -5910,45 +5923,6 @@ function keepKnowledgeLocationAfterClosingDocument(document) {
   showEmptyDocument();
 }
 
-async function syncDiaryStatus() {
-  const status = await getDiaryStatus();
-  state.diaryUnlocked = status.enabled === false || !status.locked;
-  state.mindmapEditor?.refreshAccess();
-  if (!state.diaryUnlocked) {
-    noteAssistantLockPrivate();
-    noteBrowserLockPrivate();
-  }
-  const button = $('#diaryButton');
-  if (!button) return;
-  const label = state.diaryUnlocked ? '私密知识已解锁' : '私密知识已锁定';
-  button.setAttribute('aria-label', label);
-  button.title = label;
-  button.classList.toggle('unlocked', state.diaryUnlocked);
-  button.querySelector('.diary-icon-locked')?.toggleAttribute('hidden', state.diaryUnlocked);
-  button.querySelector('.diary-icon-unlocked')?.toggleAttribute('hidden', !state.diaryUnlocked);
-}
-
-async function toggleDiary() {
-  if (!state.diaryUnlocked) {
-    $('#diaryPassword').value = '';
-    $('#diaryDialog').showModal();
-    requestAnimationFrame(() => $('#diaryPassword').focus());
-    return;
-  }
-  const confirmed = await confirmAction({
-    title: '锁定私密知识',
-    message: '日记将立即从知识列表、搜索和后续 Agent 上下文中移除。',
-    confirmText: '立即锁定',
-  });
-  if (!confirmed) return;
-  if (!(await flushPendingSaves())) return;
-  await lockDiary();
-  state.diaryUnlocked = false;
-  if (state.activeDocument?.visibility === 'diary') await navigate('knowledge');
-   await Promise.all([syncDiaryStatus(), loadKnowledgeTree(), loadDocuments()]);
-  showToast('私密知识已锁定', 'success');
-}
-
 function applyTheme(value) {
   if (value === 'system') {
     localStorage.removeItem('theme');
@@ -5975,6 +5949,7 @@ function bindEvents() {
     $('#conversation').style.setProperty('--composer-height', `${entries[0].target.getBoundingClientRect().height}px`);
   });
   composerObserver.observe($('#agentComposer'));
+  initModeIndicator();
   document.querySelector('.workspace-mode-nav').addEventListener('click', async event => {
     const button = event.target.closest('[data-mode]');
     if (!button) return;
@@ -6446,19 +6421,9 @@ function bindEvents() {
   desktopSidebarQuery.addEventListener('change', syncDesktopSidebar);
   syncDesktopSidebar();
 
-  $('#diaryButton').addEventListener('click', toggleDiary);
-  $('#closeDiaryDialog').addEventListener('click', () => $('#diaryDialog').close());
-  $('#cancelDiaryDialog').addEventListener('click', () => $('#diaryDialog').close());
-  $('#diaryForm').addEventListener('submit', async event => {
-    event.preventDefault();
-    const ok = await unlockDiary($('#diaryPassword').value);
-    if (!ok) return showToast('私密知识口令不正确', 'error');
-    $('#diaryDialog').close();
-     await Promise.all([syncDiaryStatus(), loadKnowledgeTree(), state.selectedKnowledgeBase ? loadDocuments() : Promise.resolve()]);
-    showToast('私密知识已解锁', 'success');
-  });
   $('#settingsButton')?.addEventListener('click', () => openSettings('appearance').catch(error => showToast(error.message, 'error')));
   $('#knowledgeSyncStatus')?.addEventListener('click', () => openSettings('knowledge').catch(error => showToast(error.message, 'error')));
+  $('#knowledgeSyncHeader')?.addEventListener('click', () => openSettings('knowledge').catch(error => showToast(error.message, 'error')));
   $('#syncKnowledgeFolderButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#saveKnowledgeSyncExtensions')?.addEventListener('click', () => saveKnowledgeSyncExtensions().catch(error => showToast(error.message, 'error')));
   $('#syncKnowledgeFolderSettingsButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
@@ -6853,7 +6818,7 @@ async function initialize() {
   renderKnowledgeSearchModeHint();
   const savedTheme = localStorage.getItem('theme');
   $('#themeSelect').value = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'system';
-  await Promise.all([syncDiaryStatus(), loadAgentStatus(), loadComposerModelOptions()]);
+  await Promise.all([loadAgentStatus(), loadComposerModelOptions()]);
   await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount(), loadKnowledgeSyncStatus()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();

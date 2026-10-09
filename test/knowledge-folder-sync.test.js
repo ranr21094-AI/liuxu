@@ -41,7 +41,7 @@ test('graphical mindmaps retain metadata through sync, conflicts, revisions and 
   assert.deepEqual(JSON.parse(knowledge.getDocument(note.id).content), external);
 });
 
-test('folder sync migrates notes, relative images, diary notes and empty folders', async (t) => {
+test('folder sync migrates notes, relative images, a second base and empty folders', async (t) => {
   const { db, dir, root, knowledge } = setup(t);
   db.addCategory('项目');
   db.addCategory('空目录', '项目');
@@ -52,12 +52,12 @@ test('folder sync migrates notes, relative images, diary notes and empty folders
     knowledgeBase: '项目',
     content: '正文\n\n![图](/uploads/%E7%A4%BA%E6%84%8F%E5%9B%BE.png)\n\n```md\n![示例](/uploads/not-real.png)\n```',
   }).document;
-  const diary = knowledge.createNote({ title: '当天', content: '秘密', knowledgeBase: '日记' }, { diaryUnlocked: true }).document;
+  const second = knowledge.createNote({ title: '当天', content: '秘密', knowledgeBase: '日记' }).document;
 
   const report = knowledge.folderSync.migrateAll({ rootPath: root });
   assert.equal(report.documents, 2);
   assert.equal(fs.existsSync(path.join(root, '项目', '空目录')), true);
-  const migrated = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const migrated = knowledge.getDocument(note.id);
   const notePath = knowledge.folderSync.localPathFor(migrated);
   assert.ok(notePath.endsWith(`${sanitizeSegment(note.title)}.md`));
   const source = fs.readFileSync(notePath, 'utf8');
@@ -65,7 +65,7 @@ test('folder sync migrates notes, relative images, diary notes and empty folders
   assert.match(source, /!\[图\]\(\.\/%E7%A4%BA%E6%84%8F%E5%9B%BE\.png\)/);
   assert.match(source, /```md\n!\[示例\]\(\/uploads\/not-real\.png\)/);
   assert.deepEqual(fs.readFileSync(path.join(path.dirname(notePath), '示意图.png')), Buffer.from('png-bytes'));
-  assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(diary.id, { diaryUnlocked: true })).includes(`${path.sep}日记${path.sep}`));
+  assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(second.id)).includes(`${path.sep}日记${path.sep}`));
 });
 
 test('moving a knowledge folder moves its synchronized Markdown subtree', (t) => {
@@ -81,14 +81,14 @@ test('moving a knowledge folder moves its synchronized Markdown subtree', (t) =>
     folderPath: '项目/子项',
   }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
-  const oldPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+  const oldPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id));
 
   const moved = db.moveCategory('来源库/项目', '目标库');
   knowledge.rewriteCollectionPath(moved.oldPath, moved.newPath);
   knowledge.folderSync.removeCollectionDirectory(moved.oldPath, 'folder-moved');
   knowledge.folderSync.ensureDirectoryTree();
 
-  const updated = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const updated = knowledge.getDocument(note.id);
   const nextPath = knowledge.folderSync.localPathFor(updated);
   assert.equal(updated.collectionPath, '目标库/项目/子项');
   assert.ok(nextPath.endsWith(path.join('目标库', '项目', '子项', '移动中的笔记.md')));
@@ -100,21 +100,21 @@ test('external edits, moves, additions and deletes reconcile by stable id', asyn
   const { root, knowledge } = setup(t);
   const note = knowledge.createNote({ title: '原名', content: '旧内容', knowledgeBase: '资料' }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
-  const originalPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+  const originalPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id));
   const parsed = parseFrontMatter(fs.readFileSync(originalPath, 'utf8'));
   fs.writeFileSync(originalPath, serializeMarkdown({
-    ...knowledge.getDocument(note.id, { diaryUnlocked: true }), title: '外部标题', content: `${parsed.content}\n外部修改`,
+    ...knowledge.getDocument(note.id), title: '外部标题', content: `${parsed.content}\n外部修改`,
   }));
   await knowledge.folderSync.syncNow({ reason: 'test-edit' });
-  assert.equal(knowledge.getDocument(note.id, { diaryUnlocked: true }).title, '外部标题');
-  assert.match(knowledge.getDocument(note.id, { diaryUnlocked: true }).content, /外部修改/);
+  assert.equal(knowledge.getDocument(note.id).title, '外部标题');
+  assert.match(knowledge.getDocument(note.id).content, /外部修改/);
 
   const movedDir = path.join(root, '资料', '移动后');
   fs.mkdirSync(movedDir, { recursive: true });
   const movedPath = path.join(movedDir, '改名.md');
   fs.renameSync(originalPath, movedPath);
   await knowledge.folderSync.syncNow({ reason: 'test-move' });
-  const moved = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const moved = knowledge.getDocument(note.id);
   assert.equal(moved.folderPath, '移动后');
   assert.equal(moved.title, '外部标题');
 
@@ -127,7 +127,7 @@ test('external edits, moves, additions and deletes reconcile by stable id', asyn
 
   fs.unlinkSync(movedPath);
   await knowledge.folderSync.syncNow({ reason: 'test-delete' });
-  assert.equal(knowledge.getDocument(note.id, { diaryUnlocked: true }), null);
+  assert.equal(knowledge.getDocument(note.id), null);
 });
 
 test('external note moves copy relative image dependencies into the new folder', async (t) => {
@@ -136,7 +136,7 @@ test('external note moves copy relative image dependencies into the new folder',
   fs.writeFileSync(path.join(dir, 'uploads', '岗位.png'), Buffer.from('role-image'));
   const note = knowledge.createNote({ title: '岗位职责', content: '![岗位](/uploads/%E5%B2%97%E4%BD%8D.png)', knowledgeBase: '工作' }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
-  const originalPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+  const originalPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id));
   const movedDirectory = path.join(root, '工作', '岗位文件');
   fs.mkdirSync(movedDirectory, { recursive: true });
   const movedPath = path.join(movedDirectory, path.basename(originalPath));
@@ -145,7 +145,7 @@ test('external note moves copy relative image dependencies into the new folder',
   await knowledge.folderSync.syncNow({ reason: 'move-note-with-image' });
 
   assert.deepEqual(fs.readFileSync(path.join(movedDirectory, '岗位.png')), Buffer.from('role-image'));
-  assert.match(knowledge.getDocument(note.id, { diaryUnlocked: true }).content, /\.\/%E5%B2%97%E4%BD%8D\.png/);
+  assert.match(knowledge.getDocument(note.id).content, /\.\/%E5%B2%97%E4%BD%8D\.png/);
 });
 
 test('sync backfills database-only notes and copies legacy HTML images as local Markdown assets', async (t) => {
@@ -165,24 +165,24 @@ test('sync backfills database-only notes and copies legacy HTML images as local 
   knowledge.folderSync.configure({ enabled: true, rootPath: root });
 
   const snapshot = await knowledge.folderSync.syncNow({ reason: 'backfill-database-only-note' });
-  const synced = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const synced = knowledge.getDocument(note.id);
   const notePath = knowledge.folderSync.localPathFor(synced);
   assert.equal(snapshot.report.added, 1);
   assert.ok(notePath.endsWith(path.join('虎扑', '工作', '9.21.md')));
   assert.match(synced.content, /<img src="\.\/legacy\.png" width="300">/);
   assert.match(fs.readFileSync(notePath, 'utf8'), /<img src="\.\/legacy\.png" width="300">/);
   assert.deepEqual(fs.readFileSync(path.join(path.dirname(notePath), 'legacy.png')), Buffer.from('legacy-image-bytes'));
-  assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(existing.id, { diaryUnlocked: true })));
+  assert.ok(knowledge.folderSync.localPathFor(knowledge.getDocument(existing.id)));
 });
 
 test('disk changes win application save conflicts and preserve the draft', (t) => {
   const { root, knowledge } = setup(t);
   const note = knowledge.createNote({ title: '冲突', content: '数据库正文' }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
-  const current = knowledge.getDocument(note.id, { diaryUnlocked: true });
+  const current = knowledge.getDocument(note.id);
   const notePath = knowledge.folderSync.localPathFor(current);
   fs.writeFileSync(notePath, serializeMarkdown({ ...current, content: '磁盘正文' }));
-  const result = knowledge.updateDocument(note.id, { content: '编辑器草稿', baseVersion: current.version }, { diaryUnlocked: true });
+  const result = knowledge.updateDocument(note.id, { content: '编辑器草稿', baseVersion: current.version });
   assert.equal(result.status, 409);
   assert.equal(result.draftSaved, true);
   assert.equal(knowledge.folderSync.listDrafts().length, 1);
@@ -193,7 +193,7 @@ test('file previews reject a symlink that escapes the synchronized knowledge roo
   const { root, knowledge } = setup(t);
   const file = knowledge.saveImportedFile({
     buffer: Buffer.from('original-file'), filename: 'guide.txt', mimeType: 'text/plain',
-    title: '指南', knowledgeBase: '资料', text: 'original-file', diaryUnlocked: false,
+    title: '指南', knowledgeBase: '资料', text: 'original-file',
   }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
   const synced = knowledge.getDocument(file.id);
@@ -225,11 +225,11 @@ test('images referenced by deleted notes stay beside the note without becoming o
   fs.writeFileSync(path.join(dir, 'uploads', 'shared.png'), Buffer.from('shared-image'));
   const note = knowledge.createNote({ title: '带图片', content: '![图](/uploads/shared.png)' }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
-  const notePath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+  const notePath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id));
   const imagePath = path.join(path.dirname(notePath), 'shared.png');
   fs.unlinkSync(notePath);
   await knowledge.folderSync.syncNow({ reason: 'delete-note-with-image' });
-  assert.equal(knowledge.getDocument(note.id, { diaryUnlocked: true }), null);
+  assert.equal(knowledge.getDocument(note.id), null);
   assert.equal(fs.existsSync(imagePath), true);
   assert.equal(knowledge.nativeDocuments().some(item => item.fileMeta?.filename === 'shared.png'), false);
 });
@@ -238,7 +238,7 @@ test('duplicate front matter ids create a new identity instead of stealing a not
   const { root, knowledge } = setup(t);
   const note = knowledge.createNote({ title: '一号', content: 'A' }).document;
   knowledge.folderSync.migrateAll({ rootPath: root });
-  const firstPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id, { diaryUnlocked: true }));
+  const firstPath = knowledge.folderSync.localPathFor(knowledge.getDocument(note.id));
   const duplicatePath = path.join(path.dirname(firstPath), '副本.md');
   fs.copyFileSync(firstPath, duplicatePath);
   await knowledge.folderSync.syncNow({ reason: 'duplicate-id' });
@@ -333,7 +333,7 @@ test('sync skips nested app bundles but preserves ordinary files and excluded le
   fs.writeFileSync(path.join(root, '项目', 'ordinary.txt'), 'ordinary content');
   fs.writeFileSync(path.join(root, '项目', 'ordinary.app'), 'ordinary app-named file');
   await knowledge.folderSync.syncNow();
-  assert.equal(knowledge.allDocuments({ diaryUnlocked: true }).length, 1);
+  assert.equal(knowledge.allDocuments().length, 1);
   assert.ok(knowledge.folderSync.scanFiles().nameOnlyEntries.some(file => file.relativePath === '项目/ordinary.app'));
   fs.unlinkSync(path.join(root, '项目', 'ordinary.app'));
   const old = knowledge.createNote({ title: 'legacy' }).document;
@@ -404,14 +404,13 @@ test('extension whitelist keeps excluded files as read-only names without copyin
   fs.writeFileSync(path.join(root, '日记', 'secret.bin'), 'private');
   knowledge.folderSync.configure({ enabled: true, rootPath: root });
   await knowledge.folderSync.syncNow();
-  const docs = knowledge.allDocuments({ diaryUnlocked: true });
+  const docs = knowledge.allDocuments();
   assert.equal(docs.length, 1);
   assert.equal(docs[0].title, 'main.CPP');
   assert.equal(docs[0].content, 'int main() { return 0; }');
   assert.equal(fs.readdirSync(path.join(dir, 'knowledge-files')).length, 1);
   assert.deepEqual(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '项目' }).map(entry => entry.name).sort(), ['README', 'Tool.app', 'data.zip', 'unknown.bin']);
-  assert.deepEqual(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记' }), []);
-  assert.equal(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记', diaryUnlocked: true }).length, 1);
+  assert.equal(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记' }).length, 1);
   const before = knowledge.folderSync.snapshot().syncExtensions;
   assert.throws(() => knowledge.folderSync.configure({ enabled: true, rootPath: root, syncExtensions: ['.exe'] }), /不支持/);
   assert.deepEqual(knowledge.folderSync.snapshot().syncExtensions, before);

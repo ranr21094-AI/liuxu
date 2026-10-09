@@ -42,14 +42,11 @@ test('reading data preserves handwritten notes, rejects conflicts and survives p
   service.archiveDocument(file.id); state = service.getReadingData(file.id); assert.equal(update([]).status,403);
 });
 
-test('comic highlights and locked diary reading data are rejected', t => {
+test('comic highlights are rejected', t => {
   const { db } = createTempDatabase(t, 'ebook-access-'); const service = createKnowledgeService(db, { startFolderSync:false });
   const file = service.saveImportedFile({ buffer:Buffer.from('comic'), filename:'book.cbz', title:'Book', text:'' }).document;
   const state = service.getReadingData(file.id);
   assert.equal(service.updateReadingData(file.id, { ...state, baseRevision:0, entries:[{ id:'one', type:'highlight', anchor:'page:1', fingerprint:state.fingerprint, quote:'x' }] }).status,400);
-  const privateFile = service.saveImportedFile({ buffer:Buffer.from('private'), filename:'private.epub', collectionPath:'日记', diaryUnlocked:true }).document;
-  assert.equal(service.getReadingData(privateFile.id),null);
-  assert.equal(service.updateReadingData(privateFile.id, {}).status,404);
 });
 
 test('changed binaries reject stale highlights without changing annotations', t => {

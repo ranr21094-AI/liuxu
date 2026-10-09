@@ -39,7 +39,7 @@ test('offline cleanup backs up and removes only unannotated Blender imports, upd
   const { db, dir, root, knowledge } = fixture(t);
   const search = createSearchIndex(knowledge);
   // Build the search and link indexes before removal to exercise invalidation.
-  search.search('uniqueblenderinternals', { diaryUnlocked: true });
+  search.search('uniqueblenderinternals', {});
   db.sqlite.prepare("INSERT INTO knowledge_link_targets(document_id, normalized_title, title) VALUES ('file:1', 'uniqueblenderinternals', 'uniqueblenderinternals')").run();
   db.sqlite.prepare("INSERT INTO knowledge_links(source_document_id,target_document_id,resolved) VALUES ('note:1','file:1',1)").run();
   const dry = await cleanupBlenderSync({ dataDir: dir });
@@ -59,7 +59,7 @@ test('offline cleanup backs up and removes only unannotated Blender imports, upd
   assert.equal(fs.readFileSync(path.join(root, PREFIX, 'code.py'), 'utf8'), 'original program');
   assert.equal(fs.readFileSync(path.join(dir, 'knowledge-files', 'copy.py'), 'utf8'), 'stored copy');
   assert.ok(fs.existsSync(path.join(backupDir, 'schedule.db')));
-  const hits = search.search('uniqueblenderinternals', { diaryUnlocked: true });
+  const hits = search.search('uniqueblenderinternals', {});
   assert.ok(!JSON.stringify(hits).includes('file:1'));
 });
 

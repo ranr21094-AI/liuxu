@@ -26,16 +26,12 @@ test('knowledge file reader helpers enforce protected byte ranges and ZIP listin
   const knowledge = createKnowledgeService(db);
   const publicFile = knowledge.saveImportedFile({
     buffer: Buffer.from('0123456789abcdef'), filename: '读取测试.txt', mimeType: 'text/plain',
-    title: '读取测试', collectionPath: '开发', text: '读取测试正文', diaryUnlocked: false,
-  }).document;
-  const diaryFile = knowledge.saveImportedFile({
-    buffer: Buffer.from('diary secret'), filename: 'private.txt', mimeType: 'text/plain',
-    title: '私密档案', collectionPath: '日记', text: '私密正文', diaryUnlocked: true,
+    title: '读取测试', collectionPath: '开发', text: '读取测试正文',
   }).document;
   const zip = new JSZip(); zip.file('资料/说明.txt', '可列出但不解压');
   const archive = knowledge.saveImportedFile({
     buffer: await zip.generateAsync({ type: 'nodebuffer' }), filename: 'archive.zip', mimeType: 'application/zip',
-    title: 'ZIP 目录', collectionPath: '开发', text: '', previewKind: 'archive', diaryUnlocked: false,
+    title: 'ZIP 目录', collectionPath: '开发', text: '', previewKind: 'archive',
   }).document;
 
   t.after(() => invalidateKnowledgeCache(db.dataDir));
@@ -53,7 +49,6 @@ test('knowledge file reader helpers enforce protected byte ranges and ZIP listin
   assert.equal(head.body.length, 0);
   const invalidRange = await captureFileResponse({ method: 'GET', query: {}, headers: { range: 'bytes=0-1,4-5' } }, publicFile, filePath);
   assert.equal(invalidRange.status, 416);
-  assert.equal(knowledge.getDocument(diaryFile.id, { diaryUnlocked: false }), null);
   const listing = await listZipEntries(knowledge.filePathFor(archive), 0, 100);
   assert.deepEqual(listing.entries.map(entry => entry.name), ['资料/说明.txt']);
 });

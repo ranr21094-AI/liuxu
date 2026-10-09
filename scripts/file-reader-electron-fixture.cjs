@@ -88,7 +88,7 @@ async function main() {
   const { createKnowledgeService } = require('../lib/knowledge/documents');
   const knowledge = createKnowledgeService(db);
   const add = (filename, mimeType, buffer, text = '') => knowledge.saveImportedFile({
-    buffer, filename, mimeType, title: filename, collectionPath: '预览测试', text, diaryUnlocked: false,
+    buffer, filename, mimeType, title: filename, collectionPath: '预览测试', text,
   }).document;
 
   const sheetRows = [

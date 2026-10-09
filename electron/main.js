@@ -221,11 +221,9 @@ function configureKnowledgeFileIpc() {
   ipcMain.removeHandler('liuxu:knowledge-file:open-folder');
   ipcMain.handle('liuxu:knowledge-file:open-document', async (event, payload = {}) => {
     assertTrustedIpcSender(event);
-    const diaryCookies = await event.sender.session.cookies.get({ url: appOrigin, name: 'diary_session' });
     const target = await authorizedKnowledgeFilePath({
       documentId: payload.documentId,
       appOrigin,
-      diaryToken: diaryCookies[0]?.value || '',
     });
     if (!fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isFile()) {
       throw new Error('档案文件不存在');
@@ -237,11 +235,9 @@ function configureKnowledgeFileIpc() {
   });
   ipcMain.handle('liuxu:knowledge-file:open-folder', async (event, payload = {}) => {
     assertTrustedIpcSender(event);
-    const diaryCookies = await event.sender.session.cookies.get({ url: appOrigin, name: 'diary_session' });
     const target = await authorizedKnowledgeDocumentFolder({
       documentId: payload.documentId,
       appOrigin,
-      diaryToken: diaryCookies[0]?.value || '',
     });
     if (!path.isAbsolute(target) || !fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isDirectory()) {
       throw new Error('文档所在文件夹不存在或路径无效');

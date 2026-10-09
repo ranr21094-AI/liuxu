@@ -44,7 +44,6 @@ function createContext({ failure = '', draftResponse } = {}) {
     editorMatchesSubmitted: draft => draft.content === editor.value,
     setDocumentSaveState: value => { calls.status = value; },
     showToast: (message, type) => calls.toasts.push({ message, type }),
-    getDiaryStatus: async () => ({ enabled: true, locked: false }),
     showEmptyDocument: () => {
       calls.clears += 1;
       editor.value = '';
@@ -131,15 +130,4 @@ test('external deletion retains unsaved note input when the server returns 404',
   assert.equal(state.documentConflict, true);
   assert.equal(calls.clears, 0);
   assert.equal(calls.status, '保存冲突');
-});
-
-test('a locked diary is hidden even if the document request returns 404', async () => {
-  const { context, state, editor, calls } = createContext();
-  state.activeDocument.visibility = 'diary';
-  context.getDiaryStatus = async () => ({ enabled: true, locked: true });
-  context.apiFetch = async () => ({ ok: false, status: 404, json: async () => ({ error: 'Document not found' }) });
-  await context.reconcileKnowledgeSync(1);
-  assert.equal(calls.clears, 1);
-  assert.equal(state.activeDocument, null);
-  assert.equal(editor.value, '');
 });

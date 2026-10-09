@@ -222,7 +222,6 @@ export function initNoteBrowser({ onError = console.error } = {}) {
 
 export function noteBrowserSetDocument(document) {
   if (!state) return;
-  state.private = document?.visibility === 'diary' || document?.knowledgeBase === '日记';
   state.documentId = document?.status === 'archived' ? '' : String(document?.id || '');
   desktopBrowser()?.activate({ documentId: state.documentId, tabId: '', visible: false, rect: { x: 0, y: 0, width: 0, height: 0 } }).catch(state.onError);
   render();
@@ -244,7 +243,6 @@ export function noteBrowserDeleteDocument(documentId) {
   if (!state.documentId) desktopBrowser()?.activate({ documentId: '', tabId: '', visible: false, rect: { x: 0, y: 0, width: 0, height: 0 } }).catch(() => {});
   saveRecords(); render();
 }
-export function noteBrowserLockPrivate() { if (state?.private) noteBrowserClear(); }
 export function noteBrowserResetWorkspace() {
   if (!state) return;
   for (const [documentId, current] of Object.entries(state.records)) {
