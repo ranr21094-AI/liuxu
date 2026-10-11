@@ -15,14 +15,14 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在 [v1.5.0 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.5.0) 下载 `LiuXu-Setup-1.5.0-x64.exe`。
+1. 在 [v1.5.1 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.5.1) 下载 `LiuXu-Setup-1.5.1-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.5.0-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.5.1-x64.exe -Algorithm SHA256
 ```
 
 ### macOS Apple Silicon（v1.5.0）
@@ -393,6 +393,7 @@ desktop-build-summary-mac.json
 - [知识库按层级置顶](docs/knowledge-pins.md)
 - [本地知识库同步说明](docs/knowledge-folder-sync.md)
 - [笔记版本历史说明](docs/knowledge-revisions.md)
+- [v1.5.1 发布说明](docs/releases/v1.5.1.md)
 - [v1.4.6 发布说明](docs/releases/v1.4.6.md)
 - [v1.4.7 发布说明](docs/releases/v1.4.7.md)
 - [v1.4.5 发布说明](docs/releases/v1.4.5.md)

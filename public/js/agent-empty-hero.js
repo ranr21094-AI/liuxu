@@ -16,17 +16,18 @@ function buildPatternGrid() {
 
 const patternGrid = buildPatternGrid();
 
-export function renderAgentEmptyHero() {
+export function renderAgentEmptyHero({ titleZh = TITLE_ZH, titleEn = TITLE_EN } = {}) {
+  const escapeText = text => String(text).replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
   return `
     <div class="agent-empty-state agent-empty-hero" data-agent-hero>
       <div class="agent-empty-hero__frame">
         <div class="agent-empty-hero__pattern" aria-hidden="true">${patternGrid}</div>
         <div class="agent-empty-hero__layer agent-empty-hero__layer--base">
-          <h1 lang="zh-CN">${TITLE_ZH}</h1>
+          <h1 lang="zh-CN">${escapeText(titleZh)}</h1>
         </div>
         <div class="agent-empty-hero__layer agent-empty-hero__layer--spotlight" aria-hidden="true">
           <div class="agent-empty-hero__pattern agent-empty-hero__pattern--spotlight">${patternGrid}</div>
-          <h1 lang="en">${TITLE_EN}</h1>
+          <h1 lang="en">${escapeText(titleEn)}</h1>
         </div>
       </div>
     </div>`;
@@ -140,7 +141,7 @@ export function mountAgentEmptyHero(root) {
 
   frame.classList.remove('is-spotlight-active');
 
-  if (!supportsFinePointer) {
+  if (!supportsFinePointer || reducedMotion) {
     cleanups.set(hero, () => {});
     return;
   }

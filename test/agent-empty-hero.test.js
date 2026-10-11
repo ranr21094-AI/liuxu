@@ -149,7 +149,7 @@ test('spotlight starts hidden, follows smoothly, and disappears when the pointer
   }
 });
 
-test('reduced motion updates the spotlight immediately without scheduling animation', async () => {
+test('reduced motion keeps the welcome static without scheduling animation', async () => {
   const environment = createBrowserEnvironment({ reducedMotion: true });
   try {
     const heroModule = await loadHeroModule();
@@ -158,12 +158,8 @@ test('reduced motion updates the spotlight immediately without scheduling animat
 
     dispatchPointer(environment.dom, frame, 'pointerenter', { clientX: 110, clientY: 120 });
     dispatchPointer(environment.dom, frame, 'pointermove', { clientX: 410, clientY: 270 });
-    assert.equal(frame.style.getPropertyValue('--spot-x'), '400.00px');
-    assert.equal(frame.style.getPropertyValue('--spot-y'), '250.00px');
-    assert.equal(environment.pendingFrames(), 0);
-
-    dispatchPointer(environment.dom, frame, 'pointerleave');
     assert.equal(frame.classList.contains('is-spotlight-active'), false);
+    assert.equal(environment.pendingFrames(), 0);
   } finally {
     environment.restore();
   }
@@ -207,4 +203,13 @@ test('spotlight styles default to hidden and preserve touch and reduced-motion a
   assert.match(styles, /\.agent-empty-hero__frame\.is-spotlight-active \.agent-empty-hero__layer--spotlight\s*\{[\s\S]*?opacity:\s*1;/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?transition:\s*none;/);
   assert.doesNotMatch(html, /agent-empty-hero__frame is-spotlight-active/);
+});
+
+test('shared welcome accepts knowledge copy and escapes text', async () => {
+  const heroModule = await loadHeroModule();
+  const markup = heroModule.renderAgentEmptyHero({ titleZh: '让知识，有序生长', titleEn: 'Let knowledge grow.' });
+  assert.match(markup, /让知识，有序生长/);
+  assert.match(markup, /Let knowledge grow\./);
+  assert.doesNotMatch(markup, /你好，我是留序/);
+  assert.match(heroModule.renderAgentEmptyHero({ titleZh: '<script>' }), /&lt;script&gt;/);
 });

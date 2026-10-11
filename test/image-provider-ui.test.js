@@ -7,7 +7,11 @@ const { JSDOM } = require('jsdom');
 async function loadImageProviderUi(dom) {
   const url = pathToFileURL(path.join(__dirname, '../public/js/settings/image-providers.js'));
   url.search = `test=${Date.now()}-${Math.random()}`;
-  return import(url.href);
+  const ui = await import(url.href);
+  return { ...ui, loadImageProviderSettings(settings) {
+    ui.loadImageProviderSettings(settings);
+    document.querySelector('[data-select-image-provider]')?.click();
+  } };
 }
 
 function withDom(fn) {
@@ -57,26 +61,26 @@ test('image provider settings render a workspace detail pane with stable selecti
   });
 
   assert.equal(document.querySelectorAll('.custom-provider-workspace.image-provider-workspace').length, 1);
-  assert.equal(document.querySelectorAll('.custom-provider-nav-item').length, 2);
+  assert.equal(ui.readImageProviderSettings().imageProviders.length, 2);
   assert.equal(document.querySelectorAll('.custom-provider-nav-drag').length, 0, 'sidebar has no fake drag handle');
-  assert.equal(document.querySelectorAll('[data-image-add]').length, 1);
-  assert.match(document.querySelector('[data-image-add]').textContent, /添加供应商/);
+  assert.equal(document.querySelectorAll('[data-image-back]').length, 2);
   const detail = document.querySelector('.image-provider-detail');
   assert.equal(detail.dataset.providerId, 'ip_test', 'first provider is selected by default');
   assert.equal(detail.querySelectorAll('.image-model-card').length, 1);
-  assert.ok(detail.querySelector('.custom-provider-title-wrap'));
+  assert.ok(detail.querySelector('.provider-reference-header'));
   assert.ok(detail.querySelector('[data-toggle-key]'));
   assert.equal(detail.querySelectorAll('[role="switch"]').length, 1);
   const duplicate = detail.querySelector('[data-image-action="duplicate-provider"]');
-  assert.ok(duplicate?.querySelector('svg'), 'duplicate is an icon button');
-  assert.equal(duplicate.getAttribute('aria-label'), '复制供应商');
+  assert.ok(duplicate?.closest('.provider-reference-header'), 'duplicate is available in detail');
+  assert.equal(duplicate.textContent.trim(), '复制供应商');
   assert.ok(detail.querySelector('[data-image-action="test"]'));
   assert.equal(detail.querySelectorAll('.image-model-card [data-image-action="test"]').length, 0, 'connection test lives on the provider, not each model');
   assert.equal(detail.querySelectorAll('.image-model-card [data-image-action="generate"]').length, 1);
 
+  document.querySelector('[data-image-back]').click();
   document.querySelector('[data-select-image-provider="ip_second"]').click();
   assert.equal(document.querySelector('.image-provider-detail').dataset.providerId, 'ip_second');
-  assert.equal(document.querySelectorAll('.custom-provider-nav-item.active').length, 1);
+  assert.equal(document.querySelector('.image-provider-detail').dataset.providerId, 'ip_second');
 
   const capability = document.querySelector('.image-model-capabilities');
   capability.open = true;
@@ -85,7 +89,7 @@ test('image provider settings render a workspace detail pane with stable selecti
   assert.equal(document.querySelector('.image-model-capabilities').open, true, 'capability open state persists across re-render');
 
   document.querySelector('[data-image-action="duplicate-provider"]').click();
-  assert.equal(document.querySelectorAll('.custom-provider-nav-item').length, 3);
+  assert.equal(ui.readImageProviderSettings().imageProviders.length, 3);
 
   const saved = ui.readImageProviderSettings();
   assert.equal(saved.imageProviders.length, 3);
@@ -97,15 +101,16 @@ test('image provider settings render a workspace detail pane with stable selecti
 
   for (let i = 0; i < 3; i += 1) {
     global.confirm = () => true;
+    document.querySelector('[data-select-image-provider]')?.click();
     document.querySelector('[data-image-action="remove-provider"]').click();
   }
   const afterRemoval = ui.readImageProviderSettings();
   assert.equal(afterRemoval.imageProviders.length, 0);
   assert.equal(afterRemoval.defaultImageModelRef, '');
-  assert.ok(document.querySelector('.custom-provider-detail-empty'), 'empty state renders when no provider remains');
+  assert.ok(document.querySelector('.provider-directory-list .empty-list'), 'empty state renders when no provider remains');
 }));
 
-test('image provider test-state slots exist and keep inputs across updates', withDom(async () => {
+test('image provider test-state slots exist and keep inputs across updates', withDom(async (dom) => {
   const ui = await loadImageProviderUi();
   ui.loadImageProviderSettings({
     imageProviders: [{
@@ -129,9 +134,9 @@ test('image provider test-state slots exist and keep inputs across updates', wit
   assert.equal(restored.value, '重命名后的模型');
 
   document.querySelector('[role="switch"]').click();
-  assert.ok(document.querySelector('.custom-provider-status-dot.is-disabled'), 'disabled provider shows status dot');
+  assert.equal(document.querySelector('[role="switch"]').checked, false);
   document.querySelector('[role="switch"]').click();
-  assert.equal(document.querySelector('.custom-provider-status-dot.is-disabled'), null);
+  assert.equal(document.querySelector('[role="switch"]').checked, true);
 
   const keyInput = document.querySelector('.image-provider-key');
   assert.equal(keyInput.type, 'password');
@@ -149,7 +154,7 @@ test('adding a provider uses one button and Seedream fills presets for blank mod
   ui.loadImageProviderSettings({ imageProviders: [] });
 
   document.querySelector('[data-image-add]').click();
-  assert.equal(document.querySelectorAll('.custom-provider-nav-item').length, 1);
+  assert.equal(document.querySelectorAll('.image-provider-detail').length, 1);
   const added = document.querySelector('.image-provider-detail');
   assert.equal(added.querySelector('.image-provider-adapter').value, 'openai-images');
   assert.equal(added.querySelectorAll('.image-model-card').length, 1);
@@ -197,7 +202,7 @@ test('adding a provider uses one button and Seedream fills presets for blank mod
   assert.equal(document.querySelector('.image-provider-base-url').value, 'https://api.example.com/v1');
 }));
 
-test('a finished connection test does not rebuild another provider being edited', withDom(async () => {
+test('a finished connection test does not rebuild another provider being edited', withDom(async (dom) => {
   const ui = await loadImageProviderUi();
   ui.loadImageProviderSettings({
     imageProviders: [{
@@ -220,7 +225,8 @@ test('a finished connection test does not rebuild another provider being edited'
   try {
     document.querySelector('[data-image-action="test"]').click();
     assert.equal(typeof finishTest, 'function');
-    document.querySelector('[data-select-image-provider="ip_second"]').click();
+    document.querySelector('[data-image-back]').click();
+  document.querySelector('[data-select-image-provider="ip_second"]').click();
     const nameInput = document.querySelector('.image-provider-name');
     nameInput.value = '正在编辑';
     finishTest();
@@ -243,4 +249,18 @@ test('incomplete image providers block save instead of dropping existing cards',
   document.querySelector('.image-provider-name').value = '';
   document.querySelector('.image-provider-base-url').value = '';
   assert.match(ui.imageProviderSaveError(['ip_saved']), /请先完成/);
+}));
+
+test('image provider directory opens detail and returns with edited draft intact', withDom(async () => {
+  const url = pathToFileURL(path.join(__dirname, '../public/js/settings/image-providers.js'));
+  const ui = await import(url.href + '?directory=' + Date.now());
+  ui.loadImageProviderSettings({ imageProviders: [{ id: 'one', name: 'Original', adapter: 'openai-images', baseUrl: 'https://example.com', models: [] }] });
+  assert.equal(document.querySelector('.image-provider-detail'), null);
+  assert.equal(document.querySelectorAll('.provider-directory-row').length, 1);
+  document.querySelector('.provider-directory-row').click();
+  document.querySelector('.image-provider-name').value = 'Edited';
+  document.querySelector('[data-image-back]').click();
+  assert.match(document.querySelector('.provider-directory-name').textContent, /Edited/);
+  document.querySelector('.provider-directory-row').click();
+  assert.equal(document.querySelector('.image-provider-name').value, 'Edited');
 }));

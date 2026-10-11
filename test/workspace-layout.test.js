@@ -48,7 +48,7 @@ test('workspace density nits keep 36px controls, 24px narrow padding, and title 
   const workbench = fs.readFileSync(path.join(__dirname, '../public/css/workbench.css'), 'utf8');
   assert.match(css, /\.workspace-sidebar \.search-field[\s\S]*height:\s*36px/);
   assert.match(css, /@media \(max-width: 840px\)[\s\S]*--doc-pad-x:\s*24px/);
-  assert.match(css, /\.workspace-topbar \.run-status[\s\S]*display:\s*inline-flex/);
+  assert.match(css, /\.agent-view \.run-status[\s\S]*display:\s*inline-flex/);
   assert.match(css, /\.document-title-input[\s\S]*text-overflow:\s*ellipsis/);
   assert.doesNotMatch(workbench, /\.topbar-mode-switch/);
   assert.doesNotMatch(workbench, /\.run-status \{ display: none !important; \}/);
@@ -82,7 +82,13 @@ test('compact mode nav stays visible and keeps independent sidebar controls', ()
   assert.deepEqual(buttons.map(button => button.textContent), ['Agent', '知识库', 'Memory', '待办']);
   assert.deepEqual(buttons.map(button => button.dataset.mode), ['agent', 'knowledge', 'memory', 'todos']);
   assert.ok(buttons.every(button => button.type === 'button'));
-  assert.equal(nav.querySelector('svg'), null);
+  assert.equal(buttons[0].querySelector('svg.agent-mode-plus'), null);
+  assert.ok(document.querySelector('#agentNewSessionButton').closest('.sidebar-search-row'));
+  assert.equal(nav.querySelectorAll('.mode-rail-icon').length, 0);
+  assert.equal(document.querySelector('.workspace-topbar'), null);
+  assert.ok(document.querySelector('#sidebarToggle').closest('#workspaceBrand'));
+  assert.ok(document.querySelector('#runStatus').closest('#agentComposer'));
+  assert.equal(document.querySelector('#newSessionButton'), null);
   assert.equal(buttons[0].getAttribute('aria-current'), 'page');
   assert.equal(document.querySelector('#agentSidebarPanel') !== null, true);
   assert.doesNotMatch(source, /workbenchModeNavCollapsed|MODE_NAV_COLLAPSED_KEY|syncModeNav|toggleModeNav/);
@@ -145,4 +151,38 @@ test('message follower keeps history position and resumes only at bottom or expl
     list.scrollHeight = 2200; follower.follow(); assert.equal(list.scrollTop, 200); assert.equal(button.hidden, false);
     button.click(); callback(); assert.equal(list.scrollTop, 2200); assert.equal(button.hidden, true);
   } finally { follower.destroy(); dom.window.close(); Object.assign(global, before); }
+});
+
+test('desktop hides the entire sidebar and preserves search with focus handoff', () => {
+  const fs = require('node:fs'), vm = require('node:vm');
+  const dom = new JSDOM(fs.readFileSync('public/index.html', 'utf8'), { url: 'http://localhost' });
+  const source = fs.readFileSync('public/js/workbench.js', 'utf8');
+  const document = dom.window.document;
+  let filtersClosed = 0, calendarsClosed = 0;
+  const context = { document, $: selector => document.querySelector(selector), desktopSidebarQuery: { matches: true }, mobileSidebarQuery: { matches: false },
+    localStorage: dom.window.localStorage, SIDEBAR_COLLAPSED_KEY: 'workbenchSidebarCollapsed',
+    sidebarSearchControls: { close() { filtersClosed++; } }, closeDatePickers() { calendarsClosed++; } };
+  vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('function syncDesktopSidebar()'), source.indexOf('function parseRoute()')), context);
+  try {
+    const search = document.getElementById('sessionSearch'); search.value = 'keep query'; search.focus();
+    vm.runInContext('toggleDesktopSidebar(true)', context);
+    assert.equal(document.body.classList.contains('sidebar-collapsed'), true);
+    assert.equal(document.getElementById('agentSidebarPanel').inert, true);
+    assert.equal(document.activeElement.id, 'sidebarOpen');
+    assert.equal(document.getElementById('workspaceSidebar').inert, true);
+    assert.equal(document.getElementById('sidebarToggle').getAttribute('aria-expanded'), 'false');
+    assert.equal(search.value, 'keep query');
+    assert.equal(document.querySelectorAll('#workspaceModeNav .mode-rail-icon').length, 0);
+    assert.ok(filtersClosed); assert.ok(calendarsClosed);
+    vm.runInContext('toggleDesktopSidebar(false)', context);
+    assert.equal(document.getElementById('agentSidebarPanel').inert, false);
+    assert.equal(document.getElementById('workspaceSidebar').inert, false);
+    assert.equal(document.activeElement.id, 'sidebarToggle');
+    assert.equal(document.getElementById('sidebarToggle').getAttribute('aria-expanded'), 'true');
+    assert.equal(search.value, 'keep query');
+    assert.equal(dom.window.localStorage.getItem('workbenchSidebarCollapsed'), 'false');
+    const css = fs.readFileSync('public/css/workbench.css', 'utf8');
+    assert.match(css, /body\.sidebar-collapsed \.workspace-shell \{ grid-template-columns: 0px minmax\(0, 1fr\);/);
+  } finally { dom.window.close(); }
 });

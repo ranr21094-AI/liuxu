@@ -23,10 +23,10 @@ test('grouping preserves mixed pinned order, regular ordering, and omits empty g
   try {
     const list = dom.window.document.querySelector('#list');
     arrangeKnowledgeRows(list);
-    assert.deepEqual([...list.querySelectorAll('.knowledge-list-section')].map(node => node.textContent), ['置顶', '文件夹', '文件', '未同步项']);
+    assert.deepEqual([...list.querySelectorAll('.knowledge-list-section')].map(node => node.textContent), ['置顶2', '文件夹1', '文档2', '未同步项1']);
     assert.deepEqual([...list.children].filter(node => node.id).map(node => node.id), ['pd', 'pf', 'folder', 'first', 'second', 'local']);
     list.innerHTML = '<div data-list-group="file">one</div>';
     arrangeKnowledgeRows(list);
-    assert.equal(list.querySelector('.knowledge-list-section').textContent, '文件');
+    assert.equal(list.querySelector('.knowledge-list-section').textContent, '文档1');
   } finally { dom.window.close(); }
 });
