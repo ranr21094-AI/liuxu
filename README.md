@@ -15,23 +15,23 @@
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在 [v1.5.1 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.5.1) 下载 `LiuXu-Setup-1.5.1-x64.exe`。
+1. 在 [v1.5.2 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.5.2) 下载 `LiuXu-Setup-1.5.2-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.5.1-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.5.2-x64.exe -Algorithm SHA256
 ```
 
-### macOS Apple Silicon（v1.5.0）
+### macOS Apple Silicon（v1.5.2）
 
-当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.5.0 为知识库档案新增电子书阅读器，支持 EPUB、MOBI、AZW3、FB2、TXT、PDF 和 CBZ，并提供阅读进度、排版设置、搜索、书签与摘录。构建产物为：
+当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.5.2 改进电子书、PDF 与 CBZ 的阅读布局、批注和书签体验，并完善知识库文档历史、原文编辑、待办分类和 Memory 编辑。构建产物为：
 
 ```text
-LiuXu-1.5.0-mac-arm64.dmg
-LiuXu-1.5.0-mac-arm64.zip
+LiuXu-1.5.2-mac-arm64.dmg
+LiuXu-1.5.2-mac-arm64.zip
 ```
 
 该包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。
@@ -39,8 +39,8 @@ LiuXu-1.5.0-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.5.0-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.5.0-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.5.2-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.5.2-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -393,6 +393,7 @@ desktop-build-summary-mac.json
 - [知识库按层级置顶](docs/knowledge-pins.md)
 - [本地知识库同步说明](docs/knowledge-folder-sync.md)
 - [笔记版本历史说明](docs/knowledge-revisions.md)
+- [v1.5.2 发布说明](docs/releases/v1.5.2.md)
 - [v1.5.1 发布说明](docs/releases/v1.5.1.md)
 - [v1.4.6 发布说明](docs/releases/v1.4.6.md)
 - [v1.4.7 发布说明](docs/releases/v1.4.7.md)
