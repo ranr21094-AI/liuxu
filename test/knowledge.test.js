@@ -789,6 +789,7 @@ test('restoring a revision restores its knowledge base and content', (t) => {
     content: '第一版',
     knowledgeBase: '开发',
   }).document;
+  knowledge.createNamedRevision(note.id, { name: '初稿', baseVersion: note.version });
   const moved = knowledge.updateDocument(note.id, {
     knowledgeBase: '归档',
     content: '归档版',
@@ -797,7 +798,7 @@ test('restoring a revision restores its knowledge base and content', (t) => {
   assert.equal(moved.knowledgeBase, '归档');
   const listed = knowledge.listRevisions(note.id);
   assert.ok(listed.revisions && listed.revisions.length >= 1);
-  const restored = knowledge.restoreRevision(note.id, listed.revisions[0].id, { baseVersion: moved.version });
+  const restored = knowledge.restoreRevision(note.id, listed.revisions[0].id, { baseVersion: moved.version, restoreLocation: true });
   assert.equal(restored.document.knowledgeBase, '开发');
   assert.equal(restored.document.content, '第一版');
 });

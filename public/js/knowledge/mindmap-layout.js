@@ -13,7 +13,7 @@ export function nodeText(text, width = 232) {
   const max = Math.max(...lines.map(line => [...line].reduce((n, c) => n + (/[\u0000-\u00ff]/.test(c) ? 7.5 : 14), 0)));
   return { lines, width: Math.max(120, Math.min(260, max + 28)), height: Math.max(44, lines.length * 22 + 22) };
 }
-export function layoutMindmap(model, { expanded = false } = {}) {
+export function layoutMindmap(model, { expanded = false, preservePositions = false } = {}) {
   const tree = inspectTree(model), positions = new Map();
   if (!tree.valid) {
     for (const node of model.nodes || []) positions.set(node.id, { ...nodeText(node.text), x: Number(node.x) || 0, y: Number(node.y) || 0 });
@@ -34,6 +34,14 @@ export function layoutMindmap(model, { expanded = false } = {}) {
       const total = children.reduce((n, child) => n + span(child), 0) + Math.max(0, children.length - 1) * 22;
       let cursor = -total / 2;
       for (const child of children) { const height = span(child), sign = side === 'left' ? -1 : 1; place(child, sign * (root.width / 2 + 64 + sizes.get(child).width / 2), cursor + height / 2, sign); cursor += height + 22; }
+    }
+  }
+  if (preservePositions) {
+    for (const node of model.nodes || []) {
+      const position = positions.get(node.id);
+      if (position && Number.isFinite(node.x) && Number.isFinite(node.y)) {
+        position.x = node.x; position.y = node.y;
+      }
     }
   }
   const values = [...positions.values()];

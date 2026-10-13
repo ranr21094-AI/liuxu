@@ -62,6 +62,17 @@ export function createTodoDetailController({ document: doc = document, confirm =
       panel.querySelectorAll('button, input, textarea, select').forEach(field => { field.disabled = value; });
     }
   }
+  function renameCategory(previousName, nextName) {
+    const field = doc.getElementById('todoFullCategory');
+    if (field?.value === previousName) field.value = nextName;
+    if (mode !== 'todos' || !baseline) return;
+    const index = fields.todos.indexOf('todoFullCategory');
+    const values = JSON.parse(baseline);
+    if (values[index] === previousName) {
+      values[index] = nextName;
+      baseline = JSON.stringify(values);
+    }
+  }
   doc.getElementById('todoView')?.addEventListener('keydown', event => {
     if (!mode) return;
     if (event.key === 'Escape') {
@@ -77,5 +88,5 @@ export function createTodoDetailController({ document: doc = document, confirm =
     }
   });
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(syncLayout).observe(doc.getElementById('todoView'));
-  return { open, discard, allowDiscard, close, syncLayout, setSaving, get saving() { return saving; }, get activeMode() { return mode; } };
+  return { open, discard, allowDiscard, close, syncLayout, setSaving, renameCategory, get saving() { return saving; }, get activeMode() { return mode; } };
 }

@@ -1250,7 +1250,7 @@ test('recurring todos generate the next pending occurrence only once when comple
   assert.match(generatedUndated[0].due_date, /^\d{4}-\d{2}-\d{2}$/);
 });
 
-test('todo categories can be added and deleted while preserving tasks under default', async (t) => {
+test('todo categories can be added, renamed atomically, and deleted while preserving tasks under default', async (t) => {
   const { baseUrl } = loadFreshApp(t);
 
   const categories = await fetch(`${baseUrl}/api/todo-categories`);
@@ -1273,11 +1273,50 @@ test('todo categories can be added and deleted while preserving tasks under defa
   assert.equal(createdTodo.status, 201);
   assert.equal((await createdTodo.json()).category, '待学习');
 
-  const deletedCategory = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待学习')}`, {
+  const duplicateTarget = await fetch(`${baseUrl}/api/todo-categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '工作' }),
+  });
+  assert.equal(duplicateTarget.status, 201);
+  const conflict = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待学习')}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '工作' }),
+  });
+  assert.equal(conflict.status, 409);
+  const tooLong = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待学习')}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '分类名称'.repeat(7) }),
+  });
+  assert.equal(tooLong.status, 400);
+  const renamed = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待学习')}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '读书' }),
+  });
+  assert.equal(renamed.status, 200);
+  assert.deepEqual((await renamed.json()).categories, ['待办', '读书', '工作']);
+  assert.equal((await (await fetch(`${baseUrl}/api/todos`)).json())[0].category, '读书');
+  const missing = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('不存在')}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '新名称' }),
+  });
+  assert.equal(missing.status, 404);
+  const protectedRename = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待办')}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '我的待办' }),
+  });
+  assert.equal(protectedRename.status, 409);
+
+  const deletedCategory = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('读书')}`, {
     method: 'DELETE',
   });
   assert.equal(deletedCategory.status, 200);
-  assert.deepEqual((await deletedCategory.json()).categories, ['待办']);
+  assert.deepEqual((await deletedCategory.json()).categories, ['待办', '工作']);
   assert.equal((await (await fetch(`${baseUrl}/api/todos`)).json())[0].category, '待办');
 
   const protectedDefault = await fetch(`${baseUrl}/api/todo-categories/${encodeURIComponent('待办')}`, {
@@ -2008,7 +2047,9 @@ test('todo UI uses drag sorting, new priorities, and concise notes previews', ()
   assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullCategory"[\s\S]*id="todoFullCategoryMenu" role="listbox"/);
   assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullPriority"[\s\S]*id="todoFullPriorityMenu" role="listbox"/);
   assert.match(htmlSource, /data-todo-select-control data-select-id="todoFullRecurrence"[\s\S]*id="todoFullRecurrenceMenu" role="listbox"/);
-  assert.match(htmlSource, /id="btnTodoCategoryOpen"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
+  assert.match(htmlSource, /class="sidebar-filter-toggle todo-category-open todo-mode-only" id="btnTodoCategoryOpen"[\s\S]*<svg viewBox="0 0 24 24" aria-hidden="true">/);
+  assert.match(htmlSource, /id="todoSearchInput"[\s\S]*id="btnTodoCategoryOpen"[\s\S]*id="todoReminderOpen"/);
+  assert.doesNotMatch(htmlSource, /id="todoSidebarHeading"/);
   assert.match(htmlSource, /<dialog class="workspace-dialog" id="todoCategoryOverlay"/);
   assert.match(htmlSource, /id="todoCategoryOverlay"[\s\S]*id="todoCategoryAddForm"[\s\S]*id="todoCategoryInput"[\s\S]*id="btnTodoCategoryAdd"/);
   assert.match(htmlSource, /id="btnTodoCategoryCancel"/);
@@ -2032,13 +2073,14 @@ test('todo UI uses drag sorting, new priorities, and concise notes previews', ()
   assert.match(todoSource, /apiFetch\('\/api\/todo-categories'\)/);
   assert.match(todoSource, /function renderTodoFilterTabs\(\)/);
   assert.match(todoSource, /data-filter="\$\{escHtml\(category\)\}"/);
-  assert.match(todoSource, /data-filter="done"[\s\S]*已完成/);
+  assert.match(todoSource, /systemFilter\('done', '已完成'/);
+  assert.match(todoSource, /data-action="rename-category"[\s\S]*重命名/);
   assert.match(todoSource, /data-action="delete-category"/);
-  assert.match(todoSource, /class="todo-category-remove"[\s\S]*role="button"[\s\S]*<svg viewBox="0 0 24 24"/);
-  assert.doesNotMatch(todoSource, /title="删除分类">×/);
+  assert.match(todoSource, /class="todo-category-more"[\s\S]*aria-haspopup="menu"/);
+  assert.match(todoSource, /function closeTodoCategoryMenu\(/);
   assert.match(todoSource, /function addTodoCategoryFromForm\(event\)/);
   assert.match(todoSource, /function deleteTodoCategory\(name\)/);
-  assert.match(todoSource, /function openTodoCategoryModal\(\)/);
+  assert.match(todoSource, /function openTodoCategoryModal\(\{ mode = 'add'/);
   assert.match(todoSource, /dialog\.showModal\(\)/);
   assert.match(todoSource, /\$\('#btnTodoCategoryOpen'\)\.addEventListener\('click', openTodoCategoryModal\);/);
   assert.match(todoSource, /\$\('#btnTodoCategoryClose'\)\.addEventListener\('click', closeTodoCategoryModal\);/);
@@ -2096,13 +2138,20 @@ test('todo UI uses drag sorting, new priorities, and concise notes previews', ()
   assert.match(styleSource, /\.todo-search-box\s*\{[\s\S]*margin-top:\s*0;/);
   assert.match(styleSource, /\.todo-filter-tabs\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.dialog-card\.compact-dialog\s*\{[\s\S]*max-width:\s*430px;/);
-  assert.match(styleSource, /\.todo-category-remove\s*\{[\s\S]*border-radius:\s*7px;/);
-  assert.match(styleSource, /\.todo-category-remove svg\s*\{[\s\S]*stroke-width:\s*1\.9;/);
+  assert.match(styleSource, /\.todo-category-more\s*\{[\s\S]*opacity:\s*0;/);
+  assert.match(styleSource, /\.todo-category-menu\s*\{[\s\S]*position:\s*fixed;/);
+  assert.match(htmlSource, /class="primary-action compact todo-new-action" id="btnTodoNew"[\s\S]*data-todo-new-icon="countdown"/);
+  assert.match(styleSource, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.todo-toolbar \.todo-new-action, \.todo-new-action-label \{ transition: none; \}/);
+  assert.match(styleSource, /@media \(hover: none\), \(pointer: coarse\)[\s\S]*\.todo-toolbar \.todo-new-action,\s*\.todo-toolbar \.todo-new-action:is\(:hover, :focus-visible\) \{ width: 40px;/);
   assert.match(styleSource, /\.todo-category-badge\s*\{[\s\S]*background:\s*var\(--accent-soft\);/);
   assert.match(styleSource, /\.todo-select-control\[data-select-id="todoFullCategory"\]\s*\{[\s\S]*grid-column:\s*1 \/ -1;/);
   assert.match(styleSource, /\.todo-native-select\s*\{[\s\S]*opacity:\s*0;[\s\S]*pointer-events:\s*none;/);
   assert.match(styleSource, /\.todo-select-trigger:hover\s*\{[\s\S]*border-color:\s*var\(--line-strong\);/);
-  assert.match(styleSource, /\.todo-select-control\.has-value \.todo-select-trigger\s*\{[\s\S]*linear-gradient\(90deg, var\(--accent\) 0 3px, transparent 3px\),[\s\S]*var\(--panel\);/);
+  assert.match(styleSource, /\.todo-select-control\.has-value \.todo-select-trigger\s*\{[\s\S]*background:\s*var\(--selection-fill, var\(--accent-soft\)\);/);
+  assert.match(styleSource, /#todoFullCategoryMenu \.todo-select-option\[aria-selected="true"\],[\s\S]*#todoFullPriorityMenu \.todo-select-option\[aria-selected="true"\],[\s\S]*#todoFullRecurrenceMenu \.todo-select-option\[aria-selected="true"\][\s\S]*background:\s*var\(--selection-fill, var\(--accent-soft\)\);/);
+  assert.match(styleSource, /#todoFullCategoryMenu \.todo-select-option\[aria-selected="true"\]:hover,[\s\S]*#todoFullPriorityMenu \.todo-select-option\[aria-selected="true"\]:hover,[\s\S]*#todoFullRecurrenceMenu \.todo-select-option\[aria-selected="true"\]:hover[\s\S]*background:\s*color-mix\(in srgb, var\(--accent-soft\) 74%, var\(--surface-hover\)\);/);
+  assert.match(styleSource, /\.select-control\.has-value \.select-control-trigger\s*\{[\s\S]*linear-gradient\(90deg, var\(--accent\) 0 3px, transparent 3px\),[\s\S]*var\(--panel\);/);
+  assert.match(styleSource, /\.todo-select-control \.todo-select-trigger:is\(:hover, \[aria-expanded="true"\]\)\s*\{[\s\S]*background:\s*color-mix\(in srgb, var\(--accent-soft\) 82%, var\(--surface\)\);/);
   assert.doesNotMatch(styleSource, /\.todo-select-control\.has-value \.todo-select-trigger\s*\{[^}]*linear-gradient\(135deg/);
   assert.match(styleSource, /\.todo-select-option:hover,\s*\.todo-select-option:focus-visible\s*\{[\s\S]*background:\s*var\(--accent-soft\);/);
   assert.match(styleSource, /\.todo-section-clear\s*\{[\s\S]*width:\s*auto;[\s\S]*min-height:\s*24px;/);

@@ -2481,6 +2481,20 @@ app.post('/api/todo-categories', (req, res) => {
   }
 });
 
+app.put('/api/todo-categories/:name', (req, res) => {
+  try {
+    const nextName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!nextName) return res.status(400).json({ error: 'Name is required' });
+    if (nextName.length > 24) return res.status(400).json({ error: 'Category name must be 24 characters or fewer' });
+    const result = db.renameTodoCategory(req.params.name, nextName);
+    if (!result) return res.status(404).json({ error: 'Todo category not found' });
+    if (result.error) return res.status(409).json({ error: result.error });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/todo-categories/:name', (req, res) => {
   try {
     const result = db.deleteTodoCategory(req.params.name);

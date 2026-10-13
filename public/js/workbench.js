@@ -5,6 +5,8 @@ import { initProviderControls } from './app/provider-controls.js';
 import { initSettingsPresentation } from './app/settings-presentation.js';
 import { initFloatingSidebarButton } from './app/floating-sidebar-button.js';
 import { documentType } from './knowledge/document-types.js';
+import { cleanupLegacyRevisions } from './knowledge/revision-migration.js';
+import { createRawTextState } from './knowledge/text-file-editor.js';
 import { apiFetch } from './auth.js';
 import {
   debounce,
@@ -112,6 +114,8 @@ const state = {
   memorySelectedId: '',
   memorySearchAccepted: '',
   memoryEditingOriginal: '',
+  memoryEditingTitle: '',
+  memoryEditingTitleOriginal: '',
   memoryWriteBusy: false,
   memoryLoadError: '',
   memoryEditingId: '',
@@ -2193,8 +2197,21 @@ async function restoreKnowledgeDraft(id) {
   if (!documentId) throw new Error('草稿没有对应文档');
   if (state.activeDocument?.id !== documentId) await navigate('knowledge', documentId);
   const draft = data.draft || {};
+  if (draft.rawText) {
+    const latestResponse = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`);
+    if (!latestResponse.ok) throw new Error('无法读取原件当前版本，草稿仍保留');
+    const latest = await latestResponse.json();
+    await renderActiveDocument(latest);
+  }
   if (draft.title != null) $('#documentTitle').value = draft.title;
-  if (draft.content != null) $('#documentContent').value = draft.content;
+  if (draft.rawText) {
+    if (!state.activeDocument?.textFileEditable || !state.fileText) throw new Error('原件尚未就绪，请同步并重新打开文件后恢复草稿');
+    state.fileText = createRawTextState(draft.content || '', Boolean(draft.bom), state.fileText.baseFingerprint);
+    $('#fileTextEditor').value = state.fileText.display;
+    $('#fileTextEditor').readOnly = false;
+    $('#fileTextEditReason').textContent = '';
+    setFileReaderTab('edit');
+  } else if (draft.content != null) $('#documentContent').value = draft.content;
   if (draft.knowledgeBase != null) $('#documentKnowledgeBase').value = draft.knowledgeBase;
   if (draft.folderPath != null) $('#documentFolderPath').value = draft.folderPath;
   if (draft.documentDate != null) { $('#documentDate').value = draft.documentDate; syncDatePickers(); }
@@ -2493,11 +2510,12 @@ let memoryDiscardPending = null;
 let memoryFilterSerial = 0;
 async function confirmMemoryDiscard() {
   if (state.memoryWriteBusy) return false;
-  if (state.memoryEditingId && state.memoryEditingDraft !== state.memoryEditingOriginal) {
-    if (!memoryDiscardPending) memoryDiscardPending = confirmAction({ title: '放弃未保存的修改？', message: '系统记忆的修改尚未保存。', confirmText: '放弃修改', cancelText: '继续编辑' }).finally(() => { memoryDiscardPending = null; });
+  if (state.memoryEditingId && (state.memoryEditingDraft !== state.memoryEditingOriginal || state.memoryEditingTitle !== state.memoryEditingTitleOriginal)) {
+    if (!memoryDiscardPending) memoryDiscardPending = confirmAction({ title: '放弃未保存的修改？', message: '记忆条目的修改尚未保存。', confirmText: '放弃修改', cancelText: '继续编辑' }).finally(() => { memoryDiscardPending = null; });
     if (!(await memoryDiscardPending)) return false;
   }
   state.memoryEditingId = ''; state.memoryEditingDraft = ''; state.memoryEditingOriginal = '';
+  state.memoryEditingTitle = ''; state.memoryEditingTitleOriginal = '';
   return true;
 }
 async function changeMemorySearch() {
@@ -2522,7 +2540,7 @@ async function selectMemoryItem(id) {
 function setMemoryWriteBusy(busy) {
   state.memoryWriteBusy = busy;
   $('#agentMemoryItems')?.setAttribute('aria-busy', String(busy));
-  $('#agentMemoryItems')?.querySelectorAll('button, textarea').forEach(control => { control.disabled = busy; });
+  $('#agentMemoryItems')?.querySelectorAll('button, input, textarea').forEach(control => { control.disabled = busy; });
 }
 
 function memoryBodyHtml(content) {
@@ -2542,11 +2560,16 @@ function renderMemoryItems(items) {
   }
   const selected = visible.find(item => item.id === state.memorySelectedId) || visible[0];
   state.memorySelectedId = selected.id;
+  const titleLimit = Math.max(1, Number($('#memoryTitleMaxChars')?.value) || 40);
+  const contentLimit = Math.max(1, Number(selected.layer === 'L3' ? $('#memoryContentMaxCharsL3')?.value : $('#memoryContentMaxCharsL2')?.value) || (selected.layer === 'L3' ? 1200 : 240));
   root.innerHTML = [selected].map(item => {
     const system = isSystemMemoryItem(item);
-    const editing = system && state.memoryEditingId === item.id;
+    const editing = state.memoryEditingId === item.id;
+    const title = editing && !system
+      ? `<label class="memory-edit-title"><span class="sr-only">记忆名称</span><input type="text" data-memory-title-editor="${escHtml(item.id)}" aria-label="记忆名称" maxlength="${titleLimit}" value="${escHtml(state.memoryEditingTitle)}"></label>`
+      : `<h2 id="memoryDetailTitle" tabindex="-1">${escHtml(item.title || '未命名记忆')}</h2>`;
     const body = editing
-      ? `<textarea class="memory-system-editor" data-memory-system-editor="${escHtml(item.id)}" aria-label="编辑${escHtml(item.title || '系统记忆')}正文" maxlength="8000">${escHtml(state.memoryEditingDraft)}</textarea>`
+      ? `<label class="memory-edit-content"><span class="sr-only">记忆内容</span><textarea class="memory-system-editor" ${system ? `data-memory-system-editor="${escHtml(item.id)}" maxlength="8000"` : `data-memory-content-editor="${escHtml(item.id)}" maxlength="${contentLimit}"`} aria-label="编辑${escHtml(item.title || '记忆')}正文">${escHtml(state.memoryEditingDraft)}</textarea></label>`
       : memoryBodyHtml(item.content);
     const actions = system
       ? (editing
@@ -2554,12 +2577,16 @@ function renderMemoryItems(items) {
         <button class="primary-action compact" type="button" data-memory-system-save="${escHtml(item.id)}">保存</button>`
         : `<button class="secondary-action compact" type="button" data-memory-edit="${escHtml(item.id)}">编辑</button>
         <button class="secondary-action compact" type="button" data-memory-system-restore="${escHtml(item.id)}">恢复默认</button>`)
-      : `<button class="danger-action compact" type="button" data-memory-archive="${escHtml(item.id)}">删除</button>`;
+      : (editing
+        ? `<button class="secondary-action compact" type="button" data-memory-edit-cancel="${escHtml(item.id)}">取消</button>
+        <button class="primary-action compact" type="button" data-memory-save="${escHtml(item.id)}">保存</button>`
+        : `<button class="secondary-action compact" type="button" data-memory-edit="${escHtml(item.id)}">编辑</button>
+        <button class="danger-action compact" type="button" data-memory-archive="${escHtml(item.id)}">删除</button>`);
     return `
-    <article class="memory-item" data-memory-item="${escHtml(item.id)}" data-memory-kind="${escHtml(item.kind || item.layer || '')}">
+    <article class="memory-item${editing ? ' is-editing' : ''}" data-memory-item="${escHtml(item.id)}" data-memory-kind="${escHtml(item.kind || item.layer || '')}">
       <header>
         <span class="memory-layer">${escHtml(memoryLayerLabel(item.layer))}</span>
-        <h2 id="memoryDetailTitle" tabindex="-1">${escHtml(item.title || '未命名记忆')}</h2>
+        ${title}
       </header>
       ${body}
       <div class="card-actions">
@@ -2619,6 +2646,7 @@ function renderMemoryWorkspace() {
   renderMemoryProposalList(proposals);
   renderMemoryItems(items);
   renderMemorySidebar();
+  $('#memoryView')?.classList.toggle('is-editing', Boolean(state.memoryEditingId));
   const error = $('#memoryLoadError');
   error.hidden = !state.memoryLoadError;
   $('#memoryLoadErrorText').textContent = state.memoryLoadError;
@@ -2805,10 +2833,38 @@ async function saveSystemMemoryItem(id) {
   }
   state.memoryEditingId = '';
   state.memoryEditingDraft = '';
+  state.memoryEditingOriginal = '';
+  state.memoryEditingTitle = '';
+  state.memoryEditingTitleOriginal = '';
   await loadMemoriesPanel();
   showToast('系统提示词已更新', 'success');
   } catch (error) { showToast(error.message || '系统记忆保存失败', 'error'); }
   finally { setMemoryWriteBusy(false); }
+}
+
+async function saveMemoryItem(id) {
+  if (!id || state.memoryWriteBusy) return;
+  setMemoryWriteBusy(true);
+  try {
+    const title = document.querySelector(`[data-memory-title-editor="${CSS.escape(id)}"]`)?.value ?? state.memoryEditingTitle;
+    const content = document.querySelector(`[data-memory-content-editor="${CSS.escape(id)}"]`)?.value ?? state.memoryEditingDraft;
+    const response = await apiFetch(`/api/agent/memories/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '记忆保存失败');
+    state.memoryEditingId = '';
+    state.memoryEditingDraft = '';
+    state.memoryEditingOriginal = '';
+    state.memoryEditingTitle = '';
+    state.memoryEditingTitleOriginal = '';
+    await loadMemoriesPanel();
+    showToast('记忆已更新', 'success');
+  } catch (error) {
+    showToast(error.message || '记忆保存失败', 'error');
+  } finally { setMemoryWriteBusy(false); }
 }
 
 async function restoreSystemMemoryItem(id) {
@@ -2829,6 +2885,9 @@ async function restoreSystemMemoryItem(id) {
   }
   state.memoryEditingId = '';
   state.memoryEditingDraft = '';
+  state.memoryEditingOriginal = '';
+  state.memoryEditingTitle = '';
+  state.memoryEditingTitleOriginal = '';
   await loadMemoriesPanel();
   showToast('已恢复默认系统提示词', 'success');
   } catch (error) { showToast(error.message || '恢复默认失败', 'error'); }
@@ -5207,6 +5266,7 @@ function showEmptyDocument() {
   documentPreviewCleanup = null;
   state.mindmapEditor?.destroy();
   state.mindmapEditor = null;
+  state.fileText = null;
   state.activeDocument = null;
   state.markdownTocOpen = false;
   syncMarkdownToc();
@@ -5298,9 +5358,13 @@ function setDocumentSaveState(text, className = '') {
   element.textContent = text;
   const stateClass = className || (text === '已保存' ? 'saved' : '');
   element.className = `save-state ${stateClass}`.trim();
+  const rawState = $('#fileTextSaveState');
+  if (rawState) { rawState.textContent = text; rawState.className = element.className; }
 }
 
 async function renderActiveDocument(document) {
+  const previousFileTab = state.activeDocument?.id === document.id && document.sourceType === 'file'
+    ? window.document.querySelector('#fileReaderTabs [aria-selected="true"]')?.dataset.fileReaderTab : null;
   documentPreviewCleanup?.();
   documentPreviewCleanup = null;
   state.mindmapEditor?.destroy();
@@ -5309,6 +5373,7 @@ async function renderActiveDocument(document) {
   noteReadingPositionGeneration += 1;
   if (state.activeDocument?.id !== document.id) state.markdownTocOpen = false;
   state.activeDocument = document;
+  state.fileText = null;
   state.documentDirty = false;
   state.documentConflict = false;
   state.editorMode = 'edit';
@@ -5338,7 +5403,7 @@ async function renderActiveDocument(document) {
   if (isMindmap) {
     const parsed = (() => { try { return JSON.parse(document.content || '{}'); } catch { return emptyMindmap(); } })();
     state.mindmapEditor = createMindmapEditor({
-      canvas: $('#mindmapCanvas'), initial: parsed,
+      canvas: $('#mindmapCanvas'), initial: parsed, preserveInitialPositions: true,
       canEdit: () => state.activeDocument?.id === document.id && state.activeDocument.status !== 'archived' && !state.documentConflict && !noteMutationLock,
       confirmDelete: confirmAction,
       onError: message => showToast(message, 'error'),
@@ -5360,7 +5425,7 @@ async function renderActiveDocument(document) {
   $('#documentPreview').hidden = isMindmap;
   $('#editorModeSwitch').hidden = isFile || isMindmap;
   $('#knowledgeLinkIssues').hidden = isFile || isMindmap;
-  $('#knowledgeRelations').hidden = isFile || isMindmap;
+  $('#knowledgeRelations').hidden = isFile && !document.textFileSupported;
   $('#fileOriginalPanel').hidden = !isFile;
   const openDocumentFolder = $('#openDocumentFolderButton');
   openDocumentFolder.hidden = !window.liuxuDesktop?.knowledgeFiles?.openContainingFolder;
@@ -5380,7 +5445,13 @@ async function renderActiveDocument(document) {
   if (!isFile) void restoreNoteReadingPosition(document);
   noteFindController?.setActiveDocument(document);
   syncMarkdownToc();
-  if (isFile) renderFileOriginalPanel(document);
+  if (isFile) {
+    renderFileOriginalPanel(document);
+    await loadTextFileEditor(document);
+    if (state.activeDocument?.id !== document.id) return;
+    document = state.activeDocument;
+    if (previousFileTab) setFileReaderTab(previousFileTab);
+  }
   else destroyFilePreview();
   renderKnowledgeBaseList();
   renderKnowledgeTree();
@@ -5419,6 +5490,41 @@ function renderFileOriginalPanel(document) {
   state.fileAnnotation = { documentId: document.id, id: '', version: 0, title: '', content: '', dirty: false };
   setFileReaderTab('preview');
   void renderFilePreview(document, $('#filePreviewHost'));
+}
+
+async function loadTextFileEditor(document, attempt = 0) {
+  const serial = (state.fileTextRequestSerial || 0) + 1;
+  state.fileTextRequestSerial = serial;
+  const tab = $('#fileTextEditorTab');
+  const editor = $('#fileTextEditor');
+  if (!tab || !editor) return;
+  tab.hidden = !document.textFileSupported;
+  editor.value = '';
+  editor.readOnly = true;
+  $('#fileTextEditReason').textContent = '';
+  if (!document.textFileSupported) return;
+  try {
+    const response = await apiFetch(`/api/knowledge/files/${encodeURIComponent(document.id)}/text`);
+    const raw = await response.json();
+    if (state.activeDocument?.id !== document.id || state.fileTextRequestSerial !== serial) return;
+    if (state.activeDocument !== document || (raw.baseVersion && raw.baseVersion !== document.version)) {
+      if (attempt < 2) return loadTextFileEditor(state.activeDocument, attempt + 1);
+      $('#fileTextEditReason').textContent = '文档已变化，请重新打开原件';
+      return;
+    }
+    document.textFileEditable = Boolean(raw.editable && response.ok);
+    $('#fileTextEditReason').textContent = raw.reason || raw.error || '';
+    if (response.ok && typeof raw.content === 'string') {
+      state.fileText = createRawTextState(raw.content, raw.bom, raw.baseFingerprint);
+      editor.value = state.fileText.display;
+      editor.readOnly = !document.textFileEditable;
+      document.rawContent = raw.content;
+      document.textFileBom = raw.bom;
+      document.baseFingerprint = raw.baseFingerprint;
+    }
+  } catch (error) {
+    if (state.activeDocument === document) $('#fileTextEditReason').textContent = error.message || '原文读取失败';
+  }
 }
 
 async function loadFileAnnotation(documentId) {
@@ -5582,6 +5688,15 @@ function currentDocumentPatch() {
     documentRole: state.activeDocument?.documentRole || 'normal',
     baseVersion: state.activeDocument?.version,
   };
+  if (state.activeDocument?.sourceType === 'file') {
+    delete patch.content;
+    if (state.fileText && state.activeDocument.textFileEditable) {
+      patch.content = state.fileText.content;
+      patch.bom = state.fileText.bom;
+      patch.baseFingerprint = state.fileText.baseFingerprint;
+      patch.rawText = true;
+    }
+  }
   return patch;
 }
 
@@ -5589,6 +5704,7 @@ function editorMatchesSubmitted(submitted) {
   const now = currentDocumentPatch();
   return now.title === submitted.title
     && now.content === submitted.content
+    && now.bom === submitted.bom
     && now.knowledgeBase === submitted.knowledgeBase
     && now.folderPath === submitted.folderPath
     && now.documentDate === submitted.documentDate
@@ -5703,17 +5819,24 @@ async function saveDocumentOnce() {
   setDocumentSaveState('正在保存', 'saving');
   let response;
   try {
-    response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
+    response = await apiFetch(patch.rawText ? `/api/knowledge/files/${encodeURIComponent(id)}/text` : `/api/knowledge/documents/${encodeURIComponent(id)}`, {
+      method: patch.rawText ? 'PUT' : 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     });
   } catch (error) {
     throw error;
   }
-  const data = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => ({}));
+  const data = patch.rawText && response.ok ? payload.document : payload;
   if (state.activeDocument?.id !== id) return false;
   if (response.status === 409) {
+    if (patch.rawText) {
+      await persistConflictDraft(id);
+      $('#fileTextEditor').readOnly = true;
+      $('#fileTextEditReason').textContent = data.error || '原件已被外部修改，草稿已保留；请同步后重新打开';
+      return false;
+    }
     return resolveDocumentConflict(data.current);
   }
   if (!response.ok) {
@@ -5722,12 +5845,23 @@ async function saveDocumentOnce() {
     return false;
   }
   const previous = state.activeDocument;
-  if (typeof data.content === 'string' && data.content !== submittedContent && $('#documentContent').value === submittedContent) {
+  if (!patch.rawText && typeof data.content === 'string' && data.content !== submittedContent && $('#documentContent').value === submittedContent) {
     const caret = $('#documentContent').selectionStart;
     $('#documentContent').value = data.content;
     const delta = data.content.length - submittedContent.length;
     const nextCaret = Math.max(0, Math.min(data.content.length, Number(caret) + delta));
     $('#documentContent').setSelectionRange(nextCaret, nextCaret);
+  }
+  if (patch.rawText) {
+    state.fileText.acknowledge(payload.baseFingerprint);
+    data.textFileSupported = true;
+    data.textFileEditable = true;
+    data.rawContent = payload.content;
+    data.textFileBom = payload.bom;
+    data.baseFingerprint = payload.baseFingerprint;
+  } else if (previous?.sourceType === 'file') {
+    Object.assign(data, { textFileSupported: previous.textFileSupported, textFileEditable: previous.textFileEditable,
+      rawContent: previous.rawContent, textFileBom: previous.textFileBom, baseFingerprint: previous.baseFingerprint });
   }
   state.activeDocument = data;
   // Only clear the dirty flag when the editor still holds exactly what was
@@ -5741,6 +5875,10 @@ async function saveDocumentOnce() {
     scheduleDocumentSave();
   }
   knowledgeEnhancements?.onDocumentSaved?.(data);
+  if (patch.rawText) {
+    void renderFilePreview(data, $('#filePreviewHost'));
+    $('#fileMeta').textContent = formatBytes(data.fileMeta.bytes);
+  }
   updateDocumentSummary(data);
   const locationChanged = previous && (
     (previous.knowledgeBase || '其他') !== (data.knowledgeBase || '其他')
@@ -5864,12 +6002,6 @@ async function applyNoteAssistantEdit({ documentId, find, replace, append, conte
   if (!editor || state.documentConflict || state.activeDocument?.id !== documentId || state.activeDocument?.status === 'archived') throw new Error('文档已切换、归档或存在保存冲突，请重新打开目标文档后应用');
   if (!(await beforeNoteMutation(documentId))) throw new Error('当前草稿保存失败，未应用 AI 提案');
   try {
-    const checkpoint = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/revisions/checkpoint`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ baseVersion: state.activeDocument.version }),
-    });
-    const checkpointData = await checkpoint.json().catch(() => ({}));
-    if (!checkpoint.ok) throw new Error(checkpointData.error || 'AI 提案前快照保存失败');
     if (state.activeDocument?.id !== documentId) throw new Error('笔记已切换，未应用 AI 提案');
     if (append) {
       const addition = String(content || '');
@@ -6449,7 +6581,7 @@ function bindEvents() {
       loadFileAnnotation(state.activeDocument.id).catch(error => showToast(error.message, 'error'));
     }
   });
-  for (const selector of ['#fileAnnotationTitle', '#fileAnnotationContent']) {
+  for (const selector of ['#fileAnnotationContent']) {
     $(selector)?.addEventListener('input', () => {
       const documentId = state.activeDocument?.id;
       if (!documentId || state.activeDocument?.sourceType !== 'file') return;
@@ -6464,6 +6596,11 @@ function bindEvents() {
       $('#fileAnnotationState').textContent = '有未保存修改';
     });
   }
+  $('#fileTextEditor')?.addEventListener('input', event => {
+    if (!state.fileText || !state.activeDocument?.textFileEditable || state.documentConflict || noteMutationLock) return;
+    state.fileText.edit(event.target.value);
+    scheduleDocumentSave();
+  });
   $('#saveFileAnnotation')?.addEventListener('click', () => saveFileAnnotation().catch(error => showToast(error.message, 'error')));
   $('#knowledgeLoadMore').addEventListener('click', () => loadDocuments({ append: true }).catch(error => showToast(error.message, 'error')));
   ['documentTitle', 'documentDate', 'documentTags', 'documentContent'].forEach(id => {
@@ -6938,6 +7075,10 @@ function bindEvents() {
   $('#memoryView').addEventListener('input', event => {
     const editor = event.target.closest('[data-memory-system-editor]');
     if (editor) state.memoryEditingDraft = editor.value;
+    const contentEditor = event.target.closest('[data-memory-content-editor]');
+    if (contentEditor) state.memoryEditingDraft = contentEditor.value;
+    const titleEditor = event.target.closest('[data-memory-title-editor]');
+    if (titleEditor) state.memoryEditingTitle = titleEditor.value;
   });
   $('#memoryView').addEventListener('click', async event => {
     if (event.target.closest('[data-memory-retry]')) { await loadMemoriesPanel(); return; }
@@ -6962,6 +7103,11 @@ function bindEvents() {
       await saveSystemMemoryItem(save.dataset.memorySystemSave);
       return;
     }
+    const saveItem = event.target.closest('[data-memory-save]');
+    if (saveItem) {
+      await saveMemoryItem(saveItem.dataset.memorySave);
+      return;
+    }
     const edit = event.target.closest('[data-memory-edit]');
     if (edit) {
       const id = edit.dataset.memoryEdit;
@@ -6969,8 +7115,11 @@ function bindEvents() {
       state.memoryEditingId = id;
       state.memoryEditingDraft = item?.content || '';
       state.memoryEditingOriginal = state.memoryEditingDraft;
+      state.memoryEditingTitle = item?.title || '';
+      state.memoryEditingTitleOriginal = state.memoryEditingTitle;
       renderMemoryWorkspace();
-      $('[data-memory-system-editor]')?.focus();
+      if (item && isSystemMemoryItem(item)) $('[data-memory-system-editor]')?.focus();
+      else $('[data-memory-title-editor]')?.focus();
       return;
     }
     const cancel = event.target.closest('[data-memory-edit-cancel]');
@@ -6978,6 +7127,9 @@ function bindEvents() {
       if (!(await confirmMemoryDiscard())) return;
       state.memoryEditingId = '';
       state.memoryEditingDraft = '';
+      state.memoryEditingOriginal = '';
+      state.memoryEditingTitle = '';
+      state.memoryEditingTitleOriginal = '';
       renderMemoryWorkspace();
       document.querySelector(`[data-memory-edit="${CSS.escape(cancel.dataset.memoryEditCancel)}"]`)?.focus();
       return;
@@ -7010,6 +7162,13 @@ async function initialize() {
   await Promise.all([loadKnowledgeTree(), loadSessions(), refreshMemoryPendingCount(), loadKnowledgeSyncStatus()]);
   if (!window.location.hash) history.replaceState(null, '', '#agent');
   await applyRoute();
+  const cleanupResult = await cleanupLegacyRevisions({
+    flushPendingSaves, getActiveDocument: () => state.activeDocument, apiFetch,
+  });
+  if (cleanupResult.deleted) {
+    if (state.activeDocument) knowledgeEnhancements?.setActiveDocument?.(state.activeDocument);
+    showToast(`已清理 ${cleanupResult.deleted} 个旧历史版本；当前正文已保留`, 'success');
+  }
   window.setInterval(() => {
     if ($('#settingsDialog')?.open && state.settingsPanel === 'remote' && remoteBridge()) loadRemoteAccessSettings().catch(() => {});
   }, 2000);

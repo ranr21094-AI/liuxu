@@ -1,3 +1,4 @@
+import { mountMindmapHistory } from './mindmap-history.js';
 import { imageTokens, escapeAttr } from './note-images.js';
 import { escHtml, showToast } from '../helpers.js';
 import { renderToHtmlUncached } from '../markdown.js';
@@ -135,7 +136,10 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
 
   const revisionDialog = document.querySelector('#knowledgeRevisionDialog');
   let revisionOrigin = null;
+  let previewCleanup = null;
   function closeRevision({ focus = true } = {}) {
+    previewCleanup?.();
+    previewCleanup = null;
     view.revisionDetailRequestSeq += 1;
     if (revisionDialog?.open) revisionDialog.close();
     document.querySelector('#knowledgeRevisionDetail').hidden = true;
@@ -148,7 +152,10 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     if (revisionDialog && !revisionDialog.open) revisionDialog.showModal();
   }
   function syncOperationControls() {
-    document.querySelectorAll('#knowledgeRevisionDetail button, #saveKnowledgeRevision').forEach(button => { button.disabled = view.operationPending; });
+    document.querySelectorAll('#knowledgeRevisionDetail button, #saveKnowledgeRevision').forEach(button => {
+      const fileReadOnly = view.document?.sourceType === 'file' && !view.document.textFileEditable;
+      button.disabled = view.operationPending || (fileReadOnly && (button.id === 'saveKnowledgeRevision' || button.matches('[data-restore-revision]')));
+    });
   }
   function syncRelationControls() {
     document.querySelectorAll('[data-knowledge-relations-tab]').forEach(button => {
@@ -163,7 +170,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
   function closeRelations({ focus = true } = {}) {
     const tab = view.activeTab;
     details.open = false;
-    if (view.document?.sourceType === 'file') { relations.hidden = true; relations.classList.remove('file-relations-open'); }
+    if (view.document?.sourceType === 'file' && !view.document.textFileSupported) { relations.hidden = true; relations.classList.remove('file-relations-open'); }
     syncRelationControls();
     if (focus) document.querySelector('[data-knowledge-relations-tab="' + tab + '"]')?.focus();
   }
@@ -374,6 +381,8 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
   function renderRevisionDetail(revision) {
     const host = document.querySelector('#knowledgeRevisionDetail');
     if (!host || !revision) return;
+    previewCleanup?.();
+    previewCleanup = null;
     const current = view.document || {};
     const snapshot = revision.snapshot || {};
     const location = value => [value.knowledgeBase || '其他', value.folderPath].filter(Boolean).join(' / ');
@@ -384,16 +393,24 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       ['位置', location(snapshot), location(current)],
     ];
     const fieldHtml = fields.filter(([, oldValue, newValue]) => oldValue !== newValue).map(([label, oldValue, newValue]) => `<div class="knowledge-revision-field"><strong>${escHtml(label)}</strong><span class="${oldValue === newValue ? '' : 'removed'}">旧版：${escHtml(oldValue || '（无）')}</span><span class="${oldValue === newValue ? '' : 'added'}">当前：${escHtml(newValue || '（无）')}</span></div>`).join('');
-    const diff = lineDiff(snapshot.content || '', current.content || '');
-    const body = diff.fallback
+    const currentContent = current.sourceType === 'file' ? current.rawContent ?? '' : current.content || '';
+    const diff = lineDiff(snapshot.content || '', currentContent);
+    let body = diff.fallback
       ? `<div class="knowledge-revision-diff"><section><h4>历史</h4><pre>${escHtml(diff.left)}</pre></section><section><h4>当前</h4><pre>${escHtml(diff.right)}</pre></section></div>`
       : `<div class="knowledge-revision-diff"><section><h4>历史</h4><pre>${diff.left}</pre></section><section><h4>当前</h4><pre>${diff.right}</pre></section></div>`;
+    if (current.sourceType === 'file' && typeof current.rawContent !== 'string') {
+      body = `<div class="knowledge-revision-diff"><section><h4>历史原件</h4><pre>${escHtml(snapshot.content || '')}</pre></section><section><h4>当前原件</h4><p>当前原件不可读取或不符合 UTF-8 编辑条件，请同步并重新打开后比较。</p></section></div>`;
+    }
+    const isMindmap = snapshot.documentRole === 'mindmap' && current.documentRole === 'mindmap';
+    if (isMindmap) body = `<div class="mindmap-history-pair" data-mindmap-history></div><details class="mindmap-history-json"><summary>JSON 文本对比</summary>${body}</details>`;
+    if (snapshot.snapshotKind === 'text_file') body = `<p class="knowledge-revision-image-note">原文件版本 · UTF-8${snapshot.file?.bom ? '（含 BOM）' : ''} · ${Number(snapshot.file?.bytes) || 0} 字节</p>${body}`;
     const actions = revision.name
       ? `<button type="button" class="secondary-action compact" data-rename-revision="${Number(revision.id)}">重命名</button><button type="button" class="danger-action compact" data-delete-revision="${Number(revision.id)}">删除命名版本</button>`
       : '';
     host.hidden = false;
-    host.innerHTML = `<div class="knowledge-revision-content"><div class="knowledge-revision-detail-head"><span>${revision.name ? `${escHtml(revision.name)} · ` : ''}${escHtml(formatDate(revision.capturedAt))} · 历史 v${Number(revision.documentVersion) || 1}</span></div>${fieldHtml ? `<div class="knowledge-revision-fields">${fieldHtml}</div>` : '<p class="knowledge-revision-image-note">标题、标签、日期与位置未变化。</p>'}${body}<p class="knowledge-revision-image-note">图片文件不会保存历史副本；恢复内容后，仍需图片资源存在才能显示。</p></div><div class="knowledge-revision-footer"><label class="knowledge-revision-location-option"><input type="checkbox" data-restore-location> 同时恢复历史位置</label><div class="knowledge-revision-actions">${actions}<button type="button" class="primary-action compact" data-restore-revision="${Number(revision.id)}">恢复此版本</button></div></div>`;
+    host.innerHTML = `<div class="knowledge-revision-content"><div class="knowledge-revision-detail-head"><span>${revision.name ? `${escHtml(revision.name)} · ` : ''}${escHtml(formatDate(revision.capturedAt))} · 历史 v${Number(revision.documentVersion) || 1}</span></div>${fieldHtml ? `<div class="knowledge-revision-fields">${fieldHtml}</div>` : '<p class="knowledge-revision-image-note">标题、标签、日期与位置未变化。</p>'}${body}${current.sourceType !== 'file' && !isMindmap ? '<p class="knowledge-revision-image-note">图片文件不会保存历史副本；恢复内容后，仍需图片资源存在才能显示。</p>' : ''}</div><div class="knowledge-revision-footer"><label class="knowledge-revision-location-option"><input type="checkbox" data-restore-location> 同时恢复历史位置</label><div class="knowledge-revision-actions">${actions}<button type="button" class="primary-action compact" data-restore-revision="${Number(revision.id)}">恢复此版本</button></div></div>`;
     showRevision();
+    if (isMindmap) previewCleanup = mountMindmapHistory(host.querySelector('[data-mindmap-history]'), snapshot.content, currentContent);
     syncOperationControls();
   }
 
@@ -439,7 +456,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       const oldLocation = location(snapshot);
       const confirmed = await confirmAction({
         title: '恢复历史版本',
-        message: `将恢复“${revision.name || revision.title || `v${revision.documentVersion}`}”的正文、标题、标签和日期。${restoreLocation ? `位置：${currentLocation} → ${oldLocation}。` : `保留当前位置：${currentLocation}。`}当前草稿已保存；恢复前会留下快照。`,
+        message: `将恢复“${revision.name || revision.title || `v${revision.documentVersion}`}”的正文、标题、标签和日期。${restoreLocation ? `位置：${currentLocation} → ${oldLocation}。` : `保留当前位置：${currentLocation}。`}当前草稿已保存；恢复不会自动保存当前内容为历史版本。`,
         confirmText: '恢复此版本',
       });
       if (!confirmed) return;
@@ -451,7 +468,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       try {
         response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}/restore`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ baseVersion: current.version, restoreLocation }),
+          body: JSON.stringify({ baseVersion: current.version, baseFingerprint: current.baseFingerprint, restoreLocation }),
         });
         data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || '历史版本恢复失败');
@@ -462,6 +479,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
           const expectedLocation = restoreLocation ? oldLocation : currentLocation;
           if (latest && Number(latest.version) > Number(current.version)
             && latest.title === snapshot.title && latest.content === snapshot.content
+            && (snapshot.snapshotKind !== 'text_file' || latest.fileMeta?.sha256 === snapshot.file?.sha256)
             && JSON.stringify(latest.tags || []) === JSON.stringify(snapshot.tags || [])
             && String(latest.documentDate || '') === String(snapshot.documentDate || '')
             && location(latest) === expectedLocation) data = { document: latest };
@@ -479,6 +497,8 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       closeRevision();
       details.open = true;
       view.activeTab = 'revisions';
+      document.querySelector('#knowledgeBacklinksPanel').hidden = true;
+      document.querySelector('#knowledgeRevisionsPanel').hidden = false;
       syncRelationControls();
       updateSummary();
       await loadRevisions();
@@ -506,7 +526,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       if (documentId !== view.document?.id || state.documentDirty) throw new Error('笔记已变化，请重新保存后再命名版本');
       const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/revisions`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, baseVersion: view.document.version }),
+        body: JSON.stringify({ name, baseVersion: view.document.version, baseFingerprint: view.document.baseFingerprint }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || '命名版本保存失败');
@@ -583,12 +603,12 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     view.revisions = [];
     view.selectedRevision = null;
     view.activeTab = 'backlinks';
-    relations.hidden = !doc || doc.sourceType === 'file';
+    relations.hidden = !doc || (doc.sourceType === 'file' && !doc.textFileSupported);
     relations.classList.remove('file-relations-open');
     const revisionsTab = document.querySelector('[data-knowledge-relations-tab="revisions"]');
     const revisionCreate = document.querySelector('.knowledge-revision-create');
     const revisionRetention = document.querySelector('.knowledge-revision-retention');
-    const supportsHistory = Boolean(doc && doc.sourceType !== 'file');
+    const supportsHistory = Boolean(doc && (doc.sourceType !== 'file' || doc.textFileSupported));
     if (revisionsTab) revisionsTab.hidden = !supportsHistory;
     if (revisionCreate) revisionCreate.hidden = relations.classList.contains('is-redesigned') || !supportsHistory;
     if (revisionRetention) revisionRetention.hidden = !supportsHistory;
@@ -615,6 +635,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     window.document.querySelector('#knowledgeRevisionDetail').hidden = true;
     renderIssues(doc.linkIssues || []);
     updateSummary();
+    syncOperationControls();
   }
 
   function onDocumentSaved(document) {

@@ -440,6 +440,12 @@ input.date-picker-native { position: absolute !important; width: 1px !important;
 .memory-detail .memory-item > header { flex: none; }
 .memory-detail .memory-body, .memory-detail .memory-system-editor { min-height: 0; flex: 1 1 auto; }
 .memory-detail .memory-system-editor { height: 320px; }
+.memory-view.is-editing .memory-page { overflow: hidden; }
+.memory-view.is-editing #agentMemoryItems { display: flex; min-height: 0; flex: 1; margin-top: 0; }
+.memory-view.is-editing #memoryProposalsSection { display: none; }
+.memory-view.is-editing .memory-detail .memory-item.is-editing { width: 100%; max-height: none; min-height: 0; height: 100%; flex: 1; }
+.memory-view.is-editing .memory-detail .memory-edit-content { display: flex; min-height: 0; flex: 1; margin: 0; }
+.memory-view.is-editing .memory-detail .memory-edit-content .memory-system-editor { min-height: 0; height: auto; max-height: none; flex: 1; resize: none; overflow-y: auto; }
 
 /* Sidebar modes share their bottom action layout. */
 #agentNewSessionButton svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }

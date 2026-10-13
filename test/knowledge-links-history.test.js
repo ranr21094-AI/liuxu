@@ -39,6 +39,7 @@ test('knowledge links, backlinks, revisions, and restore use stable document ids
   assert.equal(knowledge.backlinks(target.id).backlinks[0].sourceId, source.id);
   assert.equal(knowledge.outgoingLinks(source.id).links[0].status, 'resolved');
 
+  knowledge.createNamedRevision(target.id, { name: '初稿', baseVersion: target.version });
   const updated = knowledge.updateDocument(target.id, { title: '目标重命名', content: '第二版' }).document;
   assert.equal(knowledge.outgoingLinks(source.id).links[0].targetId, updated.id);
   assert.equal(knowledge.backlinks(updated.id).total, 1);
@@ -49,10 +50,10 @@ test('knowledge links, backlinks, revisions, and restore use stable document ids
   const restored = knowledge.restoreRevision(target.id, listed.revisions[0].id, { baseVersion: updated.version });
   assert.equal(restored.document.title, '目标笔记');
   assert.equal(restored.document.content, '第一版');
-  assert.equal(knowledge.listRevisions(target.id).total, 2);
+  assert.equal(knowledge.listRevisions(target.id).total, 1);
 });
 
-test('named revisions survive automatic pruning, require the current version, and can be renamed or deleted', (t) => {
+test('manual revisions survive edits without automatic history, require the current version, and can be renamed or deleted', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-named-revisions-'));
   const db = createDatabase(dir);
   const knowledge = createKnowledgeService(db);
@@ -67,7 +68,7 @@ test('named revisions survive automatic pruning, require the current version, an
   const updated = knowledge.updateDocument(note.id, { title: '后续修改', content: '后续正文', baseVersion: note.version }, { revisionReason: 'agent_write' }).document;
   const revisions = knowledge.listRevisions(note.id).revisions;
   assert.equal(revisions[0].name, '发布前');
-  assert.ok(revisions.some(item => item.reason === 'agent_write'));
+  assert.equal(revisions.length, 1);
   assert.equal(knowledge.renameRevision(note.id, revisions[0].id, { name: '改名版本' }).revision.name, '改名版本');
   assert.equal(knowledge.deleteNamedRevision(note.id, revisions[0].id).deleted, true);
   assert.equal(knowledge.getRevision(note.id, revisions[0].id).error, 'Revision not found');
@@ -102,6 +103,7 @@ test('restore can keep the present location while restoring the historical note 
     cleanupTempDataDir(dir);
   });
   const original = knowledge.createNote({ title: '初始标题', content: '初始正文', knowledgeBase: '工作', folderPath: '草稿' }).document;
+  knowledge.createNamedRevision(original.id, { name: '初稿', baseVersion: original.version });
   const moved = knowledge.updateDocument(original.id, {
     title: '新标题', content: '新正文', knowledgeBase: '工作', folderPath: '正式', baseVersion: original.version,
   }).document;

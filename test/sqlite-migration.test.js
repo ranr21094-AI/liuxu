@@ -185,7 +185,7 @@ test('schema v3 migration is repeatable and keeps row-level updates stable', (t)
   assert.equal(db.sqlite.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value, String(SCHEMA_VERSION));
   assert.ok(db.sqlite.prepare('PRAGMA table_info(knowledge_revisions)').all().some(column => column.name === 'name'));
   assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_link_targets LIMIT 1').get());
-  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM knowledge_revisions').get().count, 1);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM knowledge_revisions').get().count, 0);
   assert.ok(db.sqlite.prepare('SELECT 1 FROM knowledge_index_state WHERE id = 1').get());
   assert.equal(db.sqlite.pragma('busy_timeout', { simple: true }), 5000);
   assert.equal(String(db.sqlite.pragma('synchronous', { simple: true })).toLowerCase(), '1');

@@ -677,8 +677,8 @@ export function shouldCollapseExtractText(doc) {
 }
 
 export function setFileReaderTab(tab) {
-  fileReaderTab = ['preview', 'annotation', 'text'].includes(tab) ? tab : 'preview';
-  const panes = { preview: '#filePreviewPane', annotation: '#fileAnnotationPane', text: '#fileTextPane' };
+  fileReaderTab = ['preview', 'annotation', 'text', 'edit'].includes(tab) ? tab : 'preview';
+  const panes = { preview: '#filePreviewPane', annotation: '#fileAnnotationPane', text: '#fileTextPane', edit: '#fileTextEditPane' };
   for (const [key, selector] of Object.entries(panes)) {
     const pane = window.document.querySelector(selector);
     if (pane) pane.hidden = key !== fileReaderTab;
@@ -721,12 +721,20 @@ export function renderFilePreview(doc, host) {
   if (search) search.oninput = () => {
     const text = String(doc.content || '');
     const query = search.value.trim();
+    const clearButton = window.document.querySelector('#fileTextSearchClear');
+    if (clearButton) clearButton.hidden = !query;
     if (!textHost) return;
     if (!query) textHost.textContent = text || '没有提取到正文。';
     else {
       const lines = text.split('\n');
       textHost.textContent = lines.map((line, index) => line.toLocaleLowerCase().includes(query.toLocaleLowerCase()) ? `${index + 1}: ${line}` : '').filter(Boolean).join('\n') || '没有匹配内容。';
     }
+  };
+  const clearSearch = window.document.querySelector('#fileTextSearchClear');
+  if (clearSearch && search) clearSearch.onclick = () => {
+    search.value = '';
+    search.oninput?.();
+    search.focus();
   };
   const renderTask = loadReadingPosition(doc, kind).then(position => {
     if (token !== previewToken) return;

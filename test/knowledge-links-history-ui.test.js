@@ -171,6 +171,8 @@ test('revision comparison uses a modal, shows changed fields, preserves failed r
     document.querySelector('[data-restore-revision]').click(); await tick();
     assert.equal(dialog.open, false); assert.equal(restoreCount, 2);
     assert.equal(document.querySelector('#knowledgeRelationsDetails').open, true);
+    assert.equal(document.querySelector('#knowledgeRevisionsPanel').hidden, false);
+    assert.equal(document.querySelector('#knowledgeBacklinksPanel').hidden, true);
   } finally { dom.window.close(); restoreGlobals(old); }
 });
 
@@ -212,5 +214,36 @@ test('late revision detail cannot reopen the comparison after a document switch'
     finish({ ok: true, json: async () => ({ revision: { id: 7, name: '旧记录', snapshot: { content: '旧正文' } } }) });await tick();
     assert.equal(document.querySelector('#knowledgeRevisionDialog').open, false);
     assert.equal(document.querySelector('#knowledgeRevisionDetail').hidden, true);
+  } finally { dom.window.close(); restoreGlobals(old); }
+});
+
+test('text-file history compares original content and sends fingerprints, separate from extracted text', async () => {
+  const { dom, old } = makeRedesignedDom();
+  try {
+    const { initKnowledgeEnhancements } = await moduleUnderTest();
+    const sent = [];
+    const snapshot = { title: 'source.txt', content: '历史原件\r\n', tags: [], snapshotKind: 'text_file', file: { bom: true, bytes: 20, sha256: 'old' } };
+    const revision = { id: 8, name: '原件历史', documentVersion: 1, snapshot };
+    const ui = initKnowledgeEnhancements({ state: {}, navigate() {}, beforeMutation: async () => true, afterMutation() {},
+      confirmAction: async () => true,
+      apiFetch: async (url, options) => {
+        if (options?.method === 'POST') sent.push(JSON.parse(options.body));
+        if (url.endsWith('/revisions/8')) return { ok: true, json: async () => ({ revision }) };
+        if (options?.method === 'POST') return { ok: true, json: async () => ({ revision }) };
+        return { ok: true, json: async () => ({ total: 1, revisions: [revision] }) };
+      },
+    });
+    ui.setActiveDocument({ id: 'file:1', sourceType: 'file', version: 2, title: 'source.txt', textFileSupported: true,
+      textFileEditable: true, rawContent: '当前原件\r\n', content: '错误的搜索提取文字', baseFingerprint: 'current' });
+    assert.equal(document.querySelector('#knowledgeRelations').hidden, false);
+    document.querySelector('[data-knowledge-relations-tab="revisions"]').click(); await tick();
+    document.querySelector('[data-revision-id="8"]').click(); await tick();
+    const dialog = document.querySelector('#knowledgeRevisionDialog');
+    assert.match(dialog.textContent, /当前原件/); assert.doesNotMatch(dialog.textContent, /错误的搜索提取文字/);
+    document.querySelector('[data-close-revision]').click();
+    document.querySelector('#knowledgeRevisionName').value = '新版本';
+    document.querySelector('#saveKnowledgeRevision').click(); await tick();
+    assert.equal(sent[0].baseFingerprint, 'current');
+    assert.equal(sent[0].baseVersion, 2);
   } finally { dom.window.close(); restoreGlobals(old); }
 });

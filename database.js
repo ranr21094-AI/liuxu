@@ -1016,6 +1016,38 @@ function addTodoCategory(name) {
   return { category: normalized, categories: next };
 }
 
+function renameTodoCategory(name, nextName) {
+  const original = typeof name === 'string' ? name.trim() : '';
+  const candidate = typeof nextName === 'string' ? nextName.trim() : '';
+  if (!original || !candidate || candidate.length > 24) return { error: 'Invalid todo category name' };
+  if (original === DEFAULT_TODO_CATEGORY) return { error: 'Default todo category is protected' };
+  const categories = readTodoCategories();
+  if (!categories.includes(original)) return null;
+  if (candidate !== original && categories.includes(candidate)) return { error: 'Todo category already exists' };
+  if (candidate === original) return { category: candidate, categories };
+
+  const todos = readTodos();
+  const renamedTodos = todos.map(todo => normalizeTodoCategoryName(todo.category) === original
+    ? { ...todo, category: candidate }
+    : todo);
+  const renamedCategories = categories.map(category => category === original ? candidate : category);
+  const updateTodo = sqlite.prepare('UPDATE todos SET body = ? WHERE id = ?');
+  const removeCategories = sqlite.prepare('DELETE FROM todo_categories');
+  const insertCategory = sqlite.prepare('INSERT INTO todo_categories (sort_index, name) VALUES (?, ?)');
+  sqlite.transaction(() => {
+    renamedTodos.forEach((todo, index) => {
+      if (todo !== todos[index]) updateTodo.run(JSON.stringify(todo), Number(todo.id));
+    });
+    removeCategories.run();
+    renamedCategories.forEach((category, index) => insertCategory.run(index, category));
+  })();
+
+  cache.todos = renamedTodos;
+  cache.todoCategories = renamedCategories;
+  syncMaxIds();
+  return { category: candidate, categories: renamedCategories };
+}
+
 function deleteTodoCategory(name) {
   const normalized = normalizeTodoCategoryName(name, '');
   if (!normalized) return { error: 'Invalid todo category name' };
@@ -2258,6 +2290,7 @@ return {
   removeCountdown,
   getTodoCategories,
   addTodoCategory,
+  renameTodoCategory,
   deleteTodoCategory,
   getTodoReminderSettings: readTodoReminderSettings,
   getTodoReminderMailSettings: readTodoReminderMailSettings,

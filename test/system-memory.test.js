@@ -136,6 +136,19 @@ test('system memory HTTP update, restore, and isolation from Agent tools', async
   });
   assert.equal(notSystem.status, 404);
 
+  const editable = listedData.items.find(item => item.layer === 'L3' && item.kind !== 'system');
+  assert.ok(editable);
+  const edited = await fetch(`${base}/api/agent/memories/${encodeURIComponent(editable.id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: '更新后的流程', content: '第一步：整理输入。\n第二步：完成处理。' }),
+  });
+  assert.equal(edited.status, 200);
+  const editedData = await edited.json();
+  assert.equal(editedData.memory.title, '更新后的流程');
+  assert.equal(editedData.memory.content, '第一步：整理输入。\n第二步：完成处理。');
+  assert.equal(editedData.memory.version, (editable.version || 1) + 1);
+
   const saved = await fetch(`${base}/api/agent/memories/${encodeURIComponent(agent.id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

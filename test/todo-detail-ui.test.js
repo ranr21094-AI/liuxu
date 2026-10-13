@@ -68,10 +68,18 @@ test('task workspace renders modes once, filters counts, saves once, and preserv
     assert.equal(doc.getElementById('todoSearchInput').closest('#todoSidebarPanel') !== null, true);
     assert.equal(doc.querySelector('#todoView #todoSearchInput'), null);
     assert.equal(doc.getElementById('todoReminderEnabled').closest('#todoReminderDialog').id, 'todoReminderDialog');
+    assert.equal(doc.getElementById('btnTodoCategoryOpen').hidden, false);
+    assert.equal(doc.querySelector('#btnTodoNew [data-todo-new-icon="todo"]').hidden, false);
+    assert.equal(doc.querySelector('#btnTodoNew [data-todo-new-icon="countdown"]').hidden, true);
+    const filterNames = [...doc.querySelectorAll('#todoFilterTabs [data-filter]')].map(button => button.textContent.trim());
+    assert.deepEqual(filterNames.slice(0, 2), ['待办', '已完成']);
     doc.getElementById('todoModeCountdowns').click(); await tick();
     assert.equal(doc.getElementById('todoListHeading').textContent, '倒数日');
     assert.match(doc.getElementById('countdownGrid').textContent, /下一次/);
-    assert.equal(doc.getElementById('todoSidebarHeading').textContent, '倒数日');
+    assert.equal(doc.getElementById('btnTodoCategoryOpen').hidden, true);
+    assert.equal(doc.querySelector('#btnTodoNew [data-todo-new-icon="todo"]').hidden, true);
+    assert.equal(doc.querySelector('#btnTodoNew [data-todo-new-icon="countdown"]').hidden, false);
+    assert.equal(doc.getElementById('btnTodoNew').getAttribute('aria-label'), '新建倒数日');
     const directory = doc.querySelector('[data-countdown-select]');
     assert.match(directory.textContent, /Birthday.*下一次/);
     directory.focus(); directory.click(); await tick();
@@ -102,6 +110,77 @@ test('task workspace renders modes once, filters counts, saves once, and preserv
     resolveWrite({ ok: true, json: async () => ({}) }); await tick(); await tick();
     assert.equal(doc.getElementById('todoFullForm').hidden, true);
     assert.equal(doc.activeElement.id, 'btnTodoNew');
+  } finally { dom.window.close(); Object.assign(global, previous); }
+});
+
+test('category menu supports keyboard rename and updates an open task without losing its draft', async () => {
+  const dom = new JSDOM(fs.readFileSync('public/index.html', 'utf8'), { url: 'http://localhost' });
+  const doc = dom.window.document;
+  const previous = Object.fromEntries(['document', 'window', 'localStorage', 'fetch', 'requestAnimationFrame', 'Event'].map(key => [key, global[key]]));
+  Object.assign(global, { document: doc, window: dom.window, localStorage: dom.window.localStorage, requestAnimationFrame: fn => fn(), Event: dom.window.Event });
+  dom.window.localStorage.setItem('todoFilter', '阅读');
+  const categoryOverlay = doc.getElementById('todoCategoryOverlay');
+  categoryOverlay.showModal = () => categoryOverlay.setAttribute('open', '');
+  categoryOverlay.close = () => { categoryOverlay.removeAttribute('open'); categoryOverlay.dispatchEvent(new dom.window.Event('close')); };
+  let categories = ['待办', '阅读'];
+  let todos = [{ id: 8, title: '原任务', category: '阅读', due_date: '', priority: 'none', recurrence: 'none', notes: '' }];
+  global.fetch = async (url, options = {}) => {
+    if (options.method === 'PUT') {
+      const original = decodeURIComponent(url.split('/').at(-1));
+      const name = JSON.parse(options.body).name;
+      if (name !== original && categories.includes(name)) return { ok: false, status: 409, json: async () => ({ error: 'Todo category already exists' }) };
+      categories = ['待办', name];
+      todos = todos.map(todo => ({ ...todo, category: name }));
+      return { ok: true, json: async () => ({ category: name, categories }) };
+    }
+    const body = url === '/api/todos' ? todos
+      : url === '/api/countdowns' ? []
+        : url === '/api/todo-categories' ? categories
+          : url === '/api/todo-reminder-settings' ? { enabled: false, recipientEmail: '', sendTime: '08:00', mailReady: false, smtp: {}, lastStatus: 'idle' }
+            : {};
+    return { ok: true, json: async () => body };
+  };
+  try {
+    const module = await import('../public/js/todos.js?todo-category-keyboard-rename-test');
+    module.initTodos(); await module.loadTodos();
+    doc.querySelector('.todo-item[data-id="8"]').click(); await tick();
+    assert.equal(doc.getElementById('todoFullCategory').value, '阅读');
+    doc.getElementById('todoFullTitle').value = '尚未保存的标题';
+    const toggle = doc.querySelector('[data-category-more="阅读"]');
+    toggle.click();
+    const moveDown = new dom.window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+    toggle.dispatchEvent(moveDown);
+    assert.equal(doc.activeElement.dataset.action, 'rename-category');
+    doc.activeElement.click();
+    assert.equal(categoryOverlay.open, true);
+    assert.equal(doc.getElementById('todoCategoryInput').value, '阅读');
+    assert.equal(doc.getElementById('todoFullCategory').value, '阅读');
+    doc.getElementById('todoCategoryInput').value = '待办';
+    doc.getElementById('todoCategoryAddForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(categoryOverlay.open, true);
+    assert.equal(doc.getElementById('todoCategoryInput').value, '待办');
+    assert.match(doc.getElementById('todoCategoryError').textContent, /同名/);
+    doc.getElementById('todoCategoryInput').value = '读书';
+    doc.getElementById('todoCategoryInput').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    doc.getElementById('todoCategoryAddForm').dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(categoryOverlay.open, false);
+    assert.deepEqual(categories, ['待办', '读书']);
+    assert.equal(doc.getElementById('todoFullCategory').value, '读书');
+    assert.equal(doc.getElementById('todoFullTitle').value, '尚未保存的标题');
+    assert.equal(doc.activeElement.dataset.filter, '读书');
+    const renamedMore = doc.querySelector('[data-category-more="读书"]');
+    renamedMore.focus(); renamedMore.click();
+    const menu = renamedMore.parentElement.querySelector('.todo-category-menu');
+    const menuItem = menu.querySelector('[role="menuitem"]');
+    menuItem.focus();
+    menuItem.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(menu.hidden, true);
+    assert.equal(doc.activeElement, renamedMore);
+    renamedMore.click();
+    doc.getElementById('todoListHeading').dispatchEvent(new dom.window.Event('pointerdown', { bubbles: true }));
+    assert.equal(menu.hidden, true);
   } finally { dom.window.close(); Object.assign(global, previous); }
 });
 

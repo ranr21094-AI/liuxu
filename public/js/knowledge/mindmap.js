@@ -3,9 +3,10 @@ import { layoutMindmap } from './mindmap-layout.js';
 import { drawMap, svgElement } from './mindmap-view.js';
 export { emptyMindmap } from './mindmap-model.js';
 
-export function createMindmapEditor({ canvas, initial, onChange, canEdit = () => true, confirmDelete, onError = () => {} }) {
+export function createMindmapEditor({ canvas, initial, onChange, canEdit = () => true, preserveInitialPositions = false, confirmDelete, onError = () => {} }) {
   const doc = canvas.ownerDocument, win = doc.defaultView, host = canvas.closest('.mindmap-editor'), stage = canvas.parentElement;
   let model = cloneMap(initial || emptyMindmap()), selected = inspectTree(model).rootId, destroyed = false;
+  let preservePositions = preserveInitialPositions;
   let layout, layer, edit = null, undo = [], redo = [], gesture = null, holdTimer, composing = false, suppressClick = false, deletePending = false;
   let scale = 1, pan = { x: 0, y: 0 }, size = { width: 0, height: 0 }, pointers = new Map(), pinch = null;
   const disposers = [];
@@ -32,12 +33,12 @@ export function createMindmapEditor({ canvas, initial, onChange, canEdit = () =>
   }
   function draw({ expanded = false, drag = null } = {}) {
     if (destroyed) return;
-    layout = layoutMindmap(model, { expanded });
+    layout = layoutMindmap(model, { expanded, preservePositions });
     const next = bounds();
     if (!size.width) pan = { x: next.width / 2, y: next.height / 2 };
     else { pan.x += (next.width - size.width) / 2; pan.y += (next.height - size.height) / 2; }
     size = next; canvas.setAttribute('viewBox', `0 0 ${size.width} ${size.height}`);
-    layer = drawMap(doc, model, layout, { colors: colors(), selected, drop: gesture?.drop, drag });
+    layer = drawMap(doc, model, layout, { colors: colors(), selected, drop: gesture?.drop, drag, interactive: writable() });
     layer.setAttribute('transform', `translate(${pan.x} ${pan.y}) scale(${scale})`);
     canvas.replaceChildren(layer); controls(); positionEdit();
   }
@@ -52,6 +53,7 @@ export function createMindmapEditor({ canvas, initial, onChange, canEdit = () =>
     if (!writable()) return false;
     const before = JSON.stringify(model);
     if (fn() === false || JSON.stringify(model) === before) return false;
+    preservePositions = false;
     undo.push(before); if (undo.length > 100) undo.shift(); redo = []; draw(); emit(); reveal(); return true;
   }
   function paintSelection(id) {

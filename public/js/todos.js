@@ -47,6 +47,10 @@ let todoReminderSettings = {
 };
 let todoReminderUiMessage = '';
 let detailController;
+let todoCategoryModalMode = 'add';
+let todoCategoryOriginalName = '';
+let todoCategoryReturnCategory = '';
+let todoCategoryMenuName = '';
 export async function leaveTodoView() {
   if (detailController && !(await detailController.allowDiscard())) return false;
   detailController?.discard();
@@ -329,37 +333,86 @@ function renderTodoCategorySelect(selected = DEFAULT_TODO_CATEGORY) {
 function renderTodoFilterTabs() {
   const tabs = $('#todoFilterTabs');
   if (!tabs) return;
-  const categoryButtons = todoCategories.map(category => {
+  closeTodoCategoryMenu();
+  const systemFilter = (category, label, icon) => `
+    <button class="todo-filter-pill todo-system-filter${activeFilter === category ? ' active' : ''}" data-filter="${category}" aria-pressed="${activeFilter === category}" title="${label}">
+      <span class="todo-filter-leading">${icon}<span class="todo-filter-label">${label}</span></span>
+    </button>`;
+  const customCategories = todoCategories.filter(category => category !== DEFAULT_TODO_CATEGORY);
+  const customFilters = customCategories.map((category, index) => {
     const selected = activeFilter === category;
-    const removable = category !== DEFAULT_TODO_CATEGORY;
-    return `
-      <button class="todo-filter-pill${selected ? ' active' : ''}" data-filter="${escHtml(category)}" role="tab" aria-selected="${selected}">
+    const menuId = `todoCategoryMenu${index}`;
+    return `<div class="todo-filter-row${selected ? ' active' : ''}" data-todo-category-row="${escHtml(category)}">
+      <button class="todo-filter-pill${selected ? ' active' : ''}" data-filter="${escHtml(category)}" data-category-filter="${escHtml(category)}" aria-pressed="${selected}" title="${escHtml(category)}">
         <span class="todo-filter-label">${escHtml(category)}</span>
-        ${removable ? `
-          <span
-            class="todo-category-remove"
-            role="button"
-            tabindex="0"
-            data-action="delete-category"
-            data-category="${escHtml(category)}"
-            aria-label="删除分类：${escHtml(category)}"
-            title="删除分类"
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 7h16"></path>
-              <path d="M10 11v6"></path>
-              <path d="M14 11v6"></path>
-              <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"></path>
-              <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"></path>
-            </svg>
-          </span>
-        ` : ''}
       </button>
-    `;
+      <button class="todo-category-more" type="button" data-category-more="${escHtml(category)}" aria-label="${escHtml(category)}分类操作" title="分类操作" aria-haspopup="menu" aria-expanded="false" aria-controls="${menuId}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"></circle><circle cx="12" cy="12" r="1.2"></circle><circle cx="19" cy="12" r="1.2"></circle></svg>
+      </button>
+      <div class="todo-category-menu" id="${menuId}" role="menu" aria-label="${escHtml(category)}分类操作" hidden>
+        <button type="button" role="menuitem" data-action="rename-category" data-category="${escHtml(category)}">重命名</button>
+        <button type="button" role="menuitem" data-action="delete-category" data-category="${escHtml(category)}">删除</button>
+      </div>
+    </div>`;
   }).join('');
-  const doneSelected = activeFilter === 'done';
-  tabs.innerHTML = `${categoryButtons}
-    <button class="todo-filter-pill${doneSelected ? ' active' : ''}" data-filter="done" role="tab" aria-selected="${doneSelected}"><span class="todo-filter-label">已完成</span></button>`;
+  tabs.innerHTML = `${systemFilter(DEFAULT_TODO_CATEGORY, '待办', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"></path><path d="M4 12h4l2 3h4l2-3h4"></path></svg>')}
+    ${systemFilter('done', '已完成', '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="m8 12 2.5 2.5L16.5 9"></path></svg>')}
+    ${customCategories.length ? '<div class="todo-filter-divider" role="separator"></div>' : ''}${customFilters}`;
+}
+
+function focusTodoFilter(filter) {
+  [...($('#todoFilterTabs')?.querySelectorAll('[data-filter]') || [])]
+    .find(button => button.dataset.filter === filter)?.focus();
+}
+
+function closeTodoCategoryMenu({ restoreFocus = false } = {}) {
+  if (!todoCategoryMenuName) return;
+  const tabs = $('#todoFilterTabs');
+  const row = [...(tabs?.querySelectorAll('[data-todo-category-row]') || [])]
+    .find(element => element.dataset.todoCategoryRow === todoCategoryMenuName);
+  const toggle = row?.querySelector('[data-category-more]');
+  const menu = row?.querySelector('.todo-category-menu');
+  if (menu) menu.hidden = true;
+  toggle?.setAttribute('aria-expanded', 'false');
+  const name = todoCategoryMenuName;
+  todoCategoryMenuName = '';
+  if (restoreFocus) toggle?.focus();
+  return name;
+}
+
+function openTodoCategoryMenu(toggle, { focusFirst = false } = {}) {
+  const category = toggle?.dataset.categoryMore;
+  if (!category) return;
+  if (todoCategoryMenuName && todoCategoryMenuName !== category) closeTodoCategoryMenu();
+  const row = toggle.closest('[data-todo-category-row]');
+  const menu = row?.querySelector('.todo-category-menu');
+  if (!menu) return;
+  const positionMenu = () => {
+    const anchor = toggle.getBoundingClientRect();
+    const panel = menu.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const left = Math.max(12, Math.min(viewportWidth - panel.width - 12, anchor.right - panel.width));
+    let top = anchor.bottom + 3;
+    if (top + panel.height > viewportHeight - 12 && anchor.top - panel.height - 3 >= 12) top = anchor.top - panel.height - 3;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  };
+  if (focusFirst) {
+    if (menu.hidden) {
+      menu.hidden = false;
+      toggle.setAttribute('aria-expanded', 'true');
+      todoCategoryMenuName = category;
+      positionMenu();
+    }
+    menu.querySelector('[role="menuitem"]')?.focus();
+    return;
+  }
+  const opening = menu.hidden;
+  menu.hidden = !opening;
+  toggle.setAttribute('aria-expanded', String(opening));
+  todoCategoryMenuName = opening ? category : '';
+  if (opening) positionMenu();
 }
 
 function renderFullTodos() {
@@ -484,7 +537,6 @@ function applyTodoPageMode() {
   if (!view) return;
   const countdownMode = todoPageMode === 'countdowns';
   view.classList.toggle('countdown-mode', countdownMode);
-  $('#todoSidebarHeading').textContent = countdownMode ? '倒数日' : '待办';
   $('#countdownSidebarList').hidden = !countdownMode;
   const fullPanel = $('#todoFullPanel');
   const fullForm = $('#todoFullForm');
@@ -508,7 +560,15 @@ function applyTodoPageMode() {
     searchLabel.setAttribute('aria-label', text);
   }
   const newButton = $('#btnTodoNew');
-  if (newButton) { newButton.textContent = countdownMode ? '新建倒数日' : '新建任务'; newButton.setAttribute('aria-label', newButton.textContent); }
+  if (newButton) {
+    const label = countdownMode ? '新建倒数日' : '新建任务';
+    const iconMode = countdownMode ? 'countdown' : 'todo';
+    newButton.dataset.actionMode = iconMode;
+    newButton.querySelector('.todo-new-action-label').textContent = label;
+    newButton.querySelectorAll('[data-todo-new-icon]').forEach(icon => { icon.hidden = icon.dataset.todoNewIcon !== iconMode; });
+    newButton.setAttribute('aria-label', label);
+    newButton.title = label;
+  }
   document.querySelectorAll('#todoModeTabs [data-todo-page]').forEach(button => {
     const selected = button.dataset.todoPage === todoPageMode;
     button.classList.toggle('active', selected);
@@ -751,30 +811,66 @@ async function saveTodoFromFullForm() {
   } finally { detailController?.setSaving(false); }
 }
 
-function openTodoCategoryModal() {
+function showTodoCategoryError(message = '') {
+  const error = $('#todoCategoryError');
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = !message;
+}
+
+function openTodoCategoryModal({ mode = 'add', category = '', returnCategory = '' } = {}) {
   const dialog = $('#todoCategoryOverlay');
   const input = $('#todoCategoryInput');
   if (!dialog || !input) return;
-  input.value = '';
+  closeTodoCategoryMenu();
+  todoCategoryModalMode = mode;
+  todoCategoryOriginalName = mode === 'rename' ? category : '';
+  todoCategoryReturnCategory = returnCategory;
+  const renaming = mode === 'rename';
+  $('#todoCategoryModalTitle').textContent = renaming ? '重命名分类' : '新增分类';
+  $('#btnTodoCategoryAdd').textContent = renaming ? '保存' : '添加';
+  input.value = renaming ? category : '';
+  showTodoCategoryError('');
   if (!dialog.open) dialog.showModal();
-  requestAnimationFrame(() => input.focus());
+  requestAnimationFrame(() => { input.focus(); if (renaming) input.select(); });
 }
 
-function closeTodoCategoryModal() {
+function closeTodoCategoryModal({ restoreFocus = true } = {}) {
   const dialog = $('#todoCategoryOverlay');
   const input = $('#todoCategoryInput');
   if (input) input.value = '';
+  showTodoCategoryError('');
   if (dialog?.open) dialog.close();
+  const returnCategory = todoCategoryReturnCategory;
+  todoCategoryModalMode = 'add';
+  todoCategoryOriginalName = '';
+  todoCategoryReturnCategory = '';
+  if (restoreFocus) requestAnimationFrame(() => {
+    if (returnCategory) {
+      const row = [...($('#todoFilterTabs')?.querySelectorAll('[data-todo-category-row]') || [])]
+        .find(element => element.dataset.todoCategoryRow === returnCategory);
+      row?.querySelector('[data-category-more]')?.focus();
+    } else $('#btnTodoCategoryOpen')?.focus();
+  });
 }
 
 async function addTodoCategoryFromForm(event) {
   event.preventDefault();
   const input = $('#todoCategoryInput');
   const name = input.value.trim();
-  if (!name) return;
+  if (!name) { showTodoCategoryError('请输入分类名称。'); input.focus(); return; }
+  if (name.length > 24) { showTodoCategoryError('分类名称不能超过 24 个字符。'); input.focus(); return; }
+  const submit = $('#btnTodoCategoryAdd');
+  if (submit.disabled) return;
+  submit.disabled = true;
+  showTodoCategoryError('');
+  const mode = todoCategoryModalMode;
+  const originalName = todoCategoryOriginalName;
   try {
-    const res = await apiFetch('/api/todo-categories', {
-      method: 'POST',
+    const res = await apiFetch(mode === 'rename'
+      ? `/api/todo-categories/${encodeURIComponent(originalName)}`
+      : '/api/todo-categories', {
+      method: mode === 'rename' ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
     });
@@ -782,12 +878,23 @@ async function addTodoCategoryFromForm(event) {
     todoCategories = normalizeTodoCategories(body.categories || [body.category]);
     activeFilter = body.category || name;
     localStorage.setItem('todoFilter', activeFilter);
-    input.value = '';
-    closeTodoCategoryModal();
-    renderTodos();
-    showToast('待办分类已添加', 'success');
+    if (mode === 'rename') {
+      const selectedCategory = $('#todoFullCategory')?.value || DEFAULT_TODO_CATEGORY;
+      renderTodoCategorySelect(selectedCategory === originalName ? name : selectedCategory);
+      detailController?.renameCategory(originalName, name);
+    }
+    closeTodoCategoryModal({ restoreFocus: false });
+    await loadTodos();
+    focusTodoFilter(activeFilter);
+    showToast(mode === 'rename' ? '待办分类已重命名' : '待办分类已添加', 'success');
   } catch (err) {
-    showToast('添加分类失败: ' + err.message, 'error');
+    const message = err.message === 'Todo category already exists' ? '已有同名分类。'
+      : err.message === 'Default todo category is protected' ? '系统分类不能重命名。'
+        : err.message || '请重试。';
+    showTodoCategoryError(message);
+    input.focus();
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -797,12 +904,23 @@ async function deleteTodoCategory(name) {
     message: `删除分类「${name}」？该分类下的未完成待办会移动到「${DEFAULT_TODO_CATEGORY}」。`,
     confirmText: '删除',
   });
-  if (!confirmed) return;
+  if (!confirmed) {
+    const row = [...($('#todoFilterTabs')?.querySelectorAll('[data-todo-category-row]') || [])]
+      .find(element => element.dataset.todoCategoryRow === name);
+    row?.querySelector('[data-category-more]')?.focus();
+    return;
+  }
   try {
-    await apiFetch(`/api/todo-categories/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const response = await apiFetch(`/api/todo-categories/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    const result = await response.json().catch(() => ({}));
+    if (Array.isArray(result.categories)) todoCategories = [DEFAULT_TODO_CATEGORY, ...result.categories.filter(category => category !== DEFAULT_TODO_CATEGORY)];
+    const currentCategory = $('#todoFullCategory')?.value || DEFAULT_TODO_CATEGORY;
+    if (currentCategory === name) renderTodoCategorySelect(DEFAULT_TODO_CATEGORY);
+    detailController?.renameCategory(name, DEFAULT_TODO_CATEGORY);
     if (activeFilter === name) activeFilter = DEFAULT_TODO_CATEGORY;
     localStorage.setItem('todoFilter', activeFilter);
     await loadTodos();
+    focusTodoFilter(activeFilter);
     showToast('待办分类已删除', 'success');
   } catch (err) {
     showToast('删除分类失败: ' + err.message, 'error');
@@ -1091,26 +1209,59 @@ export function initTodos() {
   $('#todoFullTitle').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); saveTodoFromFullForm(); }
   });
-  $('#todoFilterTabs').addEventListener('click', (e) => {
-    const deleteAction = e.target.closest('[data-action="delete-category"]');
-    if (deleteAction) {
-      e.stopPropagation();
-      deleteTodoCategory(deleteAction.dataset.category);
+  const todoFilterTabs = $('#todoFilterTabs');
+  todoFilterTabs.addEventListener('click', (event) => {
+    const more = event.target.closest('[data-category-more]');
+    if (more) { openTodoCategoryMenu(more); return; }
+    const action = event.target.closest('[data-action="rename-category"], [data-action="delete-category"]');
+    if (action) {
+      const { category } = action.dataset;
+      closeTodoCategoryMenu();
+      if (action.dataset.action === 'rename-category') openTodoCategoryModal({ mode: 'rename', category, returnCategory: category });
+      else deleteTodoCategory(category);
       return;
     }
-    const btn = e.target.closest('button[data-filter]');
-    if (!btn) return;
-    activeFilter = btn.dataset.filter;
+    const button = event.target.closest('button[data-filter]');
+    if (!button) return;
+    closeTodoCategoryMenu();
+    activeFilter = button.dataset.filter;
     localStorage.setItem('todoFilter', activeFilter);
     renderFullTodos();
+    focusTodoFilter(activeFilter);
   });
-  $('#todoFilterTabs').addEventListener('keydown', (e) => {
-    const deleteAction = e.target.closest('[data-action="delete-category"]');
-    if (!deleteAction || (e.key !== 'Enter' && e.key !== ' ')) return;
-    e.preventDefault();
-    e.stopPropagation();
-    deleteTodoCategory(deleteAction.dataset.category);
+  todoFilterTabs.addEventListener('keydown', (event) => {
+    const more = event.target.closest('[data-category-more]');
+    if (more && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault();
+      openTodoCategoryMenu(more, { focusFirst: true });
+      return;
+    }
+    const menu = event.target.closest('.todo-category-menu');
+    if (menu) {
+      const items = [...menu.querySelectorAll('[role="menuitem"]')];
+      const index = items.indexOf(document.activeElement);
+      if (event.key === 'Escape') {
+        event.preventDefault(); event.stopPropagation(); closeTodoCategoryMenu({ restoreFocus: true });
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+          : (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        items[next]?.focus();
+      }
+    }
   });
+  todoFilterTabs.addEventListener('focusout', (event) => {
+    const row = event.target.closest('[data-todo-category-row]');
+    if (!row) return;
+    setTimeout(() => {
+      if (todoCategoryMenuName && !row.contains(document.activeElement)) closeTodoCategoryMenu();
+    }, 0);
+  });
+  document.addEventListener('pointerdown', event => {
+    if (todoCategoryMenuName && !event.target.closest('#todoFilterTabs')) closeTodoCategoryMenu();
+  });
+  document.addEventListener('scroll', () => { if (todoCategoryMenuName) closeTodoCategoryMenu(); }, true);
+  window.addEventListener('resize', () => { if (todoCategoryMenuName) closeTodoCategoryMenu(); });
   $('#todoSearchInput').addEventListener('input', (e) => {
     todoSearchQuery = e.target.value || '';
     $('#todoSearchClear').hidden = !todoSearchQuery;
@@ -1150,10 +1301,11 @@ export function initTodos() {
   $('#todoCategoryOverlay').addEventListener('click', (e) => {
     if (e.target === $('#todoCategoryOverlay')) closeTodoCategoryModal();
   });
-  $('#todoCategoryOverlay').addEventListener('cancel', () => {
-    const input = $('#todoCategoryInput');
-    if (input) input.value = '';
+  $('#todoCategoryOverlay').addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeTodoCategoryModal();
   });
+  $('#todoCategoryInput').addEventListener('input', () => showTodoCategoryError(''));
   $('#todoCategoryAddForm').addEventListener('submit', addTodoCategoryFromForm);
   initTodoSelectControls();
 }

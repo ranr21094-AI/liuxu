@@ -160,16 +160,8 @@
       </section>
 
       <section class="sidebar-panel" id="todoSidebarPanel" data-sidebar-mode="todos" hidden>
-        <div class="knowledge-panel-heading">
-          <span id="todoSidebarHeading">待办</span>
-          <button class="icon-button tree-add todo-category-open todo-mode-only" id="btnTodoCategoryOpen" type="button" aria-haspopup="dialog" aria-controls="todoCategoryOverlay" title="新增待办分类" aria-label="新增待办分类">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 5v14M5 12h14"></path>
-            </svg>
-          </button>
-        </div>
         <div class="sidebar-scroll">
-          <div class="todo-filter-tabs todo-mode-only" id="todoFilterTabs" role="tablist" aria-label="待办筛选"></div>
+          <div class="todo-filter-tabs todo-mode-only" id="todoFilterTabs" role="group" aria-label="待办分类筛选"></div>
           <div id="countdownSidebarList" class="countdown-sidebar-list" aria-label="倒数日目录" hidden></div>
         </div>
         <div class="sidebar-search-dock todo-reminder-dock" id="todoSearchDock">
@@ -231,6 +223,7 @@
               <label for="todoSearchInput" class="sidebar-search-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input type="search" id="todoSearchInput" placeholder="搜索待办" aria-label="搜索待办" autocomplete="off"></label>
               <button type="button" class="sidebar-search-clear" id="todoSearchClear" aria-label="清空待办搜索" hidden>×</button>
             </div>
+            <button type="button" class="sidebar-filter-toggle todo-category-open todo-mode-only" id="btnTodoCategoryOpen" aria-haspopup="dialog" aria-controls="todoCategoryOverlay" title="新增待办分类" aria-label="新增待办分类"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
             <button type="button" id="todoReminderOpen" class="sidebar-filter-toggle" aria-label="邮件提醒设置，未配置" title="邮件提醒：未配置" aria-expanded="false" aria-controls="todoReminderDialog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 6 9 7 9-7"></path></svg><span class="todo-reminder-enabled-dot" hidden></span></button>
           </div>
         </div>
@@ -420,7 +413,7 @@
               <div class="knowledge-relations-panel" id="knowledgeRevisionsPanel" aria-label="版本历史" hidden>
                 <div class="knowledge-history-tools">
                   <button type="button" class="secondary-action compact" id="knowledgeRevisionCreateToggle" aria-expanded="false" aria-controls="knowledgeRevisionCreate">保存命名版本</button>
-                  <details class="knowledge-history-help"><summary>保留规则</summary><p class="knowledge-revision-retention">普通编辑按 5 分钟窗口留存，不代表逐次保存记录；自动历史保留 30 天且最多 50 条，命名版本长期保留。</p></details>
+                  <details class="knowledge-history-help"><summary>保留规则</summary><p class="knowledge-revision-retention">仅主动保存版本时记录历史。手动版本长期保留，不设时间或数量上限；编辑、AI 修改、同步和恢复均不自动留档。</p></details>
                 </div>
                 <div class="knowledge-revision-create" id="knowledgeRevisionCreate" hidden>
                   <label class="sr-only" for="knowledgeRevisionName">版本名称</label><input id="knowledgeRevisionName" maxlength="100" placeholder="给当前版本命名">
@@ -444,16 +437,25 @@
             <div class="file-reader-tabs" id="fileReaderTabs" role="tablist" aria-label="文件阅读模式">
               <button type="button" class="active" data-file-reader-tab="preview" role="tab" aria-selected="true">预览</button>
               <button type="button" data-file-reader-tab="annotation" role="tab" aria-selected="false">批注</button>
+              <button type="button" id="fileTextEditorTab" data-file-reader-tab="edit" role="tab" aria-selected="false" hidden>编辑原文</button>
               <button type="button" data-file-reader-tab="text" role="tab" aria-selected="false">提取文本</button>
             </div>
             <div class="file-reader-pane" id="filePreviewPane" role="tabpanel"><div id="filePreviewHost" class="file-preview-host" aria-live="polite"></div></div>
+            <section class="file-reader-pane file-text-edit-pane" id="fileTextEditPane" role="tabpanel" hidden>
+              <p id="fileTextEditReason" role="status"></p>
+              <textarea id="fileTextEditor" aria-label="编辑原文件文本" spellcheck="false" maxlength="500000"></textarea>
+              <p class="file-text-edit-hint">原件编辑 · 自动保存 · Ctrl+S 保存 · 版本需主动保存 · <span id="fileTextSaveState" role="status">已保存</span></p>
+            </section>
             <section class="file-reader-pane file-annotation-pane" id="fileAnnotationPane" role="tabpanel" hidden>
-              <label>批注标题<input id="fileAnnotationTitle" maxlength="200" placeholder="可选标题"></label>
+              <input type="hidden" id="fileAnnotationTitle" value="">
               <textarea id="fileAnnotationContent" maxlength="200000" placeholder="记录与这个文件相关的笔记"></textarea>
               <div class="file-annotation-actions"><span id="fileAnnotationState" role="status"></span><button type="button" class="primary-action compact" id="saveFileAnnotation">保存批注</button></div>
             </section>
             <section class="file-reader-pane file-text-pane" id="fileTextPane" role="tabpanel" hidden>
-              <label class="file-text-search">搜索提取文本<input id="fileTextSearch" type="search" placeholder="输入关键词"></label>
+              <div class="file-text-search sidebar-search-field">
+                <label class="sidebar-search-label" for="fileTextSearch"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input id="fileTextSearch" type="search" placeholder="搜索提取文本" aria-label="搜索提取文本" autocomplete="off"></label>
+                <button type="button" class="sidebar-search-clear" id="fileTextSearchClear" aria-label="清空提取文本搜索" hidden>×</button>
+              </div>
               <pre class="file-preview-text" id="fileExtractedText"></pre>
             </section>
           </section>
@@ -492,7 +494,13 @@
             <span class="todo-stat" id="todoStatAlert"><strong id="todoStatOverdue">0</strong> <span id="todoStatLabelOverdue">逾期</span></span>
             <span class="todo-stat"><strong id="todoStatDone">0</strong> <span id="todoStatLabelDone">已完成</span></span>
           </p>
-          <button class="primary-action compact" id="btnTodoNew" type="button">新建任务</button>
+          <button class="primary-action compact todo-new-action" id="btnTodoNew" type="button" aria-label="新建任务" title="新建任务">
+            <span class="todo-new-action-icon" aria-hidden="true">
+              <svg data-todo-new-icon="todo" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>
+              <svg data-todo-new-icon="countdown" viewBox="0 0 24 24" hidden><rect x="3.5" y="5" width="17" height="16" rx="2"></rect><path d="M7.5 3v4M16.5 3v4M3.5 10h17M12 13v5M9.5 15.5h5"></path></svg>
+            </span>
+            <span class="todo-new-action-label">新建任务</span>
+          </button>
         </div>
         <div class="todo-page-layout">
           <div class="todo-list-column">
@@ -1083,7 +1091,8 @@
         </div>
         <button class="icon-button" id="btnTodoCategoryClose" type="button" aria-label="关闭">×</button>
       </header>
-      <label class="dialog-field" for="todoCategoryInput">分类名称<input type="text" id="todoCategoryInput" placeholder="例如：学习" maxlength="24"></label>
+      <label class="dialog-field" for="todoCategoryInput">分类名称<input type="text" id="todoCategoryInput" placeholder="例如：学习" maxlength="24" required></label>
+      <p class="todo-category-error" id="todoCategoryError" role="alert" hidden></p>
       <div class="dialog-actions">
         <button type="button" class="secondary-action" id="btnTodoCategoryCancel">取消</button>
         <button type="submit" class="primary-action compact" id="btnTodoCategoryAdd">添加</button>
