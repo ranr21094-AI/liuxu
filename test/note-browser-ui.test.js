@@ -86,3 +86,16 @@ test('sidebar normalizes search text, resizes by keyboard, and clears restored w
     assert.ok(ctx.calls.closed.length >= 1);
   } finally { cleanup(ctx); }
 });
+
+test('web preview keeps a disabled browser entry with a desktop-only explanation', async () => {
+  const ctx = setup();
+  try {
+    delete window.liuxuDesktop;
+    const browser = await load();ctx.controller=browser.initNoteBrowser();
+    browser.noteBrowserSetDocument({ id:'note:1', status:'active' });
+    const button=document.querySelector('#noteBrowserToggleButton');
+    assert.equal(button.hidden,false);assert.equal(button.disabled,true);
+    assert.match(button.title,/仅桌面版可用/);
+    assert.equal(document.querySelector('#noteBrowserPanel').hidden,true);
+  } finally { cleanup(ctx); }
+});

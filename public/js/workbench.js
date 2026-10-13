@@ -1,3 +1,9 @@
+import { initKnowledgeMove } from './app/knowledge-move.js';
+import { initDocumentPresentation } from './app/document-presentation.js';
+import { renderProviderDirectory } from './app/provider-directory.js';
+import { initProviderControls } from './app/provider-controls.js';
+import { initSettingsPresentation } from './app/settings-presentation.js';
+import { initFloatingSidebarButton } from './app/floating-sidebar-button.js';
 import { documentType } from './knowledge/document-types.js';
 import { apiFetch } from './auth.js';
 import {
@@ -25,10 +31,16 @@ import { createMindmapEditor, emptyMindmap } from './knowledge/mindmap.js';
 import { imageHtml, bindNoteImageSizing } from './knowledge/note-images.js';
 import { enableMarkdownImagePreview, openMarkdownImagePreview } from './imagePreview.js';
 import { preloadMarkdownLibraries, renderToHtml, renderToHtmlUncached } from './markdown.js';
-import { initTodos, loadTodos, showTodoView, getTodoSubtitle } from './todos.js';
+import { initTodos, loadTodos, showTodoView, getTodoSubtitle, leaveTodoView } from './todos.js';
 import { createBackupActions } from './workbench-backup.js';
 import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
+import { initDatePickers, syncDatePickers, closeDatePickers } from './app/date-picker.js';
+import { initKnowledgeOperations } from './app/knowledge-operations.js';
+import { enhanceKnowledgeRowMenus } from './app/knowledge-row-menu.js';
+import { initKnowledgeNavigation } from './app/knowledge-navigation.js';
+import { initSessionCreateAction } from './app/agent-mode-action.js';
+import { initSidebarSearch, filterMemoryItems, createLatestRequest } from './app/sidebar-search.js';
 import { scheduleRender } from './app/render-scheduler.js';
 import { getDesktopUpdates, getDesktopRemoteAccess, getDesktopKnowledgeFolder } from './desktop/bridge.js';
 import { initializeRemoteSession, isRemoteClient, logoutRemoteSession } from './remote-access.js';
@@ -97,6 +109,11 @@ const state = {
   editorMode: 'edit',
   routeSerial: 0,
   memoryLayer: '',
+  memorySelectedId: '',
+  memorySearchAccepted: '',
+  memoryEditingOriginal: '',
+  memoryWriteBusy: false,
+  memoryLoadError: '',
   memoryEditingId: '',
   memoryEditingDraft: '',
   memories: { items: [], proposals: [] },
@@ -106,6 +123,22 @@ const state = {
   knowledgeSync: null,
   knowledgeSyncLoading: false,
 };
+
+const knowledgeRequests = createLatestRequest();
+let sidebarSearchControls = null;
+let knowledgeMove = null;
+let agentModeAction = null;
+let knowledgeSearchScope = '';
+
+function syncKnowledgeSearchScope() {
+  const scope = JSON.stringify([state.selectedKnowledgeBase, state.selectedFolderPath]);
+  if (knowledgeSearchScope && scope !== knowledgeSearchScope) {
+    knowledgeRequests.invalidate();
+    sidebarSearchControls?.resetKnowledge();
+    clearKnowledgeDocuments();
+  }
+  knowledgeSearchScope = scope;
+}
 
 let knowledgeDragItem = null;
 let suppressKnowledgeClickUntil = 0;
@@ -288,7 +321,6 @@ function patchSessionSummaryAfterUserMessage(sessionId, content) {
   if (state.activeSession?.id === sessionId) {
     state.activeSession.messageCount = summary.messageCount;
     state.activeSession.updatedAt = summary.updatedAt;
-    applyAgentTopbar(state.activeSession);
   }
   invalidateSessionDetailCache(sessionId);
   updateSessionRowMeta(sessionId);
@@ -527,16 +559,6 @@ function formatSessionMeta(session) {
   const countLabel = count ? `${count} 条消息` : '暂无消息';
   const dateLabel = formatSessionDate(session.updatedAt);
   return dateLabel ? `${dateLabel} · ${countLabel}` : countLabel;
-}
-
-function applyAgentTopbar(session) {
-  if (!session) {
-    $('#topbarTitle').textContent = '新会话';
-    $('#topbarSubtitle').textContent = '';
-    return;
-  }
-  $('#topbarTitle').textContent = session.title || '新会话';
-  $('#topbarSubtitle').textContent = formatSessionMeta(session);
 }
 
 function formatBytes(value) {
@@ -831,12 +853,13 @@ function bindKnowledgeSearchSettingsEvents() {
 function syncMobileSidebarAccessibility() {
   const sidebar = $('#workspaceSidebar');
   const isOpen = document.body.classList.contains('sidebar-visible');
-  const isHidden = mobileSidebarQuery.matches && !isOpen;
+  const isHidden = mobileSidebarQuery.matches ? !isOpen : document.body.classList.contains('sidebar-collapsed');
   $('#sidebarBackdrop').hidden = !mobileSidebarQuery.matches || !isOpen;
   sidebar.inert = isHidden;
   if (isHidden) sidebar.setAttribute('aria-hidden', 'true');
   else sidebar.removeAttribute('aria-hidden');
-  $('#sidebarOpen').setAttribute('aria-expanded', String(mobileSidebarQuery.matches && isOpen));
+  $('#sidebarOpen').setAttribute('aria-expanded', String(!isHidden));
+  $('#sidebarClose').setAttribute('aria-expanded', String(!isHidden));
 }
 
 function openMobileSidebar() {
@@ -854,7 +877,27 @@ function closeMobileSidebar() {
 
 function syncDesktopSidebar() {
   const collapsed = desktopSidebarQuery.matches && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true';
+  const wasCollapsed = document.body.classList.contains('sidebar-collapsed');
   document.body.classList.toggle('sidebar-collapsed', collapsed);
+  document.querySelectorAll('[data-sidebar-mode]').forEach(panel => { panel.inert = collapsed; });
+  if (collapsed) {
+    sidebarSearchControls?.close();
+    $('#todoReminderDialog').hidden = true;
+    $('#todoReminderOpen').setAttribute('aria-expanded', 'false');
+    closeDatePickers();
+  }
+  const sidebar = $('#workspaceSidebar');
+  const hidden = collapsed || (mobileSidebarQuery.matches && !document.body.classList.contains('sidebar-visible'));
+  sidebar.inert = hidden;
+  if (hidden) sidebar.setAttribute('aria-hidden', 'true');
+  else sidebar.removeAttribute('aria-hidden');
+  const open = $('#sidebarOpen');
+  open.setAttribute('aria-expanded', String(!hidden));
+  open.setAttribute('aria-label', desktopSidebarQuery.matches ? '展开侧栏' : '打开侧栏');
+  if (collapsed !== wasCollapsed) {
+    if (collapsed && sidebar.contains(document.activeElement)) open.focus();
+    else if (!collapsed && document.activeElement === open && desktopSidebarQuery.matches) $('#sidebarToggle').focus();
+  }
   const toggle = $('#sidebarToggle');
   if (toggle) {
     toggle.hidden = !desktopSidebarQuery.matches;
@@ -931,6 +974,7 @@ function initModeIndicator() {
 }
 
 function setModeUI(mode) {
+  if (state.mode !== mode) { knowledgeRequests.invalidate(); sidebarSearchControls?.close(); closeDatePickers(); }
   state.mode = mode;
   document.body.dataset.mode = mode;
   noteAssistantSetMode(mode);
@@ -938,9 +982,10 @@ function setModeUI(mode) {
     button.classList.toggle('active', button.dataset.mode === mode);
     button.setAttribute('aria-current', button.dataset.mode === mode ? 'page' : 'false');
   });
+  agentModeAction?.sync();
   syncModeIndicator();
   const brandMode = $('#workspaceBrandMode');
-  const modeLabel = document.querySelector(`.workspace-mode-nav [data-mode="${mode}"]`)?.firstChild?.textContent?.trim() || '';
+  const modeLabel = { agent: 'Agent', knowledge: '知识库', memory: 'Memory', todos: '待办' }[mode] || '';
   if (brandMode && brandMode.textContent !== modeLabel) {
     brandMode.textContent = modeLabel;
     brandMode.classList.remove('is-changing');
@@ -950,22 +995,9 @@ function setModeUI(mode) {
   document.querySelectorAll('[data-sidebar-mode]').forEach(panel => { panel.hidden = panel.dataset.sidebarMode !== mode; });
   document.querySelectorAll('[data-main-mode]').forEach(panel => { panel.hidden = panel.dataset.mainMode !== mode; });
   syncKnowledgeDocumentActions();
-  if (mode === 'agent') {
-    applyAgentTopbar(state.activeSession);
-  } else {
-    $('#topbarTitle').textContent = mode === 'memory' ? 'Memory' : mode === 'todos' ? '待办' : '知识库';
-    if (mode === 'memory') {
-      const saved = (state.memories?.items || []).length;
-      const pending = (state.memories?.proposals || []).length;
-      $('#topbarSubtitle').textContent = pending ? `${saved} 条记忆 · ${pending} 条待确认` : `${saved} 条记忆`;
-    } else if (mode === 'todos') {
-      $('#topbarSubtitle').textContent = getTodoSubtitle();
-    } else if (isKnowledgeRoot()) {
-      $('#topbarSubtitle').textContent = '';
-    } else {
-      $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ') || `${state.knowledgeTotal} 条知识`;
-    }
-  }
+  updateKnowledgeEmptyState();
+  if (mode !== 'agent') unmountAgentEmptyHero($('#agentMessageList'));
+  else if ($('#agentMessageList [data-agent-hero]')) mountAgentEmptyHero($('#agentMessageList'));
   closeMobileSidebar();
 }
 
@@ -1080,6 +1112,8 @@ function knowledgeSwitchTarget() {
 async function applyRoute() {
   if (noteMutationLock) { history.replaceState(null, '', routeHash('knowledge', noteMutationLock.id)); return; }
   const route = parseRoute();
+  if (state.mode === 'memory' && route.mode !== 'memory' && !(await confirmMemoryDiscard())) { history.replaceState(null, '', '#memory'); return; }
+  if (state.mode === 'todos' && route.mode !== 'todos' && !(await leaveTodoView())) { history.replaceState(null, '', '#todos'); return; }
   if (route.legacyTodos) history.replaceState(null, '', '#todos');
   const activeDocumentId = state.activeDocument?.id || '';
   const leavesActiveDocument = state.mode === 'knowledge'
@@ -1099,6 +1133,7 @@ async function applyRoute() {
       folderPath: state.selectedFolderPath,
     });
   }
+  if (route.mode === 'knowledge') syncKnowledgeSearchScope();
   setModeUI(route.mode);
   if (route.mode === 'agent') {
     if (route.id) await openSession(route.id, serial);
@@ -1108,13 +1143,12 @@ async function applyRoute() {
   } else if (route.mode === 'todos') {
     await loadTodos();
     showTodoView();
-    if (serial === state.routeSerial) $('#topbarSubtitle').textContent = getTodoSubtitle();
   } else if (route.id) {
     await openKnowledgeDocument(route.id, { block: route.block, offset: route.offset, serial });
     if (state.selectedKnowledgeBase) await loadDocuments();
   } else {
     showEmptyDocument();
-    if (state.selectedKnowledgeBase) await loadDocuments();
+    if (state.selectedKnowledgeBase || knowledgeFiltersActive()) await loadDocuments();
     else clearKnowledgeDocuments();
     if (state.selectedKnowledgeBase) {
       const title = state.selectedFolderPath || state.selectedKnowledgeBase;
@@ -1231,7 +1265,7 @@ function composerModelSelects() {
 
 function syncComposerModelSelectState() {
   const disabled = state.agentStatus?.configured === false;
-  composerModelSelects().forEach(select => { select.disabled = disabled; });
+  composerModelSelects().forEach(select => { select.disabled = disabled || !select.querySelector('option[value]:not([value=""])'); });
 }
 
 function providerModelGroups() {
@@ -1246,9 +1280,9 @@ function providerModelGroups() {
 function populateAgentModelSelectElement(select, selected) {
   if (!select) return;
   const groups = providerModelGroups();
-  select.innerHTML = groups
+  select.innerHTML = groups.length ? groups
     .map(group => `<optgroup label="${escHtml(group.label)}">${group.items.map(item => `<option value="${escHtml(item.id)}">${escHtml(item.name)}</option>`).join('')}</optgroup>`)
-    .join('');
+    .join('') : '<option value="">暂无可用模型</option>';
   const known = groups.some(group => group.items.some(item => item.id === selected));
   select.value = known ? selected : '';
 }
@@ -1521,6 +1555,7 @@ function customModelOverrideRowHtml(providerId, modelUiId, model) {
     </div>`;
 }
 
+let textProviderDetailOpen = false;
 function renderCustomProvidersList() {
   // The previous implementation used <details class="custom-provider-card"> with
   // a custom-provider-summary. Keep the card class on the detail pane so older
@@ -1528,6 +1563,10 @@ function renderCustomProvidersList() {
   const root = $('#customProvidersList');
   if (!root) return;
   const list = state.customProvidersDraft || [];
+  if (!textProviderDetailOpen || !list.length) {
+    root.innerHTML = renderProviderDirectory(list);
+    return;
+  }
   const selectedProvider = list.find(provider => provider.id === state.customProviderSelectedId) || list[0] || null;
   state.customProviderSelectedId = selectedProvider?.id || '';
   const providerLabel = provider => provider.name?.trim() || '未命名供应商';
@@ -1535,19 +1574,7 @@ function renderCustomProvidersList() {
   const editIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 17.5-.7 3.2 3.2-.7L18.9 7.6a2.1 2.1 0 0 0-3-3z"></path><path d="m14.5 6.5 3 3"></path></svg>';
   const trashIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 4h4l1 3H9zM7 7l1 13h8l1-13M10 11v5M14 11v5"></path></svg>';
   const eyeIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.2-5 9-5 9 5 9 5-3.2 5-9 5-9-5-9-5Z"></path><circle cx="12" cy="12" r="2.2"></circle></svg>';
-  const sidebar = `
-    <aside class="custom-provider-sidebar" aria-label="供应商列表">
-      <div class="custom-provider-sidebar-heading">自定义供应商</div>
-      <div class="custom-provider-sidebar-list" role="listbox" aria-label="选择供应商">
-        ${list.map(provider => `
-          <button type="button" class="custom-provider-nav-item${provider.id === state.customProviderSelectedId ? ' active' : ''}" data-select-provider="${escHtml(provider.id)}" role="option" aria-selected="${provider.id === state.customProviderSelectedId}">
-            <span class="custom-provider-nav-icon" aria-hidden="true">${providerIcon}</span>
-            <span class="custom-provider-nav-copy"><strong>${escHtml(providerLabel(provider))}</strong><small>${escHtml(customProviderFormatLabel(provider.apiFormat))}</small></span>
-            <span class="custom-provider-status-dot${provider.enabled === false ? ' is-disabled' : ''}" aria-label="${provider.enabled === false ? '已禁用' : '已启用'}"></span>
-          </button>`).join('')}
-      </div>
-      <button type="button" class="custom-provider-add-link" data-add-provider="sidebar">＋ <span>添加供应商</span></button>
-    </aside>`;
+  const sidebar = selectedProvider ? '' : '<button type="button" class="secondary-action compact" data-add-provider="toolbar">＋ 添加供应商</button>';
   if (!selectedProvider) {
     renderPreservingFocus(root, () => {
       root.innerHTML = `<div class="custom-provider-workspace">${sidebar}<section class="custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有供应商。添加后可接入 OpenAI / Anthropic 兼容 API。</p></section></div>`;
@@ -1576,25 +1603,13 @@ function renderCustomProvidersList() {
   }).join('');
   const detail = `
     <section class="custom-provider-card custom-provider-detail" data-provider-index="${providerIndex}" data-provider-id="${escHtml(selectedProvider.id)}">
-      <header class="custom-provider-detail-header">
-        <div class="custom-provider-title-wrap">
-          <input type="text" class="custom-provider-name custom-provider-title-input" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:name" value="${escHtml(selectedProvider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称">
-          <button type="button" class="icon-button custom-provider-title-edit" aria-label="编辑供应商名称" title="编辑供应商名称">${editIcon}</button>
-          <span class="custom-provider-model-count">${modelCount} 个模型</span>
-        </div>
-        <div class="custom-provider-detail-actions">
-          <label class="provider-enabled-switch">
-            <input type="checkbox" role="switch" data-toggle-provider="${providerIndex}" ${selectedProvider.enabled !== false ? 'checked' : ''} aria-label="启用供应商">
-            <span class="provider-enabled-track" aria-hidden="true"></span>
-            <span class="provider-enabled-label">${selectedProvider.enabled !== false ? '已启用' : '已禁用'}</span>
-          </label>
-          <button type="button" class="icon-button custom-provider-delete" data-remove-provider="${providerIndex}" aria-label="删除供应商" title="删除供应商">${trashIcon}</button>
-        </div>
+      <header class="custom-provider-detail-header provider-toolbar provider-reference-header">
+        <button type="button" class="icon-button" data-provider-back aria-label="返回供应商列表" title="返回供应商列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H4m7-7-7 7 7 7"></path></svg></button>
+        <span class="provider-avatar" aria-hidden="true">${escHtml(Array.from(providerLabel(selectedProvider))[0].toUpperCase())}</span><strong data-provider-heading>${escHtml(providerLabel(selectedProvider))}</strong><span class="provider-protocol">${escHtml(selectedProvider.apiFormat || 'openai')}</span>
+        <label class="provider-enabled-switch"><input type="checkbox" role="switch" data-toggle-provider="${providerIndex}" ${selectedProvider.enabled !== false ? 'checked' : ''} aria-label="启用供应商"><span class="provider-enabled-track" aria-hidden="true"></span><span class="provider-enabled-label">${selectedProvider.enabled !== false ? '已启用' : '已禁用'}</span></label>
       </header>
+      <label class="provider-reference-name">名称<input type="text" class="custom-provider-name custom-provider-title-input" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:name" value="${escHtml(selectedProvider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称"></label>
       <div class="custom-provider-body">
-        <label class="custom-provider-inline-field custom-provider-base-field">Base URL
-          <input type="url" class="custom-provider-base-url" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:base-url" value="${escHtml(selectedProvider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
-        </label>
         <label class="custom-provider-inline-field">API 格式
           <select class="custom-provider-format" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:format">
             <option value="openai" ${selectedProvider.apiFormat === 'openai' ? 'selected' : ''}>Chat Completions (/chat/completions)</option>
@@ -1604,6 +1619,9 @@ function renderCustomProvidersList() {
         </label>
         <label class="custom-provider-inline-field">API Key
           <div class="custom-provider-key-wrap"><input type="password" class="custom-provider-key" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:key" autocomplete="off" spellcheck="false" placeholder="${escHtml(selectedProvider.apiKeyConfigured && !selectedProvider.apiKey ? '已配置；留空保持不变' : '可选（OpenAI 格式）')}" value="${escHtml(selectedProvider.apiKey || '')}"><button type="button" class="custom-provider-key-toggle" data-toggle-key aria-label="显示 API Key">${eyeIcon}</button></div>
+        </label>
+        <label class="custom-provider-inline-field custom-provider-base-field">Base URL
+          <input type="url" class="custom-provider-base-url" data-focus-key="model:provider:${escHtml(selectedProvider.id)}:base-url" value="${escHtml(selectedProvider.baseUrl)}" placeholder="http://127.0.0.1:11434/v1 或 https://api.example.com/v1" maxlength="500">
         </label>
         <div class="custom-provider-models">
           <div class="custom-provider-models-head">
@@ -1615,7 +1633,7 @@ function renderCustomProvidersList() {
           </div>
           ${modelRows}
         </div>
-        <div class="custom-provider-capabilities">
+        <details class="settings-advanced custom-provider-capability-details"><summary><span>能力与高级配置</span><small>图片、推理与文件传输</small></summary><div class="custom-provider-capabilities">
           <label class="custom-provider-capability"><input type="checkbox" class="custom-provider-supports-media" ${selectedProvider.supportsMedia ? 'checked' : ''}>支持图片输入</label>
           <label class="custom-provider-inline-field custom-provider-thinking">思考/推理参数
             <select class="custom-provider-thinking-select">${customProviderThinkingOptions(selectedProvider.thinking || '')}</select>
@@ -1628,7 +1646,8 @@ function renderCustomProvidersList() {
             </select>
           </label>
           <label class="custom-provider-capability" title="仅 OpenRouter 端点生效"><input type="checkbox" class="custom-provider-zdr" ${selectedProvider.zdr ? 'checked' : ''}>ZDR 零数据保留</label>
-        </div>
+        </div></details>
+        <div class="provider-detail-bottom"><button type="button" class="danger-action compact" data-remove-provider="${providerIndex}">删除供应商</button><button type="button" class="secondary-action compact" data-provider-back>返回列表</button></div>
       </div>
     </section>`;
   renderPreservingFocus(root, () => {
@@ -1940,6 +1959,7 @@ async function loadAgentSettingsForm() {
     $('#agentPerplexityKey').placeholder = keyPlaceholder(settings.perplexityApiKeyConfigured, 'pplx-...');
     state.customProviderTestStates.clear();
     state.providerModelOverrideKey = null;
+    textProviderDetailOpen = false;
     state.customProvidersDraft = (settings.customProviders || []).map(provider => ({
       id: provider.id || randomProviderId(),
       name: provider.name || '',
@@ -2027,6 +2047,8 @@ function renderKnowledgeSyncStatus() {
     sidebar.classList.toggle('error', sync?.status === 'error' || sync?.status === 'warning');
   }
   if (header) {
+    header.dataset.syncStatus = sync?.status || 'loading';
+    header.title = [label, sync?.error, '打开知识库同步设置'].filter(Boolean).join(' · ');
     const statusText = header.querySelector('.sync-status-text');
     if (statusText) statusText.textContent = label;
     header.classList.toggle('error', sync?.status === 'error' || sync?.status === 'warning');
@@ -2175,7 +2197,7 @@ async function restoreKnowledgeDraft(id) {
   if (draft.content != null) $('#documentContent').value = draft.content;
   if (draft.knowledgeBase != null) $('#documentKnowledgeBase').value = draft.knowledgeBase;
   if (draft.folderPath != null) $('#documentFolderPath').value = draft.folderPath;
-  if (draft.documentDate != null) $('#documentDate').value = draft.documentDate;
+  if (draft.documentDate != null) { $('#documentDate').value = draft.documentDate; syncDatePickers(); }
   if (Array.isArray(draft.tags)) $('#documentTags').value = draft.tags.join(', ');
   state.documentConflict = false;
   scheduleDocumentSave();
@@ -2331,19 +2353,24 @@ function settingsSavePayload() {
   return payload;
 }
 
+let settingsSaving = false;
 async function saveAgentSettings() {
+  if (settingsSaving) return;
   if (!state.aiSettings) {
     showToast('模型设置尚未加载，请关闭后重试', 'error');
     return;
   }
   const button = $('#saveAgentSettings');
+  const status = $('#settingsSaveStatus');
+  settingsSaving = true;
   button.disabled = true;
+  button.textContent = '保存中…';
+  status.textContent = '';
+  status.classList.remove('is-error');
   try {
     const payload = settingsSavePayload();
     if (payload.error) {
-      showToast(payload.error, 'error');
-      button.disabled = false;
-      return;
+      throw new Error(payload.error);
     }
     const response = await apiFetch('/api/ai/settings', {
       method: 'PUT',
@@ -2358,14 +2385,22 @@ async function saveAgentSettings() {
       await loadAgentStatus();
       await loadAgentSettingsForm();
     } catch (reloadError) {
+      status.textContent = '设置已保存，界面刷新失败，请重新打开设置';
+      status.classList.add('is-error');
       showToast(`设置已保存，但界面刷新失败：${reloadError.message || reloadError}`, 'error');
       button.disabled = false;
       return;
     }
+    status.textContent = '已保存';
     showToast('设置已保存', 'success');
   } catch (error) {
+    status.textContent = error.message || '设置保存失败，请重试';
+    status.classList.add('is-error');
     showToast(error.message || '模型设置保存失败', 'error');
+  } finally {
+    settingsSaving = false;
     button.disabled = false;
+    button.textContent = '保存设置';
   }
 }
 
@@ -2454,6 +2489,42 @@ function isSystemMemoryItem(item) {
   return item?.kind === 'system' || item?.layer === 'system';
 }
 
+let memoryDiscardPending = null;
+let memoryFilterSerial = 0;
+async function confirmMemoryDiscard() {
+  if (state.memoryWriteBusy) return false;
+  if (state.memoryEditingId && state.memoryEditingDraft !== state.memoryEditingOriginal) {
+    if (!memoryDiscardPending) memoryDiscardPending = confirmAction({ title: '放弃未保存的修改？', message: '系统记忆的修改尚未保存。', confirmText: '放弃修改', cancelText: '继续编辑' }).finally(() => { memoryDiscardPending = null; });
+    if (!(await memoryDiscardPending)) return false;
+  }
+  state.memoryEditingId = ''; state.memoryEditingDraft = ''; state.memoryEditingOriginal = '';
+  return true;
+}
+async function changeMemorySearch() {
+  const serial = ++memoryFilterSerial;
+  const allowed = await confirmMemoryDiscard();
+  if (serial !== memoryFilterSerial) return;
+  if (!allowed) $('#memorySearch').value = state.memorySearchAccepted;
+  else state.memorySearchAccepted = $('#memorySearch').value;
+  sidebarSearchControls?.sync();
+  renderMemoryWorkspace();
+}
+async function selectMemoryItem(id) {
+  if (state.memorySelectedId !== id) {
+    if (!(await confirmMemoryDiscard())) return;
+    state.memorySelectedId = id;
+    renderMemoryWorkspace();
+    $('.memory-page').scrollTop = 0;
+  }
+  if (mobileSidebarQuery.matches) { closeMobileSidebar(); $('#memoryDetailTitle')?.focus(); }
+  else document.querySelector(`[data-memory-select="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+}
+function setMemoryWriteBusy(busy) {
+  state.memoryWriteBusy = busy;
+  $('#agentMemoryItems')?.setAttribute('aria-busy', String(busy));
+  $('#agentMemoryItems')?.querySelectorAll('button, textarea').forEach(control => { control.disabled = busy; });
+}
+
 function memoryBodyHtml(content) {
   const text = String(content || '').trim();
   if (!text) return '<p class="memory-empty">没有正文</p>';
@@ -2463,16 +2534,19 @@ function memoryBodyHtml(content) {
 function renderMemoryItems(items) {
   const root = $('#agentMemoryItems');
   if (!root) return;
-  const visible = state.memoryLayer ? items.filter(item => item.layer === state.memoryLayer) : items;
+  const visible = filterMemoryItems(items, state.memoryLayer, $('#memorySearch')?.value || '');
   if (!visible.length) {
-    root.innerHTML = `<p class="memory-empty">${items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>`;
+    state.memorySelectedId = '';
+    root.innerHTML = `<p class="memory-empty">${$('#memorySearch')?.value.trim() ? '没有匹配的记忆' : items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>${$('#memorySearch')?.value.trim() ? '<button type="button" class="secondary-action compact" data-memory-clear-search>清空搜索</button>' : ''}`;
     return;
   }
-  root.innerHTML = visible.map(item => {
+  const selected = visible.find(item => item.id === state.memorySelectedId) || visible[0];
+  state.memorySelectedId = selected.id;
+  root.innerHTML = [selected].map(item => {
     const system = isSystemMemoryItem(item);
     const editing = system && state.memoryEditingId === item.id;
     const body = editing
-      ? `<textarea class="memory-system-editor" data-memory-system-editor="${escHtml(item.id)}" maxlength="8000">${escHtml(state.memoryEditingDraft)}</textarea>`
+      ? `<textarea class="memory-system-editor" data-memory-system-editor="${escHtml(item.id)}" aria-label="编辑${escHtml(item.title || '系统记忆')}正文" maxlength="8000">${escHtml(state.memoryEditingDraft)}</textarea>`
       : memoryBodyHtml(item.content);
     const actions = system
       ? (editing
@@ -2485,7 +2559,7 @@ function renderMemoryItems(items) {
     <article class="memory-item" data-memory-item="${escHtml(item.id)}" data-memory-kind="${escHtml(item.kind || item.layer || '')}">
       <header>
         <span class="memory-layer">${escHtml(memoryLayerLabel(item.layer))}</span>
-        <h4>${escHtml(item.title || '未命名记忆')}</h4>
+        <h2 id="memoryDetailTitle" tabindex="-1">${escHtml(item.title || '未命名记忆')}</h2>
       </header>
       ${body}
       <div class="card-actions">
@@ -2514,21 +2588,13 @@ function updateMemoryPendingBadge(pendingCount) {
   memoryButton?.classList.toggle('has-pending', count > 0);
   memoryButton?.setAttribute('aria-label', count > 0 ? `Memory，${count} 条记忆待确认` : 'Memory');
   if (memoryButton) memoryButton.title = count > 0 ? `${count} 条记忆待确认` : 'Memory';
-  const sidebarCount = $('#memorySidebarCount');
-  if (sidebarCount) sidebarCount.classList.toggle('is-pending', count > 0);
 }
 
 function renderMemorySidebar() {
   const list = $('#memorySidebarList');
-  const count = $('#memorySidebarCount');
   const items = state.memories?.items || [];
   const proposals = state.memories?.proposals || [];
-  const visible = state.memoryLayer ? items.filter(item => item.layer === state.memoryLayer) : items;
-  if (count) {
-    count.textContent = proposals.length
-      ? `${items.length} 条已保存 · ${proposals.length} 条待确认`
-      : `${items.length} 条已保存`;
-  }
+  const visible = filterMemoryItems(items, state.memoryLayer, $('#memorySearch')?.value || '');
   updateMemoryPendingBadge(proposals.length);
   document.querySelectorAll('[data-memory-layer]').forEach(button => {
     const active = (button.dataset.memoryLayer || '') === (state.memoryLayer || '');
@@ -2537,21 +2603,14 @@ function renderMemorySidebar() {
   });
   if (!list) return;
   if (!visible.length) {
-    list.innerHTML = `<p class="empty-list">${items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>`;
+    list.innerHTML = `<p class="empty-list">${$('#memorySearch')?.value.trim() ? '没有匹配的记忆' : items.length ? '这一层还没有记忆' : '还没有长期记忆'}</p>`;
     return;
   }
   list.innerHTML = visible.map(item => `
-    <button class="session-select" type="button">
+    <button class="session-select memory-sidebar-item${item.id === state.memorySelectedId ? ' active' : ''}" type="button" data-memory-select="${escHtml(item.id)}" aria-current="${item.id === state.memorySelectedId ? 'true' : 'false'}">
       <strong>${escHtml(item.title || '未命名记忆')}</strong>
       <small>${escHtml(memoryLayerLabel(item.layer))} · ${escHtml((item.content || '').replace(/\s+/g, ' ').trim().slice(0, 48) || '没有正文')}</small>
     </button>`).join('');
-}
-
-function updateMemorySubtitle() {
-  if (state.mode !== 'memory') return;
-  const saved = (state.memories?.items || []).length;
-  const pending = (state.memories?.proposals || []).length;
-  $('#topbarSubtitle').textContent = pending ? `${saved} 条记忆 · ${pending} 条待确认` : `${saved} 条记忆`;
 }
 
 function renderMemoryWorkspace() {
@@ -2560,7 +2619,10 @@ function renderMemoryWorkspace() {
   renderMemoryProposalList(proposals);
   renderMemoryItems(items);
   renderMemorySidebar();
-  updateMemorySubtitle();
+  const error = $('#memoryLoadError');
+  error.hidden = !state.memoryLoadError;
+  $('#memoryLoadErrorText').textContent = state.memoryLoadError;
+  setMemoryWriteBusy(state.memoryWriteBusy);
 }
 
 function renderMemoryProposalList(proposals) {
@@ -2568,8 +2630,11 @@ function renderMemoryProposalList(proposals) {
   if (!root) return;
   if (!proposals.length) {
     root.innerHTML = '';
+    $('#memoryProposalsSection').hidden = true;
     return;
   }
+  $('#memoryProposalsSection').hidden = false;
+  $('#memoryProposalsCount').textContent = `${proposals.length} 条`;
   root.innerHTML = proposals.map(item => `
     <article class="memory-proposal" data-memory-proposal="${escHtml(item.id)}">
       <header>
@@ -2610,14 +2675,13 @@ async function loadMemoriesPanel() {
     const response = await apiFetch('/api/agent/memories');
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '记忆加载失败');
+    state.memoryLoadError = '';
     state.memories = { items: data.items || [], proposals: data.proposals || [] };
     renderMemoryWorkspace();
     return state.memories;
   } catch (error) {
-    state.memories = { items: [], proposals: [] };
+    state.memoryLoadError = error.message || '记忆加载失败';
     renderMemoryWorkspace();
-    const root = $('#agentMemoryItems');
-    if (root) root.innerHTML = `<p class="memory-empty">${escHtml(error.message || '记忆加载失败')}</p>`;
     return state.memories;
   }
 }
@@ -2669,8 +2733,14 @@ async function refreshAgentMemory() {
   }
 }
 
+const memoryProposalWrites = new Set();
 async function handleMemoryProposalAction(id, action) {
-  if (!id) return;
+  if (!id || memoryProposalWrites.has(id)) return;
+  memoryProposalWrites.add(id);
+  try {
+  if (action === 'approve' && state.mode === 'memory' && !(await confirmMemoryDiscard())) return;
+  if (state.mode === 'memory' && action === 'approve') renderMemoryWorkspace();
+  document.querySelectorAll(`[data-memory-approve="${CSS.escape(id)}"], [data-memory-dismiss="${CSS.escape(id)}"]`).forEach(button => { button.disabled = true; });
   const path = action === 'approve' ? 'approve' : 'dismiss';
   const response = await apiFetch(`/api/agent/memory-proposals/${encodeURIComponent(id)}/${path}`, { method: 'POST' });
   if (!response.ok) {
@@ -2680,9 +2750,22 @@ async function handleMemoryProposalAction(id, action) {
     return;
   }
   document.querySelector(`[data-memory-card="${CSS.escape(id)}"]`)?.remove();
-  if (state.mode === 'memory') await loadMemoriesPanel();
+  if (state.mode === 'memory') {
+    const saved = action === 'approve' ? await response.json().catch(() => ({})) : null;
+    if (saved?.id) {
+      state.memorySelectedId = saved.id;
+      if (!filterMemoryItems([saved], state.memoryLayer, $('#memorySearch').value).length) { state.memoryLayer = ''; $('#memorySearch').value = ''; state.memorySearchAccepted = ''; sidebarSearchControls?.sync(); }
+    }
+    await loadMemoriesPanel();
+    if (saved?.id) { $('.memory-page').scrollTop = 0; $('#memoryDetailTitle')?.focus(); }
+  }
   else await refreshMemoryPendingCount();
   showToast(action === 'approve' ? '长期记忆已保存' : '已忽略这项记忆草稿', 'success');
+  } catch (error) { showToast(error.message || '记忆操作失败', 'error'); }
+  finally {
+    memoryProposalWrites.delete(id);
+    document.querySelectorAll(`[data-memory-approve="${CSS.escape(id)}"], [data-memory-dismiss="${CSS.escape(id)}"]`).forEach(button => { button.disabled = false; });
+  }
 }
 
 async function confirmSystemPromptChange(title, message) {
@@ -2700,7 +2783,9 @@ async function confirmSystemPromptChange(title, message) {
 }
 
 async function saveSystemMemoryItem(id) {
-  if (!id) return;
+  if (!id || state.memoryWriteBusy) return;
+  setMemoryWriteBusy(true);
+  try {
   const editor = document.querySelector(`[data-memory-system-editor="${CSS.escape(id)}"]`);
   const content = editor ? editor.value : state.memoryEditingDraft;
   const confirmed = await confirmSystemPromptChange(
@@ -2722,10 +2807,14 @@ async function saveSystemMemoryItem(id) {
   state.memoryEditingDraft = '';
   await loadMemoriesPanel();
   showToast('系统提示词已更新', 'success');
+  } catch (error) { showToast(error.message || '系统记忆保存失败', 'error'); }
+  finally { setMemoryWriteBusy(false); }
 }
 
 async function restoreSystemMemoryItem(id) {
-  if (!id) return;
+  if (!id || state.memoryWriteBusy) return;
+  setMemoryWriteBusy(true);
+  try {
   const item = (state.memories?.items || []).find(entry => entry.id === id);
   const confirmed = await confirmSystemPromptChange(
     '恢复默认系统提示词',
@@ -2742,6 +2831,8 @@ async function restoreSystemMemoryItem(id) {
   state.memoryEditingDraft = '';
   await loadMemoriesPanel();
   showToast('已恢复默认系统提示词', 'success');
+  } catch (error) { showToast(error.message || '恢复默认失败', 'error'); }
+  finally { setMemoryWriteBusy(false); }
 }
 
 async function archiveMemoryItem(id) {
@@ -2758,6 +2849,11 @@ async function archiveMemoryItem(id) {
   if (!response.ok) {
     showToast(data.error || '长期记忆删除失败', 'error');
     return;
+  }
+  if (state.memorySelectedId === id) {
+    const visible = filterMemoryItems(state.memories.items, state.memoryLayer, $('#memorySearch').value);
+    const index = visible.findIndex(entry => entry.id === id);
+    state.memorySelectedId = visible[index + 1]?.id || visible[index - 1]?.id || '';
   }
   await loadMemoriesPanel();
   showToast('长期记忆已删除', 'success');
@@ -2776,7 +2872,6 @@ async function loadSessions() {
     }
   }
   renderSessions();
-  if (state.mode === 'agent') applyAgentTopbar(state.activeSession);
   ensureSessionRunSubscriptions();
 }
 
@@ -2960,7 +3055,6 @@ function showEmptySession() {
   state.activeSession = null;
   stopLiveTrace();
   setRunStatus('');
-  applyAgentTopbar(null);
   setAgentEmptyHero();
   renderSessions();
 }
@@ -3204,7 +3298,6 @@ function getCachedSessionDetail(id) {
 
 function applySessionDetail(session, { force = false, scroll = true } = {}) {
   state.activeSession = session;
-  applyAgentTopbar(session);
   renderSessionMessages(session, { force, scroll });
   updateSessionActiveHighlight(session.id);
   syncSessionRunBadgesFromSummaries();
@@ -3286,7 +3379,6 @@ async function openSession(id, serial = state.routeSerial) {
 
   if (prevId === id && state.activeSession?.messages && !local?.needsReload) {
     syncActiveSessionRunUi(state.activeSession);
-    applyAgentTopbar(state.activeSession);
     return;
   }
 
@@ -3370,7 +3462,6 @@ function startSessionRename(id) {
       if (!response.ok) showToast('会话重命名失败', 'error');
       else if (state.activeSession?.id === id) {
         state.activeSession.title = title;
-        applyAgentTopbar(state.activeSession);
       }
       await loadSessions();
     } else renderSessions();
@@ -3382,11 +3473,13 @@ function startSessionRename(id) {
   input.addEventListener('blur', () => finish(true));
 }
 
-function confirmAction({ title, message, confirmText = '确认' }) {
+function confirmAction({ title, message, confirmText = '确认', cancelText = '取消' }) {
   const dialog = $('#confirmDialog');
   $('#confirmTitle').textContent = title;
   $('#confirmMessage').textContent = message;
   $('#confirmAccept').textContent = confirmText;
+  $('#confirmCancel').textContent = cancelText;
+  dialog.returnValue = '';
   dialog.showModal();
   return new Promise(resolve => {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
@@ -3694,6 +3787,7 @@ function upsertRunTrace(run, { live = false } = {}) {
   const summaryEl = details.querySelector('.trace-summary');
   eventsEl.innerHTML = lines.map(text => `<div class="trace-event">${escHtml(text)}</div>`).join('');
   if (lines.length) summaryEl.textContent = lines.at(-1);
+  details.dataset.status = run.status || 'idle';
   eventsEl.scrollTop = eventsEl.scrollHeight;
   for (const child of Array.isArray(run.delegateRuns) ? run.delegateRuns : []) {
     upsertDelegateTrace(child, run.id, { live: live && activeRunState()?.activeChildRunId === child.id });
@@ -3729,6 +3823,8 @@ function setSessionRunStatus(sessionId, status, text = '') {
   const wasWaitingApproval = entry.status === 'waiting_approval';
   const wasWaitingUser = entry.status === 'waiting_user';
   entry.status = status;
+  const traceHost = entry.runId && runTraceHost(entry.runId);
+  if (traceHost) traceHost.dataset.status = status;
   if (entry.runId && sessionHasActiveRunStatus(status)) {
     updateSessionActiveRunInList(sessionId, { id: entry.runId, status });
   } else if (!status || TERMINAL_RUN_STATES.has(status)) {
@@ -3823,8 +3919,8 @@ const APPROVAL_STRING_LIMIT = 400;
 const APPROVAL_CONTENT_PREVIEW = 200;
 const APPROVAL_INPUT_PLACEHOLDER = '请先确认上方操作';
 const AGENT_QUESTION_DISPLAY_LIMIT = 800;
-const COMPOSER_HINT_DEFAULT = 'Enter 发送 · @ 引用知识';
-const COMPOSER_HINT_ANSWER = 'Enter 发送回答';
+const COMPOSER_HINT_DEFAULT = '@ 引用知识';
+const COMPOSER_HINT_ANSWER = '回复 Agent 提问 · @ 引用知识';
 
 function truncateApprovalString(value, max = APPROVAL_STRING_LIMIT) {
   const text = String(value ?? '');
@@ -4375,7 +4471,6 @@ function patchSessionSummaryAfterAssistantMessage(sessionId, content) {
   if (state.activeSession?.id === sessionId) {
     state.activeSession.messageCount = summary.messageCount;
     state.activeSession.updatedAt = summary.updatedAt;
-    applyAgentTopbar(state.activeSession);
   }
   invalidateSessionDetailCache(sessionId);
   updateSessionRowMeta(sessionId);
@@ -4514,16 +4609,24 @@ function shouldShowKnowledgeDocumentActions() {
   return state.mode === 'knowledge' && Boolean(state.selectedKnowledgeBase);
 }
 
+let knowledgeNoteCreating = false;
 function syncKnowledgeDocumentActions() {
   const container = $('#knowledgeDocumentActions');
   if (!container) return;
-  const show = shouldShowKnowledgeDocumentActions();
+  const show = state.mode === 'knowledge';
+  const home = !state.selectedKnowledgeBase;
+  $('#newKnowledgeBaseButton').hidden = !home;
+  $('#newNoteButton').hidden = home;
+  const createLabel = home ? '新建知识库，展开更多操作' : '新建笔记，展开更多操作';
+  $('#knowledgeOperationsToggle').title = createLabel;
+  $('#knowledgeOperationsToggle').setAttribute('aria-label', createLabel);
+  $('#newFolderButton').hidden = !state.selectedKnowledgeBase || knowledgeFiltersActive();
   container.hidden = !show;
   container.classList.toggle('is-visible', show);
   if ('inert' in container) container.inert = !show;
   container.querySelectorAll('button').forEach(button => {
     if (button.id === 'newFolderButton') return;
-    button.disabled = !show;
+    button.disabled = !show || (button.id === 'newNoteButton' && knowledgeNoteCreating);
     button.tabIndex = show ? 0 : -1;
     button.setAttribute('aria-hidden', show ? 'false' : 'true');
   });
@@ -4539,29 +4642,35 @@ function setKnowledgeSidebarLevel() {
   const insidePanel = $('#knowledgeInsidePanel');
   if (rootPanel) rootPanel.hidden = !atRoot;
   if (insidePanel) insidePanel.hidden = atRoot;
+  const searching = knowledgeFiltersActive();
+  rootPanel?.classList.toggle('is-searching', atRoot && searching);
+  $('#knowledgeBaseList').hidden = atRoot && searching;
+  $('#knowledgeResultsSection').hidden = atRoot && !searching;
+  const input = $('#knowledgeSearch');
+  const scope = state.selectedFolderPath.split('/').pop() || state.selectedKnowledgeBase;
+  input.placeholder = scope ? `搜索「${scope}」` : '搜索全部知识';
+  input.setAttribute('aria-label', scope ? `搜索 ${[state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ')} 及下级` : '搜索全部知识');
+  input.title = input.getAttribute('aria-label');
   syncKnowledgeDocumentActions();
   updateKnowledgeEmptyState();
 }
 
 function updateKnowledgeEmptyState() {
-  if (state.activeDocument || state.mode !== 'knowledge') return;
-  const title = $('#knowledgeEmptyTitle');
-  const text = $('#knowledgeEmptyText');
-  const button = $('#emptyNewNoteButton');
-  if (!title || !text) return;
-  if (isKnowledgeRoot()) {
-    title.textContent = '选择一个知识库开始浏览';
-    text.textContent = '从左侧选择一个知识库，查看文件夹和文档。';
-    if (button) button.hidden = true;
-  } else {
-    title.textContent = '选择一条知识开始阅读';
-    text.textContent = '在此知识库新建或导入内容，或从左侧选择文档。';
-    if (button) button.hidden = false;
+  const host = $('#knowledgeEmptyState');
+  if (!host) return;
+  if (state.activeDocument || state.mode !== 'knowledge') {
+    unmountAgentEmptyHero(host);
+    return;
   }
+  if (!host.firstElementChild) {
+    host.innerHTML = renderAgentEmptyHero({ titleZh: '让知识，有序生长', titleEn: 'Let knowledge grow.' });
+  }
+  mountAgentEmptyHero(host);
 }
 
 function clearKnowledgeDocuments() {
   state.documents = [];
+  state.localNameOnlyEntries = [];
   state.knowledgeTotal = 0;
   state.knowledgeNextCursor = null;
   renderDocuments();
@@ -4624,20 +4733,13 @@ function renderKnowledgeBreadcrumb(base) {
   const nav = $('#knowledgeBreadcrumb');
   if (!nav || !base) return;
   const segments = String(state.selectedFolderPath || '').split('/').filter(Boolean);
-  let crumbs = `
-    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="root">知识库</button>
-    <span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>
-    <button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="base" data-drop-base="${escHtml(base.name)}" data-drop-folder="">${escHtml(base.name)}</button>`;
+  const arrow = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>';
+  const item = (name, target, current, folder = '') => `<button type="button" class="knowledge-breadcrumb-link knowledge-directory-button${current ? ' knowledge-breadcrumb-current' : ''}" data-directory-menu="${escHtml(target)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(folder)}" title="${escHtml([base.name, folder].filter(Boolean).join(' / '))}" aria-label="切换同层目录：${escHtml(name)}" aria-haspopup="true" aria-expanded="false"><span>${escHtml(name)}</span>${arrow}</button>`;
+  let crumbs = `<button type="button" class="knowledge-breadcrumb-link knowledge-root-link" data-breadcrumb="root" title="返回知识库主目录" aria-label="返回知识库主目录">～</button><span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(base.name, 'base', !segments.length)}`;
   let prefix = '';
   segments.forEach((segment, index) => {
-    const target = prefix ? `${prefix}/${segment}` : segment;
-    prefix = target;
-    crumbs += `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>`;
-    if (index === segments.length - 1) {
-      crumbs += `<span class="knowledge-breadcrumb-current" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(target)}">${escHtml(segment)}</span>`;
-    } else {
-      crumbs += `<button type="button" class="knowledge-breadcrumb-link" data-breadcrumb="folder" data-folder-path="${escHtml(target)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(target)}">${escHtml(segment)}</button>`;
-    }
+    prefix = prefix ? `${prefix}/${segment}` : segment;
+    crumbs += `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(segment, prefix, index === segments.length - 1, prefix)}`;
   });
   nav.innerHTML = crumbs;
 }
@@ -4645,14 +4747,9 @@ function renderKnowledgeBreadcrumb(base) {
 function documentListHeadingText() {
   const total = state.knowledgeTotal;
   const base = findKnowledgeBase(state.selectedKnowledgeBase);
-  if (state.selectedFolderPath) {
-    const folder = findFolderNode(base?.folders, state.selectedFolderPath);
-    return `${folder?.name || state.selectedFolderPath} · ${total}`;
-  }
-  if (state.selectedKnowledgeBase) {
-    return `${base?.name || state.selectedKnowledgeBase} · ${total}`;
-  }
-  return '知识库';
+  if (knowledgeFiltersActive()) return `${activeKnowledgeSearchQuery() ? '搜索结果' : '筛选结果'} · ${total}`;
+  if (state.selectedKnowledgeBase) return '';
+  return knowledgeFiltersActive() ? `全部知识 · ${total}` : '知识库';
 }
 
 function activeKnowledgeSearchQuery() {
@@ -4682,7 +4779,8 @@ function documentRowSubtitleHtml(document) {
   const q = activeKnowledgeSearchQuery();
   if (document.searchSnippet) {
     const snippet = String(document.searchSnippet).replace(/\s+/g, ' ').trim().slice(0, 120);
-    return highlightSearch(snippet, q);
+    const location = [document.knowledgeBase, document.folderPath].filter(Boolean).join(' / ');
+    return `${highlightSearch(snippet, q)}${location ? `<span class="document-search-location">${escHtml(location)}</span>` : ''}`;
   }
   const text = documentRowSubtitle(document);
   if (!text) return '';
@@ -4712,17 +4810,16 @@ function renderKnowledgeTree() {
 }
 
 function folderRowsHtml(base) {
-  if (!base || activeKnowledgeSearchQuery()) return '';
+  if (!base || knowledgeFiltersActive()) return '';
   const folders = currentLevelFolders(base, state.selectedFolderPath);
   const baseName = escHtml(base.name);
   return folders.map(folder => `
     <div class="document-folder-row" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="folder" data-knowledge-drag-path="${escHtml(`${base.name}/${folder.path}`)}" data-pinned-at="${escHtml(folder.pinnedAt || '')}" data-list-group="folder" data-folder-open="${escHtml(folder.path)}" data-folder-name="${escHtml(folder.name)}" data-drop-base="${baseName}" data-drop-folder="${escHtml(folder.path)}">
       <span class="document-folder-mark${folder.pinnedAt ? ' is-pinned' : ''}"${folder.pinnedAt ? ' title="已置顶"' : ' aria-hidden="true"'}>${folder.pinnedAt ? PIN_ICON : '<svg viewBox="0 0 24 24"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path></svg>'}</span>
       <span class="document-folder-body">
-        <span class="document-folder-title"><strong>${escHtml(folder.name)}</strong></span>
-        <small class="document-folder-count">${Number(folder.documentCount) || 0} 篇</small>
+        <span class="document-folder-title"><strong title="${escHtml(folder.name)}">${escHtml(folder.name)}</strong></span>
       </span>
-      <span class="document-folder-chevron" aria-hidden="true">›</span>
+      <small class="document-folder-count">${Number(folder.documentCount) || 0} 篇</small>
       <span class="tree-actions">
         ${!knowledgeFiltersActive() ? pinActionHtml({ kind: 'folder', target: `${base.name}/${folder.path}`, pinnedAt: folder.pinnedAt, escape: escHtml }) : ''}
         <button class="tree-action" type="button" data-tree-rename-folder="${baseName}" data-tree-folder="${escHtml(folder.path)}" title="重命名文件夹" aria-label="重命名 ${escHtml(folder.name)}">${KNOWLEDGE_ICONS.rename}</button>
@@ -4842,7 +4939,8 @@ async function manageKnowledgeTree(action, baseName, folderPath = '') {
 function knowledgeQuery(cursor = '', { includeSearchText = false } = {}) {
   const params = new URLSearchParams();
   if (state.selectedKnowledgeBase) params.set('knowledgeBase', state.selectedKnowledgeBase);
-  params.set('folder', state.selectedFolderPath || '');
+  if (!knowledgeFiltersActive()) params.set('folder', state.selectedFolderPath || '');
+  else if (state.selectedFolderPath) params.set('folderPath', state.selectedFolderPath);
   const tag = $('#knowledgeTagFilter').value.trim();
   const date = $('#knowledgeDateFilter').value;
   if (tag) params.set('tag', tag);
@@ -4871,6 +4969,10 @@ function knowledgeSearchQuery() {
   return params;
 }
 
+function findKnowledgeDocument(id) {
+  return state.documents.find(document => String(document.id) === String(id)) || (String(state.activeDocument?.id ?? '') === String(id) ? state.activeDocument : null);
+}
+
 function renderDocuments() {
   const list = $('#knowledgeDocumentList');
   const heading = $('#knowledgeDocumentListHeading');
@@ -4891,10 +4993,10 @@ function renderDocuments() {
       <div data-list-group="file" data-document-type="${type.kind}" class="document-row ${state.activeDocument?.id === document.id ? 'active' : ''}" role="button" tabindex="0" draggable="true" title="拖到目标文件夹或知识库可移动" data-knowledge-drag-type="document" data-knowledge-drag-id="${escHtml(document.id)}" data-pinned-at="${escHtml(document.pinnedAt || '')}" data-document-open="${escHtml(document.id)}"${document.searchOffset ? ` data-search-offset="${document.searchOffset}"` : ''}>
         <span class="document-row-icon${showPinned ? ' is-pinned' : ''}"${showPinned ? ' title="已置顶"' : ' aria-hidden="true"'}>${rowIcon}</span>
         <span class="document-row-body">
-          <span class="document-row-title"><strong>${documentRowTitleHtml(document)}</strong><span class="document-type-label">${type.label}</span>${document.documentRole === 'mindmap' ? '<span class="private-mark" title="思维导图">图</span>' : ''}</span>
-          ${subtitleHtml ? `<small>${subtitleHtml}</small>` : ''}
+          <span class="document-row-title"><strong title="${escHtml(document.title || '未命名文档')}">${documentRowTitleHtml(document)}</strong>${document.documentRole === 'mindmap' ? '<span class="private-mark" title="思维导图">图</span>' : ''}</span>
+          ${subtitleHtml || document.sourceType === 'file' ? `<small>${document.sourceType === 'file' ? `${escHtml(type.label)}${subtitleHtml ? ' · ' : ''}` : ''}${subtitleHtml}</small>` : ''}
         </span>
-        ${state.selectedKnowledgeBase && !knowledgeFiltersActive() ? `<span class="tree-actions">${pinActionHtml({ kind: 'document', target: document.id, scope: document.collectionPath, pinnedAt: document.pinnedAt, escape: escHtml })}</span>` : ''}
+        <span class="tree-actions">${state.selectedKnowledgeBase && !knowledgeFiltersActive() ? pinActionHtml({ kind: 'document', target: document.id, scope: document.collectionPath, pinnedAt: document.pinnedAt, escape: escHtml }) : ''}<button class="tree-action" type="button" data-move-document="${escHtml(document.id)}" title="移动到…" aria-label="移动到…"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h7l2 2h9v11H3zM14 3h7m-3-3 3 3-3 3"></path></svg></button>${document.status === 'archived' ? `<button class="tree-action" type="button" data-restore-document="${escHtml(document.id)}" title="恢复文档" aria-label="恢复文档"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7v5h5M5.6 16a8 8 0 1 0 .1-8.9L4 12"></path></svg></button>` : `<button class="tree-action" type="button" data-archive-document="${escHtml(document.id)}" title="归档文档" aria-label="归档文档"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 5.5h17v4h-17zM5 9.5V18a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9.5M10 13.5h4"></path></svg></button>`}<button class="tree-action danger" type="button" data-delete-document="${escHtml(document.id)}" title="删除文档" aria-label="删除文档">${KNOWLEDGE_ICONS.delete}</button></span>
       </div>`;
   }).join('');
   const localRows = !knowledgeFiltersActive() && state.selectedKnowledgeBase ? state.localNameOnlyEntries.map(entry => `
@@ -4910,6 +5012,7 @@ function renderDocuments() {
     if (state.selectedKnowledgeBase && !knowledgeFiltersActive()) arrangeKnowledgeRows(list);
   }
   $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
+  enhanceKnowledgeRowMenus(list);
 }
 
 function clearKnowledgeDragUi() {
@@ -5052,37 +5155,50 @@ async function moveKnowledgeItem(item, target) {
 }
 
 async function loadDocuments({ append = false, refreshTree = true } = {}) {
-  if (!append) state.localNameOnlyEntries = [];
-  if (!append && refreshTree) await loadKnowledgeTree();
+  const isLatest = knowledgeRequests.begin();
+  const key = JSON.stringify([state.mode, state.selectedKnowledgeBase, state.selectedFolderPath, knowledgeSearchQuery().toString(), $('#knowledgeArchivedFilter').checked]);
+  const current = () => isLatest() && key === JSON.stringify([state.mode, state.selectedKnowledgeBase, state.selectedFolderPath, knowledgeSearchQuery().toString(), $('#knowledgeArchivedFilter').checked]);
   const q = $('#knowledgeSearch').value.trim();
   const archived = $('#knowledgeArchivedFilter').checked;
-  if (q && !archived) {
-    if (append) return;
-    const response = await apiFetch(`/api/knowledge/search?${knowledgeSearchQuery()}`);
+  const cursor = append ? state.knowledgeNextCursor : '';
+  const searchParams = knowledgeSearchQuery();
+  const listParams = knowledgeQuery(cursor, { includeSearchText: archived && Boolean(q) });
+  const localParams = new URLSearchParams({ knowledgeBase: state.selectedKnowledgeBase, folder: state.selectedFolderPath || '' });
+  const browseLocal = !append && !knowledgeFiltersActive() && state.selectedKnowledgeBase;
+  if (append && (q && !archived || !cursor)) return;
+  try {
+    if (!append && refreshTree) await loadKnowledgeTree();
+    if (!current()) return;
+    if (isKnowledgeRoot() && !knowledgeFiltersActive()) {
+      clearKnowledgeDocuments();
+      setKnowledgeSidebarLevel();
+      return;
+    }
+    const searching = q && !archived;
+    const response = await apiFetch(searching ? `/api/knowledge/search?${searchParams}` : `/api/knowledge/documents?${listParams}`);
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || '知识库搜索失败');
-    state.documents = data.documents || [];
-    state.knowledgeTotal = Number(data.total) || state.documents.length;
-    state.knowledgeNextCursor = null;
-  } else {
-    const cursor = append ? state.knowledgeNextCursor : '';
-    if (append && !cursor) return;
-    const response = await apiFetch(`/api/knowledge/documents?${knowledgeQuery(cursor, { includeSearchText: archived && Boolean(q) })}`);
-    const data = await response.json().catch(() => ({}));
+    if (!current()) return;
     if (!response.ok) throw new Error(data.error || '知识库加载失败');
+    let localEntries = [];
+    if (browseLocal) {
+      const localResponse = await apiFetch(`/api/knowledge/local-entries?${localParams}`);
+      const localData = await localResponse.json().catch(() => ({}));
+      if (!current()) return;
+      if (localResponse.ok) localEntries = localData.entries || [];
+    }
     state.documents = append ? mergeDocumentPages(state.documents, data.documents || []) : (data.documents || []);
     state.knowledgeTotal = Number(data.total) || 0;
-    state.knowledgeNextCursor = data.nextCursor || null;
-  }
-  if (!append && !knowledgeFiltersActive() && state.selectedKnowledgeBase) {
-    const params = new URLSearchParams({ knowledgeBase: state.selectedKnowledgeBase, folder: state.selectedFolderPath || '' });
-    const response = await apiFetch(`/api/knowledge/local-entries?${params}`);
-    const data = await response.json().catch(() => ({}));
-    if (response.ok) state.localNameOnlyEntries = data.entries || [];
-  }
-  renderDocuments();
-  if (state.mode === 'knowledge' && !state.activeDocument) {
-    $('#topbarSubtitle').textContent = isKnowledgeRoot() ? '' : `${state.knowledgeTotal} 条知识`;
+    state.knowledgeNextCursor = searching ? null : data.nextCursor || null;
+    if (!append) state.localNameOnlyEntries = localEntries;
+    renderDocuments();
+    setKnowledgeSidebarLevel();
+    if (state.mode === 'knowledge' && !state.activeDocument) {
+    }
+  } catch (error) {
+    if (current()) {
+      if (!append) $('#knowledgeDocumentList').innerHTML = '<p class="empty-list">无法读取知识，请稍后重试。</p><button type="button" class="load-more" data-knowledge-search-retry>重试</button>';
+      throw error;
+    }
   }
 }
 
@@ -5107,9 +5223,7 @@ function showEmptyDocument() {
   $('#knowledgeEmptyState').hidden = false;
   $('#documentWorkspace').hidden = true;
   if (isKnowledgeRoot()) {
-    $('#topbarSubtitle').textContent = '';
   } else {
-    $('#topbarSubtitle').textContent = isKnowledgeRoot() ? '' : `${state.knowledgeTotal} 条知识`;
   }
   updateKnowledgeEmptyState();
   renderDocuments();
@@ -5169,7 +5283,7 @@ function updateDocumentMetaSummary() {
   if (tagsRaw) chips.push(tagsRaw.length > 28 ? `${tagsRaw.slice(0, 28)}…` : tagsRaw);
   host.innerHTML = chips.map(text => `<span class="document-meta-chip">${escHtml(text)}</span>`).join('');
   const chipsButton = $('#documentMetaChips');
-  if (chipsButton) chipsButton.hidden = chips.length === 0;
+  if (chipsButton) { chipsButton.hidden = chips.length === 0; chipsButton.title = [kb, folder && folder !== '根目录' ? folder : '', date, tagsRaw].filter(Boolean).join(' / '); }
   syncDocumentMetaExpanded();
 }
 
@@ -5200,7 +5314,9 @@ async function renderActiveDocument(document) {
   state.editorMode = 'edit';
   state.selectedKnowledgeBase = document.knowledgeBase || String(document.collectionPath || '其他').split('/')[0] || '其他';
   state.selectedFolderPath = document.folderPath || String(document.collectionPath || '').split('/').slice(1).join('/');
+  syncKnowledgeSearchScope();
   setKnowledgeSidebarLevel();
+  unmountAgentEmptyHero($('#knowledgeEmptyState'));
   $('#knowledgeEmptyState').hidden = true;
   $('#documentWorkspace').hidden = false;
   $('#documentTitle').value = document.title || '';
@@ -5209,6 +5325,7 @@ async function renderActiveDocument(document) {
     folderPath: state.selectedFolderPath,
   });
   $('#documentDate').value = document.documentDate || '';
+  syncDatePickers();
   $('#documentTags').value = (document.tags || []).join(', ');
   const metaPanel = $('#documentMetaPanel');
   if (metaPanel) metaPanel.open = false;
@@ -5234,7 +5351,6 @@ async function renderActiveDocument(document) {
   }
   $('#documentPreview').scrollTop = 0;
   pendingNotePreviewPosition = { documentId: document.id, top: 0 };
-  $('#topbarSubtitle').textContent = [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join(' / ');
   setDocumentSaveState('已保存');
   const isFile = document.sourceType === 'file';
   $('#documentWorkspace').classList.toggle('is-file-document', isFile);
@@ -5254,8 +5370,6 @@ async function renderActiveDocument(document) {
     } catch (error) { showToast(error.message || '无法打开所在文件夹', 'error'); }
   };
   $('#noteFindToggleButton').hidden = isFile || isMindmap;
-  $('#archiveDocumentButton').hidden = document.status === 'archived';
-  $('#restoreDocumentButton').hidden = document.status !== 'archived';
   updateInsertImageButton();
   $('#documentTitle').readOnly = document.status === 'archived';
   setDocumentFormDisabled(document.status === 'archived');
@@ -5627,8 +5741,6 @@ async function saveDocumentOnce() {
     scheduleDocumentSave();
   }
   knowledgeEnhancements?.onDocumentSaved?.(data);
-  $('#topbarSubtitle').textContent = [data.knowledgeBase || state.selectedKnowledgeBase, data.folderPath || state.selectedFolderPath].filter(Boolean).join(' / ')
-    || `${state.knowledgeTotal} 条知识`;
   updateDocumentSummary(data);
   const locationChanged = previous && (
     (previous.knowledgeBase || '其他') !== (data.knowledgeBase || '其他')
@@ -5743,7 +5855,7 @@ async function importKnowledgeFile(file) {
     showToast(error.message, 'error');
   } finally {
     $('#importFileButton').disabled = false;
-    $('#importFileButton').textContent = '↑';
+    $('#importFileButton').textContent = '导入文件';
   }
 }
 
@@ -5850,9 +5962,9 @@ async function handleDocumentImagePaste(event) {
   await handleDocumentImageUpload(file);
 }
 
-async function archiveActiveDocument() {
-  const document = state.activeDocument;
+async function archiveActiveDocument(document = state.activeDocument) {
   if (!document) return;
+  if (state.activeDocument?.id === document.id && !(await flushPendingSaves())) return showToast('请先解决文档保存问题，再归档。', 'error');
   const confirmed = await confirmAction({
     title: '归档知识文档',
     message: `“${document.title || '未命名'}”将从默认列表和检索结果中隐藏，原文件不会被删除。`,
@@ -5863,12 +5975,11 @@ async function archiveActiveDocument() {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '归档失败', 'error');
   showToast('文档已归档', 'success');
-  keepKnowledgeLocationAfterClosingDocument(document);
+  if (state.activeDocument?.id === document.id) keepKnowledgeLocationAfterClosingDocument(document);
   await loadDocuments();
 }
 
-async function restoreActiveDocument() {
-  const document = state.activeDocument;
+async function restoreActiveDocument(document = state.activeDocument) {
   if (!document || document.status !== 'archived') return;
   const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/restore`, { method: 'POST' });
   const data = await response.json().catch(() => ({}));
@@ -5876,7 +5987,7 @@ async function restoreActiveDocument() {
   showToast('文档已恢复', 'success');
   $('#knowledgeArchivedFilter').checked = false;
   await loadDocuments();
-  await renderActiveDocument(data);
+  if (state.activeDocument?.id === document.id) await renderActiveDocument(data);
 }
 
 function deleteConfirmCopy(document) {
@@ -5893,9 +6004,9 @@ function deleteConfirmCopy(document) {
   };
 }
 
-async function deleteActiveDocument() {
-  const document = state.activeDocument;
+async function deleteActiveDocument(document = state.activeDocument) {
   if (!document) return;
+  if (state.activeDocument?.id === document.id && !(await flushPendingSaves())) return showToast('请先解决文档保存问题，再删除。', 'error');
   const copy = deleteConfirmCopy(document);
   const confirmed = await confirmAction({
     title: copy.title,
@@ -5908,8 +6019,10 @@ async function deleteActiveDocument() {
   if (!response.ok) return showToast(data.error || '删除失败', 'error');
   showToast('文档已删除', 'success');
   void clearReadingPosition(document.id);
-  noteBrowserClear({ deleteDocument: true });
-  keepKnowledgeLocationAfterClosingDocument(document);
+  if (state.activeDocument?.id === document.id) {
+    noteBrowserClear({ deleteDocument: true });
+    keepKnowledgeLocationAfterClosingDocument(document);
+  }
   await loadDocuments();
 }
 
@@ -5934,6 +6047,28 @@ function applyTheme(value) {
 }
 
 function bindEvents() {
+  initDatePickers();
+  initDocumentPresentation();
+  agentModeAction = initSessionCreateAction($('#agentNewSessionButton'), {
+    createSession,
+    onError: error => showToast(error.message, 'error'),
+  });
+  initKnowledgeOperations({ createNote: () => $(state.selectedKnowledgeBase ? '#newNoteButton' : '#newKnowledgeBaseButton').click() });
+  knowledgeMove = initKnowledgeMove({
+    getBases: () => state.knowledgeBases,
+    getDocument: id => state.activeDocument?.id === id ? state.activeDocument : state.documents.find(item => item.id === id),
+    move: async (item, target) => {
+      const active = state.activeDocument?.id === item.id;
+      if (active && !(await beforeNoteMutation(item.id))) throw new Error('笔记尚未保存，移动已取消');
+      try { await moveKnowledgeItem(item, target); }
+      finally { if (active) await afterNoteMutation(item.id, { failed: true }); }
+    },
+  });
+  initKnowledgeNavigation({
+    getBases: () => state.knowledgeBases,
+    getLocation: () => ({ knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath }),
+    navigate: (knowledgeBase, folderPath) => navigate('knowledge', '', { knowledgeBase, folderPath }),
+  });
   bindKnowledgeDragEvents();
   noteFindController = initNoteFind({
     root: document,
@@ -5965,7 +6100,11 @@ function bindEvents() {
     if (targetMode === 'knowledge') await loadKnowledgeTree();
     navigate(targetMode, id, options);
   });
-  $('#sidebarOpen').addEventListener('click', openMobileSidebar);
+  initFloatingSidebarButton($('#sidebarOpen'));
+  $('#sidebarOpen').addEventListener('click', () => {
+    if (desktopSidebarQuery.matches) toggleDesktopSidebar(false);
+    else openMobileSidebar();
+  });
   $('#sidebarClose').addEventListener('click', closeMobileSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeMobileSidebar);
   $('#workspaceSidebar').addEventListener('keydown', event => {
@@ -5979,8 +6118,7 @@ function bindEvents() {
     }
   });
   $('#sidebarToggle').addEventListener('click', () => toggleDesktopSidebar());
-  $('#newSessionButton').addEventListener('click', () => createSession().catch(error => showToast(error.message, 'error')));
-  $('#sessionSearch').addEventListener('input', renderSessions);
+
   $('#sessionList').addEventListener('click', event => {
     const open = event.target.closest('[data-session-open]');
     const rename = event.target.closest('[data-session-rename]');
@@ -6192,20 +6330,28 @@ function bindEvents() {
     }
   });
 
-  const reloadKnowledge = debounce(() => loadDocuments().catch(error => showToast(error.message, 'error')), 220);
-  $('#knowledgeSearch').addEventListener('input', reloadKnowledge);
-  bindKnowledgeSearchSettingsEvents();
-  ['knowledgeTagFilter', 'knowledgeDateFilter', 'knowledgeArchivedFilter'].forEach(id => {
-    $(`#${id}`).addEventListener(id === 'knowledgeTagFilter' ? 'input' : 'change', reloadKnowledge);
+  const reloadKnowledge = debounce(() => {
+    if (state.mode === 'knowledge') loadDocuments().catch(error => showToast(error.message, 'error'));
+  }, 220);
+  sidebarSearchControls = initSidebarSearch({
+    document,
+    onSessionChange: renderSessions,
+    onMemoryChange: () => { changeMemorySearch().catch(error => showToast(error.message, 'error')); },
+    onKnowledgeChange: () => {
+      knowledgeRequests.invalidate();
+      clearKnowledgeDocuments();
+      setKnowledgeSidebarLevel();
+      if (knowledgeFiltersActive()) $('#knowledgeDocumentList').innerHTML = '<p class="empty-list">正在搜索…</p>';
+      reloadKnowledge();
+    },
   });
+  bindKnowledgeSearchSettingsEvents();
   $('#newKnowledgeBaseButton').addEventListener('click', () => manageKnowledgeTree('add-base'));
   $('#knowledgeBreadcrumb').addEventListener('click', event => {
     if (Date.now() < suppressKnowledgeClickUntil) return;
     const link = event.target.closest('[data-breadcrumb]');
     if (!link) return;
     if (link.dataset.breadcrumb === 'root') {
-      state.selectedKnowledgeBase = '';
-      state.selectedFolderPath = '';
       navigate('knowledge');
       return;
     }
@@ -6234,6 +6380,15 @@ function bindEvents() {
     if (open) navigate('knowledge', '', { knowledgeBase: open.dataset.knowledgeBaseOpen });
   });
   $('#knowledgeDocumentList').addEventListener('click', event => {
+    const archive = event.target.closest('[data-archive-document]');
+    const restore = event.target.closest('[data-restore-document]');
+    const remove = event.target.closest('[data-delete-document]');
+    if (archive) { event.preventDefault(); return archiveActiveDocument(findKnowledgeDocument(archive.dataset.archiveDocument)); }
+    if (restore) { event.preventDefault(); return restoreActiveDocument(findKnowledgeDocument(restore.dataset.restoreDocument)).catch(error => showToast(error.message, 'error')); }
+    if (remove) { event.preventDefault(); return deleteActiveDocument(findKnowledgeDocument(remove.dataset.deleteDocument)); }
+    const move = event.target.closest('[data-move-document]');
+    if (move) { event.preventDefault(); return knowledgeMove.open(move.dataset.moveDocument, move); }
+    if (event.target.closest('[data-knowledge-search-retry]')) return loadDocuments().catch(error => showToast(error.message, 'error'));
     if (event.target.closest('[data-knowledge-pin-kind]')) { event.preventDefault(); return toggleKnowledgePin(event.target.closest('[data-knowledge-pin-kind]')); }
     if (Date.now() < suppressKnowledgeClickUntil) return;
     const renameFolder = event.target.closest('[data-tree-rename-folder]');
@@ -6270,9 +6425,15 @@ function bindEvents() {
       navigate('knowledge', row.dataset.documentOpen, offset > 0 ? { offset } : {});
     }
   });
-  $('#newNoteButton').addEventListener('click', createNote);
+  $('#newNoteButton').addEventListener('click', async () => {
+    const button = $('#newNoteButton'), toggle = $('#knowledgeOperationsToggle');
+    if (knowledgeNoteCreating) return;
+    knowledgeNoteCreating = true;
+    button.disabled = toggle.disabled = true;
+    try { await createNote(); } catch (error) { showToast(error.message || '笔记创建失败', 'error'); }
+    finally { knowledgeNoteCreating = false; button.disabled = toggle.disabled = false; }
+  });
   $('#newMindmapButton')?.addEventListener('click', createMindmap);
-  $('#emptyNewNoteButton').addEventListener('click', createNote);
   $('#importFileButton').addEventListener('click', () => $('#knowledgeFileInput').click());
   $('#knowledgeFileInput').addEventListener('change', event => {
     const file = event.target.files?.[0];
@@ -6351,9 +6512,6 @@ function bindEvents() {
     const file = event.target.files?.[0];
     if (file) handleDocumentImageUpload(file).catch(error => showToast(error.message, 'error'));
   });
-  $('#archiveDocumentButton').addEventListener('click', archiveActiveDocument);
-  $('#restoreDocumentButton').addEventListener('click', () => restoreActiveDocument().catch(error => showToast(error.message, 'error')));
-  $('#deleteDocumentButton').addEventListener('click', deleteActiveDocument);
   $('#knowledgeQuickSwitcherInput')?.addEventListener('input', event => loadQuickSwitcherResults(event.target.value.trim()));
   $('#knowledgeQuickSwitcherClose')?.addEventListener('click', closeQuickSwitcher);
   $('#knowledgeQuickSwitcher')?.addEventListener('click', event => {
@@ -6440,6 +6598,7 @@ function bindEvents() {
     });
   });
   $('#agentSidebarStatus').addEventListener('click', () => openSettings('model').catch(error => showToast(error.message, 'error')));
+  initSettingsPresentation($('#settingsForm'), setSettingsPanel);
   $('#closeSettingsDialog').addEventListener('click', () => $('#settingsDialog').close());
   $('#settingsForm').addEventListener('submit', event => {
     event.preventDefault();
@@ -6517,7 +6676,16 @@ function bindEvents() {
       renderDesktopUpdatePanel();
     });
   }
+  initProviderControls($('#customProvidersList'));
   $('#customProvidersList')?.addEventListener('change', event => {
+    if (event.target.matches('[data-provider-select]')) {
+      syncCustomProvidersDraftFromDom();
+      state.customProviderSelectedId = event.target.value;
+      state.providerModelOverrideKey = null;
+      renderCustomProvidersList(); refreshModelSelects();
+      $('#customProvidersList .provider-selector')?.focus();
+      return;
+    }
     const toggleProvider = event.target.closest('[data-toggle-provider]');
     if (!toggleProvider) return;
     syncCustomProvidersDraftFromDom();
@@ -6530,10 +6698,17 @@ function bindEvents() {
     refreshModelSelects();
   });
   $('#customProvidersList')?.addEventListener('click', async event => {
+    if (event.target.closest('[data-provider-back]')) {
+      syncCustomProvidersDraftFromDom(); textProviderDetailOpen = false;
+      renderCustomProvidersList();
+      $('#customProvidersList [data-select-provider="' + CSS.escape(state.customProviderSelectedId) + '"]')?.focus();
+      return;
+    }
     const selectProvider = event.target.closest('[data-select-provider]');
     if (selectProvider) {
       event.preventDefault();
       syncCustomProvidersDraftFromDom();
+      textProviderDetailOpen = true;
       state.customProviderSelectedId = selectProvider.dataset.selectProvider || '';
       state.providerModelOverrideKey = null;
       renderCustomProvidersList();
@@ -6545,11 +6720,14 @@ function bindEvents() {
       event.preventDefault();
       syncCustomProvidersDraftFromDom();
       const provider = createEmptyCustomProvider();
+      textProviderDetailOpen = true;
       state.customProvidersDraft = [...(state.customProvidersDraft || []), provider];
       state.customProviderSelectedId = provider.id;
       renderCustomProvidersList();
       refreshModelSelects();
-      document.querySelector('.custom-provider-title-input')?.focus();
+      const editor = document.querySelector('#customProvidersList .provider-name-editor');
+      if (editor) editor.hidden = false;
+      document.querySelector('#customProvidersList .custom-provider-title-input')?.focus();
       return;
     }
     const toggleKey = event.target.closest('[data-toggle-key]');
@@ -6590,6 +6768,7 @@ function bindEvents() {
           || state.customProvidersDraft[0]?.id
           || '';
       }
+      textProviderDetailOpen = false;
       renderCustomProvidersList();
       refreshModelSelects();
       return;
@@ -6761,6 +6940,8 @@ function bindEvents() {
     if (editor) state.memoryEditingDraft = editor.value;
   });
   $('#memoryView').addEventListener('click', async event => {
+    if (event.target.closest('[data-memory-retry]')) { await loadMemoriesPanel(); return; }
+    if (event.target.closest('[data-memory-clear-search]')) { $('#memorySearch').value = ''; await changeMemorySearch(); return; }
     const approve = event.target.closest('[data-memory-approve]');
     if (approve) {
       await handleMemoryProposalAction(approve.dataset.memoryApprove, 'approve');
@@ -6787,22 +6968,29 @@ function bindEvents() {
       const item = (state.memories?.items || []).find(entry => entry.id === id);
       state.memoryEditingId = id;
       state.memoryEditingDraft = item?.content || '';
+      state.memoryEditingOriginal = state.memoryEditingDraft;
       renderMemoryWorkspace();
+      $('[data-memory-system-editor]')?.focus();
       return;
     }
     const cancel = event.target.closest('[data-memory-edit-cancel]');
     if (cancel) {
+      if (!(await confirmMemoryDiscard())) return;
       state.memoryEditingId = '';
       state.memoryEditingDraft = '';
       renderMemoryWorkspace();
+      document.querySelector(`[data-memory-edit="${CSS.escape(cancel.dataset.memoryEditCancel)}"]`)?.focus();
       return;
     }
     const archive = event.target.closest('[data-memory-archive]');
     if (archive) await archiveMemoryItem(archive.dataset.memoryArchive);
   });
-  $('#memorySidebarPanel').addEventListener('click', event => {
+  $('#memorySidebarPanel').addEventListener('click', async event => {
+    const selected = event.target.closest('[data-memory-select]');
+    if (selected) { await selectMemoryItem(selected.dataset.memorySelect); return; }
     const filter = event.target.closest('[data-memory-layer]');
-    if (!filter) return;
+    if (!filter || filter.dataset.memoryLayer === state.memoryLayer) return;
+    if (!(await confirmMemoryDiscard())) return;
     state.memoryLayer = filter.dataset.memoryLayer || '';
     renderMemoryWorkspace();
   });

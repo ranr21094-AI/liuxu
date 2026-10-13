@@ -298,12 +298,14 @@ function appendPdfPage(stage, pageNumber) {
   const shell = window.document.createElement('section');
   shell.className = 'file-pdf-page-shell';
   shell.dataset.pageNumber = String(pageNumber);
+  shell.style.minHeight = '600px';
   shell.innerHTML = `<div class="file-pdf-page-label">第 ${pageNumber} 页</div><div class="file-pdf-canvas-wrap"><canvas></canvas><div class="file-pdf-text-layer"></div></div>`;
   stage.appendChild(shell);
   return shell;
 }
 
 async function renderPdf(doc, host, token, controller, position, savePosition) {
+  host.dataset.pdfFit='width'; host.dataset.pdfFlow='scrolled';
   const pdfjs = await import('/vendor/pdfjs/pdf.min.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
   if (token !== previewToken) return;
@@ -312,7 +314,7 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
   const pdf = await loadingTask.promise;
   if (token !== previewToken) return;
   const toolbar = host.querySelector('.file-preview-toolbar');
-  toolbar.insertAdjacentHTML('afterbegin', `<label>页码 <input data-pdf-page type="number" min="1" max="${pdf.numPages}" value="1"></label><span>/${pdf.numPages}</span><button type="button" data-file-action="pdf-go">跳转</button><button type="button" data-file-action="rotate">旋转</button><input data-pdf-search type="search" placeholder="搜索 PDF" aria-label="搜索 PDF"><button type="button" data-file-action="pdf-find">查找</button><span data-pdf-result aria-live="polite"></span>`);
+  toolbar.insertAdjacentHTML('afterbegin', `<label>页码 <input data-pdf-page type="number" min="1" max="${pdf.numPages}" value="1"></label><span>/${pdf.numPages}</span><button type="button" data-file-action="pdf-go">跳转</button><button type="button" data-file-action="rotate">旋转</button><input data-pdf-search type="search" placeholder="搜索 PDF" aria-label="搜索 PDF"><span data-pdf-result aria-live="polite"></span>`);
   const stage = host.querySelector('.file-preview-stage');
   stage.classList.add('file-preview-pdf-pages');
   const pages = Array.from({ length: pdf.numPages }, (_, index) => appendPdfPage(stage, index + 1));
@@ -334,7 +336,8 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     const wrap = shell.querySelector('.file-pdf-canvas-wrap');
     const baseViewport = page.getViewport({ scale: 1, rotation: (rotation + page.rotate) % 360 });
     const fit = Math.max(.3, Math.min(2.5, (stage.clientWidth / (stage.classList.contains('book-pdf-spread') ? 2 : 1) - 32) / baseViewport.width));
-    const viewport = page.getViewport({ scale: fit * scale, rotation: (rotation + page.rotate) % 360 });
+    const fitted = host.dataset.pdfFit === 'page' ? Math.min(fit, Math.max(.1,(stage.clientHeight - 40) / baseViewport.height)) : fit;
+    const viewport = page.getViewport({ scale: fitted * scale, rotation: (rotation + page.rotate) % 360 });
     const ratio = Math.min(2, window.devicePixelRatio || 1);
     const canvas = shell.querySelector('canvas');
     canvas.width = Math.floor(viewport.width * ratio);
@@ -354,6 +357,7 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     try { await new pdfjs.TextLayer({ textContentSource: textContent, container: textLayer, viewport }).render(); } catch {}
     wrap.style.width = `${viewport.width}px`;
     shell.dataset.rendered = 'true';
+    shell.style.minHeight = `${Math.ceil(viewport.height) + 24}px`;
     pdfTools?.paint();
     page.cleanup?.();
     })();
@@ -364,8 +368,9 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     if (entry.isIntersecting) renderPage(Number(entry.target.dataset.pageNumber)).catch(() => {});
   }), { root: stage, rootMargin: '800px 0px' });
   pages.forEach(page => observer.observe(page));
-  controller.signal.addEventListener('abort', () => observer.disconnect(), { once: true });
+  controller.signal.addEventListener('abort', () => { observer.disconnect(); canvasTasks.forEach(task => task.cancel()); }, { once: true });
   const rerender = async () => {
+    pdfTools?.hideSelectionAction();
     const generation = ++renderGeneration;
     for (const task of canvasTasks) task.cancel();
     await Promise.allSettled([...rendering.values()]);
@@ -386,15 +391,18 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     fit() { scale = 1; rerender(); },
     rotate() { rotation = (rotation + 90) % 360; rerender(); },
     go() {
-      const number = Math.max(1, Math.min(pdf.numPages, Number(toolbar.querySelector('[data-pdf-page]').value) || 1));
-      pages[number - 1].scrollIntoView({ behavior: 'smooth', block: 'start' });
+      pdfTools?.hideSelectionAction();
+      const number = Math.max(1, Math.min(pdf.numPages, Number(host.querySelector('[data-pdf-page]').value) || 1));
+      host.dataset.pdfPage = String(number);
+      pages.forEach((page,index) => { page.hidden = host.dataset.pdfFlow === 'single' && index !== number - 1; });
+      pages[number - 1].scrollIntoView({ behavior: 'auto', block: 'start' });
       renderPage(number).catch(() => {});
     },
   };
-  if (doc.status === 'needs_ocr') host.querySelector('.file-preview-toolbar').insertAdjacentHTML('beforeend', '<span class="file-preview-note">扫描件暂不可搜索</span>');
+  if (doc.status === 'needs_ocr') toolbar.insertAdjacentHTML('beforeend', '<span class="file-preview-note">扫描件暂不可搜索</span>');
   stage.addEventListener('click', event => {
     const shell = event.target.closest('.file-pdf-page-shell');
-    if (shell) toolbar.querySelector('[data-pdf-page]').value = shell.dataset.pageNumber;
+    if (shell) host.querySelector('[data-pdf-page]').value = shell.dataset.pageNumber;
   });
   stage.addEventListener('scroll', () => {
     const stageTop = stage.getBoundingClientRect().top;
@@ -417,7 +425,7 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     target.scrollIntoView({ block: 'start' });
     stage.scrollTop = Math.max(0, stage.scrollTop + (Number(position?.offset) || 0));
   }
-  toolbar.querySelector('[data-pdf-page]').value = String(pageNumber);
+  host.querySelector('[data-pdf-page]').value = String(pageNumber);
   pdfTools = await pdfReading({ doc, host, toolbar, stage, pages, pdf, renderPage, rerender, signal: controller.signal, position });
 }
 
@@ -602,9 +610,10 @@ function renderUnsupported(doc, host) {
 }
 
 function bindToolbar(host, doc, token, controller) {
+  const toolbar = host.querySelector('.file-preview-toolbar');
   const listener = async event => {
     const button = event.target.closest('[data-file-action]');
-    if (!button || token !== previewToken) return;
+    if (!button || token !== previewToken || (!host.contains(button) && !toolbar?.contains(button))) return;
     const action = button.dataset.fileAction;
     const actions = host._filePreviewActions || {};
     if (action === 'zoom-in') actions.zoom?.(1);
@@ -616,8 +625,8 @@ function bindToolbar(host, doc, token, controller) {
     else if (action === 'pdf-find') await actions.find?.();
     else if (action === 'retry') void renderFilePreview(doc, host);
   };
-  host.addEventListener('click', listener);
-  controller.signal.addEventListener('abort', () => host.removeEventListener('click', listener), { once: true });
+  host.ownerDocument.addEventListener('click', listener);
+  controller.signal.addEventListener('abort', () => host.ownerDocument.removeEventListener('click', listener), { once: true });
 }
 
 async function renderKind(doc, host, token, controller, position, savePosition) {
@@ -657,6 +666,7 @@ export function destroyFilePreview() {
   activeCleanup = () => {};
   const host = window.document.querySelector('#filePreviewHost');
   if (host) {
+    delete host.dataset.headerReady;
     host._filePreviewActions = null;
     host.replaceChildren();
   }

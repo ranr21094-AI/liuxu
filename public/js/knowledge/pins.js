@@ -39,7 +39,7 @@ export function arrangeKnowledgeRows(list) {
   const groups = [
     ['置顶', rows.filter(row => row.dataset.pinnedAt).sort((a, b) => comparePinned({ pinnedAt: a.dataset.pinnedAt }, { pinnedAt: b.dataset.pinnedAt }))],
     ['文件夹', rows.filter(row => !row.dataset.pinnedAt && row.dataset.listGroup === 'folder')],
-    ['文件', rows.filter(row => !row.dataset.pinnedAt && row.dataset.listGroup === 'file')],
+    ['文档', rows.filter(row => !row.dataset.pinnedAt && row.dataset.listGroup === 'file')],
     ['未同步项', rows.filter(row => row.dataset.listGroup === 'local')],
   ];
   list.replaceChildren();
@@ -48,6 +48,10 @@ export function arrangeKnowledgeRows(list) {
     const heading = list.ownerDocument.createElement('div');
     heading.className = 'knowledge-pin-section knowledge-list-section';
     heading.textContent = title;
+    const count = list.ownerDocument.createElement('span');
+    count.className = 'knowledge-section-count';
+    count.textContent = String(group.length);
+    heading.append(count);
     list.append(heading, ...group);
   }
 }

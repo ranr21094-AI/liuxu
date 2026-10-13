@@ -47,11 +47,4 @@ export function initWorkspaceControls() {
     field.addEventListener('change', renderFilters);
   });
   renderFilters();
-  const menu = document.querySelector('#documentMore');
-  document.addEventListener('click', event => {
-    if (!menu.contains(event.target) || event.target.closest('button')) menu.open = false;
-  });
-  document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && menu.open) { menu.open = false; menu.querySelector('summary').focus(); }
-  });
 }

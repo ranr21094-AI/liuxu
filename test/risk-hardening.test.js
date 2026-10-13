@@ -1990,10 +1990,12 @@ test('workbench exposes settings without account login UI', () => {
   assert.match(workbenchSource, /#settingsButton/);
   assert.doesNotMatch(authSource, /unlockDiary|getDiaryStatus|lockDiary/);
   assert.doesNotMatch(authSource, /redirectToLogin|logoutSite|checkAuth/);
-  assert.match(indexSource, /sidebar-toolbar-row[\s\S]*agent-sidebar-toolbar[\s\S]*id="newSessionButton"[\s\S]*<svg/);
+  assert.doesNotMatch(indexSource, /newSessionButton|agent-sidebar-toolbar/);
+  assert.match(indexSource, /id="agentNewSessionButton"/);
+  assert.doesNotMatch(indexSource, /agent-mode-plus/);
 });
 
-test('todo UI uses drag sorting, new priorities, and hides notes previews', () => {
+test('todo UI uses drag sorting, new priorities, and concise notes previews', () => {
   const todoSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'todos.js'), 'utf8');
   const helpersSource = fs.readFileSync(path.join(ROOT, 'public', 'js', 'helpers.js'), 'utf8');
   const styleSource = fs.readFileSync(path.join(ROOT, 'public', 'css', 'workbench.css'), 'utf8');
@@ -2019,8 +2021,8 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.doesNotMatch(todoSource, /data-action="move-up"/);
   assert.doesNotMatch(todoSource, /data-action="move-down"/);
   assert.doesNotMatch(todoSource, /moveTodo/);
-  assert.doesNotMatch(todoSource, /#todoList|todoInput|btnTodoClear|renderCompactTodos|pending\.slice\(0, 6\)/);
-  assert.doesNotMatch(todoSource, /todo-notes-preview/);
+  assert.doesNotMatch(todoSource, /#todoList['"]|todoInput|btnTodoClear|renderCompactTodos|pending\.slice\(0, 6\)/);
+  assert.match(todoSource, /todo-notes-preview/);
   assert.doesNotMatch(styleSource, /todo-notes-preview/);
   assert.match(todoSource, /priority: todo\.priority \|\| 'none'/);
   assert.match(todoSource, /recurrence: todo\.recurrence \|\| 'none'/);
@@ -2047,7 +2049,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.match(todoSource, /function recurrenceBadge\(todo\)/);
   assert.match(todoSource, /title="重复：\$\{label\}"/);
   assert.match(todoSource, /const labels = \{ normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' \};/);
-  assert.match(todoSource, /const codes = \{ normal: 'P2', important: 'P1', urgent: 'P0' \};/);
+  assert.match(todoSource, /const labels = \{ normal: 'P2 普通', important: 'P1 重要', urgent: 'P0 紧急' \};/);
   assert.match(todoSource, /if \(activeFilter === 'all' \|\| activeFilter === 'undated' \|\| activeFilter === 'pending'\) activeFilter = DEFAULT_TODO_CATEGORY;/);
   assert.match(todoSource, /function sortTodosForView\(todos, mode\)/);
   assert.match(todoSource, /else items = items\.filter\(t => !t\.done && \(t\.category \|\| DEFAULT_TODO_CATEGORY\) === activeFilter\);/);
@@ -2080,7 +2082,7 @@ test('todo UI uses drag sorting, new priorities, and hides notes previews', () =
   assert.doesNotMatch(priorityStyleBlock, /border-radius:\s*50%;/);
   assert.match(htmlSource, /class="todo-toolbar"/);
   assert.match(htmlSource, /id="btnTodoNew"/);
-  assert.match(htmlSource, /id="todoFormEmpty"/);
+  assert.match(htmlSource, /id="todoFullFormTitle"/);
   assert.doesNotMatch(htmlSource, /todo-stat-card|<h2>待办事项<\/h2>/);
   assert.match(todoSource, /todo-item-body/);
   assert.match(todoSource, /function startNewTodo\(\)/);
@@ -2123,11 +2125,11 @@ test('countdown UI provides a persistent independent card mode', () => {
   assert.match(todoSource, /function renderCountdowns\(\)/);
   assert.match(todoSource, /function saveCountdownFromForm\(\)/);
   assert.match(todoSource, /function deleteCountdown\(id\)/);
-  assert.match(todoSource, /\['总数', '今天', '30天内', '已过期'\]/);
+  assert.match(todoSource, /\['总数', '今天', '30天内', '已过'\]/);
   assert.match(todoSource, /item\.title\.toLowerCase\(\)\.includes\(query\)[\s\S]*item\.notes\.toLowerCase\(\)\.includes\(query\)/);
   assert.doesNotMatch(todoSource, /state\.datesWithTodos[^;]*allCountdowns/);
   assert.match(todoSource, /countdown-item-body/);
-  assert.match(htmlSource, /id="countdownFormEmpty"/);
+  assert.match(htmlSource, /id="countdownFormTitle"/);
   assert.match(styleSource, /\.countdown-grid\s*\{[\s\S]*flex-direction:\s*column;/);
   assert.match(styleSource, /\.countdown-item\s*\{/);
 });
@@ -2365,7 +2367,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(workspaceUi, /\.workspace-sidebar \.search-field[\s\S]*height:\s*36px/);
   assert.match(workspaceUi, /--doc-pad-x:\s*clamp\(24px/);
   assert.match(workspaceUi, /@media \(max-width: 840px\)[\s\S]*--doc-pad-x:\s*24px/);
-  assert.match(workspaceUi, /\.workspace-topbar \.run-status[\s\S]*display:\s*inline-flex/);
+  assert.match(workspaceUi, /\.agent-view \.run-status[\s\S]*display:\s*inline-flex/);
   assert.doesNotMatch(source, /\$\('#topbarSubtitle'\)\.textContent = data\.title/);
   assert.deepEqual(modes, ['agent', 'knowledge', 'memory', 'todos']);
   assert.equal(document.querySelector('[data-mode="tasks"]'), null);
@@ -2379,7 +2381,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#todoView').hasAttribute('hidden'), true);
   assert.equal(document.querySelector('#todoStatPending') !== null, true);
   assert.equal(document.querySelector('#btnTodoNew') !== null, true);
-  assert.equal(document.querySelector('#todoFormEmpty') !== null, true);
+  assert.equal(document.querySelector('#todoFullFormTitle') !== null, true);
   assert.equal(document.querySelector('#todoFullPanel').closest('#todoView') !== null, true);
   assert.equal(document.querySelector('#todoFullTitle').closest('#todoView') !== null, true);
   assert.equal(document.querySelector('#btnTodoCategoryOpen').closest('#todoSidebarPanel') !== null, true);
@@ -2418,16 +2420,18 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#annotationContent'), null);
   assert.equal(document.querySelector('#filePreviewHost') !== null, true);
   assert.equal(document.querySelector('#fileReaderTabs') !== null, true);
-  assert.equal(document.querySelector('#deleteDocumentButton') !== null, true);
+  assert.equal(document.querySelector('#deleteDocumentButton'), null, 'document delete moved into the sidebar row actions');
+  assert.match(source, /data-delete-document="\$\{escHtml\(document\.id\)\}"/);
+  assert.match(source, /const remove = event\.target\.closest\('\[data-delete-document\]'\)/);
   assert.equal(document.querySelector('#insertImageButton') !== null, true);
   assert.equal(document.querySelector('#insertImageButton svg[aria-hidden="true"]') !== null, true);
   assert.equal(document.querySelector('#insertImageButton')?.textContent.trim(), '');
   assert.equal(document.querySelector('#documentImageInput') !== null, true);
-  assert.equal(document.querySelector('#documentMetaChips') !== null, true);
-  assert.equal(document.querySelector('#documentMetaChips')?.getAttribute('aria-controls'), 'documentMetaPanel');
-  const metaSummary = document.querySelector('#documentMetaPanel > summary');
-  assert.equal(metaSummary?.classList.contains('sr-only'), true);
-  assert.equal(metaSummary?.textContent.trim(), '文档属性');
+  assert.equal(document.querySelector('#documentMetaChips'), null);
+  assert.equal(document.querySelector('#documentMetaPanel'), null);
+  assert.ok(document.querySelector('.document-inline-fields #documentDate'));
+  assert.ok(document.querySelector('.document-inline-fields #documentTags'));
+  assert.ok(document.querySelector('#documentKnowledgeBase').closest('[hidden]'));
   assert.match(styles, /\.save-state\s*\{[^}]*border:\s*0;/);
   assert.doesNotMatch(styles, /\.save-state\s*\{[^}]*border-radius:\s*999px/);
   assert.match(styles, /\.document-title-input[\s\S]*?border-radius:\s*10px/);
@@ -2463,10 +2467,10 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.equal(document.querySelector('#refreshOpenRouterModels'), null);
   assert.equal(document.querySelector('#addCustomProvider'), null, 'static add button moved into the provider workspace');
   assert.equal(document.querySelector('#customProvidersList') !== null, true);
-  assert.match(source, /data-add-provider="sidebar"/);
+  assert.match(source, /data-add-provider="toolbar"/);
   assert.match(source, /function customProviderFormatLabel/);
   assert.match(source, /custom-provider-workspace/);
-  assert.match(source, /data-select-provider=/);
+  assert.match(source, /data-provider-select/);
   assert.match(styles, /\.custom-provider-conn-grid/);
   assert.match(source, /customProviderTestStates/);
   assert.match(source, /providerId !== state\.customProviderSelectedId/);
@@ -2555,7 +2559,7 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /closest\('\[data-approval-id\]'\)[\s\S]{0,1600}setSessionRunStatus\(sessionId, 'running'\)/);
   assert.match(source, /const restoreCard = \(\) =>/);
   assert.match(source, /function formatSessionMeta/);
-  assert.match(source, /function applyAgentTopbar/);
+  assert.doesNotMatch(source, /applyAgentTopbar|#topbarTitle|#topbarSubtitle/);
   assert.match(source, /formatSessionMeta\(session\)/);
   assert.doesNotMatch(source, /lastMessagePreview \|\| formatTime\(session\.updatedAt\)/);
   assert.match(source, /function buildAssistantMetaHtml/);
@@ -2586,15 +2590,15 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /renderMentionMenu/);
   assert.equal(document.querySelector('#agentComposerModelSelect') !== null, true);
   assert.equal(document.querySelector('#agentComposerModelSelect').getAttribute('aria-label'), '切换 Agent 模型');
-  assert.equal(document.querySelector('#assistantToggleButton')?.getAttribute('aria-label'), '留序 LiuXu');
-  assert.equal(document.querySelector('#noteAssistantPanel')?.getAttribute('aria-label'), '留序 LiuXu');
-  assert.equal(document.querySelector('#noteAssistantTitle')?.textContent.trim(), '留序 LiuXu');
+  assert.equal(document.querySelector('#assistantToggleButton')?.getAttribute('aria-label'), '打开文档助手');
+  assert.equal(document.querySelector('#noteAssistantPanel')?.getAttribute('aria-labelledby'), 'noteAssistantTitle');
+  assert.equal(document.querySelector('#noteAssistantTitle')?.textContent.trim(), '文档助手');
   assert.equal(document.querySelector('#noteAssistantPanel')?.closest('#documentWorkspace'), null);
   assert.equal(document.querySelector('#noteAssistantPanel')?.closest('#workspaceShell'), null);
   assert.equal(document.querySelector('[data-note-assistant-drag]') !== null, true);
   assert.equal(document.querySelector('[data-note-assistant-resize]') !== null, true);
   assert.equal(document.querySelector('#noteAssistantModelSelect') !== null, true);
-  assert.equal(document.querySelector('#noteAssistantModelSelect').getAttribute('aria-label'), '切换留序 LiuXu 模型');
+  assert.equal(document.querySelector('#noteAssistantModelSelect').getAttribute('aria-label'), '切换文档助手模型');
   assert.equal(document.querySelector('#noteAssistantSend')?.classList.contains('send-button'), true);
   assert.equal(document.querySelector('#noteAssistantStop')?.classList.contains('stop-button'), true);
   assert.match(styles, /\.note-assistant-panel\s*\{[\s\S]*position:\s*fixed;/);
@@ -2650,7 +2654,8 @@ test('new workspace exposes Agent, knowledge, and memory modes in a shared two-c
   assert.match(source, /sidebar-collapsed/);
   assert.match(source, /workbenchSidebarCollapsed/);
   assert.match(styles, /body\.sidebar-collapsed \.workspace-shell/);
-  assert.equal(document.querySelector('#restoreDocumentButton') !== null, true);
+  assert.equal(document.querySelector('#restoreDocumentButton'), null, 'restore action lives in the sidebar row menu');
+  assert.match(source, /data-restore-document="\$\{escHtml\(document\.id\)\}"/);
   assert.match(source, /restoreActiveDocument/);
   assert.match(source, /\/api\/knowledge\/documents\/\$\{encodeURIComponent\(document\.id\)\}\/restore/);
   assert.match(source, /\/api\/knowledge\/search\?/);

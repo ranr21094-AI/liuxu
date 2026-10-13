@@ -133,6 +133,41 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
   const details = document.querySelector('#knowledgeRelationsDetails');
   if (!textarea || !picker || !relations || !details) return { setActiveDocument() {}, onDocumentSaved() {}, clear() {} };
 
+  const revisionDialog = document.querySelector('#knowledgeRevisionDialog');
+  let revisionOrigin = null;
+  function closeRevision({ focus = true } = {}) {
+    view.revisionDetailRequestSeq += 1;
+    if (revisionDialog?.open) revisionDialog.close();
+    document.querySelector('#knowledgeRevisionDetail').hidden = true;
+    if (focus) {
+      if (revisionOrigin?.isConnected) revisionOrigin.focus();
+      else document.querySelector('[data-knowledge-relations-tab="revisions"]')?.focus();
+    }
+  }
+  function showRevision() {
+    if (revisionDialog && !revisionDialog.open) revisionDialog.showModal();
+  }
+  function syncOperationControls() {
+    document.querySelectorAll('#knowledgeRevisionDetail button, #saveKnowledgeRevision').forEach(button => { button.disabled = view.operationPending; });
+  }
+  function syncRelationControls() {
+    document.querySelectorAll('[data-knowledge-relations-tab]').forEach(button => {
+      const active = details.open && button.dataset.knowledgeRelationsTab === view.activeTab;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-expanded', String(active));
+      if (button.hasAttribute('role')) button.setAttribute('aria-selected', String(active));
+    });
+    const close = document.querySelector('#knowledgeRelationsClose');
+    if (close) close.hidden = !details.open;
+  }
+  function closeRelations({ focus = true } = {}) {
+    const tab = view.activeTab;
+    details.open = false;
+    if (view.document?.sourceType === 'file') { relations.hidden = true; relations.classList.remove('file-relations-open'); }
+    syncRelationControls();
+    if (focus) document.querySelector('[data-knowledge-relations-tab="' + tab + '"]')?.focus();
+  }
+
   const view = {
     document: null,
     pickerItems: [],
@@ -237,7 +272,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
 
   function setCount(selector, value) {
     const host = document.querySelector(selector);
-    if (host) host.textContent = value === null ? '–' : String(value);
+    if (host) { host.textContent = value === null ? '' : String(value); host.hidden = value === null; }
   }
 
   function renderLoadError(host, message, retryAttribute) {
@@ -348,16 +383,18 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       ['日期', snapshot.documentDate || '（无）', current.documentDate || '（无）'],
       ['位置', location(snapshot), location(current)],
     ];
-    const fieldHtml = fields.map(([label, oldValue, newValue]) => `<div class="knowledge-revision-field"><strong>${escHtml(label)}</strong><span class="${oldValue === newValue ? '' : 'removed'}">旧版：${escHtml(oldValue || '（无）')}</span><span class="${oldValue === newValue ? '' : 'added'}">当前：${escHtml(newValue || '（无）')}</span></div>`).join('');
+    const fieldHtml = fields.filter(([, oldValue, newValue]) => oldValue !== newValue).map(([label, oldValue, newValue]) => `<div class="knowledge-revision-field"><strong>${escHtml(label)}</strong><span class="${oldValue === newValue ? '' : 'removed'}">旧版：${escHtml(oldValue || '（无）')}</span><span class="${oldValue === newValue ? '' : 'added'}">当前：${escHtml(newValue || '（无）')}</span></div>`).join('');
     const diff = lineDiff(snapshot.content || '', current.content || '');
     const body = diff.fallback
-      ? `<div class="knowledge-revision-diff"><pre>${escHtml(diff.left)}</pre><pre>${escHtml(diff.right)}</pre></div>`
-      : `<div class="knowledge-revision-diff"><pre>${diff.left}</pre><pre>${diff.right}</pre></div>`;
+      ? `<div class="knowledge-revision-diff"><section><h4>历史</h4><pre>${escHtml(diff.left)}</pre></section><section><h4>当前</h4><pre>${escHtml(diff.right)}</pre></section></div>`
+      : `<div class="knowledge-revision-diff"><section><h4>历史</h4><pre>${diff.left}</pre></section><section><h4>当前</h4><pre>${diff.right}</pre></section></div>`;
     const actions = revision.name
       ? `<button type="button" class="secondary-action compact" data-rename-revision="${Number(revision.id)}">重命名</button><button type="button" class="danger-action compact" data-delete-revision="${Number(revision.id)}">删除命名版本</button>`
       : '';
     host.hidden = false;
-    host.innerHTML = `<div class="knowledge-revision-detail-head"><span>${revision.name ? `${escHtml(revision.name)} · ` : ''}${escHtml(formatDate(revision.capturedAt))} · 旧版 v${Number(revision.documentVersion) || 1}</span><div class="knowledge-revision-actions">${actions}<button type="button" class="secondary-action compact" data-restore-revision="${Number(revision.id)}">恢复此版本</button></div></div><div class="knowledge-revision-fields">${fieldHtml}</div><h4>正文</h4>${body}<label class="knowledge-revision-location-option"><input type="checkbox" data-restore-location> 同时恢复历史位置</label><p class="knowledge-revision-image-note">图片文件不会保存历史副本；恢复内容后，仍需图片资源存在才能显示。</p>`;
+    host.innerHTML = `<div class="knowledge-revision-content"><div class="knowledge-revision-detail-head"><span>${revision.name ? `${escHtml(revision.name)} · ` : ''}${escHtml(formatDate(revision.capturedAt))} · 历史 v${Number(revision.documentVersion) || 1}</span></div>${fieldHtml ? `<div class="knowledge-revision-fields">${fieldHtml}</div>` : '<p class="knowledge-revision-image-note">标题、标签、日期与位置未变化。</p>'}${body}<p class="knowledge-revision-image-note">图片文件不会保存历史副本；恢复内容后，仍需图片资源存在才能显示。</p></div><div class="knowledge-revision-footer"><label class="knowledge-revision-location-option"><input type="checkbox" data-restore-location> 同时恢复历史位置</label><div class="knowledge-revision-actions">${actions}<button type="button" class="primary-action compact" data-restore-revision="${Number(revision.id)}">恢复此版本</button></div></div>`;
+    showRevision();
+    syncOperationControls();
   }
 
   async function openRevision(revisionId) {
@@ -372,6 +409,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     view.selectedRevision = data.revision;
     renderRevisionDetail(data.revision);
     renderRevisions(view.revisions);
+    revisionOrigin = document.querySelector(`[data-revision-id="${Number(revisionId)}"]`);
   }
 
   async function restoreSelected(revisionId) {
@@ -381,6 +419,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     if (!revision || Number(revision.id) !== Number(revisionId)) throw new Error('请先重新选择并比较此版本');
     const restoreLocationChoice = Boolean(document.querySelector('#knowledgeRevisionDetail [data-restore-location]')?.checked);
     view.operationPending = true;
+    syncOperationControls();
     let locked = false;
     try {
       if (typeof beforeMutation === 'function') {
@@ -437,13 +476,16 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       view.revisionTotal = null;
       setCount('#knowledgeRevisionCount', null);
       view.selectedRevision = null;
-      document.querySelector('#knowledgeRevisionDetail').hidden = true;
+      closeRevision();
       details.open = true;
+      view.activeTab = 'revisions';
+      syncRelationControls();
       updateSummary();
       await loadRevisions();
     } finally {
       if (locked) await afterMutation?.(documentId, { failed: true });
       view.operationPending = false;
+      syncOperationControls();
     }
   }
 
@@ -454,6 +496,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     const name = String(input?.value || '').trim();
     if (!name) throw new Error('请先输入版本名称');
     view.operationPending = true;
+    syncOperationControls();
     let locked = false;
     try {
       if (typeof beforeMutation === 'function') {
@@ -475,6 +518,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     } finally {
       if (locked) await afterMutation?.(documentId, { failed: true });
       view.operationPending = false;
+      syncOperationControls();
     }
   }
 
@@ -495,6 +539,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     }
     if (serial !== view.documentSerial || documentId !== view.document?.id) throw new Error('笔记已切换，请重新选择版本');
     view.operationPending = true;
+    syncOperationControls();
     try {
       const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/revisions/${encodeURIComponent(revisionId)}`, {
         method: action === 'rename' ? 'PATCH' : 'DELETE',
@@ -508,12 +553,20 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
       view.revisionsPending = null;
       await loadRevisions();
       if (action === 'rename') await openRevision(data.revision.id);
+      else closeRevision();
     } finally {
       view.operationPending = false;
+      syncOperationControls();
     }
   }
 
   function setActiveDocument(doc) {
+    closeRevision({ focus: false });
+    const create = document.querySelector('#knowledgeRevisionCreate');
+    if (create) create.hidden = true;
+    document.querySelector('#knowledgeRevisionCreateToggle')?.setAttribute('aria-expanded', 'false');
+    const help = document.querySelector('.knowledge-history-help');
+    if (help) help.open = false;
     view.document = doc || null;
     view.documentSerial += 1;
     view.backlinksRequestSeq += 1;
@@ -530,13 +583,14 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     view.revisions = [];
     view.selectedRevision = null;
     view.activeTab = 'backlinks';
-    relations.hidden = !doc;
+    relations.hidden = !doc || doc.sourceType === 'file';
+    relations.classList.remove('file-relations-open');
     const revisionsTab = document.querySelector('[data-knowledge-relations-tab="revisions"]');
     const revisionCreate = document.querySelector('.knowledge-revision-create');
     const revisionRetention = document.querySelector('.knowledge-revision-retention');
     const supportsHistory = Boolean(doc && doc.sourceType !== 'file');
     if (revisionsTab) revisionsTab.hidden = !supportsHistory;
-    if (revisionCreate) revisionCreate.hidden = !supportsHistory;
+    if (revisionCreate) revisionCreate.hidden = relations.classList.contains('is-redesigned') || !supportsHistory;
     if (revisionRetention) revisionRetention.hidden = !supportsHistory;
     document.querySelectorAll('[data-knowledge-relations-tab]').forEach(button => {
       const active = button.dataset.knowledgeRelationsTab === 'backlinks';
@@ -547,13 +601,15 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     document.querySelector('#knowledgeRevisionsPanel').hidden = true;
     if (!doc) {
       details.open = false;
+      syncRelationControls();
       return;
     }
     details.open = false;
     const backlinkCount = window.document.querySelector('#knowledgeBacklinkCount');
     const revisionCount = window.document.querySelector('#knowledgeRevisionCount');
-    if (backlinkCount) backlinkCount.textContent = '–';
-    if (revisionCount) revisionCount.textContent = '–';
+    setCount('#knowledgeBacklinkCount', null);
+    setCount('#knowledgeRevisionCount', null);
+    syncRelationControls();
     window.document.querySelector('#knowledgeBacklinksList').innerHTML = '<p class="empty-list">展开后加载引用此文档的内容。</p>';
     window.document.querySelector('#knowledgeRevisionsList').innerHTML = '<p class="empty-list">展开后加载版本历史。</p>';
     window.document.querySelector('#knowledgeRevisionDetail').hidden = true;
@@ -565,13 +621,13 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     if (!document || view.document?.id !== document.id) return;
     view.document = { ...view.document, ...document };
     renderIssues(document.linkIssues || []);
-    if (view.selectedRevision) renderRevisionDetail(view.selectedRevision);
+    if (view.selectedRevision && !window.document.querySelector('#knowledgeRevisionDetail').hidden) renderRevisionDetail(view.selectedRevision);
     if (details.open) {
       view.backlinksLoaded = false;
       view.revisionsLoaded = false;
       view.backlinksPending = null;
       view.revisionsPending = null;
-      Promise.all([loadBacklinks(), loadRevisions()]).catch(() => {});
+      (view.activeTab === 'revisions' ? loadRevisions() : loadBacklinks()).catch(() => {});
     }
   }
 
@@ -598,6 +654,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     if (!picker.contains(event.target) && event.target !== textarea) hidePicker();
   });
   details.addEventListener('toggle', () => {
+    syncRelationControls();
     if (!details.open || !view.document) return;
     if (view.activeTab === 'revisions' && !view.revisionsLoaded) loadRevisions().catch(() => {});
     if (view.activeTab === 'backlinks' && !view.backlinksLoaded) loadBacklinks().catch(() => {});
@@ -605,7 +662,10 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
   document.querySelector('.knowledge-relations-tabs').addEventListener('click', event => {
     const button = event.target.closest('[data-knowledge-relations-tab]');
     if (!button) return;
-    view.activeTab = button.dataset.knowledgeRelationsTab === 'revisions' ? 'revisions' : 'backlinks';
+    const nextTab = button.dataset.knowledgeRelationsTab === 'revisions' ? 'revisions' : 'backlinks';
+    if (relations.classList.contains('is-redesigned') && details.open && nextTab === view.activeTab) { closeRelations(); return; }
+    view.activeTab = nextTab;
+    if (relations.classList.contains('is-redesigned')) details.open = true;
     document.querySelectorAll('[data-knowledge-relations-tab]').forEach(item => {
       const active = item === button;
       item.classList.toggle('active', active);
@@ -613,6 +673,7 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     });
     document.querySelector('#knowledgeBacklinksPanel').hidden = view.activeTab !== 'backlinks';
     document.querySelector('#knowledgeRevisionsPanel').hidden = view.activeTab !== 'revisions';
+    syncRelationControls();
     if (details.open && view.document) {
       if (view.activeTab === 'revisions' && !view.revisionsLoaded) loadRevisions().catch(() => {});
       if (view.activeTab === 'backlinks' && !view.backlinksLoaded) loadBacklinks().catch(() => {});
@@ -635,10 +696,12 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     const row = event.target.closest('[data-revision-id]');
     if (row) {
       const serial = view.documentSerial;
+      revisionOrigin = row;
       openRevision(row.dataset.revisionId).catch(error => {
         if (serial !== view.documentSerial) return;
         document.querySelector('#knowledgeRevisionDetail').hidden = false;
         document.querySelector('#knowledgeRevisionDetail').textContent = error.message;
+        showRevision();
       });
     }
   });
@@ -664,6 +727,26 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
         if (serial === view.documentSerial) document.querySelector('#knowledgeRevisionDetail').insertAdjacentHTML('afterbegin', `<p class="empty-list">${escHtml(error.message)}</p>`);
       });
     }
+  });
+
+  const knowledgeView = document.querySelector('#knowledgeView');
+  if (knowledgeView) new window.MutationObserver(() => {
+    if (knowledgeView.hidden) { closeRevision({ focus: false }); closeRelations({ focus: false }); }
+  }).observe(knowledgeView, { attributes: true, attributeFilter: ['hidden'] });
+  revisionDialog?.querySelector('[data-close-revision]')?.addEventListener('click', () => closeRevision());
+  revisionDialog?.addEventListener('cancel', event => { event.preventDefault(); closeRevision(); });
+  document.querySelector('#knowledgeRelationsClose')?.addEventListener('click', () => closeRelations());
+  document.querySelector('#knowledgeRevisionCreateToggle')?.addEventListener('click', event => {
+    const create = document.querySelector('#knowledgeRevisionCreate');
+    create.hidden = !create.hidden;
+    event.currentTarget.setAttribute('aria-expanded', String(!create.hidden));
+    if (!create.hidden) document.querySelector('#knowledgeRevisionName').focus();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (document.querySelector('.date-picker-popup:not([hidden]), dialog[open]') || !picker.hidden) return;
+    if (document.querySelector('.select-control-menu:not([hidden])')) return;
+    if (details.open) { event.preventDefault(); closeRelations(); }
   });
 
   document.querySelector('#saveKnowledgeRevision').addEventListener('click', () => saveNamedRevision().catch(error => showToast(error.message, 'error')));

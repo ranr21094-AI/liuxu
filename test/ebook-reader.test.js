@@ -104,3 +104,12 @@ test('TXT encoding and chapter splitting preserve full text, and old default syn
   fs.writeFileSync(path.join(dir,'.knowledge-folder.json'),JSON.stringify({syncExtensions:['.md','.pdf']}));
   assert.deepEqual(createKnowledgeService(db,{startFolderSync:false}).folderSync.config.syncExtensions,['.md','.pdf']);
 });
+
+ test('bundled book frames load sanitized HTML without blob navigation and propagate load failures', () => {
+  for (const file of ['paginator.js', 'fixed-layout.js']) {
+    const source = fs.readFileSync('public/vendor/foliate/' + file, 'utf8');
+    assert.match(source, /new Promise\(\(resolve, reject\)/);
+    assert.match(source, /srcdoc = html.*catch\(reject\)/);
+    assert.doesNotMatch(source, /setAttribute\('sandbox', '[^']*allow-scripts/);
+  }
+});

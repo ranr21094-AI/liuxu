@@ -62,6 +62,10 @@ for (const entry of await readdir(foliateSource)) {
     let source = await readFile(path.join(foliateSource, entry), 'utf8');
     // Book frames must never execute book scripts, including inline handlers.
     source = source.replaceAll('allow-same-origin allow-scripts', 'allow-same-origin').replace("import 'construct-style-sheets-polyfill'", '');
+    // Chapters are already sanitized by protectBook. Embed their HTML directly:
+    // embedded browsers may cancel blob frame navigation before its load event.
+    if (entry === 'paginator.js') source = source.replace('return new Promise(resolve => {\n            this.#iframe.addEventListener', 'return new Promise((resolve, reject) => {\n            this.#iframe.addEventListener').replace('this.#iframe.src = src', "fetch(src).then(response => response.text()).then(html => { this.#iframe.srcdoc = html }).catch(reject)");
+    if (entry === 'fixed-layout.js') source = source.replace('return new Promise(resolve => {', 'return new Promise((resolve, reject) => {').replace('iframe.src = src', "fetch(src).then(response => response.text()).then(html => { iframe.srcdoc = html }).catch(reject)");
     if (entry === 'comic-book.js') source = source.replace('.sort()', ".sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))");
     if (entry === 'paginator.js') source = source
       .replace('const { style } = el', 'if (!el) return\n    const { style } = el')

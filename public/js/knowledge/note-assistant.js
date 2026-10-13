@@ -21,6 +21,8 @@ let contextSerial = 0;
 function panel() { return document.querySelector('#noteAssistantPanel'); }
 function messagesHost() { return document.querySelector('#noteAssistantMessages'); }
 function input() { return document.querySelector('#noteAssistantInput'); }
+function attachmentInput() { return document.querySelector('#noteAssistantAttachmentInput'); }
+function attachmentHost() { return document.querySelector('#noteAssistantAttachments'); }
 
 function viewportSize(viewport = {}) {
   const fallbackWidth = typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280;
@@ -232,10 +234,12 @@ function syncComposer() {
   const stop = document.querySelector('#noteAssistantStop');
   if (send) send.hidden = busy;
   if (stop) stop.hidden = !state?.runId;
-  if (input()) { input().disabled = busy; input().placeholder = state?.runStatus === 'waiting_user' ? '输入回答，继续当前任务…' : '询问本篇内容，或让留序 LiuXu 修改…'; }
+  if (input()) { input().disabled = busy; input().placeholder = state?.runStatus === 'waiting_user' ? '输入回答，继续当前任务…' : '询问本篇内容，或让文档助手修改…'; }
+  const attach = document.querySelector('#noteAssistantAttach');
+  if (attach) attach.disabled = busy || !state?.activeDocumentId;
 }
 
-function renderMessage(role, content, { follow = true, forceFollow = false } = {}) {
+function renderMessage(role, content, { follow = true, forceFollow = false, attachments = [] } = {}) {
   const host = messagesHost();
   if (!host) return;
   const wasNearBottom = follow && messagesAreNearBottom();
@@ -243,7 +247,17 @@ function renderMessage(role, content, { follow = true, forceFollow = false } = {
   item.className = `note-assistant-message is-${role === 'user' ? 'user' : 'assistant'}`;
   item.innerHTML = `<div class="note-assistant-bubble"></div>`;
   if (role !== 'user' && state.renderMarkdown) item.querySelector('.note-assistant-bubble').innerHTML = state.renderMarkdown(content);
-  else item.querySelector('.note-assistant-bubble').textContent = content;
+  else item.querySelector('.note-assistant-bubble').textContent = content || (attachments.length ? `已附加 ${attachments.length} 个文件` : '');
+  if (role === 'user' && attachments.length) {
+    const files = document.createElement('div'); files.className = 'note-assistant-message-files';
+    for (const attachment of attachments) {
+      const url = typeof attachment.url === 'string' && /^\/uploads\/[a-zA-Z0-9_.%/-]+$/.test(attachment.url) ? attachment.url : '';
+      if (!url) continue;
+      const name = String(attachment.displayName || attachment.filename || '附件').slice(0, 240);
+      const link = document.createElement('a'); link.className = 'note-assistant-message-file'; link.href = url; link.target = '_blank'; link.rel = 'noopener'; link.title = name; link.textContent = name; files.appendChild(link);
+    }
+    if (files.childElementCount) item.querySelector('.note-assistant-bubble').appendChild(files);
+  }
   host.appendChild(item);
   followMessages(wasNearBottom, forceFollow);
 }
@@ -479,7 +493,7 @@ function renderSessionMessages(messages = []) {
     if (message.kind === 'browser_screenshot') {
       for (const attachment of message.attachments || []) renderToolImages({ data: { imageUrl: attachment.url } }, { follow: false });
     } else if (message.role === 'user' || message.role === 'assistant') {
-      renderMessage(message.role, String(message.content || ''), { follow: false });
+      renderMessage(message.role, String(message.content || ''), { follow: false, attachments: message.attachments || [] });
     }
   }
   closeTrace();
@@ -653,7 +667,7 @@ async function loadSession(documentId) {
     if (serial !== contextSerial) return;
     state.sessionId = data.session?.id || '';
     const trailingTrace = renderSessionMessages(data.session?.messages || []);
-    if (!state.sessionId) renderStatusLine('还没有对话，向留序 LiuXu 提问或让它修改本篇内容。');
+    if (!state.sessionId) renderStatusLine('还没有对话，向文档助手提问或让它修改本篇内容。');
     if (data.activeRun && ACTIVE_RUN_STATES.has(data.activeRun.status)) {
       // A run is still in flight server-side; resubscribe to its events.
       state.runId = data.activeRun.id;
@@ -821,21 +835,48 @@ function subscribeRun(runId) {
   };
 }
 
+function renderNoteAssistantAttachments() {
+  const host = attachmentHost(); if (!host || !state) return;
+  host.hidden = !state.pendingAttachments.length;
+  host.innerHTML = state.pendingAttachments.map((item, index) => `<span class="note-assistant-pending-file" title="${escHtml(item.displayName || item.filename || '附件')}"><span>${escHtml(item.displayName || item.filename || '附件')}</span><button type="button" data-note-assistant-remove-attachment="${index}" aria-label="移除附件 ${escHtml(item.displayName || item.filename || '附件')}">×</button></span>`).join('');
+}
+
+async function uploadNoteAssistantAttachments(files) {
+  const remaining = 14 - (state.pendingAttachments || []).length;
+  const list = [...files].slice(0, remaining);
+  if (!list.length) { showToast('最多附加 14 个文件', 'error'); return; }
+  const button = document.querySelector('#noteAssistantAttach'); if (button) button.disabled = true;
+  try {
+    for (const file of list) {
+      const body = new FormData(); body.append('files', file);
+      const response = await apiFetch('/api/agent/uploads', { method: 'POST', body });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '附件上传失败');
+      const item = Array.isArray(data.items) ? data.items[0] : null;
+      if (item?.url) state.pendingAttachments.push(item);
+    }
+    renderNoteAssistantAttachments();
+  } finally { if (button && state) button.disabled = Boolean(state.sending || (state.runId && state.runStatus !== 'waiting_user')); }
+}
+
 async function send() {
   const serial = contextSerial;
   const text = String(input()?.value || '').trim();
-  if (!text || state.sending || (state.runId && state.runStatus !== 'waiting_user') || !state.activeDocumentId) return;
+  const attachments = [...(state.pendingAttachments || [])];
+  if ((!text && !attachments.length) || state.sending || (state.runId && state.runStatus !== 'waiting_user') || !state.activeDocumentId) return;
+  const content = text || '请阅读并分析我上传的附件。';
   state.sending = true;
   syncComposer();
   input().value = '';
   autoResizeNoteComposer();
-  renderMessage('user', text, { forceFollow: true });
+  renderMessage('user', content, { forceFollow: true, attachments });
   try {
     const response = await apiFetch(`/api/agent/note-assist/${encodeURIComponent(state.activeDocumentId)}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         content: text,
+        attachments: attachments.map(item => ({ url: item.url, filename: item.filename, displayName: item.displayName, kind: item.kind, mimeType: item.mimeType, size: item.size, sha256: item.sha256, extractionStatus: item.extractionStatus, truncated: item.truncated })),
         sessionId: state.sessionId || undefined,
         newSession: state.newSessionRequested === true,
       }),
@@ -846,11 +887,13 @@ async function send() {
     if (!response.ok) throw new Error(data.error || '发送失败');
     clearInteraction();
     state.sessionId = data.sessionId || state.sessionId;
+    state.pendingAttachments = [];
+    renderNoteAssistantAttachments();
     state.runId = data.runId;
     subscribeRun(data.runId);
   } catch (error) {
     if (serial === contextSerial && input() && !input().value) input().value = text;
-    showToast(error.message || '留序 LiuXu 发送失败', 'error');
+    showToast(error.message || '文档助手发送失败', 'error');
   } finally { state.sending = false; syncComposer(); }
 }
 
@@ -887,7 +930,7 @@ function renderSessionList() {
   }
   host.innerHTML = sessions.map(session => {
     const active = session.id === state.sessionId;
-    const title = escHtml(session.title || '留序 LiuXu');
+    const title = escHtml(session.title || '文档助手');
     const preview = escHtml(session.preview || `${session.messageCount} 条消息`);
     return `<div class="note-assistant-session-row${active ? ' is-active' : ''}" data-note-assistant-action="switch-session" data-session-id="${escHtml(session.id)}" role="button" tabindex="0">
       <div class="note-assistant-session-copy">
@@ -945,7 +988,7 @@ async function switchSession(sessionId) {
 async function deleteSession(sessionId) {
   const confirmed = await confirmDialog({
     title: '删除会话',
-    message: '删除该留序 LiuXu 会话及其全部运行记录？此操作不可撤销。',
+    message: '删除该文档助手会话及其全部运行记录？此操作不可撤销。',
     confirmText: '删除',
     danger: true,
   });
@@ -1002,6 +1045,8 @@ function newConversation() {
   state.runId = '';
   state.proposals = new Map();
   state.proposalState = new Map();
+  state.pendingAttachments = [];
+  renderNoteAssistantAttachments();
   messagesHost().innerHTML = '';
   renderStatusLine('新对话已就绪。');
   updateBatchBar();
@@ -1027,6 +1072,7 @@ export function initNoteAssistant({ applyEdit, ensureDocument, ...integrations }
     proposalState: new Map(),
     sessionListOpen: false,
     newSessionRequested: false,
+    pendingAttachments: [],
     applyEdit: typeof applyEdit === 'function' ? applyEdit : () => {},
     ensureDocument,
   };
@@ -1077,6 +1123,26 @@ export function initNoteAssistant({ applyEdit, ensureDocument, ...integrations }
   host.addEventListener('input', event => {
     if (event.target === input()) autoResizeNoteComposer();
   });
+  const picker = attachmentInput();
+  document.querySelector('#noteAssistantAttach')?.addEventListener('click', () => picker?.click());
+  picker?.addEventListener('change', async () => {
+    try { await uploadNoteAssistantAttachments(picker.files || []); } catch (error) { showToast(error.message || '附件上传失败', 'error'); }
+    picker.value = '';
+  });
+  host.addEventListener('click', event => {
+    const remove = event.target.closest('[data-note-assistant-remove-attachment]');
+    if (!remove) return;
+    state.pendingAttachments.splice(Number(remove.dataset.noteAssistantRemoveAttachment), 1); renderNoteAssistantAttachments();
+  });
+  input()?.addEventListener('paste', async event => {
+    const files = [...(event.clipboardData?.items || [])].filter(item => item.kind === 'file' && item.type.startsWith('image/')).map(item => item.getAsFile()).filter(Boolean);
+    if (!files.length) return; event.preventDefault();
+    try { await uploadNoteAssistantAttachments(files); } catch (error) { showToast(error.message || '图片上传失败', 'error'); }
+  });
+  const composer = document.querySelector('.note-assistant-composer');
+  composer?.addEventListener('dragover', event => { if ([...(event.dataTransfer?.types || [])].includes('Files')) { event.preventDefault(); composer.classList.add('is-dragging'); } });
+  composer?.addEventListener('dragleave', event => { if (!composer.contains(event.relatedTarget)) composer.classList.remove('is-dragging'); });
+  composer?.addEventListener('drop', async event => { if (!event.dataTransfer?.files?.length) return; event.preventDefault(); composer.classList.remove('is-dragging'); try { await uploadNoteAssistantAttachments(event.dataTransfer.files); } catch (error) { showToast(error.message || '附件上传失败', 'error'); } });
   host.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); setOpen(false); return; }
     if (event.key === 'Tab' && host.dataset.layout === 'overlay') {
@@ -1111,6 +1177,8 @@ export function noteAssistantSetActiveDocument(doc) {
   state.runId = '';
   state.sessionId = '';
   state.sessionLoaded = false;
+  state.pendingAttachments = [];
+  renderNoteAssistantAttachments();
   state.proposals = new Map();
   state.proposalState = new Map();
   state.sessionListOpen = false;
@@ -1140,8 +1208,12 @@ export function noteAssistantClear() {
   state.activeDocumentId = '';
   state.sessionId = '';
   state.sessionLoaded = false;
+  state.pendingAttachments = [];
+  renderNoteAssistantAttachments();
   state.proposals = new Map();
   state.proposalState = new Map();
+  state.pendingAttachments = [];
+  renderNoteAssistantAttachments();
   state.sessionListOpen = false;
   messagesHost().innerHTML = '';
   setOpen(false);

@@ -40,7 +40,7 @@ export function createAssistantLayout(host, { restoreFloating } = {}) {
     document.body.style.setProperty('--assistant-stack-width', `${Math.max(browserWidth, next.width)}px`);
     const button = host.querySelector('[data-note-assistant-layout]');
     if (button) {
-      button.textContent = preference === 'docked' ? '浮动' : '停靠';
+      button.setAttribute('aria-label', preference === 'docked' ? '切换为浮动窗口' : '停靠到正文右侧');
       button.title = preference === 'docked' ? '切换为浮动窗口' : '停靠到正文右侧';
     }
     const grip = host.querySelector('.note-assistant-dock-resize');

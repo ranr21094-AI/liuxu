@@ -25,7 +25,7 @@ test('builds a sibling toc with heading levels and unique ids', async () => {
     assert.deepEqual([...tocHost.querySelectorAll('[data-markdown-toc] a')].map(node => node.textContent), ['重复标题', '子标题', '重复标题']);
     assert.equal(preview.querySelector('[data-markdown-toc]'), null);
     assert.deepEqual([...tocHost.querySelectorAll('[data-markdown-toc] li')].map(node => node.className), ['markdown-toc-level-1', 'markdown-toc-level-2', 'markdown-toc-level-2']);
-    assert.equal(tocHost.querySelector('[data-markdown-toc] summary').textContent, '目录');
+    assert.equal(tocHost.querySelector('[data-markdown-toc] h2').textContent, '目录');
   } finally {
     dom.window.close();
   }
@@ -90,5 +90,17 @@ test('source toc shows an empty message and locates the editor without changing 
     assert.equal(editor.selectionStart, editor.value.indexOf('# Target'));
     assert.equal(dom.window.document.activeElement, editor);
     assert.equal(dom.window.location.hash, '#knowledge?base=Test&document=note:1');
+  } finally { dom.window.close(); }
+});
+
+test('toc has no nested disclosure and preserves all six source heading levels', async () => {
+  const { renderSourceToc, renderMarkdownToc }=await loadModule();
+  const { dom, preview, tocHost }=makeDom('<p>普通正文不是标题</p>');
+  try {
+    renderMarkdownToc(preview,tocHost);assert.equal(tocHost.querySelector('.markdown-toc-empty').textContent,'暂无标题');
+    renderSourceToc([1,2,3,4,5,6].map(n=>'#'.repeat(n)+' 标题'+n).join('\n'),tocHost,()=>{});
+    assert.equal(tocHost.querySelector('details'),null);
+    assert.deepEqual([...tocHost.querySelectorAll('li')].map(el=>el.className),[1,2,3,4,5,6].map(n=>'markdown-toc-level-'+n));
+    assert.ok([...tocHost.querySelectorAll('a')].every(el=>el.title===el.textContent));
   } finally { dom.window.close(); }
 });

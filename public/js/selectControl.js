@@ -114,7 +114,10 @@ function bindGlobalListeners() {
     if (!event.target.closest(CONTROL_SELECTOR)) closeSelectControls();
   });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeSelectControls();
+    if (event.key === 'Escape' && !event.defaultPrevented) {
+      const trigger = document.querySelector('.select-control-trigger[aria-expanded="true"]');
+      if (trigger) { event.preventDefault(); closeSelectControls(); trigger.focus(); }
+    }
   });
 }
 

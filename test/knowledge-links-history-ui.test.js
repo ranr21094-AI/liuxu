@@ -96,9 +96,121 @@ test('late history responses from the previous note are discarded', async () => 
     finishOld({ ok: true, json: async () => ({ total: 1, revisions: [{ id: 77, documentVersion: 1, title: '旧笔记内容', contentLength: 9 }], nextCursor: null }) });
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.doesNotMatch(document.querySelector('#knowledgeRevisionsList').textContent, /旧笔记内容/);
-    assert.equal(document.querySelector('#knowledgeRevisionCount').textContent, '–');
+    assert.equal(document.querySelector('#knowledgeRevisionCount').hidden, true);
   } finally {
     dom.window.close();
     restoreGlobals(old);
   }
+});
+
+function makeRedesignedDom() {
+  const fs = require('node:fs');
+  const { dom, old } = makeDom();
+  dom.window.document.body.innerHTML = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+  const dialog = dom.window.document.querySelector('#knowledgeRevisionDialog');
+  dialog.showModal = function () { this.open = true; this.querySelector('[data-close-revision]').focus(); };
+  dialog.close = function () { this.open = false; };
+  return { dom, old };
+}
+const tick = () => new Promise(resolve => setTimeout(resolve, 10));
+
+test('bottom entries open directly, toggle closed, load only the chosen list and preserve unknown counts', async () => {
+  const { dom, old } = makeRedesignedDom();
+  try {
+    const { initKnowledgeEnhancements } = await moduleUnderTest();
+    const calls = [];
+    const ui = initKnowledgeEnhancements({ state: {}, navigate() {}, confirmAction: async () => true,
+      apiFetch: async url => { calls.push(url); return { ok: true, json: async () => ({ total: 0, revisions: [], backlinks: [] }) }; },
+    });
+    ui.setActiveDocument({ id: 'note:1', version: 2, content: '', sourceType: 'note' });
+    const revisions = document.querySelector('[data-knowledge-relations-tab="revisions"]');
+    assert.equal(document.querySelector('#knowledgeRevisionCount').hidden, true);
+    revisions.click(); await tick();
+    assert.equal(revisions.getAttribute('aria-expanded'), 'true');
+    assert.equal(calls.length, 1); assert.match(calls[0], /revisions\?/);
+    assert.equal(document.querySelector('#knowledgeRevisionCount').textContent, '0');
+    ui.onDocumentSaved({ id: 'note:1', version: 3 }); await tick();
+    assert.equal(calls.length, 2); assert.ok(calls.every(url => url.includes('/revisions?')));
+    revisions.click(); assert.equal(document.querySelector('#knowledgeRelationsDetails').open, false);
+    const backlinks = document.querySelector('[data-knowledge-relations-tab="backlinks"]');
+    backlinks.click(); await tick(); assert.match(calls.at(-1), /backlinks/);
+    backlinks.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    assert.equal(document.querySelector('#knowledgeRelationsDetails').open, false);
+    assert.equal(document.activeElement, backlinks);
+  } finally { dom.window.close(); restoreGlobals(old); }
+});
+
+test('revision comparison uses a modal, shows changed fields, preserves failed restore, and closes after success', async () => {
+  const { dom, old } = makeRedesignedDom();
+  try {
+    const { initKnowledgeEnhancements } = await moduleUnderTest();
+    let fail = true, restoreCount = 0, confirmCount = 0;
+    const snapshot = { title: '历史标题', content: '旧正文', tags: [], documentDate: '', knowledgeBase: '其他' };
+    const revision = { id: 7, name: '初稿', documentVersion: 1, snapshot };
+    const ui = initKnowledgeEnhancements({ state: {}, navigate() {}, beforeMutation: async () => true, afterMutation() {}, onRestore() {},
+      confirmAction: async () => { confirmCount++; return true; },
+      apiFetch: async (url, options) => {
+        if (url.endsWith('/restore')) { restoreCount++; return { ok: !fail, status: fail ? 409 : 200, json: async () => fail ? { error: '模拟版本冲突' } : { document: { id: 'note:1', version: 3, ...snapshot } } }; }
+        if (url.endsWith('/revisions/7')) return { ok: true, json: async () => ({ revision }) };
+        return { ok: true, json: async () => ({ total: 1, revisions: [revision] }) };
+      },
+    });
+    ui.setActiveDocument({ id: 'note:1', version: 2, sourceType: 'note', ...snapshot, title: '当前标题', content: '新正文' });
+    document.querySelector('[data-knowledge-relations-tab="revisions"]').click(); await tick();
+    document.querySelector('[data-revision-id="7"]').click(); await tick();
+    const dialog = document.querySelector('#knowledgeRevisionDialog');
+    assert.equal(dialog.open, true);
+    assert.equal(document.querySelectorAll('.knowledge-revision-field').length, 1);
+    assert.deepEqual([...document.querySelectorAll('.knowledge-revision-diff h4')].map(el => el.textContent), ['历史', '当前']);
+    document.querySelector('[data-restore-location]').checked = true;
+    document.querySelector('[data-restore-revision]').click(); await tick();
+    assert.equal(dialog.open, true); assert.match(dialog.textContent, /模拟版本冲突/);
+    assert.equal(document.querySelector('[data-restore-location]').checked, true);
+    assert.equal(restoreCount, 1); assert.equal(confirmCount, 1);
+    fail = false;
+    document.querySelector('[data-restore-revision]').click(); await tick();
+    assert.equal(dialog.open, false); assert.equal(restoreCount, 2);
+    assert.equal(document.querySelector('#knowledgeRelationsDetails').open, true);
+  } finally { dom.window.close(); restoreGlobals(old); }
+});
+
+test('comparison close restores row focus, saving does not reopen it, and switching notes resets auxiliary panels', async () => {
+  const { dom, old } = makeRedesignedDom();
+  try {
+    const { initKnowledgeEnhancements } = await moduleUnderTest();
+    const revision = { id: 7, documentVersion: 1, snapshot: { content: '旧' } };
+    const ui = initKnowledgeEnhancements({ state: {}, navigate() {}, confirmAction: async () => false,
+      apiFetch: async url => ({ ok: true, json: async () => url.endsWith('/revisions/7') ? { revision } : { total: 1, revisions: [revision] } }),
+    });
+    ui.setActiveDocument({ id: 'note:1', sourceType: 'note', content: '当前', version: 1 });
+    document.querySelector('[data-knowledge-relations-tab="revisions"]').click(); await tick();
+    document.querySelector('[data-revision-id="7"]').click(); await tick();
+    document.querySelector('[data-close-revision]').click();
+    assert.equal(document.activeElement.dataset.revisionId, '7');
+    ui.onDocumentSaved({ id: 'note:1', version: 2 }); await tick();
+    assert.equal(document.querySelector('#knowledgeRevisionDialog').open, false);
+    document.querySelector('#knowledgeRevisionCreateToggle').click();
+    assert.equal(document.querySelector('#knowledgeRevisionCreate').hidden, false);
+    ui.setActiveDocument({ id: 'note:2', sourceType: 'note', version: 1 });
+    assert.equal(document.querySelector('#knowledgeRevisionCreate').hidden, true);
+    assert.equal(document.querySelector('#knowledgeRelationsDetails').open, false);
+    assert.equal(document.querySelector('[data-knowledge-relations-tab="revisions"]').getAttribute('aria-expanded'), 'false');
+  } finally { dom.window.close(); restoreGlobals(old); }
+});
+
+test('late revision detail cannot reopen the comparison after a document switch', async () => {
+  const { dom, old } = makeRedesignedDom();
+  try {
+    const { initKnowledgeEnhancements } = await moduleUnderTest(); let finish;
+    const ui = initKnowledgeEnhancements({ state: {}, navigate() {}, confirmAction: async () => false,
+      apiFetch: url => url.endsWith('/revisions/7') ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ ok: true, json: async () => ({ total: 1, revisions: [{ id: 7, documentVersion: 1 }] }) }),
+    });
+    ui.setActiveDocument({ id: 'note:1', sourceType: 'note', version: 1 });
+    document.querySelector('[data-knowledge-relations-tab="revisions"]').click(); await tick();
+    document.querySelector('[data-revision-id="7"]').click(); await tick();
+    ui.setActiveDocument({ id: 'note:2', sourceType: 'note', version: 1 });
+    finish({ ok: true, json: async () => ({ revision: { id: 7, name: '旧记录', snapshot: { content: '旧正文' } } }) });await tick();
+    assert.equal(document.querySelector('#knowledgeRevisionDialog').open, false);
+    assert.equal(document.querySelector('#knowledgeRevisionDetail').hidden, true);
+  } finally { dom.window.close(); restoreGlobals(old); }
 });

@@ -1,0 +1,43 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {JSDOM}=require('jsdom');
+const {pathToFileURL}=require('node:url');
+test('file header preserves fields and actions, and restores native note layout',async()=>{
+ const dom=new JSDOM(fs.readFileSync('public/index.html','utf8'));
+ const prior={document:global.document,MutationObserver:global.MutationObserver};
+ global.document=dom.window.document;global.MutationObserver=dom.window.MutationObserver;
+ const proto=dom.window.HTMLElement.prototype, matches=proto.matches;
+ proto.matches=function(selector){return selector===':popover-open'?Boolean(this._open):matches.call(this,selector)};
+ proto.showPopover=function(){this._open=true};proto.hidePopover=function(){this._open=false};
+ try {
+  const {initReaderHeader}=await import(pathToFileURL(process.cwd()+'/public/js/knowledge/reader-header.js'));
+  const {initDatePickers}=await import(pathToFileURL(process.cwd()+'/public/js/app/date-picker.js'));
+  initDatePickers(document);
+  initReaderHeader();
+  const workspace=document.querySelector('#documentWorkspace'), date=document.querySelector('#documentDate');date.value='2026-10-12';
+  workspace.classList.add('is-file-document');await new Promise(r=>setTimeout(r,0));
+  assert.equal(document.querySelector('.reader-info-popover').contains(date),true);
+  const tabs=document.querySelector('#fileReaderTabs');
+  assert.equal(tabs.parentElement,document.querySelector('.document-context-row'));
+  assert.equal(tabs.classList.contains('reader-mode-switch'),true);
+  assert.equal(tabs.hasAttribute('popover'),false);
+  assert.equal(document.querySelector('.reader-mode-trigger'),null);
+  assert.equal(date.value,'2026-10-12');
+  assert.equal(document.querySelector('[data-date-input="documentDate"] .date-picker-value').textContent,'2026-10-12');
+  const quickActions=document.querySelector('.reader-header-quick-actions');
+  assert.equal(quickActions.contains(document.querySelector('#assistantToggleButton')),true);
+  assert.equal(quickActions.contains(document.querySelector('#noteBrowserToggleButton')),true);
+  assert.equal(quickActions.contains(document.querySelector('.reader-info-trigger')),true);
+  assert.equal(quickActions.parentElement.lastElementChild,quickActions);
+  const host=document.querySelector('#filePreviewHost'), toolbar=document.createElement('div');toolbar.className='file-preview-toolbar';host.append(toolbar);host.dataset.headerReady='true';
+  await new Promise(r=>setTimeout(r,0));assert.equal(toolbar.parentElement.className,'reader-header-tools');
+  document.querySelector('[data-file-reader-tab="preview"]').classList.remove('active');document.querySelector('[data-file-reader-tab="annotation"]').classList.add('active');
+  await new Promise(r=>setTimeout(r,0));assert.equal(document.querySelector('.reader-header-tools').hidden,true);
+  workspace.classList.remove('is-file-document');await new Promise(r=>setTimeout(r,0));
+  assert.equal(document.querySelector('.document-toolbar-actions').contains(document.querySelector('#assistantToggleButton')),true);
+  assert.equal(document.querySelector('.document-context-row').contains(date),true);
+  assert.equal(document.querySelector('#fileOriginalPanel').contains(tabs),true);
+  assert.equal(document.querySelector('#fileOriginalPanel').contains(document.querySelector('#fileName')),true);
+ }finally {global.document=prior.document;global.MutationObserver=prior.MutationObserver;dom.window.close()}
+});

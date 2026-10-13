@@ -78,7 +78,7 @@ async function syncNative() {
 function render() {
   const browser = desktopBrowser();
   const button = $('#noteBrowserToggleButton');
-  if (button) { button.hidden = !browser || !state.documentId; button.disabled = Boolean(state.loading); button.setAttribute('aria-expanded', String(Boolean(record()?.open))); }
+  if (button) { button.hidden = !state.documentId; button.disabled = !browser || Boolean(state.loading); button.title = browser ? '浏览器' : '内置浏览器仅桌面版可用'; button.setAttribute('aria-label', browser ? '打开浏览器侧栏' : '内置浏览器仅桌面版可用'); button.setAttribute('aria-expanded', String(Boolean(record()?.open))); }
   const panel = $('#noteBrowserPanel');
   if (!panel) return;
   const current = record();

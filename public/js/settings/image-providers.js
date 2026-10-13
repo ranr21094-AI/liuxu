@@ -1,3 +1,5 @@
+import { renderProviderDirectory } from '../app/provider-directory.js';
+import { initProviderControls } from '../app/provider-controls.js';
 import { apiFetch } from '../auth.js';
 import { escHtml, showToast, renderPreservingFocus } from '../helpers.js';
 
@@ -9,6 +11,7 @@ const testStates = new Map();
 const testControllers = new Map();
 let providers = [];
 let selectedProviderId = '';
+let providerDetailOpen = false;
 let defaultModelRef = '';
 let bound = false;
 
@@ -223,17 +226,7 @@ function rerenderSettings() {
 }
 
 function renderSidebar() {
-  const items = providers.map(provider => `
-    <button type="button" class="custom-provider-nav-item${provider.id === selectedProviderId ? ' active' : ''}" data-select-image-provider="${escHtml(provider.id)}" role="option" aria-selected="${provider.id === selectedProviderId}">
-      <span class="custom-provider-nav-icon" aria-hidden="true">${imageProviderIcon}</span>
-      <span class="custom-provider-nav-copy"><strong>${escHtml(provider.name?.trim() || '未命名供应商')}</strong><small>${escHtml(adapterLabels[provider.adapter] || provider.adapter)} · ${provider.models.length} 个模型</small></span>
-      <span class="custom-provider-status-dot${provider.enabled === false ? ' is-disabled' : ''}" aria-label="${provider.enabled === false ? '已禁用' : '已启用'}"></span>
-    </button>`).join('');
-  return `<aside class="custom-provider-sidebar" aria-label="生图供应商列表">
-    <div class="custom-provider-sidebar-heading">生图供应商</div>
-    <div class="custom-provider-sidebar-list" role="listbox" aria-label="选择生图供应商">${items || '<p class="empty-list">还没有生图供应商。</p>'}</div>
-    <button type="button" class="custom-provider-add-link" data-image-add="provider">＋ <span>添加供应商</span></button>
-  </aside>`;
+  return providers.length ? '' : '<button type="button" class="secondary-action compact" data-image-add="provider">＋ 添加供应商</button>';
 }
 
 function renderModel(provider, model) {
@@ -257,14 +250,14 @@ function renderModel(provider, model) {
     </div>
     <details class="image-model-capabilities" data-capability-key="${escHtml(`${provider.id}:${model.id}`)}" ${capabilityExpanded.has(`${provider.id}:${model.id}`) ? 'open' : ''}>
       <summary>能力与默认参数</summary>
-      <div class="image-capability-grid">
+      <h5 class="provider-parameter-heading">能力</h5><div class="image-capability-grid">
         ${checks.map(([key, label]) => `<label class="image-provider-check"><input data-capability="${key}" type="checkbox" ${caps[key] ? 'checked' : ''}>${label}</label>`).join('')}
-        <label>最多输出<input data-capability-number="maxOutputs" type="number" min="1" max="15" value="${Number(caps.maxOutputs) || 1}"></label>
+        <h5 class="provider-parameter-heading">输出限制</h5><label>最多输出<input data-capability-number="maxOutputs" type="number" min="1" max="15" value="${Number(caps.maxOutputs) || 1}"></label>
         <label>最多参考图<input data-capability-number="maxReferences" type="number" min="0" max="14" value="${Number(caps.maxReferences) || 0}"></label>
         <label>尺寸列表<input data-capability-list="sizes" value="${escHtml(csv(caps.sizes))}" placeholder="auto, 1024x1024"></label>
         <label>质量列表<input data-capability-list="qualities" value="${escHtml(csv(caps.qualities))}" placeholder="standard, high"></label>
         <label>格式列表<input data-capability-list="outputFormats" value="${escHtml(csv(caps.outputFormats))}" placeholder="png, jpeg"></label>
-        <label>默认尺寸<input data-default="size" value="${escHtml(defaults.size || '')}"></label>
+        <h5 class="provider-parameter-heading">默认参数</h5><label>默认尺寸<input data-default="size" value="${escHtml(defaults.size || '')}"></label>
         <label>默认质量<input data-default="quality" value="${escHtml(defaults.quality || '')}"></label>
         <label>默认张数<input data-default-number="count" type="number" min="1" max="15" value="${Number(defaults.count) || 1}"></label>
         <label>默认格式<input data-default="outputFormat" value="${escHtml(defaults.outputFormat || '')}"></label>
@@ -275,11 +268,11 @@ function renderModel(provider, model) {
         <label class="image-provider-check"><input data-default-bool="streaming" type="checkbox" ${defaults.streaming ? 'checked' : ''}>默认流式</label>
       </div>
     </details>
-    <div class="image-model-test-row">
+    <details class="image-model-test" ${generating ? 'open' : ''}><summary>测试</summary><div class="image-model-test-row">
       <input class="image-test-prompt" data-focus-key="${escHtml(`${focusBase}:prompt`)}" value="${escHtml(model.testPrompt || '极简蓝色圆点，白色背景')}" aria-label="试生图提示词">
       <button type="button" class="secondary-action compact" data-image-action="generate" data-provider-id="${escHtml(provider.id)}" data-model-id="${escHtml(model.id)}">${generating ? '取消试生图' : '试生图'}</button>
     </div>
-    ${renderTestStateSlot(generationKey)}
+    ${renderTestStateSlot(generationKey)}</details>
   </article>`;
 }
 
@@ -289,29 +282,20 @@ function renderDetail(provider) {
   const connectionRunning = testStates.get(connKey)?.status === 'running';
   const enabled = provider.enabled !== false;
   return `<section class="custom-provider-card custom-provider-detail image-provider-detail" data-provider-id="${escHtml(provider.id)}">
-    <header class="custom-provider-detail-header">
-      <div class="custom-provider-title-wrap">
-        <input type="text" class="custom-provider-title-input image-provider-name" data-focus-key="${escHtml(`${focusBase}:name`)}" value="${escHtml(provider.name)}" placeholder="未命名供应商" maxlength="80" aria-label="供应商名称">
-        <button type="button" class="icon-button custom-provider-title-edit" aria-label="编辑供应商名称" title="编辑供应商名称">${editIcon}</button>
-        <span class="custom-provider-model-count">${provider.models.length} 个模型</span>
-      </div>
-      <div class="custom-provider-detail-actions">
-        <label class="provider-enabled-switch">
-          <input type="checkbox" role="switch" data-image-action="toggle-provider" data-provider-id="${escHtml(provider.id)}" ${enabled ? 'checked' : ''} aria-label="启用供应商">
-          <span class="provider-enabled-track" aria-hidden="true"></span>
-          <span class="provider-enabled-label">${enabled ? '已启用' : '已禁用'}</span>
-        </label>
-        <button type="button" class="icon-button custom-provider-duplicate" data-image-action="duplicate-provider" data-provider-id="${escHtml(provider.id)}" aria-label="复制供应商" title="复制供应商">${copyIcon}</button>
-        <button type="button" class="icon-button custom-provider-delete" data-image-action="remove-provider" data-provider-id="${escHtml(provider.id)}" aria-label="删除供应商" title="删除供应商">${trashIcon}</button>
-      </div>
+    <header class="custom-provider-detail-header provider-toolbar provider-reference-header">
+      <button type="button" class="icon-button" data-image-back aria-label="返回供应商列表" title="返回供应商列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H4m7-7-7 7 7 7"></path></svg></button>
+      <span class="provider-avatar" aria-hidden="true">${escHtml(Array.from(provider.name || '未命名供应商')[0].toUpperCase())}</span><strong data-provider-heading>${escHtml(provider.name || '未命名供应商')}</strong><span class="provider-protocol">${escHtml(provider.adapter)}</span>
+      <label class="provider-enabled-switch"><input type="checkbox" role="switch" data-image-action="toggle-provider" data-provider-id="${escHtml(provider.id)}" ${enabled ? 'checked' : ''} aria-label="启用供应商"><span class="provider-enabled-track" aria-hidden="true"></span><span class="provider-enabled-label">${enabled ? '已启用' : '已禁用'}</span></label>
+      <button type="button" class="secondary-action compact" data-image-action="duplicate-provider" data-provider-id="${escHtml(provider.id)}">复制供应商</button>
     </header>
+    <label class="provider-reference-name">名称<input type="text" class="custom-provider-title-input image-provider-name" data-focus-key="${escHtml(`${focusBase}:name`)}" value="${escHtml(provider.name)}" maxlength="80" aria-label="供应商名称"></label>
     <div class="custom-provider-body">
       <div class="custom-provider-conn-grid">
         <label class="custom-provider-inline-field">协议<select class="image-provider-adapter" data-focus-key="${escHtml(`${focusBase}:adapter`)}"><option value="seedream" ${provider.adapter === 'seedream' ? 'selected' : ''}>Seedream</option><option value="openai-images" ${provider.adapter === 'openai-images' ? 'selected' : ''}>OpenAI Images</option></select></label>
-        <label class="custom-provider-inline-field">API 根地址<input class="image-provider-base-url" data-focus-key="${escHtml(`${focusBase}:base-url`)}" value="${escHtml(provider.baseUrl)}" spellcheck="false" placeholder="https://..."></label>
         <label class="custom-provider-inline-field">API Key
           <div class="custom-provider-key-wrap"><input class="image-provider-key custom-provider-key" data-focus-key="${escHtml(`${focusBase}:key`)}" type="password" autocomplete="off" spellcheck="false" value="${escHtml(provider.apiKey || '')}" placeholder="${provider.apiKeyConfigured ? '已配置；留空保持不变' : '可留空用于本地接口'}"><button type="button" class="custom-provider-key-toggle" data-toggle-key aria-label="显示 API Key">${eyeIcon}</button></div>
         </label>
+        <label class="custom-provider-inline-field">API 根地址<input class="image-provider-base-url" data-focus-key="${escHtml(`${focusBase}:base-url`)}" value="${escHtml(provider.baseUrl)}" spellcheck="false" placeholder="https://..."></label>
       </div>
       <small class="image-provider-endpoint-hint">生成端点：${escHtml(generationEndpoint(provider))}</small>
       <div class="image-provider-connection-row">
@@ -324,6 +308,7 @@ function renderDetail(provider) {
       </div>
       <div class="image-provider-models">${provider.models.map(model => renderModel(provider, model)).join('') || '<p class="empty-list">该供应商还没有模型。</p>'}</div>
       <button type="button" class="custom-provider-add-model-link" data-image-action="add-model" data-provider-id="${escHtml(provider.id)}">＋ 添加模型</button>
+      <div class="provider-detail-bottom"><button type="button" class="danger-action compact" data-image-action="remove-provider" data-provider-id="${escHtml(provider.id)}">删除供应商</button><button type="button" class="secondary-action compact" data-image-back>返回列表</button></div>
     </div>
   </section>`;
 }
@@ -331,11 +316,12 @@ function renderDetail(provider) {
 function render() {
   const root = document.querySelector('#imageProvidersSettings');
   if (!root) return;
+  if (!providerDetailOpen || !providers.length) { root.innerHTML = renderProviderDirectory(providers, 'image'); return; }
   const selected = providers.find(item => item.id === selectedProviderId) || providers[0] || null;
   selectedProviderId = selected?.id || '';
   const detail = selected
     ? renderDetail(selected)
-    : '<section class="custom-provider-card custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有生图供应商。从左侧添加供应商。</p></section>';
+    : '<section class="custom-provider-card custom-provider-detail custom-provider-detail-empty"><p class="empty-list">还没有生图供应商。添加后即可配置模型与能力。</p></section>';
   root.innerHTML = `<div class="custom-provider-workspace image-provider-workspace">${renderSidebar()}${detail}</div>`;
 }
 
@@ -478,6 +464,7 @@ async function handleAction(button) {
   if (action === 'remove-provider') {
     if (!globalThis.confirm(`确定删除供应商「${provider.name || '未命名供应商'}」？`)) return;
     providers.splice(index, 1);
+    providerDetailOpen = false;
     if (selectedProviderId === provider.id) selectedProviderId = providers[0]?.id || '';
     ensureDefaultModelRef();
     return render();
@@ -511,6 +498,7 @@ async function handleAction(button) {
 function selectProvider(providerId) {
   syncFromDom();
   if (!providers.some(item => item.id === providerId)) return;
+  providerDetailOpen = true;
   selectedProviderId = providerId;
   render();
 }
@@ -520,6 +508,7 @@ export function bindImageProviderSettings() {
   const root = document.querySelector('#imageProvidersSettings');
   if (!root) return;
   bound = true;
+  initProviderControls(root);
   root.addEventListener('toggle', event => {
     const capabilities = event.target.closest?.('.image-model-capabilities');
     if (!capabilities?.dataset.capabilityKey) return;
@@ -527,6 +516,10 @@ export function bindImageProviderSettings() {
     else capabilityExpanded.delete(capabilities.dataset.capabilityKey);
   }, true);
   root.addEventListener('click', event => {
+    if (event.target.closest('[data-image-back]')) {
+      syncFromDom(); providerDetailOpen = false; render();
+      root.querySelector('[data-select-image-provider="' + CSS.escape(selectedProviderId) + '"]')?.focus(); return;
+    }
     const selectItem = event.target.closest('[data-select-image-provider]');
     if (selectItem) return selectProvider(selectItem.dataset.selectImageProvider);
     const toggleKey = event.target.closest('[data-toggle-key]');
@@ -550,6 +543,7 @@ export function bindImageProviderSettings() {
       syncFromDom();
       if (providers.length >= MAX_PROVIDERS) return showToast(`最多 ${MAX_PROVIDERS} 个生图供应商`, 'error');
       const provider = providerTemplate();
+      providerDetailOpen = true;
       providers.push(provider);
       selectedProviderId = provider.id;
       if (!defaultModelRef && provider.models[0]) defaultModelRef = modelRef(provider, provider.models[0]);
@@ -561,6 +555,9 @@ export function bindImageProviderSettings() {
     if (button && button.dataset.imageAction !== 'toggle-provider') handleAction(button);
   });
   root.addEventListener('change', event => {
+    if (event.target.matches('[data-image-provider-select]')) {
+      selectProvider(event.target.value); root.querySelector('.provider-selector')?.focus(); return;
+    }
     if (!event.target.closest('.image-provider-detail')) return;
     syncFromDom();
     const provider = providers.find(item => item.id === selectedProviderId);
@@ -591,6 +588,7 @@ export function loadImageProviderSettings(settings = {}) {
   providers = (settings.imageProviders || []).map(cloneSettingsProvider);
   defaultModelRef = settings.defaultImageModelRef || '';
   selectedProviderId = '';
+  providerDetailOpen = false;
   capabilityExpanded.clear();
   testStates.clear();
   render();

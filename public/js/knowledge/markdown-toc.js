@@ -16,14 +16,13 @@ function clearMarkdownToc(preview, tocHost) {
 
 function createToc(preview, tocHost) {
   const headings = [...(preview?.querySelectorAll(HEADING_SELECTOR) || [])];
-  if (!headings.length || !tocHost) return null;
+  if (!tocHost) return null;
   const used = new Set();
   const document = tocHost.ownerDocument;
-  const details = document.createElement('details');
+  const details = document.createElement('section');
   details.className = 'markdown-toc';
   details.dataset.markdownToc = 'true';
-  details.open = true;
-  const summary = document.createElement('summary');
+  const summary = document.createElement('h2');
   summary.textContent = '目录';
   details.append(summary);
   const list = document.createElement('ol');
@@ -41,7 +40,7 @@ function createToc(preview, tocHost) {
     item.className = `markdown-toc-level-${heading.tagName.slice(1)}`;
     const link = document.createElement('a');
     link.href = `#${id}`;
-    link.textContent = heading.textContent || '无标题';
+    link.textContent = heading.textContent || '无标题'; link.title = link.textContent;
     link.addEventListener('click', event => {
       event.preventDefault();
       heading.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
@@ -50,6 +49,7 @@ function createToc(preview, tocHost) {
     item.append(link);
     list.append(item);
   });
+  if (!headings.length) { const empty = document.createElement('p'); empty.className = 'markdown-toc-empty'; empty.textContent = '暂无标题'; details.append(empty); }
   details.append(list);
   tocHost.append(details);
   return details;
@@ -113,12 +113,12 @@ export function renderSourceToc(source, tocHost, onNavigate) {
   tocHost.replaceChildren();
   const doc = tocHost.ownerDocument;
   const headings = sourceHeadings(source);
-  const details = doc.createElement('details'); details.className = 'markdown-toc'; details.dataset.markdownToc = 'true'; details.open = true;
-  const summary = doc.createElement('summary'); summary.textContent = '目录'; details.append(summary);
+  const details = doc.createElement('section'); details.className = 'markdown-toc'; details.dataset.markdownToc = 'true';
+  const summary = doc.createElement('h2'); summary.textContent = '目录'; details.append(summary);
   const list = doc.createElement('ol'); list.className = 'markdown-toc-list';
   for (const heading of headings) {
     const item = doc.createElement('li'); item.className = `markdown-toc-level-${heading.level}`;
-    const link = doc.createElement('a'); link.href = '#'; link.textContent = heading.text;
+    const link = doc.createElement('a'); link.href = '#'; link.textContent = heading.text; link.title = heading.text;
     link.addEventListener('click', event => { event.preventDefault(); onNavigate(heading.offset); });
     item.append(link); list.append(item);
   }

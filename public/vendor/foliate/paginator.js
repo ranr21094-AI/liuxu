@@ -243,7 +243,7 @@ class View {
     }
     async load(src, afterLoad, beforeRender) {
         if (typeof src !== 'string') throw new Error(`${src} is not string`)
-        return new Promise(resolve => {
+        return new Promise((resolve, reject) => {
             this.#iframe.addEventListener('load', () => {
                 const doc = this.document
                 afterLoad?.(doc)
@@ -272,7 +272,7 @@ class View {
 
                 resolve()
             }, { once: true })
-            this.#iframe.src = src
+            fetch(src).then(response => response.text()).then(html => { this.#iframe.srcdoc = html }).catch(reject)
         })
     }
     render(layout) {

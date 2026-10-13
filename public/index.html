@@ -27,37 +27,37 @@
   </section>
   <div class="workspace-shell" id="workspaceShell">
     <aside class="workspace-sidebar" id="workspaceSidebar" aria-label="工作区侧栏">
-      <div class="workspace-brand" id="workspaceBrand"><button class="brand-mark" id="settingsButton" type="button" title="设置" aria-label="打开设置"><span class="brand-mark-letter" aria-hidden="true">L</span><svg class="brand-mark-gear" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.84 4.92L10.17 2.58A9.6 9.6 0 0 1 13.83 2.58L14.16 4.92A7.4 7.4 0 0 1 15.47 5.47L17.37 4.04A9.6 9.6 0 0 1 19.96 6.63L18.53 8.53A7.4 7.4 0 0 1 19.08 9.84L21.42 10.17A9.6 9.6 0 0 1 21.42 13.83L19.08 14.16A7.4 7.4 0 0 1 18.53 15.47L19.96 17.37A9.6 9.6 0 0 1 17.37 19.96L15.47 18.53A7.4 7.4 0 0 1 14.16 19.08L13.83 21.42A9.6 9.6 0 0 1 10.17 21.42L9.84 19.08A7.4 7.4 0 0 1 8.53 18.53L6.63 19.96A9.6 9.6 0 0 1 4.04 17.37L5.47 15.47A7.4 7.4 0 0 1 4.92 14.16L2.58 13.83A9.6 9.6 0 0 1 2.58 10.17L4.92 9.84A7.4 7.4 0 0 1 5.47 8.53L4.04 6.63A9.6 9.6 0 0 1 6.63 4.04L8.53 5.47A7.4 7.4 0 0 1 9.84 4.92Z"></path><circle cx="12" cy="12" r="3"></circle></svg></button><strong>留序 <span id="workspaceBrandMode">Agent</span></strong></div>
+      <div class="workspace-brand" id="workspaceBrand"><button class="brand-mark" id="settingsButton" type="button" title="设置" aria-label="打开设置"><span class="brand-mark-letter" aria-hidden="true">L</span><svg class="brand-mark-gear" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.84 4.92L10.17 2.58A9.6 9.6 0 0 1 13.83 2.58L14.16 4.92A7.4 7.4 0 0 1 15.47 5.47L17.37 4.04A9.6 9.6 0 0 1 19.96 6.63L18.53 8.53A7.4 7.4 0 0 1 19.08 9.84L21.42 10.17A9.6 9.6 0 0 1 21.42 13.83L19.08 14.16A7.4 7.4 0 0 1 18.53 15.47L19.96 17.37A9.6 9.6 0 0 1 17.37 19.96L15.47 18.53A7.4 7.4 0 0 1 14.16 19.08L13.83 21.42A9.6 9.6 0 0 1 10.17 21.42L9.84 19.08A7.4 7.4 0 0 1 8.53 18.53L6.63 19.96A9.6 9.6 0 0 1 4.04 17.37L5.47 15.47A7.4 7.4 0 0 1 4.92 14.16L2.58 13.83A9.6 9.6 0 0 1 2.58 10.17L4.92 9.84A7.4 7.4 0 0 1 5.47 8.53L4.04 6.63A9.6 9.6 0 0 1 6.63 4.04L8.53 5.47A7.4 7.4 0 0 1 9.84 4.92Z"></path><circle cx="12" cy="12" r="3"></circle></svg></button><strong>留序 <span id="workspaceBrandMode">Agent</span></strong><button class="icon-button sidebar-toggle" id="sidebarToggle" type="button" aria-label="收起侧栏" aria-controls="workspaceSidebar" aria-expanded="true" title="收起侧栏" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16m6-11-3 3 3 3"></path></svg></button></div>
       <nav class="mode-switch workspace-mode-nav" id="workspaceModeNav" aria-label="工作模式">
         <span class="mode-indicator" aria-hidden="true"></span>
-        <button type="button" data-mode="agent" class="active" aria-current="page">Agent</button>
-        <button type="button" data-mode="knowledge">知识库</button>
-        <button type="button" data-mode="memory">Memory<span class="mode-pending-badge" id="memoryPendingBadge" hidden aria-hidden="true"></span></button>
-        <button type="button" data-mode="todos">待办</button>
+        <button type="button" data-mode="agent" aria-label="Agent" title="切换到 Agent" class="active" aria-current="page"><span class="agent-mode-label" aria-hidden="true">Agent</span></button>
+        <button type="button" data-mode="knowledge" aria-label="知识库" title="知识库"><span class="mode-label">知识库</span></button>
+        <button type="button" data-mode="memory" aria-label="Memory" title="Memory"><span class="mode-label">Memory</span><span class="mode-pending-badge" id="memoryPendingBadge" hidden aria-hidden="true"></span></button>
+        <button type="button" data-mode="todos" aria-label="待办" title="待办"><span class="mode-label">待办</span></button>
       </nav>
       <div class="sidebar-mobile-bar">
-        <button class="icon-button sidebar-close" id="sidebarClose" type="button" aria-label="关闭侧栏">×</button>
+        <button class="icon-button sidebar-close" id="sidebarClose" type="button" aria-label="关闭侧栏" aria-controls="workspaceSidebar" aria-expanded="true" title="关闭侧栏"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16m6-11-3 3 3 3"></path></svg></button>
       </div>
 
       <section class="sidebar-panel" id="agentSidebarPanel" data-sidebar-mode="agent">
-        <div class="sidebar-toolbar-row agent-sidebar-toolbar">
-          <button class="agent-toolbar-btn" id="newSessionButton" type="button" title="新建会话" aria-label="新建会话">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 5v14"></path>
-              <path d="M5 12h14"></path>
-            </svg>
-          </button>
-          <label class="search-field agent-toolbar-search" for="sessionSearch">
-            <span aria-hidden="true">⌕</span>
-            <input id="sessionSearch" type="search" placeholder="搜索会话" autocomplete="off">
-          </label>
-        </div>
         <div class="sidebar-scroll" id="sessionList" aria-live="polite">
           <p class="empty-list">正在加载会话…</p>
         </div>
-        <button class="sidebar-status" id="agentSidebarStatus" type="button" aria-label="打开模型设置">
-          <span class="status-dot"></span><span>Agent 已就绪</span>
-        </button>
+        <div class="sidebar-search-dock">
+          <button class="sidebar-status" id="agentSidebarStatus" type="button" aria-label="打开模型设置">
+            <span class="status-dot"></span><span>Agent 已就绪</span>
+          </button>
+          <div class="sidebar-search-row">
+          <div class="sidebar-search-field">
+            <label for="sessionSearch" class="sidebar-search-label">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+              <input id="sessionSearch" type="search" placeholder="搜索会话" aria-label="搜索会话" autocomplete="off">
+            </label>
+            <button type="button" class="sidebar-search-clear" data-search-clear="sessionSearch" aria-label="清空搜索" hidden>×</button>
+          </div>
+            <button type="button" id="agentNewSessionButton" class="sidebar-filter-toggle" aria-label="新建会话" title="新建会话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+          </div>
+        </div>
       </section>
 
       <section class="sidebar-panel" id="knowledgeSidebarPanel" data-sidebar-mode="knowledge" hidden>
@@ -74,9 +74,6 @@
               <button class="icon-button-svg tree-add" id="syncKnowledgeFolderButton" type="button" title="立即同步" aria-label="立即同步">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
               </button>
-              <button class="icon-button-svg tree-add" id="newKnowledgeBaseButton" type="button" title="新建知识库" aria-label="新建知识库">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-              </button>
             </span>
           </div>
           <div class="sidebar-scroll" id="knowledgeBaseList" aria-label="知识库列表" aria-live="polite">
@@ -89,66 +86,82 @@
 
         <div id="knowledgeInsidePanel" hidden>
           <nav class="knowledge-breadcrumb" id="knowledgeBreadcrumb" aria-label="知识库位置"></nav>
-          <label class="search-field" for="knowledgeSearch">
-            <span aria-hidden="true">⌕</span>
-            <input id="knowledgeSearch" type="search" placeholder="搜索知识" autocomplete="off">
-          </label>
-          <button class="knowledge-search-mode-hint" id="knowledgeSearchModeHint" type="button" title="打开知识库搜索设置">搜索：智能 · 全字段</button>
-          <label class="knowledge-date-filter"><span>日期</span><input id="knowledgeDateFilter" type="date" aria-label="按日期筛选知识"></label>
-          <div id="knowledgeActiveFilters" class="knowledge-active-filters" hidden aria-label="已启用筛选"></div>
-          <details class="more-filters">
-            <summary>更多筛选</summary>
-            <div class="more-filter-fields">
-              <label>标签<input id="knowledgeTagFilter" type="text" placeholder="标签名称"></label>
 
-              <label class="archive-toggle"><input id="knowledgeArchivedFilter" type="checkbox"> 查看已归档</label>
+        </div>
+        <div class="document-list-section" id="knowledgeResultsSection" hidden>
+          <div class="document-list-heading-row">
+            <div class="document-list-heading" id="knowledgeDocumentListHeading"></div>
+
+          </div>
+          <div class="sidebar-scroll document-list" id="knowledgeDocumentList" aria-live="polite">
+            <p class="empty-list">正在读取知识库…</p>
+          </div>
+          <button class="load-more" id="knowledgeLoadMore" type="button" hidden>加载更多</button>
+        </div>
+        <div class="sidebar-search-dock" id="knowledgeSearchDock">
+          <div id="knowledgeOperationsPanel" class="sidebar-filter-panel" role="region" aria-label="知识创建与导入" popover="manual" hidden>
+            <div class="sidebar-filter-heading"><strong>知识操作</strong><button type="button" id="knowledgeOperationsClose" class="sidebar-filter-close" aria-label="关闭操作菜单">×</button></div>
+            <div id="knowledgeDocumentActions" class="knowledge-bottom-actions">
+              <small class="knowledge-operation-heading">创建</small>
+              <button id="newKnowledgeBaseButton" type="button">新建知识库</button>
+              <button id="newNoteButton" type="button">新建笔记</button>
+              <button id="newMindmapButton" type="button">思维导图</button>
+              <button id="newFolderButton" type="button">新建文件夹</button>
+              <small class="knowledge-operation-heading">导入</small>
+              <button id="importFileButton" type="button">导入文件</button>
+              <input id="knowledgeFileInput" type="file" accept=".epub,.mobi,.azw3,.fb2,.cbz,.md,.txt,.log,.csv,.tsv,.json,.xml,.yaml,.yml,.html,.htm,.css,.js,.mjs,.ts,.tsx,.py,.sh,.sql,.ini,.toml,.diff,.patch,.pdf,.docx,.xlsx,.xls,.ods,.pptx,.zip,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.avif,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov" hidden>
             </div>
-          </details>
-          <div class="document-list-section">
-            <div class="document-list-heading-row">
-              <div class="document-list-heading" id="knowledgeDocumentListHeading"></div>
-              <div class="document-list-actions" id="knowledgeDocumentActions" hidden>
-                <button class="icon-button tree-add" id="newNoteButton" type="button" title="新建笔记" aria-label="新建笔记">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <path d="M14 2v6h6M8 13h8M8 17h8"></path>
-                  </svg>
-                </button>
-                <button class="icon-button tree-add" id="newMindmapButton" type="button" title="创建思维导图" aria-label="创建思维导图">⌘</button>
-                <button class="icon-button tree-add" id="importFileButton" type="button" title="导入文件" aria-label="导入文件">↑</button>
-                <input id="knowledgeFileInput" type="file" accept=".epub,.mobi,.azw3,.fb2,.cbz,.md,.txt,.log,.csv,.tsv,.json,.xml,.yaml,.yml,.html,.htm,.css,.js,.mjs,.ts,.tsx,.py,.sh,.sql,.ini,.toml,.diff,.patch,.pdf,.docx,.xlsx,.xls,.ods,.pptx,.zip,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.avif,.mp3,.wav,.m4a,.ogg,.flac,.mp4,.webm,.mov" hidden>
-                <button class="icon-button tree-add" id="newFolderButton" type="button" title="新建文件夹" aria-label="新建文件夹">
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M3 7a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
-                  </svg>
-                </button>
-              </div>
+          </div>
+          <div id="knowledgeFilterPanel" class="sidebar-filter-panel knowledge-filter-panel" role="region" aria-label="知识筛选" popover="manual" hidden>
+            <div class="sidebar-filter-heading"><strong>筛选</strong><button type="button" id="knowledgeFilterClose" class="sidebar-filter-close" aria-label="关闭筛选面板">×</button></div>
+            <div class="sidebar-filter-content">
+            <label class="sidebar-filter-field" for="knowledgeDateFilter"><span>日期</span><input id="knowledgeDateFilter" type="date" aria-label="按日期筛选知识"></label>
+            <label class="sidebar-filter-field" for="knowledgeTagFilter"><span>标签</span><input id="knowledgeTagFilter" type="text" placeholder="标签名称"></label>
+            <label class="sidebar-filter-archive"><input id="knowledgeArchivedFilter" type="checkbox">查看已归档</label>
+            <button class="knowledge-search-mode-hint" id="knowledgeSearchModeHint" type="button" title="打开知识库搜索设置">搜索：智能 · 全字段</button>
             </div>
-            <div class="sidebar-scroll document-list" id="knowledgeDocumentList" aria-live="polite">
-              <p class="empty-list">正在读取知识库…</p>
-            </div>
-            <button class="load-more" id="knowledgeLoadMore" type="button" hidden>加载更多</button>
+            <div class="sidebar-filter-footer"><button type="button" id="knowledgeClearFilters" class="secondary-action compact" disabled>清空筛选</button></div>
+          </div>
+          <div id="knowledgeActiveFilters" class="knowledge-active-filters" hidden aria-label="已启用筛选"></div>
+          <div class="sidebar-search-row">
+            <div class="sidebar-search-field">
+            <label for="knowledgeSearch" class="sidebar-search-label">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+              <input id="knowledgeSearch" type="search" placeholder="搜索全部知识" aria-label="搜索全部知识" autocomplete="off">
+            </label>
+            <button type="button" class="sidebar-search-clear" data-search-clear="knowledgeSearch" aria-label="清空搜索" hidden>×</button>
+          </div>
+            <button type="button" id="knowledgeFilterToggle" class="sidebar-filter-toggle" title="筛选知识" aria-label="筛选知识" aria-expanded="false" aria-controls="knowledgeFilterPanel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"></path></svg><span id="knowledgeFilterCount" hidden></span></button>
+            <button type="button" id="knowledgeOperationsToggle" class="sidebar-filter-toggle" title="新建笔记，展开更多操作" aria-label="新建笔记，展开更多操作" aria-expanded="false" aria-controls="knowledgeOperationsPanel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
           </div>
         </div>
       </section>
 
       <section class="sidebar-panel" id="memorySidebarPanel" data-sidebar-mode="memory" hidden>
-        <div class="knowledge-panel-heading"><span>长期记忆</span></div>
-        <div class="memory-filter" role="tablist" aria-label="记忆类型">
-          <button type="button" class="active" data-memory-layer="" aria-selected="true">全部</button>
-          <button type="button" data-memory-layer="L2" aria-selected="false">事实</button>
-          <button type="button" data-memory-layer="L3" aria-selected="false">流程</button>
-          <button type="button" data-memory-layer="system" aria-selected="false">系统</button>
-        </div>
-        <p class="document-count" id="memorySidebarCount"></p>
+          <div class="memory-filter" role="tablist" aria-label="记忆类型">
+            <button type="button" class="active" data-memory-layer="" aria-selected="true">全部</button>
+            <button type="button" data-memory-layer="L2" aria-selected="false">事实</button>
+            <button type="button" data-memory-layer="L3" aria-selected="false">流程</button>
+            <button type="button" data-memory-layer="system" aria-selected="false">系统</button>
+          </div>
         <div class="sidebar-scroll" id="memorySidebarList" aria-live="polite">
           <p class="empty-list">还没有长期记忆</p>
+        </div>
+        <div class="sidebar-search-dock">
+
+          <div class="sidebar-search-field">
+            <label for="memorySearch" class="sidebar-search-label">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+              <input id="memorySearch" type="search" placeholder="搜索记忆" aria-label="搜索记忆" autocomplete="off">
+            </label>
+            <button type="button" class="sidebar-search-clear" data-search-clear="memorySearch" aria-label="清空搜索" hidden>×</button>
+          </div>
         </div>
       </section>
 
       <section class="sidebar-panel" id="todoSidebarPanel" data-sidebar-mode="todos" hidden>
         <div class="knowledge-panel-heading">
-          <span>待办</span>
+          <span id="todoSidebarHeading">待办</span>
           <button class="icon-button tree-add todo-category-open todo-mode-only" id="btnTodoCategoryOpen" type="button" aria-haspopup="dialog" aria-controls="todoCategoryOverlay" title="新增待办分类" aria-label="新增待办分类">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5v14M5 12h14"></path>
@@ -157,13 +170,16 @@
         </div>
         <div class="sidebar-scroll">
           <div class="todo-filter-tabs todo-mode-only" id="todoFilterTabs" role="tablist" aria-label="待办筛选"></div>
+          <div id="countdownSidebarList" class="countdown-sidebar-list" aria-label="倒数日目录" hidden></div>
         </div>
+        <div class="sidebar-search-dock todo-reminder-dock" id="todoSearchDock">
+          <section id="todoReminderDialog" class="sidebar-filter-panel todo-reminder-panel" role="region" aria-labelledby="todoReminderHeading" hidden>
         <section class="todo-reminder-card" aria-labelledby="todoReminderHeading" title="所有分类中当天到期的未完成待办会按固定时间汇总发邮件">
           <div class="todo-reminder-header">
-            <h3 id="todoReminderHeading">邮件提醒</h3>
-            <span class="todo-reminder-chip" id="todoReminderMailState">未配置</span>
+            <h2 id="todoReminderHeading">邮件提醒</h2>
+            <span class="todo-reminder-chip" id="todoReminderMailState">未配置</span><button type="button" class="icon-button" id="todoReminderClose" aria-label="关闭邮件提醒">×</button>
           </div>
-          <p class="sr-only">所有分类中当天到期的未完成待办会按固定时间汇总发邮件</p>
+          <p class="todo-reminder-description">每天汇总所有分类中当天到期的未完成待办；倒数日不参与邮件提醒。</p>
           <label class="todo-reminder-toggle" for="todoReminderEnabled">
             <input type="checkbox" id="todoReminderEnabled">
             <span>启用每日提醒</span>
@@ -209,28 +225,22 @@
             <button class="secondary-action compact" id="btnTodoReminderSave" type="button">保存提醒</button>
           </div>
         </section>
+          </section>
+          <div class="sidebar-search-row">
+            <div class="sidebar-search-field">
+              <label for="todoSearchInput" class="sidebar-search-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 4 4"></path></svg><input type="search" id="todoSearchInput" placeholder="搜索待办" aria-label="搜索待办" autocomplete="off"></label>
+              <button type="button" class="sidebar-search-clear" id="todoSearchClear" aria-label="清空待办搜索" hidden>×</button>
+            </div>
+            <button type="button" id="todoReminderOpen" class="sidebar-filter-toggle" aria-label="邮件提醒设置，未配置" title="邮件提醒：未配置" aria-expanded="false" aria-controls="todoReminderDialog"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 6 9 7 9-7"></path></svg><span class="todo-reminder-enabled-dot" hidden></span></button>
+          </div>
+        </div>
       </section>
     </aside>
 
     <button class="sidebar-backdrop" id="sidebarBackdrop" type="button" aria-label="关闭侧栏" tabindex="-1"></button>
 
     <main class="workspace-main">
-      <header class="workspace-topbar">
-        <div class="topbar-leading">
-          <button class="icon-button sidebar-open" id="sidebarOpen" type="button" aria-label="打开侧栏" aria-controls="workspaceSidebar" aria-expanded="false">☰</button>
-          <button class="icon-button sidebar-toggle" id="sidebarToggle" type="button" aria-label="收起侧栏" aria-controls="workspaceSidebar" aria-expanded="true" title="收起侧栏" hidden>◧</button>
-          <div>
-            <div class="topbar-title" id="topbarTitle">Agent</div>
-            <div class="topbar-subtitle" id="topbarSubtitle">新会话</div>
-          </div>
-        </div>
-        <div class="topbar-actions">
-
-          <span class="run-status" id="runStatus" hidden><span class="status-dot"></span><span id="runStatusText">运行中</span></span>
-
-
-        </div>
-      </header>
+      <button class="icon-button sidebar-open" id="sidebarOpen" type="button" aria-label="打开侧栏" aria-controls="workspaceSidebar" aria-expanded="false" title="展开侧栏"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16m4-11 3 3-3 3"></path></svg></button>
 
       <section class="workspace-view agent-view" id="agentView" data-main-mode="agent">
         <div class="conversation" id="conversation">
@@ -264,15 +274,15 @@
             <label class="sr-only" for="agentInput">告诉 Agent 你的目标</label>
             <textarea id="agentInput" rows="1" maxlength="8000" placeholder="用 @ 引用知识库或日期，然后描述你想完成什么…"></textarea>
             <div class="composer-footer">
-              <div class="composer-meta">
+              <div class="composer-meta"><span class="run-status" id="runStatus" hidden role="status"><span class="status-dot"></span><span id="runStatusText">运行中</span></span>
                 <label class="composer-model-field">
                   <span class="sr-only">Agent 模型</span>
                   <select id="agentComposerModelSelect" class="composer-model-select" aria-label="切换 Agent 模型"></select>
                 </label>
-                <span class="composer-hint">Enter 发送 · @ 引用知识</span>
+                <span class="composer-hint">@ 引用知识</span>
               </div>
               <div class="composer-actions">
-                <button class="icon-button" id="agentAttachButton" type="button" aria-label="添加附件" title="添加附件">＋</button>
+                <button class="icon-button" id="agentAttachButton" type="button" aria-label="添加附件" title="添加附件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg></button>
                 <input id="agentAttachmentInput" type="file" accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.html,.htm,.xml,.toml,.js,.mjs,.cjs,.ts,.mts,.cts,.jsx,.tsx,.vue,.svelte,.py,.pyw,.java,.kt,.kts,.go,.rs,.c,.h,.cc,.cpp,.cxx,.hpp,.cs,.rb,.php,.swift,.m,.mm,.sh,.bash,.zsh,.fish,.ps1,.bat,.cmd,.sql,.graphql,.gql,.css,.scss,.less,.ini,.conf,.dockerfile,.makefile,.pdf,.docx" multiple hidden>
                 <button class="stop-button" id="stopRunButton" type="button" hidden>停止</button>
                 <button class="send-button" id="sendAgentButton" type="submit" aria-label="发送消息">↑</button>
@@ -283,12 +293,7 @@
       </section>
 
       <section class="workspace-view knowledge-view" id="knowledgeView" data-main-mode="knowledge" hidden>
-        <div class="knowledge-empty" id="knowledgeEmptyState">
-          <span class="empty-mark" aria-hidden="true">◇</span>
-          <h1 id="knowledgeEmptyTitle">选择一个知识库开始浏览</h1>
-          <p id="knowledgeEmptyText">从左侧选择一个知识库，查看文件夹和文档。</p>
-          <button class="primary-action compact" id="emptyNewNoteButton" type="button" hidden>新建笔记</button>
-        </div>
+        <div class="knowledge-empty" id="knowledgeEmptyState"></div>
 
         <article class="document-workspace" id="documentWorkspace" hidden>
           <header class="document-header">
@@ -297,10 +302,12 @@
                 <input class="document-title-input" id="documentTitle" maxlength="200" aria-label="文档标题">
                 <span class="save-state saved" id="documentSaveState">已保存</span>
               </div>
-              <button type="button" class="document-meta-chips" id="documentMetaChips" aria-expanded="false" aria-controls="documentMetaPanel" title="文档属性">
-                <span class="document-meta-chips-list" id="documentMetaSummary"></span>
-                <span class="document-meta-summary-caret" aria-hidden="true">⌄</span>
-              </button>
+            </div>
+            <div class="document-context-row">
+              <div class="document-inline-fields">
+                <label class="document-inline-date" for="documentDate"><span class="sr-only">日期</span><input id="documentDate" type="date" title="日期" aria-label="文档日期"></label>
+                <label class="document-inline-tags" for="documentTags"><span class="sr-only">标签</span><input id="documentTags" maxlength="300" placeholder="标签，用逗号分隔" aria-label="文档标签"></label>
+              </div>
               <div class="document-toolbar-actions">
                 <div class="editor-mode-switch" id="editorModeSwitch">
                   <button type="button" data-editor-mode="edit" class="active" title="编辑 (Ctrl+Shift+P 切换)">编辑</button>
@@ -321,10 +328,7 @@
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"></path></svg>
                 </button>
                 <input id="documentImageInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
-                <button class="icon-button" id="openDocumentFolderButton" type="button" title="在 Finder / 文件管理器中打开所在文件夹" aria-label="打开所在文件夹" hidden>
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path><path d="M3.7 10h16.6"></path></svg>
-                </button>
-                <button class="icon-button" id="assistantToggleButton" type="button" title="留序 LiuXu" aria-label="留序 LiuXu" aria-expanded="false" hidden>
+                <button class="icon-button" id="assistantToggleButton" type="button" title="文档助手" aria-label="打开文档助手" aria-expanded="false" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.3l-1.8-5.7L4.5 10.8 10.2 9z"></path>
                     <path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"></path>
@@ -333,16 +337,12 @@
                 <button class="icon-button" id="noteBrowserToggleButton" type="button" title="浏览器" aria-label="打开浏览器侧栏" aria-expanded="false" hidden>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 9h18"></path><circle cx="7" cy="6.5" r=".6"></circle><circle cx="10" cy="6.5" r=".6"></circle></svg>
                 </button>
-                <details class="document-more" id="documentMore"><summary aria-label="更多文档操作" title="更多文档操作"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></summary><div class="document-more-menu">
-                <button class="icon-button" id="archiveDocumentButton" type="button" title="归档文档" aria-label="归档文档">归档文档</button>
-                <button class="secondary-action compact" id="restoreDocumentButton" type="button" hidden>恢复</button>
-                <button class="icon-button danger" id="deleteDocumentButton" type="button" title="删除文档" aria-label="删除文档">删除文档</button>
-                </div></details>
+                <button class="icon-button" id="openDocumentFolderButton" type="button" title="在 Finder / 文件管理器中打开所在文件夹" aria-label="打开所在文件夹" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7a2 2 0 0 1 2-2h4.2l1.9 2.2h7.4a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13.5a2 2 0 0 1-2-2z"></path><path d="M3.7 10h16.6"></path></svg>
+                </button>
               </div>
             </div>
-            <details class="document-meta-panel" id="documentMetaPanel">
-              <summary class="sr-only">文档属性</summary>
-              <div class="document-meta-grid">
+            <div hidden aria-hidden="true">
                 <div class="document-field">
                   <span>知识库</span>
                   <div class="select-control" data-select-control data-select-id="documentKnowledgeBase">
@@ -367,19 +367,7 @@
                     <div class="select-control-menu" id="documentFolderPathMenu" role="listbox" hidden></div>
                   </div>
                 </div>
-                <label class="document-field" for="documentDate">
-                  <span>日期</span>
-                  <span class="document-date-field">
-                    <input id="documentDate" type="date" title="日期">
-                    <span class="document-date-icon" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="document-field" for="documentTags">
-                  <span>标签</span>
-                  <input id="documentTags" maxlength="300" placeholder="用逗号分隔">
-                </label>
-              </div>
-            </details>
+            </div>
           </header>
 
 
@@ -417,29 +405,36 @@
           </div>
           <div class="knowledge-link-issues" id="knowledgeLinkIssues" role="status" aria-live="polite" hidden></div>
 
-          <section class="knowledge-relations" id="knowledgeRelations" hidden>
+          <section class="knowledge-relations is-redesigned" id="knowledgeRelations" hidden>
+            <div class="knowledge-relations-tabs" role="group" aria-label="文档关系与历史">
+              <button type="button" data-knowledge-relations-tab="backlinks" aria-expanded="false" aria-controls="knowledgeBacklinksPanel">反向引用 <span id="knowledgeBacklinkCount" hidden></span></button>
+              <button type="button" data-knowledge-relations-tab="revisions" aria-expanded="false" aria-controls="knowledgeRevisionsPanel">版本历史 <span id="knowledgeRevisionCount" hidden></span></button>
+              <button type="button" class="icon-button" id="knowledgeRelationsClose" aria-label="收起关联内容" hidden>×</button>
+            </div>
             <details id="knowledgeRelationsDetails">
-              <summary>关联与历史 <span id="knowledgeRelationsSummary">默认折叠</span></summary>
-              <div class="knowledge-relations-tabs" role="tablist" aria-label="文档关系与历史">
-                <button type="button" class="active" data-knowledge-relations-tab="backlinks" role="tab" aria-selected="true">反向引用 <span id="knowledgeBacklinkCount">–</span></button>
-                <button type="button" data-knowledge-relations-tab="revisions" role="tab" aria-selected="false">版本历史 <span id="knowledgeRevisionCount">–</span></button>
-              </div>
-              <div class="knowledge-relations-panel" id="knowledgeBacklinksPanel" role="tabpanel">
-                <div class="knowledge-relations-list" id="knowledgeBacklinksList" aria-live="polite"><p class="empty-list">展开后加载引用此文档的内容。</p></div>
+              <summary hidden>文档关系与历史 <span id="knowledgeRelationsSummary"></span></summary>
+              <div class="knowledge-relations-panel" id="knowledgeBacklinksPanel" aria-label="反向引用">
+                <div class="knowledge-relations-list" id="knowledgeBacklinksList" aria-live="polite"></div>
                 <button class="load-more" id="knowledgeBacklinksLoadMore" type="button" hidden>加载更多引用</button>
               </div>
-              <div class="knowledge-relations-panel" id="knowledgeRevisionsPanel" role="tabpanel" hidden>
-                <div class="knowledge-revision-create">
-                  <input id="knowledgeRevisionName" maxlength="100" placeholder="给当前版本命名">
-                  <button type="button" class="secondary-action compact" id="saveKnowledgeRevision">保存命名版本</button>
+              <div class="knowledge-relations-panel" id="knowledgeRevisionsPanel" aria-label="版本历史" hidden>
+                <div class="knowledge-history-tools">
+                  <button type="button" class="secondary-action compact" id="knowledgeRevisionCreateToggle" aria-expanded="false" aria-controls="knowledgeRevisionCreate">保存命名版本</button>
+                  <details class="knowledge-history-help"><summary>保留规则</summary><p class="knowledge-revision-retention">普通编辑按 5 分钟窗口留存，不代表逐次保存记录；自动历史保留 30 天且最多 50 条，命名版本长期保留。</p></details>
                 </div>
-                <p class="knowledge-revision-retention">普通编辑按 5 分钟窗口留存，不代表逐次保存记录；自动历史保留 30 天且最多 50 条，命名版本长期保留。</p>
-                <div class="knowledge-relations-list" id="knowledgeRevisionsList" aria-live="polite"><p class="empty-list">展开后加载版本历史。</p></div>
-                <div class="knowledge-revision-detail" id="knowledgeRevisionDetail" hidden></div>
+                <div class="knowledge-revision-create" id="knowledgeRevisionCreate" hidden>
+                  <label class="sr-only" for="knowledgeRevisionName">版本名称</label><input id="knowledgeRevisionName" maxlength="100" placeholder="给当前版本命名">
+                  <button type="button" class="secondary-action compact" id="saveKnowledgeRevision">保存</button>
+                </div>
+                <div class="knowledge-relations-list" id="knowledgeRevisionsList" aria-live="polite"></div>
                 <button class="load-more" id="knowledgeRevisionsLoadMore" type="button" hidden>加载更多版本</button>
               </div>
             </details>
           </section>
+          <dialog class="knowledge-revision-dialog" id="knowledgeRevisionDialog" aria-labelledby="knowledgeRevisionDialogTitle">
+            <div class="knowledge-revision-dialog-title"><h2 id="knowledgeRevisionDialogTitle">版本对比</h2><button type="button" class="icon-button" data-close-revision aria-label="关闭版本对比">×</button></div>
+            <div class="knowledge-revision-detail" id="knowledgeRevisionDetail" hidden></div>
+          </dialog>
 
           <section class="file-original-panel" id="fileOriginalPanel" hidden>
             <div class="file-original-head">
@@ -491,20 +486,18 @@
             <button class="active" id="todoModeTodos" type="button" role="tab" data-todo-page="todos" aria-selected="true" aria-controls="todoFullPanel">待办</button>
             <button id="todoModeCountdowns" type="button" role="tab" data-todo-page="countdowns" aria-selected="false" aria-controls="countdownPanel">倒数日</button>
           </div>
-          <p class="todo-page-stats" aria-label="待办统计">
+          <p class="todo-page-stats" aria-label="全部待办统计"><span class="todo-stats-scope">全部</span>
             <span class="todo-stat"><strong id="todoStatPending">0</strong> <span id="todoStatLabelPending">待办</span></span>
             <span class="todo-stat"><strong id="todoStatToday">0</strong> <span id="todoStatLabelToday">今日</span></span>
             <span class="todo-stat" id="todoStatAlert"><strong id="todoStatOverdue">0</strong> <span id="todoStatLabelOverdue">逾期</span></span>
             <span class="todo-stat"><strong id="todoStatDone">0</strong> <span id="todoStatLabelDone">已完成</span></span>
           </p>
-          <button class="primary-action compact" id="btnTodoNew" type="button">新建</button>
+          <button class="primary-action compact" id="btnTodoNew" type="button">新建任务</button>
         </div>
         <div class="todo-page-layout">
           <div class="todo-list-column">
-            <label class="search-field todo-search-box" for="todoSearchInput">
-              <span aria-hidden="true">⌕</span>
-              <input type="search" id="todoSearchInput" placeholder="搜索标题或备注..." autocomplete="off">
-            </label>
+
+            <div class="todo-list-heading"><h2 id="todoListHeading">待办</h2><span id="todoListCount" aria-live="polite"></span><button id="todoClearCompleted" class="btn-todo-clear todo-section-clear" type="button" hidden>清除已完成</button></div>
             <section class="todo-full-panel" id="todoFullPanel" aria-label="待办列表">
               <div class="todo-full-list" id="todoFullList" role="tabpanel"></div>
             </section>
@@ -512,10 +505,9 @@
               <div class="countdown-grid" id="countdownGrid"></div>
             </section>
           </div>
-          <aside class="todo-full-form" id="todoFullForm" aria-label="编辑待办">
-            <div class="todo-detail-empty" id="todoFormEmpty">
-              <p>选择一项，或点新建</p>
-            </div>
+          <aside class="todo-full-form" id="todoFullForm" aria-label="编辑待办" aria-labelledby="todoFullFormTitle" hidden>
+            <header class="todo-detail-header"><h2 id="todoFullFormTitle">新建任务</h2><button type="button" class="icon-button" id="btnTodoDetailClose" aria-label="关闭任务详情">×</button></header>
+
             <div class="todo-detail-body" id="todoFormBody" hidden>
               <input type="hidden" id="todoEditId">
               <label class="todo-field" for="todoFullTitle">
@@ -579,20 +571,20 @@
                 <span>备注</span>
                 <textarea id="todoFullNotes" placeholder="备注..." maxlength="1000"></textarea>
               </label>
+
+            </div>
               <div class="todo-form-actions">
                 <button class="secondary-action compact" id="btnTodoFormCancel" type="button">取消</button>
                 <button class="primary-action compact" id="btnTodoFullSave" type="button">保存任务</button>
               </div>
-            </div>
+            <p class="todo-form-error" id="todoFullFormError" role="alert"></p>
           </aside>
-          <aside class="countdown-form" id="countdownForm" aria-label="编辑倒数日" hidden>
-            <div class="todo-detail-empty" id="countdownFormEmpty">
-              <p>选择一项，或点新建</p>
-            </div>
+          <aside class="countdown-form" id="countdownForm" aria-label="编辑倒数日" aria-labelledby="countdownFormTitle" hidden>
+            <header class="todo-detail-header"><h2 id="countdownFormTitle">新建倒数日</h2><button type="button" class="icon-button" id="btnCountdownDetailClose" aria-label="关闭倒数日详情">×</button></header>
+
             <div class="todo-detail-body" id="countdownFormBody" hidden>
               <input type="hidden" id="countdownEditId">
               <div class="countdown-form-heading">
-                <span>倒数日</span>
                 <small id="countdownFormHint">记录值得期待的日子</small>
               </div>
               <label class="todo-field" for="countdownTitle">
@@ -611,11 +603,13 @@
                 <span>备注</span>
                 <textarea id="countdownNotes" placeholder="备注..." maxlength="1000"></textarea>
               </label>
+
+            </div>
               <div class="todo-form-actions">
                 <button class="secondary-action compact" id="btnCountdownCancel" type="button">取消</button>
                 <button class="primary-action compact" id="btnCountdownSave" type="button">保存倒数日</button>
               </div>
-            </div>
+            <p class="todo-form-error" id="countdownFormError" role="alert"></p>
           </aside>
         </div>
       </section>
@@ -630,21 +624,22 @@
             <button class="primary-action compact" id="refreshAgentMemory" type="button">根据近期对话更新</button>
           </header>
           <p class="settings-copy" id="agentMemoryStatus" hidden></p>
-          <div id="agentMemoryProposals" class="memory-list"></div>
-          <div id="agentMemoryItems" class="memory-list"></div>
+          <div id="memoryLoadError" class="memory-load-error" role="alert" hidden><span id="memoryLoadErrorText"></span><button type="button" class="secondary-action compact" data-memory-retry>重新加载</button></div>
+          <div id="agentMemoryItems" class="memory-list memory-detail"></div>
+          <section id="memoryProposalsSection" class="memory-proposals-section" hidden aria-labelledby="memoryProposalsTitle"><header><h2 id="memoryProposalsTitle">待确认提案</h2><span id="memoryProposalsCount"></span></header><div id="agentMemoryProposals" class="memory-list"></div></section>
         </div>
       </section>
     </main>
   </div>
 
-  <aside class="note-assistant-panel" id="noteAssistantPanel" hidden role="dialog" aria-modal="false" aria-labelledby="noteAssistantTitle" aria-label="留序 LiuXu">
+  <aside class="note-assistant-panel" id="noteAssistantPanel" hidden role="dialog" aria-modal="false" aria-labelledby="noteAssistantTitle">
     <div class="note-assistant-head" data-note-assistant-drag>
-      <div class="note-assistant-heading"><strong id="noteAssistantTitle">留序 LiuXu</strong><button type="button" id="noteAssistantDocument" class="note-assistant-document" data-note-assistant-action="document" title="返回关联文档"></button></div>
+      <div class="note-assistant-heading"><strong id="noteAssistantTitle">文档助手</strong><button type="button" id="noteAssistantDocument" class="note-assistant-document" data-note-assistant-action="document" title="返回关联文档"></button></div>
       <span class="note-assistant-head-spacer"></span>
-      <button type="button" class="secondary-action compact" data-note-assistant-layout title="切换为浮动窗口">浮动</button>
-      <button type="button" class="secondary-action compact" data-note-assistant-action="sessions" aria-expanded="false">历史</button>
-      <button type="button" class="secondary-action compact" data-note-assistant-action="new">新对话</button>
-      <button type="button" class="icon-button" data-note-assistant-action="close" aria-label="关闭留序 LiuXu" title="关闭">✕</button>
+      <button type="button" class="note-assistant-toolbar-button" data-note-assistant-layout title="切换为浮动窗口" aria-label="切换为浮动窗口"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/></svg></button>
+      <button type="button" class="note-assistant-toolbar-button" data-note-assistant-action="sessions" title="历史会话" aria-label="历史会话" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2"/></svg></button>
+      <button type="button" class="note-assistant-toolbar-button" data-note-assistant-action="new" title="新对话" aria-label="新对话"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button type="button" class="note-assistant-toolbar-button" data-note-assistant-action="close" title="关闭文档助手" aria-label="关闭文档助手"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
     </div>
     <div class="note-assistant-session-list" id="noteAssistantSessionList" hidden></div>
     <div class="note-assistant-batch" id="noteAssistantBatch" hidden>
@@ -658,16 +653,18 @@
     <div class="note-assistant-status" id="noteAssistantStatus" hidden></div>
     <div class="note-assistant-composer">
       <div id="noteAssistantApprovalDock" class="agent-approval-dock" hidden></div>
-      <textarea id="noteAssistantInput" rows="1" maxlength="8000" placeholder="询问本篇内容，或让留序 LiuXu 修改…" aria-label="向留序 LiuXu 提问"></textarea>
+      <div class="note-assistant-attachments" id="noteAssistantAttachments" hidden></div>
+      <textarea id="noteAssistantInput" rows="1" maxlength="8000" placeholder="询问本篇内容，或让文档助手修改…" aria-label="向文档助手提问"></textarea>
       <div class="composer-footer">
         <div class="composer-meta">
           <label class="composer-model-field">
-            <span class="sr-only">留序 LiuXu 模型</span>
-            <select id="noteAssistantModelSelect" class="composer-model-select" aria-label="切换留序 LiuXu 模型"></select>
+            <span class="sr-only">文档助手模型</span>
+            <select id="noteAssistantModelSelect" class="composer-model-select" aria-label="切换文档助手模型"></select>
           </label>
-          <span class="composer-hint">Enter 发送</span>
         </div>
         <div class="composer-actions">
+          <button type="button" class="note-assistant-attach" id="noteAssistantAttach" aria-label="添加附件" title="添加附件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20.5 11.5-8.8 8.8a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"></path></svg></button>
+          <input id="noteAssistantAttachmentInput" type="file" accept="image/*,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.html,.htm,.xml,.toml,.js,.mjs,.cjs,.ts,.mts,.cts,.jsx,.tsx,.vue,.svelte,.py,.pyw,.java,.kt,.kts,.go,.rs,.c,.h,.cc,.cpp,.cxx,.hpp,.cs,.rb,.php,.swift,.m,.mm,.sh,.bash,.zsh,.fish,.ps1,.bat,.cmd,.sql,.graphql,.gql,.css,.scss,.less,.ini,.conf,.dockerfile,.makefile,.pdf,.docx" multiple hidden>
           <button type="button" class="stop-button" id="noteAssistantStop" data-note-assistant-action="stop" hidden>停止</button>
           <button type="button" class="send-button" id="noteAssistantSend" data-note-assistant-action="send" aria-label="发送消息">↑</button>
         </div>
@@ -679,7 +676,7 @@
 
   <dialog class="workspace-dialog settings-dialog" id="settingsDialog">
     <form class="dialog-card settings-card" id="settingsForm">
-      <header><div><span class="dialog-eyebrow">WORKSPACE</span><h2>设置</h2></div><button class="icon-button" id="closeSettingsDialog" type="button" aria-label="关闭">×</button></header>
+      <header><div><h2>设置</h2></div><button class="icon-button" id="closeSettingsDialog" type="button" aria-label="关闭">×</button></header>
       <div class="settings-shell">
         <nav class="settings-nav" id="settingsNav" aria-label="设置分类">
           <div class="settings-group-switcher" role="group" aria-label="设置分组">
@@ -716,7 +713,7 @@
           <section class="settings-section" data-settings-panel="appearance">
             <h3>外观</h3>
             <p class="settings-copy">调整留序的显示主题。</p>
-            <label class="settings-row" for="themeSelect"><span><strong>主题</strong><small>跟随系统或固定显示</small></span><select id="themeSelect"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+            <label class="settings-row" for="themeSelect"><span><strong>主题</strong><small>跟随系统或固定显示，立即生效</small></span><select id="themeSelect"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
           </section>
           <section class="settings-section" data-settings-panel="sessions" hidden>
             <h3>会话</h3>
@@ -1014,10 +1011,12 @@
           <section class="settings-section" data-settings-panel="data" hidden>
             <h3>数据与备份</h3>
             <p class="settings-copy">JSON 备份仅含结构数据（分类、待办、倒计时等，不含知识附件）；ZIP 工作区包含笔记、附件与 Agent 数据。</p>
+            <h4 class="settings-subhead">导出备份</h4>
             <div class="settings-actions">
               <button type="button" class="secondary-action compact" id="exportJsonBackupButton">导出 JSON</button>
               <button type="button" class="secondary-action compact" id="exportZipBackupButton">导出 ZIP</button>
             </div>
+            <h4 class="settings-subhead">恢复数据</h4>
             <label class="settings-row" for="restoreModeSelect"><span><strong>恢复模式</strong><small>合并保留现有数据，替换会覆盖</small></span>
               <select id="restoreModeSelect">
                 <option value="replace">替换</option>
@@ -1034,6 +1033,7 @@
         </div>
       </div>
       <div class="dialog-actions">
+        <span class="settings-save-copy">配置修改后需保存<span id="settingsSaveStatus" role="status" aria-live="polite"></span></span>
         <button class="primary-action compact" id="saveAgentSettings" type="submit">保存设置</button>
       </div>
     </form>
@@ -1071,6 +1071,8 @@
       </div>
     </form>
   </dialog>
+
+
 
   <dialog class="workspace-dialog" id="todoCategoryOverlay" aria-labelledby="todoCategoryModalTitle">
     <form class="dialog-card compact-dialog" id="todoCategoryAddForm" autocomplete="off">

@@ -89,7 +89,7 @@ export class FixedLayout extends HTMLElement {
         iframe.setAttribute('part', 'filter')
         this.#root.append(element)
         if (!src) return { blank: true, element, iframe }
-        return new Promise(resolve => {
+        return new Promise((resolve, reject) => {
             iframe.addEventListener('load', () => {
                 const doc = iframe.contentDocument
                 this.dispatchEvent(new CustomEvent('load', { detail: { doc, index } }))
@@ -101,7 +101,7 @@ export class FixedLayout extends HTMLElement {
                     onZoom,
                 })
             }, { once: true })
-            iframe.src = src
+            fetch(src).then(response => response.text()).then(html => { iframe.srcdoc = html }).catch(reject)
         })
     }
     #render(side = this.#side) {

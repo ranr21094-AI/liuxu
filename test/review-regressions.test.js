@@ -152,7 +152,7 @@ test('autosave drains edits made during delayed request and keeps failed input',
 for (const status of [400, 404, 500]) test(`todo failed HTTP ${status} preserves form and reports error`, async () => {
   const src = fs.readFileSync(path.join(__dirname, '../public/js/todos.js'), 'utf8');
   let reset = false; const toasts = [];
-  const context = { $: () => ({ value: 'unsaved task' }), DEFAULT_TODO_CATEGORY: '默认', rawApiFetch: async () => ({ ok: false, status, json: async () => ({ error: 'write failed' }) }), showToast: (message, type) => toasts.push({ message, type }), resetTodoForm: () => { reset = true; }, loadTodos: async () => {} };
+  const context = { detailController: null, $: () => ({ value: 'unsaved task' }), DEFAULT_TODO_CATEGORY: '默认', rawApiFetch: async () => ({ ok: false, status, json: async () => ({ error: 'write failed' }) }), showToast: (message, type) => toasts.push({ message, type }), resetTodoForm: () => { reset = true; }, loadTodos: async () => {} };
   vm.createContext(context);
   vm.runInContext(src.slice(src.indexOf('async function apiFetch'), src.indexOf('\n}', src.indexOf('async function apiFetch')) + 2) + src.slice(src.indexOf('async function saveTodoFromFullForm'), src.indexOf('function openTodoCategoryModal')), context);
   await vm.runInContext('saveTodoFromFullForm()', context);
