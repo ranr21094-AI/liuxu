@@ -291,13 +291,18 @@ body.remote-client .workspace-shell { height: calc(100% - 36px); }
 .file-reader-tabs button.active { border-bottom-color: var(--accent); color: var(--text); font-weight: 650; }
 .file-reader-pane { min-height: 0; flex: 1 1 0; overflow: hidden; }
 #filePreviewPane { display: flex; flex-direction: column; }
-.file-annotation-pane { display: flex; flex-direction: column; gap: 8px; overflow: auto; }
-.file-annotation-pane textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 9px 11px; color: var(--text); }
-.file-annotation-pane textarea { min-height: 180px; flex: 1; resize: vertical; line-height: 1.65; }
-.file-annotation-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; color: var(--muted); font-size: 11px; }
+.file-annotation-pane { display: grid; grid-template-rows: minmax(0, 1fr) auto; justify-items: center; gap: 10px; overflow: hidden; padding: 10px 12px 0; }
+.file-annotation-workspace { display: flex; width: min(100%, 820px); min-width: 0; min-height: 0; flex-direction: column; gap: 8px; }
+.file-annotation-mode-switch { align-self: flex-start; flex: 0 0 auto; }
+.file-annotation-editor { display: flex; min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden; }
+.file-annotation-editor textarea { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; flex: 1 1 0; resize: none; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 16px 18px; color: var(--text); font-size: 14px; line-height: 1.75; }
+.file-annotation-pane textarea:focus { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 75%, transparent); }
+.file-annotation-editor.is-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.file-annotation-editor .file-annotation-preview { width: 100%; height: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow: auto; margin: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 16px 18px; }
+.file-annotation-actions { display: flex; width: min(100%, 820px); min-height: 34px; align-items: center; justify-content: flex-end; gap: 10px; color: var(--muted); font-size: 11px; }
 .file-annotation-actions span { margin-right: auto; }
-.file-text-pane { display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
-.file-text-search { flex: 0 0 auto; }
+.file-text-pane { display: flex; flex-direction: column; gap: 8px; overflow: hidden; padding-top: 10px; }
+.file-text-pane > .file-text-search { width: 100%; height: 40px; min-height: 40px; flex: 0 0 40px; }
 .file-text-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .file-text-pane > pre { min-height: 0; flex: 1; overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 12px; }
 .knowledge-breadcrumb-current { padding: 2px 4px; color: var(--text); font-weight: 650; }

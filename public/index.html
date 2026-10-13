@@ -448,7 +448,17 @@
             </section>
             <section class="file-reader-pane file-annotation-pane" id="fileAnnotationPane" role="tabpanel" hidden>
               <input type="hidden" id="fileAnnotationTitle" value="">
-              <textarea id="fileAnnotationContent" maxlength="200000" placeholder="记录与这个文件相关的笔记"></textarea>
+              <div class="file-annotation-workspace">
+                <div class="editor-mode-switch file-annotation-mode-switch" id="fileAnnotationModeSwitch" role="group" aria-label="批注 Markdown 模式">
+                  <button type="button" class="active" data-file-annotation-mode="edit" aria-pressed="true" aria-controls="fileAnnotationEditor">编辑</button>
+                  <button type="button" data-file-annotation-mode="split" aria-pressed="false" aria-controls="fileAnnotationEditor">分屏</button>
+                  <button type="button" data-file-annotation-mode="preview" aria-pressed="false" aria-controls="fileAnnotationEditor">预览</button>
+                </div>
+                <div class="file-annotation-editor" id="fileAnnotationEditor">
+                  <textarea id="fileAnnotationContent" maxlength="200000" placeholder="记录与这个文件相关的笔记" aria-label="Markdown 批注"></textarea>
+                  <div class="markdown-preview prose file-annotation-preview" id="fileAnnotationPreview" tabindex="0" aria-label="批注 Markdown 预览" hidden></div>
+                </div>
+              </div>
               <div class="file-annotation-actions"><span id="fileAnnotationState" role="status"></span><button type="button" class="primary-action compact" id="saveFileAnnotation">保存批注</button></div>
             </section>
             <section class="file-reader-pane file-text-pane" id="fileTextPane" role="tabpanel" hidden>

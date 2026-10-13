@@ -677,7 +677,13 @@ export function shouldCollapseExtractText(doc) {
 }
 
 export function setFileReaderTab(tab) {
-  fileReaderTab = ['preview', 'annotation', 'text', 'edit'].includes(tab) ? tab : 'preview';
+  const tabs = [...window.document.querySelectorAll('[data-file-reader-tab]')];
+  const requested = ['preview', 'annotation', 'text', 'edit'].includes(tab) ? tab : 'preview';
+  fileReaderTab = tabs.some(button => button.dataset.fileReaderTab === requested && !button.hidden)
+    ? requested
+    : tabs.find(button => button.dataset.fileReaderTab === 'preview' && !button.hidden)?.dataset.fileReaderTab
+      || tabs.find(button => !button.hidden)?.dataset.fileReaderTab
+      || 'preview';
   const panes = { preview: '#filePreviewPane', annotation: '#fileAnnotationPane', text: '#fileTextPane', edit: '#fileTextEditPane' };
   for (const [key, selector] of Object.entries(panes)) {
     const pane = window.document.querySelector(selector);

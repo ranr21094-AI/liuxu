@@ -560,7 +560,8 @@ input.date-picker-native { position: absolute !important; width: 1px !important;
 #knowledgeBreadcrumb .knowledge-directory-button svg { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
 #knowledgeBreadcrumb .knowledge-breadcrumb-current { color: var(--text); font-weight: 600; }
 #knowledgeBreadcrumb .knowledge-directory-button[aria-expanded="true"] { background: var(--surface-active); }
-#knowledgeBreadcrumb .knowledge-root-link { font-size: 17px; height: 32px; padding: 3px 4px; }
+#knowledgeBreadcrumb .knowledge-root-link { display: inline-grid; width: 30px; height: 32px; flex: 0 0 30px; place-items: center; padding: 3px 4px; }
+#knowledgeBreadcrumb .knowledge-root-link svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 #knowledgeBreadcrumb button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .knowledge-navigation-menu { width: max-content; min-width: min(180px, calc(100vw - 24px)); max-width: min(260px, calc(100vw - 24px)); padding: 5px; }
 .knowledge-navigation-menu button { display: flex; align-items: center; gap: 12px; min-height: 36px; }
@@ -927,6 +928,9 @@ textarea:focus, select:focus {
 .markdown-toc-list li:is(.markdown-toc-level-3,.markdown-toc-level-4,.markdown-toc-level-5,.markdown-toc-level-6) a { font-size: 12px; font-weight: 400; color: var(--muted); }
 .markdown-toc-list a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @container (max-width: 760px) { .document-toolbar-actions > #markdownTocToggle:not([hidden]) { display: grid; } }
+@container (max-width: 640px) {
+  .file-annotation-editor.is-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+}
 @media (max-width: 600px) { .document-inline-fields { flex-basis: 100%; } .document-inline-tags { flex: 1; } }
 .knowledge-move-dialog { width: min(420px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); }
 .knowledge-move-dialog::backdrop { background: rgb(0 0 0 / .25); }

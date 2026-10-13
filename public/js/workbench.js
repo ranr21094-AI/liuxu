@@ -107,6 +107,7 @@ const state = {
   annotationDirty: false,
   fileAnnotation: { documentId: '', id: '', version: 0, title: '', content: '', dirty: false },
   fileAnnotationDrafts: new Map(),
+  fileAnnotationMode: 'edit',
   documentConflict: false,
   editorMode: 'edit',
   routeSerial: 0,
@@ -506,6 +507,7 @@ function renderDocumentPreview() {
 
 window.addEventListener('liuxu:markdown-ready', () => {
   if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
+  if (state.activeDocument?.sourceType === 'file' && state.fileAnnotationMode !== 'edit' && !$('#fileAnnotationPane')?.hidden) renderFileAnnotationPreview();
   if (state.mode === 'agent' && state.activeSession) renderSessionMessages(state.activeSession, { force: true });
 });
 
@@ -4794,7 +4796,7 @@ function renderKnowledgeBreadcrumb(base) {
   const segments = String(state.selectedFolderPath || '').split('/').filter(Boolean);
   const arrow = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>';
   const item = (name, target, current, folder = '') => `<button type="button" class="knowledge-breadcrumb-link knowledge-directory-button${current ? ' knowledge-breadcrumb-current' : ''}" data-directory-menu="${escHtml(target)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(folder)}" title="${escHtml([base.name, folder].filter(Boolean).join(' / '))}" aria-label="切换同层目录：${escHtml(name)}" aria-haspopup="true" aria-expanded="false"><span>${escHtml(name)}</span>${arrow}</button>`;
-  let crumbs = `<button type="button" class="knowledge-breadcrumb-link knowledge-root-link" data-breadcrumb="root" title="返回知识库主目录" aria-label="返回知识库主目录">～</button><span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(base.name, 'base', !segments.length)}`;
+  let crumbs = `<button type="button" class="knowledge-breadcrumb-link knowledge-root-link" data-breadcrumb="parent" title="返回上一级目录" aria-label="返回上一级目录"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10h11M7 10l8-7M7 10l8 7"></path></svg></button><span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(base.name, 'base', !segments.length)}`;
   let prefix = '';
   segments.forEach((segment, index) => {
     prefix = prefix ? `${prefix}/${segment}` : segment;
@@ -5468,7 +5470,7 @@ async function renderActiveDocument(document) {
 
 function renderFileOriginalPanel(document) {
   const meta = document.fileMeta || {};
-  window.document.querySelector('[data-file-reader-tab=annotation]').hidden = /\.cbz$/i.test(meta.filename || '') || document.status === 'needs_ocr';
+  window.document.querySelector('[data-file-reader-tab=annotation]').hidden = document.status === 'needs_ocr';
   $('#fileName').textContent = meta.filename || document.title || '文件';
   const metaParts = [formatBytes(meta.bytes)];
   if (document.status === 'needs_ocr') metaParts.push('扫描型 PDF');
@@ -5488,8 +5490,39 @@ function renderFileOriginalPanel(document) {
   $('#fileAnnotationTitle').value = '';
   $('#fileAnnotationContent').value = '';
   state.fileAnnotation = { documentId: document.id, id: '', version: 0, title: '', content: '', dirty: false };
+  setFileAnnotationMode('edit');
   setFileReaderTab('preview');
   void renderFilePreview(document, $('#filePreviewHost'));
+}
+
+function renderFileAnnotationPreview() {
+  const host = $('#fileAnnotationPreview');
+  if (!host) return;
+  const scrollTop = host.scrollTop;
+  host.innerHTML = renderMarkdown($('#fileAnnotationContent')?.value || '*暂无批注*');
+  host.scrollTop = scrollTop;
+}
+
+const refreshFileAnnotationPreview = debounce(renderFileAnnotationPreview, 180);
+
+function setFileAnnotationMode(mode) {
+  const next = mode === 'preview' ? 'preview' : mode === 'split' ? 'split' : 'edit';
+  state.fileAnnotationMode = next;
+  document.querySelectorAll('[data-file-annotation-mode]').forEach(button => {
+    const active = button.dataset.fileAnnotationMode === next;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const editor = $('#fileAnnotationEditor');
+  const textarea = $('#fileAnnotationContent');
+  const preview = $('#fileAnnotationPreview');
+  editor?.classList.toggle('is-split', next === 'split');
+  if (textarea) textarea.hidden = next === 'preview';
+  if (preview) preview.hidden = next === 'edit';
+  if (next !== 'edit') {
+    preloadMarkdownLibraries();
+    renderFileAnnotationPreview();
+  }
 }
 
 async function loadTextFileEditor(document, attempt = 0) {
@@ -5546,6 +5579,7 @@ async function loadFileAnnotation(documentId) {
   $('#fileAnnotationTitle').value = state.fileAnnotation.title;
   $('#fileAnnotationContent').value = state.fileAnnotation.content;
   $('#fileAnnotationState').textContent = state.fileAnnotation.dirty ? '有未保存修改' : (annotation ? '已保存' : '尚无批注');
+  if (state.fileAnnotationMode !== 'edit') renderFileAnnotationPreview();
 }
 
 async function saveFileAnnotation() {
@@ -6483,8 +6517,16 @@ function bindEvents() {
     if (Date.now() < suppressKnowledgeClickUntil) return;
     const link = event.target.closest('[data-breadcrumb]');
     if (!link) return;
-    if (link.dataset.breadcrumb === 'root') {
-      navigate('knowledge');
+    if (link.dataset.breadcrumb === 'parent') {
+      const segments = String(state.selectedFolderPath || '').split('/').filter(Boolean);
+      if (!segments.length) {
+        navigate('knowledge');
+        return;
+      }
+      navigate('knowledge', '', {
+        knowledgeBase: state.selectedKnowledgeBase,
+        folderPath: segments.slice(0, -1).join('/'),
+      });
       return;
     }
     if (link.dataset.breadcrumb === 'base') {
@@ -6581,6 +6623,10 @@ function bindEvents() {
       loadFileAnnotation(state.activeDocument.id).catch(error => showToast(error.message, 'error'));
     }
   });
+  $('#fileAnnotationModeSwitch')?.addEventListener('click', event => {
+    const button = event.target.closest('[data-file-annotation-mode]');
+    if (button) setFileAnnotationMode(button.dataset.fileAnnotationMode);
+  });
   for (const selector of ['#fileAnnotationContent']) {
     $(selector)?.addEventListener('input', () => {
       const documentId = state.activeDocument?.id;
@@ -6594,6 +6640,7 @@ function bindEvents() {
       };
       state.fileAnnotationDrafts.set(documentId, state.fileAnnotation);
       $('#fileAnnotationState').textContent = '有未保存修改';
+      if (state.fileAnnotationMode !== 'edit') refreshFileAnnotationPreview();
     });
   }
   $('#fileTextEditor')?.addEventListener('input', event => {

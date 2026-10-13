@@ -58,3 +58,31 @@ test('raw text editor and file history do not replace annotation controls', () =
   assert.notEqual(dom.window.document.querySelector('#fileTextEditor'), dom.window.document.querySelector('#fileAnnotationContent'));
   dom.window.close();
 });
+
+test('reader tab selection falls back from a hidden mode to a visible tab', async () => {
+  const previous = { window: global.window, document: global.document };
+  const dom = new JSDOM(`
+    <div id="fileReaderTabs">
+      <button data-file-reader-tab="preview">预览</button>
+      <button data-file-reader-tab="annotation" hidden>批注</button>
+      <button data-file-reader-tab="text">提取文本</button>
+    </div>
+    <section id="filePreviewPane"></section>
+    <section id="fileAnnotationPane"></section>
+    <section id="fileTextPane"></section>
+  `);
+  global.window = dom.window;
+  global.document = dom.window.document;
+  try {
+    const { setFileReaderTab } = await load('filePreview.js');
+    setFileReaderTab('annotation');
+    assert.equal(document.querySelector('#filePreviewPane').hidden, false);
+    assert.equal(document.querySelector('#fileAnnotationPane').hidden, true);
+    assert.equal(document.querySelector('[data-file-reader-tab="preview"]').getAttribute('aria-selected'), 'true');
+    assert.equal(document.querySelector('[data-file-reader-tab="annotation"]').getAttribute('aria-selected'), 'false');
+  } finally {
+    global.window = previous.window;
+    global.document = previous.document;
+    dom.window.close();
+  }
+});

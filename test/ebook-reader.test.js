@@ -45,6 +45,9 @@ test('reading data preserves handwritten notes, rejects conflicts and survives p
 test('comic highlights are rejected', t => {
   const { db } = createTempDatabase(t, 'ebook-access-'); const service = createKnowledgeService(db, { startFolderSync:false });
   const file = service.saveImportedFile({ buffer:Buffer.from('comic'), filename:'book.cbz', title:'Book', text:'' }).document;
+  const annotation = service.upsertAnnotation(file.id, { content:'漫画整体批注' });
+  assert.equal(annotation.document.parentDocumentId, file.id);
+  assert.equal(service.getAnnotation(file.id).content, '漫画整体批注');
   const state = service.getReadingData(file.id);
   assert.equal(service.updateReadingData(file.id, { ...state, baseRevision:0, entries:[{ id:'one', type:'highlight', anchor:'page:1', fingerprint:state.fingerprint, quote:'x' }] }).status,400);
 });
