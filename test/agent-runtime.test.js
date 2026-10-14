@@ -775,6 +775,38 @@ test('session API returns a trace for each conversation round', async (t) => {
   assert.equal(data.latestRun.id, data.runs[1].id);
 });
 
+test('session detail returns the newest message window and supports older-page cursors', async t => {
+  const db = tempDb(t);
+  const store = createAgentStore(db);
+  const session = store.createSession('long-session');
+  store.saveSession({
+    ...session,
+    messages: Array.from({ length: 520 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      content: `message-${index}`,
+    })),
+  });
+  const app = express();
+  registerAgentRoutes(app, { db });
+  const server = await new Promise(resolve => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}/api/agent/sessions/${encodeURIComponent(session.id)}`;
+  const latestResponse = await fetch(`${base}?limit=200`);
+  const latest = await latestResponse.json();
+  assert.equal(latest.messages.length, 200);
+  assert.equal(latest.messages.at(-1).content, 'message-519');
+  assert.equal(latest.messagePage.hasMore, true);
+  const olderResponse = await fetch(`${base}?limit=200&before=${encodeURIComponent(latest.messagePage.nextCursor)}`);
+  const older = await olderResponse.json();
+  assert.equal(older.messages.length, 200);
+  assert.equal(older.messages.at(-1).content, 'message-319');
+  assert.equal(older.messagePage.beforeOffset, 120);
+  assert.equal(older.messagePage.hasMore, true);
+  assert.equal((await fetch(base).then(response => response.json())).messages.length, 520);
+});
+
 test('archived sessions can be listed and deleted over HTTP, but active sessions cannot', async (t) => {
   const db = tempDb(t);
   const store = createAgentStore(db);

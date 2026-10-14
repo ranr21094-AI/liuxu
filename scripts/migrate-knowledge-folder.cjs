@@ -93,7 +93,7 @@ function restoreBackup(dataDir, dataBackup) {
   copyTree(dataBackup, dataDir);
 }
 
-function main() {
+async function main() {
   const userDataDir = argument('user-data', path.join(os.homedir(), 'Library', 'Application Support', 'work-log'));
   const dataDir = argument('data-dir', path.join(userDataDir, 'data'));
   const root = argument('root', path.join(os.homedir(), 'Documents', '留序知识库'));
@@ -117,7 +117,7 @@ function main() {
     knowledge = createKnowledgeService(db);
     const before = knowledge.nativeDocuments();
     report = knowledge.folderSync.migrateAll({ rootPath: stage });
-    knowledge.folderSync.stop();
+    await knowledge.folderSync.shutdown();
     if (report.documents !== before.length) throw new Error(`迁移数量不一致：数据库 ${before.length}，文件 ${report.documents}`);
     const manifest = JSON.parse(fs.readFileSync(path.join(stage, '.liuxu', 'manifest.json'), 'utf8'));
     if (Object.keys(manifest.documents || {}).length !== before.length) throw new Error('映射清单数量不一致');
@@ -130,7 +130,7 @@ function main() {
     if (fs.existsSync(root)) fs.rmdirSync(root);
     fs.renameSync(stage, root);
     rootInstalled = true;
-    fs.writeFileSync(path.join(dataDir, '.knowledge-folder.json'), JSON.stringify({ version: 1, enabled: true, rootPath: root, scanIntervalMs: 30000 }, null, 2));
+    fs.writeFileSync(path.join(dataDir, '.knowledge-folder.json'), JSON.stringify({ version: 2, enabled: true, rootPath: root, scanIntervalMs: 300000 }, null, 2));
     verifySqlite(path.join(dataDir, 'schedule.db'));
     const finalReport = {
       success: true,
@@ -144,7 +144,7 @@ function main() {
     fs.writeFileSync(path.join(root, '.liuxu', 'migration-report.json'), JSON.stringify(finalReport, null, 2));
     process.stdout.write(`${JSON.stringify(finalReport, null, 2)}\n`);
   } catch (error) {
-    try { knowledge?.folderSync.stop(); } catch {}
+    try { await knowledge?.folderSync.stop(); } catch {}
     try { db?.close(); } catch {}
     try { if (fs.existsSync(stage)) fs.rmSync(stage, { recursive: true, force: true }); } catch {}
     if (error.report) {
@@ -164,7 +164,7 @@ function main() {
   }
 }
 
-try { main(); } catch (error) {
+main().catch(error => {
   process.stderr.write(`${error.message}\n`);
   process.exitCode = 1;
-}
+});

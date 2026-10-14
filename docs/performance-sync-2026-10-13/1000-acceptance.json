@@ -1,0 +1,113 @@
+{
+  "docs": 1000,
+  "samples": 30,
+  "startupScanMs": 88.29,
+  "validation": {
+    "singleExternalChangeRootTraversals": 0,
+    "applicationSaveRootTraversals": 0,
+    "unchangedScanPreservesSnapshot": true
+  },
+  "node": "v24.20.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "baseline": {
+    "search": {
+      "p50Ms": 12.71,
+      "p95Ms": 14.22
+    },
+    "switch": {
+      "p50Ms": 13,
+      "p95Ms": 14.23
+    },
+    "save": {
+      "p50Ms": 13.39,
+      "p95Ms": 14.61
+    }
+  },
+  "attachmentScenarios": [
+    {
+      "attachmentMiB": 8,
+      "operations": {
+        "search": {
+          "p50Ms": 11.74,
+          "p95Ms": 13.92
+        },
+        "switch": {
+          "p50Ms": 11.86,
+          "p95Ms": 13.93
+        },
+        "save": {
+          "p50Ms": 12.04,
+          "p95Ms": 14.27
+        }
+      },
+      "firstVerificationMs": 12.92,
+      "verificationP50Ms": 12.46,
+      "verificationP95Ms": 14.56,
+      "eventLoopP95Ms": 12.05,
+      "additionalRequestP95Ms": -0.3
+    },
+    {
+      "attachmentMiB": 64,
+      "operations": {
+        "search": {
+          "p50Ms": 11.91,
+          "p95Ms": 13.62
+        },
+        "switch": {
+          "p50Ms": 11.96,
+          "p95Ms": 13.92
+        },
+        "save": {
+          "p50Ms": 11.97,
+          "p95Ms": 13.94
+        }
+      },
+      "firstVerificationMs": 26.99,
+      "verificationP50Ms": 23.57,
+      "verificationP95Ms": 25.51,
+      "eventLoopP95Ms": 9.66,
+      "additionalRequestP95Ms": -0.31
+    },
+    {
+      "attachmentMiB": 250,
+      "operations": {
+        "search": {
+          "p50Ms": 12.02,
+          "p95Ms": 13.29
+        },
+        "switch": {
+          "p50Ms": 12.03,
+          "p95Ms": 13.29
+        },
+        "save": {
+          "p50Ms": 12.09,
+          "p95Ms": 13.75
+        }
+      },
+      "firstVerificationMs": 89.31,
+      "verificationP50Ms": 89.58,
+      "verificationP95Ms": 93.32,
+      "eventLoopP95Ms": 2.46,
+      "additionalRequestP95Ms": -0.86
+    }
+  ],
+  "fullVerificationMs": 831.89,
+  "fullVerificationOperations": {
+    "search": {
+      "p50Ms": 12.1,
+      "p95Ms": 16.09
+    },
+    "switch": {
+      "p50Ms": 12.08,
+      "p95Ms": 16.18
+    },
+    "save": {
+      "p50Ms": 12.13,
+      "p95Ms": 16.3
+    }
+  },
+  "fullVerificationEventLoopP95Ms": 10.95,
+  "rssMiB": 220.08,
+  "meetsTargets": true
+}

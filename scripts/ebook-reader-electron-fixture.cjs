@@ -60,6 +60,11 @@ async function wait(w, code, label, timeout=20000) {
  if(process.env.LIUXU_TEST_BOOKS) for(const name of fs.readdirSync(process.env.LIUXU_TEST_BOOKS).filter(x=>/\.(epub|mobi|pdf|azw3)$/i.test(x))) books.push(add(name,fs.readFileSync(path.join(process.env.LIUXU_TEST_BOOKS,name))));
  const server=await require('../server').startServer(0,'127.0.0.1'); await app.whenReady();
  const w=new BrowserWindow({show:true,width:1280,height:850,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+ const executePageScript = w.webContents.executeJavaScript.bind(w.webContents);
+ w.webContents.executeJavaScript = async (script, ...args) => {
+   try { return await executePageScript(script, ...args); }
+   catch (error) { console.error('RENDERER SCRIPT FAILED:', script, error); throw error; }
+ };
  w.webContents.on('console-message',event=>{ if(event.level>=2) console.error(`${event.message} (${event.sourceId}:${event.lineNumber})`); });
  const network=[]; w.webContents.session.webRequest.onBeforeRequest((details,done)=>{ if(details.url.startsWith('https://ebook-network.invalid')) network.push(details.url); done({}); });
  try {
@@ -77,7 +82,7 @@ async function wait(w, code, label, timeout=20000) {
      assert.equal(await w.webContents.executeJavaScript("(()=>{const d=document.querySelector('foliate-view').renderer.getContents()[0].doc;return d.defaultView.getComputedStyle(d.querySelector('h1')).color})()"), 'rgb(123, 45, 67)');
      await w.webContents.executeJavaScript("window.view=document.querySelector('foliate-view'); view.goTo(1)");
      await wait(w,"view.renderer.getContents().some(x=>x.index===1)",'second chapter');
-     await w.webContents.executeJavaScript("let c=view.renderer.getContents()[0]; let p=c.doc.querySelector('p'); let r=c.doc.createRange();r.selectNodeContents(p);c.doc.getSelection().removeAllRanges();c.doc.getSelection().addRange(r);c.doc.dispatchEvent(new Event('selectionchange'))");
+     await w.webContents.executeJavaScript("let c=view.renderer.getContents().find(x=>x.index===1); let p=c.doc.querySelector('p'); let r=c.doc.createRange();r.selectNodeContents(p);c.doc.getSelection().removeAllRanges();c.doc.getSelection().addRange(r);c.doc.dispatchEvent(new Event('selectionchange'))");
      await wait(w,"[...document.querySelectorAll('button')].some(b=>b.textContent==='划线摘录'&&!b.hidden)",'select quote');
      await w.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(b=>b.textContent==='划线摘录').click()");
      await wait(w,"document.querySelector('.book-edit-dialog[open]')",'quote dialog');
@@ -88,11 +93,11 @@ async function wait(w, code, label, timeout=20000) {
      await new Promise(r=>setTimeout(r,500));
      await w.reload(); await wait(w,"document.querySelector('#filePreviewHost')?.dataset.bookReady === 'true'",'reload');
      assert.ok(await w.webContents.executeJavaScript("document.querySelector('foliate-view').renderer.getContents().some(x=>x.index===1)"));
-     await w.webContents.executeJavaScript("document.querySelector('select[aria-label=字号]').value='28';document.querySelector('select[aria-label=字号]').dispatchEvent(new Event('change'));[...document.querySelectorAll('#filePreviewHost button')].find(b=>b.textContent==='书签与摘录').click();[...document.querySelectorAll('.book-notes button')].find(b=>b.textContent==='返回原文').click()");
+     await w.webContents.executeJavaScript("(()=>{const size=document.querySelector('select[aria-label=\"字号\"]');const toggle=[...document.querySelectorAll('button')].find(b=>b.textContent==='书签与摘录');size.value='28';size.dispatchEvent(new Event('change'));toggle.click();[...document.querySelectorAll('.book-notes [data-reader-action=\"jump\"]')].find(b=>b.getAttribute('aria-label')==='返回原文')?.click()})()");
      await wait(w, "document.querySelector('.book-notes').hidden && !document.querySelector('.book-status').textContent.includes('无法定位')", 'jump to quote after reflow');
-     await w.webContents.executeJavaScript("document.querySelector('input[aria-label=搜索书内文字]').value='舒适阅读测试';[...document.querySelectorAll('#filePreviewHost button')].find(b=>b.textContent==='查找').click()");
+     await w.webContents.executeJavaScript("const input=document.querySelector('input[aria-label=搜索书内文字]');input.value='舒适阅读测试';input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
      await wait(w, "document.querySelector('.book-status').textContent.includes('找到') && document.querySelectorAll('.book-nav button').length > 1", 'book search');
-     await w.webContents.executeJavaScript("document.querySelectorAll('.book-nav button')[1].click();[...document.querySelectorAll('#filePreviewHost button')].find(b=>b.textContent==='专注阅读').click()");
+     await w.webContents.executeJavaScript("document.querySelectorAll('.book-nav button')[1].click();[...document.querySelectorAll('button')].find(b=>b.textContent==='专注阅读').click()");
      assert.ok(await w.webContents.executeJavaScript("document.querySelector('#filePreviewHost').classList.contains('book-focus')"));
      await w.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
      assert.equal(await w.webContents.executeJavaScript("document.querySelector('#filePreviewHost').classList.contains('book-focus')"), false);
@@ -105,8 +110,8 @@ async function wait(w, code, label, timeout=20000) {
 
    }
    if(book.fileMeta.filename === '文字.pdf') {
-     await wait(w, "document.querySelector('.file-pdf-text-layer span') && [...document.querySelectorAll('#filePreviewHost button')].some(b=>b.textContent==='加书签')", 'PDF tools');
-     await w.webContents.executeJavaScript("let layer=document.querySelector('.file-pdf-text-layer');let r=document.createRange();r.selectNodeContents(layer);getSelection().removeAllRanges();getSelection().addRange(r);document.dispatchEvent(new Event('selectionchange'));[...document.querySelectorAll('#filePreviewHost button')].find(b=>b.textContent==='划线摘录').click()");
+     await wait(w, "document.querySelector('.file-pdf-text-layer span') && document.querySelector('#filePreviewHost [data-reader-bookmark]')", 'PDF tools');
+     await w.webContents.executeJavaScript("let layer=document.querySelector('.file-pdf-text-layer');let r=document.createRange();r.selectNodeContents(layer);getSelection().removeAllRanges();getSelection().addRange(r);document.dispatchEvent(new Event('selectionchange'));[...document.querySelectorAll('button')].find(b=>b.textContent==='划线摘录').click()");
      await wait(w, "document.querySelector('.book-edit-dialog[open]')", 'PDF quote');
      await w.webContents.executeJavaScript("document.querySelector('.book-edit-dialog [data-save]').click()");
      await wait(w, "document.querySelector('.book-pdf-highlight')", 'PDF highlight');
@@ -119,17 +124,17 @@ async function wait(w, code, label, timeout=20000) {
    }
    if(book.fileMeta.filename === '固定版式.epub') {
      await w.webContents.executeJavaScript("let d=document.querySelector('foliate-view').renderer.getContents()[0].doc;let r=d.createRange();r.selectNodeContents(d.querySelector('p'));d.getSelection().removeAllRanges();d.getSelection().addRange(r);d.dispatchEvent(new Event('selectionchange'))");
-     await wait(w, "[...document.querySelectorAll('#filePreviewHost button')].some(b=>b.textContent==='划线摘录'&&!b.hidden)", 'fixed layout text selection');
-     await w.webContents.executeJavaScript("[...document.querySelectorAll('#filePreviewHost button')].find(b=>b.textContent==='划线摘录').click();document.querySelector('.book-edit-dialog [data-save]').click()");
+     await wait(w, "[...document.querySelectorAll('button')].some(b=>b.textContent==='划线摘录'&&!b.hidden)", 'fixed layout text selection');
+     await w.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(b=>b.textContent==='划线摘录').click();document.querySelector('.book-edit-dialog [data-save]').click()");
      await wait(w, "!document.querySelector('.book-edit-dialog')", 'fixed layout quote saved');
      assert.match(knowledge.getAnnotation(book.id).content,/排版测试/);
-     await w.webContents.executeJavaScript("[...document.querySelectorAll('#filePreviewHost button')].find(b=>b.textContent==='双页').click()");
+     await w.webContents.executeJavaScript("[...document.querySelectorAll('button')].find(b=>b.textContent==='双页').click()");
      await wait(w, "document.querySelector('foliate-view').renderer.getContents().length===2", 'two page spread');
    }
    if(book.fileMeta.filename.endsWith('.cbz')) {
      await wait(w, "document.querySelector('foliate-view').renderer.getContents().some(x=>x.doc.querySelector('img')?.naturalWidth>0)", 'comic image');
    }
-   if(book.fileMeta.filename.endsWith('.cbz')) assert.equal(await w.webContents.executeJavaScript("[...document.querySelectorAll('#filePreviewHost button')].some(b=>b.textContent==='划线摘录')"),false);
+   if(book.fileMeta.filename.endsWith('.cbz')) assert.equal(await w.webContents.executeJavaScript("[...document.querySelectorAll('button')].some(b=>b.textContent==='划线摘录')"),false);
  }
  assert.deepEqual(network,[],'book content cannot load remote resources');
  console.log('EBOOK ACCEPTANCE PASSED');

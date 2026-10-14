@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-14T07:09:06.162Z",
+  "documents": 1000,
+  "samples": 30,
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v24.20.0",
+  "backgroundScan": true,
+  "startupMs": 3367.9494579999996,
+  "fullScanMs": 288.39820899999995,
+  "eventLoopP95Ms": 3.112959,
+  "rssMiB": 217.953125,
+  "requests": {
+    "read": {
+      "p50Ms": 1.6049579999998969,
+      "p95Ms": 1.9735000000000582
+    },
+    "save": {
+      "p50Ms": 19.13608299999987,
+      "p95Ms": 24.2114160000001
+    },
+    "search": {
+      "p50Ms": 3.463749999999891,
+      "p95Ms": 4.889791999999943
+    }
+  },
+  "limitations": "Temporary local files, warm search and disk cache; one edited file; no Electron GUI or Windows verification; set PERF_BACKGROUND=1 for a scan concurrent with HTTP samples; fullScanMs includes index draining."
+}

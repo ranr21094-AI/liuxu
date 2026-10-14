@@ -467,7 +467,9 @@ function closeServer() {
 
 function beginShutdown() {
   if (!shutdownPromise) {
-    shutdownPromise = closeServer().finally(() => {
+    shutdownPromise = closeServer().then(() => require('../lib/knowledge/routes').shutdownKnowledgeServices()).catch(error => {
+      log('error', 'knowledge sync shutdown failed', error);
+    }).finally(() => {
       log('info', 'desktop shutdown complete');
       quitAllowed = true;
       app.quit();

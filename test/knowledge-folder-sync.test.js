@@ -409,8 +409,8 @@ test('extension whitelist keeps excluded files as read-only names without copyin
   assert.equal(docs[0].title, 'main.CPP');
   assert.equal(docs[0].content, 'int main() { return 0; }');
   assert.equal(fs.readdirSync(path.join(dir, 'knowledge-files')).length, 1);
-  assert.deepEqual(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '项目' }).map(entry => entry.name).sort(), ['README', 'Tool.app', 'data.zip', 'unknown.bin']);
-  assert.equal(knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记' }).length, 1);
+  assert.deepEqual((await knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '项目' })).map(entry => entry.name).sort(), ['README', 'Tool.app', 'data.zip', 'unknown.bin']);
+  assert.equal((await knowledge.folderSync.listNameOnlyEntries({ knowledgeBase: '日记' })).length, 1);
   const before = knowledge.folderSync.snapshot().syncExtensions;
   assert.throws(() => knowledge.folderSync.configure({ enabled: true, rootPath: root, syncExtensions: ['.exe'] }), /不支持/);
   assert.deepEqual(knowledge.folderSync.snapshot().syncExtensions, before);
@@ -423,6 +423,36 @@ test('extension whitelist keeps excluded files as read-only names without copyin
   assert.deepEqual(knowledge.folderSync.snapshot().syncExtensions, ['.md', '.txt']);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, '.knowledge-folder.json'))).syncExtensions, ['.md', '.txt']);
   assert.equal(db.sqlite.prepare('SELECT count(*) n FROM knowledge_documents').get().n, 1);
+});
+
+test('unchanged sync skips Markdown reads and periodic full verification catches same-size timestamp-preserving edits', async t => {
+  const { knowledge, root } = setup(t);
+  const notePath = path.join(root, '项目', '同步.md');
+  fs.mkdirSync(path.dirname(notePath), { recursive: true });
+  fs.writeFileSync(notePath, '---\nliuxu_id: "note:9001"\ntitle: "同步测试"\ntags: []\n---\nalpha');
+  knowledge.folderSync.configure({ enabled: true, rootPath: root });
+  await knowledge.folderSync.syncNow({ reason: 'manual' });
+  const original = knowledge.getDocument('note:9001');
+  assert.equal(original.content, 'alpha');
+  const timestamp = fs.statSync(notePath).mtime;
+  let markdownReads = 0;
+  const originalReadFileSync = fs.readFileSync;
+  fs.readFileSync = function patchedReadFileSync(file, ...args) {
+    if (path.resolve(String(file)) === path.resolve(notePath)) markdownReads += 1;
+    return originalReadFileSync.call(this, file, ...args);
+  };
+  try {
+    await knowledge.folderSync.syncNow({ reason: 'watch' });
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+  assert.equal(markdownReads, 0);
+  knowledge.folderSync.stop();
+  fs.writeFileSync(notePath, '---\nliuxu_id: "note:9001"\ntitle: "同步测试"\ntags: []\n---\nbravo');
+  fs.utimesSync(notePath, timestamp, timestamp);
+  knowledge.folderSync.lastDeepVerificationAt = Date.now() - 16 * 60 * 1000;
+  await knowledge.folderSync.syncNow({ reason: 'interval' });
+  assert.equal(knowledge.getDocument('note:9001').content, 'bravo');
 });
 
 test('bundle names do not duplicate expandable historical folders while retained notes remain readable', t => {

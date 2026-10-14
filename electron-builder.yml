@@ -26,6 +26,13 @@ files:
   - "!.env.example"
 asarUnpack:
   - "**/node_modules/better-sqlite3/**"
+  - "lib/knowledge/file-index-worker.js"
+  - "lib/knowledge/import.js"
+  - "lib/knowledge/sync-worker.js"
+  - "lib/knowledge/sync-worker-client.js"
+  - "lib/knowledge/folder-sync.js"
+  - "lib/knowledge/file-formats.js"
+  - "lib/util/json-file.js"
 npmRebuild: false
 win:
   executableName: LiuXu

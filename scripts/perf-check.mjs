@@ -18,6 +18,9 @@ try { report = JSON.parse(result.stdout); } catch {
 const metrics = report.metrics || {};
 const checks = {
   searchP95Ms: [metrics.searchP95Ms, 300],
+  saveThenSearchP95Ms: [metrics.saveThenSearchP95Ms, 300],
+  listPageP95Ms: [metrics.listPageP95Ms, 250],
+  unchangedSyncP95Ms: [metrics.unchangedSyncP95Ms, 500],
   documentUpdateP95Ms: [metrics.documentUpdateP95Ms, 100],
   todoUpdateP95Ms: [metrics.todoUpdateP95Ms, 100],
 };

@@ -1725,6 +1725,58 @@ function readKnowledgeReading() {
     .map(doc => ({ id: doc.id, fingerprint: doc.fileMeta?.sha256 || '', data: doc.readingData }));
 }
 
+function readReadingPositions() {
+  return sqlite.prepare('SELECT document_id, body FROM reading_positions').all().map(row => ({
+    documentId: row.document_id, record: JSON.parse(row.body),
+  }));
+}
+
+function readReadingTime() {
+  const sessions = sqlite.prepare('SELECT session_id AS sessionId, sequence, milliseconds FROM reading_time_sessions WHERE document_id=?');
+  return sqlite.prepare('SELECT document_id, milliseconds FROM reading_time').all().map(row => ({
+    documentId: row.document_id, milliseconds: row.milliseconds, sessions: sessions.all(row.document_id),
+  }));
+}
+
+function writeReadingState(positions, times, merge = false) {
+  const positionStore = require('./lib/knowledge/reading-position-state');
+  sqlite.transaction(() => {
+    if (!merge) sqlite.prepare('DELETE FROM reading_positions').run();
+    for (const item of positions || []) {
+      const id = positionStore.cleanDocumentId(item?.documentId);
+      const record = positionStore.cleanRecord(item?.record);
+      if (!id || !record) throw new Error('Invalid reading position record');
+      const existing = merge ? sqlite.prepare('SELECT body FROM reading_positions WHERE document_id=?').get(id) : null;
+      const previous = existing ? positionStore.cleanRecord(JSON.parse(existing.body)) : null;
+      const previousAt = Date.parse(previous?.savedAt || '');
+      const nextAt = Date.parse(record.savedAt || '');
+      if (existing && (!Number.isFinite(nextAt) || (Number.isFinite(previousAt) && previousAt >= nextAt))) continue;
+      sqlite.prepare('INSERT INTO reading_positions (document_id,body) VALUES (?,?) ON CONFLICT(document_id) DO UPDATE SET body=excluded.body')
+        .run(id, JSON.stringify(record));
+    }
+    if (!merge) {
+      sqlite.prepare('DELETE FROM reading_time_sessions').run();
+      sqlite.prepare('DELETE FROM reading_time').run();
+    }
+    for (const item of times || []) {
+      const id = positionStore.cleanDocumentId(item?.documentId);
+      if (!id || !Number.isSafeInteger(item.milliseconds) || item.milliseconds < 0) throw new Error('Invalid reading time record');
+      const existing = sqlite.prepare('SELECT milliseconds FROM reading_time WHERE document_id=?').get(id);
+      const nextTotal = merge ? Math.max(existing?.milliseconds || 0, item.milliseconds) : item.milliseconds;
+      sqlite.prepare('INSERT INTO reading_time (document_id,milliseconds) VALUES (?,?) ON CONFLICT(document_id) DO UPDATE SET milliseconds=excluded.milliseconds').run(id, nextTotal);
+      for (const session of item.sessions || []) {
+        if (!/^[a-zA-Z0-9_-]{1,100}$/.test(session.sessionId || '') || !Number.isSafeInteger(session.sequence) || session.sequence < 1
+          || !Number.isSafeInteger(session.milliseconds) || session.milliseconds < 0) throw new Error('Invalid reading time session');
+        const previous = sqlite.prepare('SELECT sequence FROM reading_time_sessions WHERE document_id=? AND session_id=?').get(id, session.sessionId);
+        if (merge && previous && previous.sequence >= session.sequence) continue;
+        sqlite.prepare(`INSERT INTO reading_time_sessions (document_id,session_id,sequence,milliseconds) VALUES (?,?,?,?)
+          ON CONFLICT(document_id,session_id) DO UPDATE SET sequence=excluded.sequence,milliseconds=excluded.milliseconds`)
+          .run(id, session.sessionId, session.sequence, session.milliseconds);
+      }
+    }
+  })();
+}
+
 function writeKnowledgeReading(records, merge = false) {
   if (!records) return;
   const knowledge = require('./lib/knowledge/documents').createKnowledgeService({ dataDir: DATA_DIR, sqlite,
@@ -1732,11 +1784,13 @@ function writeKnowledgeReading(records, merge = false) {
   const before = knowledge.readStore();
   try {
     for (const record of records) {
-      const parent = knowledge.nativeDocuments().find(doc => doc.sourceType === 'file' && doc.fileMeta?.sha256 === record.fingerprint);
+      const parent = knowledge.getDocument(record.id);
+      if (!parent || parent.sourceType !== 'file') continue;
       if (!parent || parent.status === 'archived') continue;
       const current = knowledge.getReadingData(parent.id);
       const entries = merge ? [...new Map([...record.data.entries, ...current.entries].map(entry => [entry.id, entry])).values()] : record.data.entries;
-      const result = knowledge.updateReadingData(parent.id, { ...current, entries, baseRevision: current.revision }, { restoringReading: true });
+      const result = knowledge.updateReadingData(parent.id, { ...current, ...record.data, entries, baseRevision: current.revision,
+        fingerprint: current.fingerprint, documentVersion: current.documentVersion }, { restoringReading: true, merge });
       if (result.error) throw new Error(result.error);
     }
   } catch (error) {
@@ -1751,6 +1805,8 @@ function backup() {
     includesBinaries: false,
     knowledgePins: readKnowledgePins(),
     knowledgeReading: readKnowledgeReading(),
+    readingPositions: readReadingPositions(),
+    readingTime: readReadingTime(),
     logs: readLogs(),
     todos: getAllTodos(),
     countdowns: getAllCountdowns(),
@@ -2008,19 +2064,34 @@ function normalizeRestoreData(data) {
   const categories = normalizeCategoriesForRestore(data.categories);
   if (categories.error) return categories;
 
-  if (data.knowledgePins !== undefined && (!Array.isArray(data.knowledgePins) || data.knowledgePins.some(item => !item || !/^(note|file):[1-9]\d*$/.test(String(item.id || '')) || typeof item.createdAt !== 'string' || typeof item.collectionPath !== 'string' || typeof item.pinnedAt !== 'string' || (item.pinnedAt && !pinValue(item.pinnedAt))))) return { error: 'Invalid knowledge pins' };
+  if (data.knowledgePins !== undefined && (!Array.isArray(data.knowledgePins) || data.knowledgePins.some(item => !item || !/^(note|file):(?:[1-9]\d*|[a-f0-9]{32})$/.test(String(item.id || '')) || typeof item.createdAt !== 'string' || typeof item.collectionPath !== 'string' || typeof item.pinnedAt !== 'string' || (item.pinnedAt && !pinValue(item.pinnedAt))))) return { error: 'Invalid knowledge pins' };
   if (data.knowledgeReading !== undefined) {
     try {
       if (!Array.isArray(data.knowledgeReading) || data.knowledgeReading.length > 10000) throw new Error('Invalid reading backup');
       for (const record of data.knowledgeReading) {
-        if (!record || !/^[a-f0-9]{64}$/.test(record.fingerprint)) throw new Error('Invalid reading fingerprint');
+        if (!record || !require('./lib/knowledge/reading-position-state').cleanDocumentId(record.id)) throw new Error('Invalid reading document identity');
         require('./lib/knowledge/reading-data').normalizeReadingData(record.data);
       }
     } catch (error) { return { error: error.message }; }
   }
+  try {
+    const positionStore = require('./lib/knowledge/reading-position-state');
+    if (data.readingPositions !== undefined && (!Array.isArray(data.readingPositions) || data.readingPositions.length > 20000
+      || data.readingPositions.some(item => !positionStore.cleanDocumentId(item?.documentId) || !positionStore.cleanRecord(item?.record)))) throw new Error('Invalid reading positions');
+    if (data.readingTime !== undefined) {
+      if (!Array.isArray(data.readingTime) || data.readingTime.length > 20000) throw new Error('Invalid reading time');
+      for (const item of data.readingTime) {
+        if (!positionStore.cleanDocumentId(item?.documentId) || !Number.isSafeInteger(item.milliseconds) || item.milliseconds < 0 || !Array.isArray(item.sessions || [])) throw new Error('Invalid reading time');
+        for (const session of item.sessions || []) if (!/^[a-zA-Z0-9_-]{1,100}$/.test(session.sessionId || '')
+          || !Number.isSafeInteger(session.sequence) || session.sequence < 1 || !Number.isSafeInteger(session.milliseconds) || session.milliseconds < 0) throw new Error('Invalid reading time session');
+      }
+    }
+  } catch (error) { return { error: error.message }; }
   return {
     knowledgePins: data.knowledgePins,
     knowledgeReading: data.knowledgeReading,
+    readingPositions: data.readingPositions,
+    readingTime: data.readingTime,
     logs: logs.logs,
     todos: todos.todos,
     countdowns: countdowns.countdowns,
@@ -2034,6 +2105,8 @@ function capturePersistentState() {
   return {
     knowledgePins: readKnowledgePins(),
     knowledgeReading: readKnowledgeReading(),
+    readingPositions: readReadingPositions(),
+    readingTime: readReadingTime(),
     logs: readLogs(),
     todos: readTodos(),
     countdowns: readCountdowns(),
@@ -2080,6 +2153,7 @@ function writePersistentState(next) {
     writeCategories(next.categories);
     writeKnowledgePins(next.knowledgePins, next.mergePins);
     writeKnowledgeReading(next.knowledgeReading, next.mergePins);
+    writeReadingState(next.readingPositions, next.readingTime, next.mergePins);
   } catch (err) {
     try {
       writeLogs(previous.logs);
@@ -2089,6 +2163,7 @@ function writePersistentState(next) {
       writeCategories(previous.categories);
       writeKnowledgePins(previous.knowledgePins);
       writeKnowledgeReading(previous.knowledgeReading);
+      writeReadingState(previous.readingPositions, previous.readingTime);
     } catch (rollbackError) {
       rollbackFailed = true;
       err.message += `; rollback failed: ${rollbackError.message}`;
@@ -2155,7 +2230,9 @@ function restore(data, mode = 'replace') {
       todoCategories: mergedTodoCategories,
       categories: mergedCats,
       knowledgePins: data.knowledgePins,
-    knowledgeReading: data.knowledgeReading,
+      knowledgeReading: data.knowledgeReading,
+      readingPositions: data.readingPositions,
+      readingTime: data.readingTime,
       mergePins: true,
     });
     stageLegacyAiChatsForMigration(data);
@@ -2173,6 +2250,8 @@ function restore(data, mode = 'replace') {
     categories,
     knowledgePins: data.knowledgePins,
     knowledgeReading: data.knowledgeReading,
+    readingPositions: data.readingPositions,
+    readingTime: data.readingTime,
   });
   stageLegacyAiChatsForMigration(data);
   return { success: true, format: 'structure', includesBinaries: false, logs: data.logs.length, todos: data.todos.length, countdowns: data.countdowns.length, categories: data.categories.length };

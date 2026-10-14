@@ -146,7 +146,7 @@ test('location navigation resets only search while preserving filter conditions'
   const { createLatestRequest } = await helpers();
   const state = { selectedKnowledgeBase: 'A', selectedFolderPath: '' };
   const context = vm.createContext({ state, knowledgeRequests: createLatestRequest(), sidebarSearchControls: controls, clearKnowledgeDocuments() {} });
-  vm.runInContext("let knowledgeSearchScope = '';\n" + source.slice(source.indexOf('function syncKnowledgeSearchScope()'), source.indexOf('let knowledgeDragItem')), context);
+  vm.runInContext("let knowledgeSearchScope = '';\n" + source.slice(source.indexOf('function syncKnowledgeSearchScope()'), source.indexOf('let suppressKnowledgeClickUntil')), context);
   context.syncKnowledgeSearchScope();
   input('knowledgeSearch', 'term'); input('knowledgeTagFilter', 'tag');
   context.syncKnowledgeSearchScope();

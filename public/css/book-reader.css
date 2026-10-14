@@ -219,3 +219,17 @@
   .is-file-document .document-context-row { gap:4px; }
   .file-reader-tabs.reader-mode-switch { width:min(216px,100%); }
 }
+
+.book-entry-actions { display:flex; gap:8px; margin-top:12px; }
+.book-entry-actions button { display:grid; place-items:center; width:36px; height:36px; padding:7px; }
+.book-entry-actions svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.book-entry-actions [aria-disabled=true] { opacity:.5; }
+.file-annotation-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; flex:1; min-height:0; overflow:auto; }
+.file-excerpt-section,.file-personal-section { min-width:0; min-height:0; display:flex; flex-direction:column; }
+.file-excerpt-section { border-right:1px solid var(--border); padding-right:20px; }
+.file-excerpt-section h3,.file-personal-section h3 { margin:0 0 12px; font-size:15px; }
+#fileExcerptSummary { flex:1; overflow:auto; }
+.file-personal-section .file-annotation-workspace { flex:1; min-height:260px; }
+.reader-time,.reader-position-status { font-size:11px; color:var(--muted); white-space:nowrap; }
+.reader-footer:has(.reader-time) { display:flex; flex-wrap:wrap; }
+@media(max-width:700px) { .file-annotation-columns { grid-template-columns:minmax(0,1fr); } .file-excerpt-section { border-right:0; border-bottom:1px solid var(--border); padding:0 0 16px; max-height:40vh; } }

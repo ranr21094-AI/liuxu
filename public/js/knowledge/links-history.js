@@ -4,7 +4,7 @@ import { escHtml, showToast } from '../helpers.js';
 import { renderToHtmlUncached } from '../markdown.js';
 
 const WIKI_LINK_RE = /\[\[([^\]\n|]+?)(?:\|([^\]\n]+?))?\]\]/g;
-const DOCUMENT_ID_RE = /^(?:note|file):[1-9]\d*$/;
+const DOCUMENT_ID_RE = /^(?:note|file):(?:[1-9]\d*|[a-f0-9]{32})$/;
 
 export function rewriteRelativeImages(markdown, documentId) {
   if (!DOCUMENT_ID_RE.test(String(documentId || ''))) return markdown;

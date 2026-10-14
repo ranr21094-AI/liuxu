@@ -171,7 +171,7 @@ The filter only applies to the book itself, leaving overlaid elements such as hi
 The paginator uses the same pagination strategy as [Epub.js](https://github.com/futurepress/epub.js): it uses CSS multi-column. As such it shares much of the same limitations (it's slow, some CSS styles do not work as expected, and other bugs). There are a few differences:
 - It is a totally standalone module. You can use it to paginate any content.
 - It is much simpler, but currently there's no support for continuous scrolling.
-- It has no concept of CFIs and operates on `Range` objects directly.
+- It has no concept of CFIs and operates on `Range` objects directly. 
 - It uses bisecting to find the current visible range, which is more accurate than what Epub.js does.
 - It has an internal `#anchor` property, which can be a `Range`, `Element`, or a fraction that represents the current location. The view is *anchored* to it no matter how you resize the window.
 - It supports more than two columns.
@@ -360,7 +360,7 @@ document.querySelector('foliate-quoteimage').getBlob({
 
 ### Supported Browsers
 
-It aims to support the latest version of WebKitGTK, Firefox, and Chromium. Older browsers like Firefox ESR are not supported.
+It aims to support the latest version of WebKitGTK, Firefox, and Chromium. Older browsers like Firefox ESR are not supported. 
 
 Although it's mainly indeded for rendering e-books in the browser, some features can be used in non-browser environments as well. In particular, `epubcfi.js` can be used as is in any environment if you only need to parse or sort CFIs. Most other features depend on having the global objects `Blob`, `TextDecoder`, `TextEncoder`, `DOMParser`, `XMLSerializer`, and `URL`, and should work if you polyfill them.
 

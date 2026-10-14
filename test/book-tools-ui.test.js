@@ -127,3 +127,25 @@ test('selection geometry maps iframe pixels and clipping; Escape hides the float
     assert.equal(action.hidden, true);
   } finally { env.finish(); }
 });
+
+test('bookmark and excerpt actions use accessible SVG controls and explain stale locations', async () => {
+  const env = setup();
+  try {
+    const entries = [{ id: 'stale', type: 'highlight', anchor: 'old-anchor', fingerprint: 'old-fingerprint', quote: '旧文字', label: '旧摘录' }];
+    global.fetch = async () => ({ ok: true, json: async () => ({ fingerprint: 'new-fingerprint', revision: 3, entries }) });
+    const { readingTools } = await loadTools();
+    await readingTools({ doc: { id: 'file:1' }, host: env.host, toolbar: env.toolbar, signal: env.controller.signal,
+      current: () => null, navigate: async () => { throw new Error('should not navigate'); } });
+    const actions = [...env.host.querySelectorAll('[data-reader-action]')];
+    assert.deepEqual(actions.map(item => item.dataset.readerAction), ['jump', 'edit', 'delete']);
+    for (const action of actions) {
+      assert.ok(action.querySelector('svg'));
+      assert.ok(action.getAttribute('aria-label'));
+      assert.equal(action.title, action.getAttribute('aria-label'));
+    }
+    const jump = actions[0];
+    assert.equal(jump.getAttribute('aria-disabled'), 'true');
+    jump.click();
+    assert.match(env.toolbar.querySelector('.book-status').textContent, /源文件已变化/);
+  } finally { env.finish(); }
+});

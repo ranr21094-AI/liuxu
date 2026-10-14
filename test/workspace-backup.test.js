@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const JSZip = require('jszip');
-const { exportWorkspace, restoreWorkspace } = require('../lib/workspace/zip');
+const { exportWorkspace, restoreWorkspace, workspaceCapacity } = require('../lib/workspace/zip');
 const { createKnowledgeService } = require('../lib/knowledge/documents');
 const { createTempDatabase, cleanupTempDataDir } = require('./db-temp');
 const { resetSecretStoreForTests } = require('../secret-store');
@@ -16,6 +16,17 @@ function tempDb(t) {
   fs.writeFileSync(path.join(dir, 'uploads', 'pic.png'), Buffer.from([1, 2, 3]));
   return { db, dir };
 }
+
+test('workspace capacity preflight reports exported database, files, entries and safe limits', t => {
+  const { db } = tempDb(t);
+  const capacity = workspaceCapacity(db);
+  assert.equal(capacity.canExport, true);
+  assert.ok(capacity.databaseBytes > 0);
+  assert.equal(capacity.fileBytes, 3);
+  assert.equal(capacity.entries, 7);
+  assert.ok(capacity.estimatedUncompressedBytes >= capacity.databaseBytes);
+  assert.ok(capacity.limits.entries >= 100000);
+});
 
 test('workspace zip export includes binaries and restores them', async (t) => {
   const { db, dir } = tempDb(t);
@@ -73,6 +84,29 @@ test('workspace zip carries the portable knowledge folder tree and restores it t
   assert.equal(fs.existsSync(path.join(targetRoot, '资料', '空文件夹')), true);
   assert.equal(fs.readFileSync(path.join(result.knowledgeFolderBackupPath, 'before.txt'), 'utf8'), 'keep in restore backup');
   fs.rmSync(result.knowledgeFolderBackupPath, { recursive: true, force: true });
+});
+
+test('file-workspace ZIP uses workspace originals instead of the legacy attachment mirror', async t => {
+  const { db, dir } = tempDb(t);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-files-mode-root-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'local.md'), 'workspace original');
+  fs.mkdirSync(path.join(root, '.liuxu'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.liuxu', 'storage.json'), JSON.stringify({ format: 'liuxu-file-workspace', version: 1 }));
+  fs.writeFileSync(path.join(dir, '.knowledge-file-workspace.json'), JSON.stringify({ format: 'liuxu-file-workspace', version: 1, rootPath: root }));
+  fs.writeFileSync(path.join(dir, '.knowledge-folder.json'), JSON.stringify({ enabled: true, rootPath: root }));
+  fs.mkdirSync(path.join(dir, 'knowledge-files'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'knowledge-files', 'legacy-copy.bin'), 'old mirror');
+
+  const archive = await exportWorkspace(db, { knowledgeRootOverride: root });
+  const zip = await JSZip.loadAsync(archive);
+  const names = Object.keys(zip.files);
+  const manifest = JSON.parse(await zip.file('workspace.json').async('string'));
+  assert.equal(manifest.knowledgeStorage, 'liuxu-file-workspace');
+  assert.ok(zip.file('knowledge-folder/local.md'));
+  assert.equal(names.some(name => name.startsWith('knowledge-files/')), false);
+  assert.equal(workspaceCapacity(db).fileBytes, 3 + Buffer.byteLength('workspace original')
+    + fs.statSync(path.join(root, '.liuxu', 'storage.json')).size);
 });
 
 test('workspace merge refuses knowledge-folder symlink escapes and rolls back partial file installation', async (t) => {

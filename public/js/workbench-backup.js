@@ -43,6 +43,12 @@ export function createBackupActions({ confirmAction, reloadKnowledge, onWorkspac
   }
 
   async function exportZipBackup() {
+    const capacityResponse = await apiFetch('/api/workspace/capacity');
+    const capacity = await capacityResponse.json().catch(() => ({}));
+    if (!capacityResponse.ok) throw new Error(capacity.error || '无法检查 ZIP 备份容量');
+    if (!capacity.canExport) throw new Error(`当前工作区无法完整导出：${(capacity.blockers || []).join('；')}`);
+    const mib = value => `${(Number(value || 0) / 1024 / 1024).toFixed(1)} MiB`;
+    showToast(`ZIP 预检通过：数据库 ${mib(capacity.databaseBytes)}，附件 ${mib(capacity.fileBytes)}，${Number(capacity.entries || 0).toLocaleString()} 个文件与目录`, 'success');
     await downloadApiExport('/api/workspace/export', 'liuxu-workspace.zip');
     showToast('ZIP 工作区已开始下载', 'success');
   }

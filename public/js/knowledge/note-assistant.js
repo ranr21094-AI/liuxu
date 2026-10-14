@@ -606,6 +606,7 @@ async function applyProposal(payload, { silent = false } = {}) {
   if (payload.append) {
     await state.applyEdit({
       documentId,
+      baseVersion: payload.baseVersion, baseFingerprint: payload.baseFingerprint,
       append: true,
       content: String(payload.content || ''),
     });
@@ -625,7 +626,7 @@ async function applyProposal(payload, { silent = false } = {}) {
     if (!silent) showToast('提案原文在笔记中出现多次，为避免误改已跳过', 'error');
     return { ok: false };
   }
-  await state.applyEdit({ documentId, find, replace: String(payload.replace ?? '') });
+  await state.applyEdit({ documentId, baseVersion: payload.baseVersion, baseFingerprint: payload.baseFingerprint, find, replace: String(payload.replace ?? '') });
   markProposal(payload.id, true, '已应用');
   return { ok: true };
   } catch (error) {

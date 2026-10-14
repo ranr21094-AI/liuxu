@@ -94,7 +94,7 @@ function readingPositionInvoke(channel, payload) {
   return ipcRenderer.invoke(`liuxu:reading-position:${channel}`, payload || {});
 }
 const readingPositions = Object.freeze({
-  get: documentId => readingPositionInvoke('get', { documentId }),
+  get: value => readingPositionInvoke('get', typeof value === 'object' ? value : { documentId: value }),
   set: payload => readingPositionInvoke('set', payload),
   clear: payload => readingPositionInvoke('clear', payload),
 });

@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { atomicWriteJson } = require('../lib/util/json-file');
+const { validManifestDelta } = require('../lib/knowledge/folder-sync');
 const PREFIX = 'Agent/设计/haibara-card/tools/Blender.app/';
 
 async function cleanupBlenderSync({ dataDir, backupDir, apply = false }) {
@@ -17,6 +18,26 @@ async function cleanupBlenderSync({ dataDir, backupDir, apply = false }) {
   }
   const originalManifest = fs.readFileSync(manifestPath);
   const manifest = JSON.parse(originalManifest);
+  const deltaPath = path.join(root, '.liuxu', 'manifest-deltas.jsonl');
+  let originalDeltas;
+  if (fs.existsSync(deltaPath)) {
+    if (fs.lstatSync(deltaPath).isSymbolicLink()) throw new Error('Unsafe sync delta path');
+    originalDeltas = fs.readFileSync(deltaPath);
+    const lines = originalDeltas.toString('utf8').split('\n'); lines.pop();
+    const assets = new Set(manifest.assets || []);
+    for (const line of lines.filter(Boolean)) {
+      const delta = JSON.parse(line);
+      if (!validManifestDelta(delta)) throw new Error('Invalid sync delta record');
+      if (delta.sequence <= (manifest.sequence || 0)) continue;
+      if (delta.sequence !== (manifest.sequence || 0) + 1) throw new Error('Sync delta sequence gap');
+      if (delta.operation === 'upsert') manifest.documents[delta.id] = delta.entry;
+      else if (delta.operation === 'delete') delete manifest.documents[delta.id];
+      else if (delta.operation === 'verified') manifest.verifiedAt = delta.verifiedAt;
+      else if (delta.present) assets.add(delta.relativePath); else assets.delete(delta.relativePath);
+      manifest.sequence = delta.sequence;
+    }
+    manifest.assets = [...assets];
+  }
   const sqlite = new Database(path.join(dataDir, 'schedule.db'), { readonly: !apply, fileMustExist: true });
   try {
     const rows = sqlite.prepare("SELECT id, body FROM knowledge_documents WHERE json_extract(body, '$.sourceType') = 'file'").all();
@@ -36,6 +57,7 @@ async function cleanupBlenderSync({ dataDir, backupDir, apply = false }) {
     await sqlite.backup(path.join(backupDir, 'schedule.db'));
     fs.copyFileSync(configPath, path.join(backupDir, 'knowledge-folder.json'));
     fs.writeFileSync(path.join(backupDir, 'manifest.json'), originalManifest);
+    if (originalDeltas) fs.writeFileSync(path.join(backupDir, 'manifest-deltas.jsonl'), originalDeltas);
     atomicWriteJson(path.join(backupDir, 'cleanup-plan.json'), report);
     sqlite.pragma('foreign_keys = ON');
     try {

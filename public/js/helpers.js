@@ -116,7 +116,7 @@ function isSafeKnowledgeAssetSrc(value) {
   if (segments.length < 6 || segments[1] !== 'api' || segments[2] !== 'knowledge' || segments[3] !== 'assets') return false;
   let decoded;
   try { decoded = segments.slice(4).map(segment => decodeURIComponent(segment)); } catch { return false; }
-  if (!/^(?:note|file):[1-9]\d*$/.test(decoded[0] || '') || decoded.length < 2) return false;
+  if (!/^(?:note|file):(?:[1-9]\d*|[a-f0-9]{32})$/.test(decoded[0] || '') || decoded.length < 2) return false;
   if (decoded.some(segment => !segment || segment === '.' || segment === '..' || /[\\/\0]/.test(segment))) return false;
   return /\.(?:png|jpe?g|gif|webp|bmp)$/i.test(decoded.at(-1));
 }

@@ -302,6 +302,7 @@
                 <label class="document-inline-tags" for="documentTags"><span class="sr-only">标签</span><input id="documentTags" maxlength="300" placeholder="标签，用逗号分隔" aria-label="文档标签"></label>
               </div>
               <div class="document-toolbar-actions">
+                <button class="secondary-action compact" id="renameKnowledgeFileButton" type="button" hidden>重命名文件</button>
                 <div class="editor-mode-switch" id="editorModeSwitch">
                   <button type="button" data-editor-mode="edit" class="active" title="编辑 (Ctrl+Shift+P 切换)">编辑</button>
                   <button type="button" data-editor-mode="split" title="分屏 (Ctrl+Shift+P 切换)">分屏</button>
@@ -448,7 +449,7 @@
             </section>
             <section class="file-reader-pane file-annotation-pane" id="fileAnnotationPane" role="tabpanel" hidden>
               <input type="hidden" id="fileAnnotationTitle" value="">
-              <div class="file-annotation-workspace">
+              <div class="file-annotation-columns"><section class="file-excerpt-section"><h3>摘录汇总</h3><div id="fileExcerptSummary" class="markdown-preview prose" tabindex="0"></div></section><section class="file-personal-section"><h3>单独笔记</h3><div class="file-annotation-workspace">
                 <div class="editor-mode-switch file-annotation-mode-switch" id="fileAnnotationModeSwitch" role="group" aria-label="批注 Markdown 模式">
                   <button type="button" class="active" data-file-annotation-mode="edit" aria-pressed="true" aria-controls="fileAnnotationEditor">编辑</button>
                   <button type="button" data-file-annotation-mode="split" aria-pressed="false" aria-controls="fileAnnotationEditor">分屏</button>
@@ -459,6 +460,7 @@
                   <div class="markdown-preview prose file-annotation-preview" id="fileAnnotationPreview" tabindex="0" aria-label="批注 Markdown 预览" hidden></div>
                 </div>
               </div>
+              </section></div>
               <div class="file-annotation-actions"><span id="fileAnnotationState" role="status"></span><button type="button" class="primary-action compact" id="saveFileAnnotation">保存批注</button></div>
             </section>
             <section class="file-reader-pane file-text-pane" id="fileTextPane" role="tabpanel" hidden>
@@ -923,14 +925,15 @@
           </section>
           <section class="settings-section" data-settings-panel="knowledge" hidden>
             <h3>知识库</h3>
-            <p class="settings-copy">笔记和档案保存在电脑上的真实文件夹。外部修改会自动同步到留序。</p>
+            <p class="settings-copy">选择本地文件工作区，直接编辑笔记和阅读原文件。首次启用会备份旧数据并保留不同版本。</p>
             <label class="settings-field" for="knowledgeFolderPath">知识库根目录
               <input id="knowledgeFolderPath" type="text" readonly spellcheck="false">
             </label>
             <div class="settings-actions" id="knowledgeFolderDesktopActions">
               <button type="button" class="primary-action compact" id="chooseKnowledgeFolderButton">选择文件夹</button>
               <button type="button" class="secondary-action compact" id="openKnowledgeFolderSettingsButton">打开文件夹</button>
-              <button type="button" class="secondary-action compact" id="syncKnowledgeFolderSettingsButton">立即同步</button>
+              <button type="button" class="secondary-action compact" id="syncKnowledgeFolderSettingsButton">刷新文件</button>
+              <button type="button" class="secondary-action compact" id="rebuildKnowledgeIndexButton">重建索引</button>
             </div>
             <div id="knowledgeSyncExtensionSettings">
               <label class="settings-field" for="knowledgeSyncExtensions">同步文件后缀
@@ -1159,5 +1162,13 @@
   <!-- Markdown vendor assets (vendor/katex/katex.min.css, vendor/katex/katex.min.js,
        vendor/marked/marked.umd.js, vendor/dompurify/purify.min.js) are loaded on demand by markdown.js. -->
   <script type="module" src="/js/workbench.js"></script>
-</body>
+<dialog id="renameKnowledgeFileDialog" aria-labelledby="renameKnowledgeFileTitle">
+    <form id="renameKnowledgeFileForm">
+      <h3 id="renameKnowledgeFileTitle">重命名文件</h3>
+      <label class="settings-field" for="renameKnowledgeFileName">文件名<input id="renameKnowledgeFileName" required maxlength="200" autocomplete="off"></label>
+      <p>修改显示标题不会改动文件名。</p>
+      <div class="settings-actions"><button type="button" id="cancelRenameKnowledgeFile" class="secondary-action">取消</button><button type="submit" class="primary-action">保存文件名</button></div>
+    </form>
+  </dialog>
+  </body>
 </html>

@@ -1,3 +1,4 @@
+import { startReadingClock } from './reading-clock.js';
 import { renderBook } from './book-reader.js';
 import { pdfReading } from './pdf-reading.js';
 import { apiFetch } from '../auth.js';
@@ -27,7 +28,7 @@ function createPositionSaver(doc, kind) {
     if (!latest) return;
     const value = latest;
     latest = null;
-    void saveReadingPosition(doc, kind, value);
+    void saveReadingPosition(doc, kind, value).then(ok => { if (activeDocument?.id === doc.id) { const status = window.document.querySelector('[data-position-status]'); if (status) status.textContent = ok ? '进度已保存' : '进度保存失败'; } });
   };
   const save = position => {
     snapshot = { ...snapshot, ...position };
@@ -162,6 +163,10 @@ function renderGrid(host, rows, options = {}) {
   const initialScrollTop = Math.max(0, Number(options.initialScrollTop) || 0);
   let scrollTop = 0;
   let start = 0;
+  let matched = [];
+  let scrollFrame = 0;
+  let searchTimer = null;
+  const listeners = new AbortController();
   const viewport = host.querySelector('.file-grid-viewport');
   const table = host.querySelector('.file-grid-table');
   const summary = host.querySelector('.file-grid-summary');
@@ -169,6 +174,7 @@ function renderGrid(host, rows, options = {}) {
   const copyButton = host.querySelector('[data-grid-copy]');
   const copyState = host.querySelector('[data-grid-copy-state]');
   let selectedValue = '';
+  const searchText = searchable.map(row => row.map(cell => String(cell ?? '').toLocaleLowerCase()).join('\0'));
   const mergeOrigins = new Map();
   const mergeCovered = new Set();
   for (const range of options.merges || []) {
@@ -183,8 +189,13 @@ function renderGrid(host, rows, options = {}) {
       for (let column = startColumn + 1; column <= endColumn; column += 1) mergeCovered.add(`${startRow},${column}`);
     }
   }
+  const updateMatches = () => {
+    matched = [];
+    for (let index = 0; index < searchable.length; index += 1) {
+      if (!query || searchText[index].includes(query)) matched.push({ row: searchable[index], index });
+    }
+  };
   const renderRows = () => {
-    const matched = searchable.map((row, index) => ({ row, index })).filter(item => !query || item.row.some(cell => String(cell).toLocaleLowerCase().includes(query)));
     const rowHeight = 31;
     const count = Math.min(160, Math.ceil(viewport.clientHeight / rowHeight) + 8);
     start = Math.max(0, Math.min(matched.length - count, Math.floor(scrollTop / rowHeight)));
@@ -203,7 +214,17 @@ function renderGrid(host, rows, options = {}) {
     table.innerHTML = `${header}<tbody><tr class="file-grid-spacer"><td colspan="${maxColumns + 1}" style="height:${offsetTop}px"></td></tr>${body}<tr class="file-grid-spacer"><td colspan="${maxColumns + 1}" style="height:${offsetBottom}px"></td></tr></tbody>`;
     summary.textContent = `${matched.length.toLocaleString()} 行 · ${maxColumns} 列`;
   };
-  host.querySelector('[data-grid-search]')?.addEventListener('input', event => { query = event.target.value.toLocaleLowerCase(); scrollTop = 0; viewport.scrollTop = 0; renderRows(); });
+  host.querySelector('[data-grid-search]')?.addEventListener('input', event => {
+    const nextQuery = event.target.value.toLocaleLowerCase();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      query = nextQuery;
+      scrollTop = 0;
+      viewport.scrollTop = 0;
+      updateMatches();
+      renderRows();
+    }, 120);
+  }, { signal: listeners.signal });
   table.addEventListener('click', event => {
     const cell = event.target.closest('td');
     if (!cell || cell.closest('.file-grid-spacer')) return;
@@ -213,7 +234,7 @@ function renderGrid(host, rows, options = {}) {
     if (valueView) valueView.textContent = selectedValue || '（空白单元格）';
     if (copyButton) copyButton.disabled = false;
     if (copyState) copyState.textContent = '';
-  });
+  }, { signal: listeners.signal });
   copyButton?.addEventListener('click', async () => {
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(selectedValue);
@@ -226,14 +247,25 @@ function renderGrid(host, rows, options = {}) {
       }
       if (copyState) copyState.textContent = '已复制';
     } catch { if (copyState) copyState.textContent = '复制失败'; }
-  });
-  viewport.addEventListener('scroll', () => { scrollTop = viewport.scrollTop; renderRows(); options.onPosition?.(scrollTop); }, { passive: true });
+  }, { signal: listeners.signal });
+  viewport.addEventListener('scroll', () => {
+    scrollTop = viewport.scrollTop;
+    options.onPosition?.(scrollTop);
+    if (scrollFrame) return;
+    scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; renderRows(); });
+  }, { passive: true, signal: listeners.signal });
+  updateMatches();
   renderRows();
   if (initialScrollTop > 0) {
     viewport.scrollTop = initialScrollTop;
     scrollTop = viewport.scrollTop;
     renderRows();
   }
+  return () => {
+    listeners.abort();
+    clearTimeout(searchTimer);
+    if (scrollFrame) cancelAnimationFrame(scrollFrame);
+  };
 }
 
 async function renderDelimited(doc, host, token, controller, position, savePosition) {
@@ -246,11 +278,13 @@ async function renderDelimited(doc, host, token, controller, position, savePosit
   const stage = host.querySelector('.file-preview-stage');
   stage.innerHTML = '<div class="file-grid-viewport"><table class="file-grid-table"></table></div>';
   let firstDraw = true;
+  let disposeGrid = () => {};
   const draw = () => {
     if (token !== previewToken) return;
+    disposeGrid();
     const text = decodeBytes(data, toolbar.querySelector('[data-file-encoding]').value);
     const rows = parseDelimited(text, toolbar.querySelector('[data-file-delimiter]').value);
-    renderGrid(host, rows, {
+    disposeGrid = renderGrid(host, rows, {
       initialScrollTop: firstDraw ? position?.top : 0,
       onPosition: top => savePosition({ top }),
     });
@@ -274,11 +308,13 @@ async function renderSpreadsheet(doc, host, token, controller, position, savePos
   const stage = host.querySelector('.file-preview-stage');
   stage.innerHTML = '<div class="file-grid-viewport"><table class="file-grid-table"></table></div>';
   let firstDraw = true;
+  let disposeGrid = () => {};
   const draw = () => {
     if (token !== previewToken) return;
+    disposeGrid();
     const sheet = book.Sheets[select.value];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: true, defval: '' });
-    renderGrid(host, rows, {
+    disposeGrid = renderGrid(host, rows, {
       initialScrollTop: firstDraw && select.value === position?.sheet ? position?.top : 0,
       onPosition: top => savePosition({ sheet: select.value, top }),
       rowLabel: index => XLSX.utils.encode_row((XLSX.utils.decode_range(sheet['!ref'] || 'A1').s.r) + index),
@@ -408,7 +444,7 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     const stageTop = stage.getBoundingClientRect().top;
     const page = pages.find(shell => shell.getBoundingClientRect().bottom > stageTop + 8) || pages.at(-1);
     if (!page) return;
-    savePosition({ fingerprint: doc.fileMeta?.sha256 || '', page: Number(page.dataset.pageNumber), offset: Math.max(0, stageTop - page.getBoundingClientRect().top) });
+    savePosition({ fingerprint: doc.fileMeta?.sha256 || '', page: Number(page.dataset.pageNumber), totalPages: pdf.numPages, offset: Math.max(0, stageTop - page.getBoundingClientRect().top) });
   }, { passive: true });
   controller.signal.addEventListener('abort', () => { observer.disconnect(); resizeObserver.disconnect(); host._filePreviewActions = null; }, { once: true });
   if (position?.fingerprint && position.fingerprint !== doc.fileMeta?.sha256) position = {};
@@ -426,6 +462,7 @@ async function renderPdf(doc, host, token, controller, position, savePosition) {
     stage.scrollTop = Math.max(0, stage.scrollTop + (Number(position?.offset) || 0));
   }
   host.querySelector('[data-pdf-page]').value = String(pageNumber);
+  savePosition({ fingerprint: doc.fileMeta?.sha256 || '', page: pageNumber, totalPages: pdf.numPages, offset: Number(position?.offset) || 0 });
   pdfTools = await pdfReading({ doc, host, toolbar, stage, pages, pdf, renderPage, rerender, signal: controller.signal, position });
 }
 
@@ -753,6 +790,12 @@ export function renderFilePreview(doc, host) {
     }
     return renderKind(doc, host, token, controller, position, savePosition);
   }).then(dispose => {
+    if (token === previewToken && (kind === 'ebook' || kind === 'pdf' || extension(doc.fileMeta?.filename) === '.txt')) {
+      const status = document.createElement('span'); status.dataset.positionStatus = ''; status.className = 'reader-position-status'; status.textContent = '进度自动保存';
+      (host.querySelector('.reader-footer') || host.querySelector('.file-preview-toolbar') || host).append(status);
+      startReadingClock(doc, host, controller.signal, () => fileReaderTab === 'preview'
+        && !host.querySelector('.file-preview-text:not([hidden])'));
+    }
     if (token !== previewToken || typeof dispose !== 'function') return;
     const previous = activeCleanup;
     activeCleanup = () => { previous(); dispose(); };

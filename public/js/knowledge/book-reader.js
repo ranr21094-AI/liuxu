@@ -199,7 +199,7 @@ export async function renderBook(doc, host, signal, position, savePosition) {
       dismissSelection();
       const { cfi, fraction, tocItem } = event.detail;
       progress.textContent = `${tocItem?.label || ''} · ${Math.round((fraction || 0) * 100)}%`;
-      savePosition({ anchor: cfi, fingerprint: meta.sha256 });
+      if (host.dataset.readerPhase === 'ready') savePosition({ anchor: cfi, fingerprint: meta.sha256 });
     });
     if (book.rendition?.layout === 'pre-paginated') book.rendition = { ...book.rendition, spread: 'none' };
     await view.open(book); signal.throwIfAborted();
@@ -301,6 +301,7 @@ export async function renderBook(doc, host, signal, position, savePosition) {
       pageInput.title = state.kind === 'page' ? '输入页码并按 Enter 跳转' : '输入阅读位置并按 Enter 跳转';
       if (document.activeElement !== pageInput) pageInput.value = String(state.current);
       pageControl.dataset.positionKind = state.kind;
+      if (host.dataset.readerPhase === 'ready') savePosition({ anchor: view.lastLocation?.cfi, fingerprint: meta.sha256, page: state.current, totalPages: state.total });
     };
     const jumpToPage = async () => {
       const state = pageState();
@@ -326,7 +327,7 @@ export async function renderBook(doc, host, signal, position, savePosition) {
     if (position?.anchor && position.fingerprint !== meta.sha256) tools.report('源文件已变化，已从开头打开；旧摘录仍保留。');
     host.dataset.bookDocument = doc.id;
     host.dataset.bookReady = 'true';
-    delete host.dataset.readerPhase;
+    host.dataset.readerPhase = 'ready'; syncPageControl();
     return stop;
   } catch (error) { stop(); throw error; }
 }

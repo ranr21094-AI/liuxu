@@ -1,0 +1,108 @@
+{
+  "docs": 10000,
+  "samples": 30,
+  "startupScanMs": 754.88,
+  "node": "v24.20.0",
+  "platform": "darwin",
+  "arch": "arm64",
+  "baseline": {
+    "search": {
+      "p50Ms": 20.85,
+      "p95Ms": 41.82
+    },
+    "switch": {
+      "p50Ms": 21.38,
+      "p95Ms": 41.85
+    },
+    "save": {
+      "p50Ms": 22.35,
+      "p95Ms": 41.9
+    }
+  },
+  "attachmentScenarios": [
+    {
+      "attachmentMiB": 8,
+      "operations": {
+        "search": {
+          "p50Ms": 20.42,
+          "p95Ms": 36.49
+        },
+        "switch": {
+          "p50Ms": 20.43,
+          "p95Ms": 36.51
+        },
+        "save": {
+          "p50Ms": 20.47,
+          "p95Ms": 36.61
+        }
+      },
+      "firstVerificationMs": 30.39,
+      "verificationP50Ms": 20.9,
+      "verificationP95Ms": 36.82,
+      "eventLoopP95Ms": 22.81,
+      "additionalRequestP95Ms": -5.29
+    },
+    {
+      "attachmentMiB": 64,
+      "operations": {
+        "search": {
+          "p50Ms": 18.17,
+          "p95Ms": 23.95
+        },
+        "switch": {
+          "p50Ms": 18.16,
+          "p95Ms": 24.03
+        },
+        "save": {
+          "p50Ms": 18.2,
+          "p95Ms": 24.08
+        }
+      },
+      "firstVerificationMs": 32.57,
+      "verificationP50Ms": 26.05,
+      "verificationP95Ms": 30.9,
+      "eventLoopP95Ms": 18.42,
+      "additionalRequestP95Ms": -17.82
+    },
+    {
+      "attachmentMiB": 250,
+      "operations": {
+        "search": {
+          "p50Ms": 17.97,
+          "p95Ms": 45.69
+        },
+        "switch": {
+          "p50Ms": 17.95,
+          "p95Ms": 45.94
+        },
+        "save": {
+          "p50Ms": 17.99,
+          "p95Ms": 46.13
+        }
+      },
+      "firstVerificationMs": 108.7,
+      "verificationP50Ms": 97.51,
+      "verificationP95Ms": 123.09,
+      "eventLoopP95Ms": 2.62,
+      "additionalRequestP95Ms": 4.23
+    }
+  ],
+  "fullVerificationMs": 5554.64,
+  "fullVerificationOperations": {
+    "search": {
+      "p50Ms": 17.08,
+      "p95Ms": 45.51
+    },
+    "switch": {
+      "p50Ms": 17.42,
+      "p95Ms": 45.49
+    },
+    "save": {
+      "p50Ms": 17.81,
+      "p95Ms": 45.51
+    }
+  },
+  "fullVerificationEventLoopP95Ms": 2.78,
+  "rssMiB": 443.3,
+  "meetsTargets": false
+}

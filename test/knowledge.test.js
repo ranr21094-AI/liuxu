@@ -60,17 +60,21 @@ test('knowledge search returns citations', (t) => {
   assert.ok(open[0].id.includes('#'));
 });
 
-test('knowledge search applies document index deltas without stale hits', (t) => {
+test('knowledge search applies in-memory document deltas without rebuilding or retaining consumed changes', async t => {
   const { db } = createTempDatabase(t, 'knowledge-index-');
   const knowledge = openKnowledge(db);
   const search = createSearchIndex(knowledge);
   const created = knowledge.createNote({ title: '旧标题', content: 'legacyalpha' }).document;
   assert.ok(search.search('legacyalpha', {}).some(item => item.documentId === created.id));
+  knowledge.allDocuments = () => { throw new Error('incremental search must not reload the knowledge base'); };
   knowledge.updateDocument(created.id, { title: '新标题', content: 'freshomega' });
   assert.equal(search.search('legacyalpha', {}).length, 0);
   assert.ok(search.search('freshomega', {}).some(item => item.documentId === created.id));
   knowledge.deleteDocument(created.id);
   assert.equal(search.search('freshomega', {}).length, 0);
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM knowledge_index_changes').get().count, 0);
+  search.dispose();
 });
 
 test('knowledge searchDocuments applies tag and date filters before minisearch', (t) => {

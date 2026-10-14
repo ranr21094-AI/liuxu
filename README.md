@@ -9,29 +9,33 @@
 
 留序是一个本地优先的个人 AI 工作台，把 **Agent、知识库、长期记忆和待办** 放在同一个桌面应用里。你的数据库和附件保存在自己的电脑上；需要 AI 时，由你选择并配置模型服务商。
 
+## 本地文件工作区（分阶段启用）
+
+知识库新增直接读写本地文件的存储模式，SQLite 提供可重建索引，文档元数据保存在根目录 `.liuxu/`。旧用户先预检、备份并显式迁移，启动不会自动切换。操作步骤、冲突协议和当前验收边界见[本地文件工作区说明](docs/file-workspace.md)。
+
 ## 下载与安装
 
 ### Windows 11 x64
 
 [**前往 GitHub Releases 下载最新安装包**](https://github.com/ranr21094-AI/liuxu/releases/latest)
 
-1. 在 [v1.5.2 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.5.2) 下载 `LiuXu-Setup-1.5.2-x64.exe`。
+1. 在 [v1.6.0 发布页](https://github.com/ranr21094-AI/liuxu/releases/tag/v1.6.0) 下载 `LiuXu-Setup-1.6.0-x64.exe`。
 2. 双击安装包，按向导选择程序安装位置。
 3. 从桌面或开始菜单打开 **留序 LiuXu**。
 
 安装包目前没有代码签名。Windows 可能显示“未知发布者”；请先核对 Release 页面提供的 SHA-256，再通过“更多信息 → 仍要运行”继续安装。
 
 ```powershell
-Get-FileHash .\LiuXu-Setup-1.5.2-x64.exe -Algorithm SHA256
+Get-FileHash .\LiuXu-Setup-1.6.0-x64.exe -Algorithm SHA256
 ```
 
-### macOS Apple Silicon（v1.5.2）
+### macOS Apple Silicon（v1.6.0）
 
-当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.5.2 改进电子书、PDF 与 CBZ 的阅读布局、批注和书签体验，并完善知识库文档历史、原文编辑、待办分类和 Memory 编辑。构建产物为：
+当前 Mac 包支持 M 系列芯片和 macOS 12 及以上。v1.6.0 增加可迁移启用的本地文件工作区，并让阅读位置、计时和摘录在重建索引后继续保留。构建产物为：
 
 ```text
-LiuXu-1.5.2-mac-arm64.dmg
-LiuXu-1.5.2-mac-arm64.zip
+LiuXu-1.6.0-mac-arm64.dmg
+LiuXu-1.6.0-mac-arm64.zip
 ```
 
 该包使用 ad-hoc 签名，尚未经过 Apple 公证。将 DMG 中的 **留序 LiuXu** 拖到“应用程序”后，首次打开如被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认“仍要打开”。
@@ -39,8 +43,8 @@ LiuXu-1.5.2-mac-arm64.zip
 可用随包提供的 `.sha256` 文件校验下载内容：
 
 ```bash
-shasum -a 256 -c LiuXu-1.5.2-mac-arm64.dmg.sha256
-shasum -a 256 -c LiuXu-1.5.2-mac-arm64.zip.sha256
+shasum -a 256 -c LiuXu-1.6.0-mac-arm64.dmg.sha256
+shasum -a 256 -c LiuXu-1.6.0-mac-arm64.zip.sha256
 ```
 
 ![留序 LiuXu 工作台](docs/images/liuxu-overview.png)
@@ -58,7 +62,7 @@ shasum -a 256 -c LiuXu-1.5.2-mac-arm64.zip.sha256
 
 笔记助手使用完整 Agent 工具，支持联网、图片、电脑/浏览器操作、记忆与单层子任务，沿用操作确认和目录白名单。直接修改当前笔记前会先保存草稿，再按工具读取时的版本号确认写入；发生冲突须重新读取并确认。需要先看效果时仍可要求生成修改提案。待审批或待回答的会话可重新打开继续。
 
-桌面版知识库可映射为一个真实本地文件夹，默认位置是“文稿/留序知识库”。首次安装后，进入 **设置 → 知识库 → 选择文件夹**，选择默认位置或其他目录即可启用同步；已有条目会迁移到所选目录。笔记以带稳定 ID front matter 的 UTF-8 Markdown 保存，图片放在 Markdown 同目录并使用相对引用；PDF、Word 和图片档案保留原文件，批注另存为同目录 Markdown。留序内的保存、移动、归档和删除会写入文件夹，外部编辑器或文件管理器中的增删改和移动也会自动同步回来。磁盘与编辑器同时修改时以磁盘文件为准，并把未写入内容保存为可恢复的冲突草稿。操作方法、文件布局和故障恢复见[本地知识库同步说明](docs/knowledge-folder-sync.md)。
+知识库仍兼容原有文件夹同步模式；新版本另提供本地文件工作区，正文和导入原件直接以所选目录中的文件为准，`.liuxu/` 保存旁路元数据，SQLite 保存可重建索引。旧用户须先结束 Agent 任务并保存草稿，再在 **设置 → 知识库 → 文件工作区** 中预检、备份并显式迁移；安装后不会自动切换，也不会自动搬动现有文件。文件模式的迁移、冲突和回退步骤见[本地文件工作区说明](docs/file-workspace.md)，旧同步模式见[本地知识库同步说明](docs/knowledge-folder-sync.md)。
 
 桌面版在笔记工具栏提供 **浏览器**。它可以和正文、笔记助手同时打开，支持多标签、地址输入、前进后退、刷新或停止、外部打开，以及拖动或用方向键调整宽度。每篇笔记分别记住标签和选中状态；关闭侧栏、切换笔记不会刷新网页。空间不足时，浏览器与助手会在右侧上下排列，极窄窗口改为覆盖显示。网页版不嵌入网页，仍可使用已有的外部打开方式。
 
@@ -325,6 +329,7 @@ npm run build          # 生成浏览器 vendor 资源
 npm test               # 完整测试
 npm run perf:baseline  # 在临时数据目录生成 1,000（可用 PERF_DOCS 调整）篇文档基线
 npm run perf:check     # 运行基线并输出结构化性能检查结果
+npm run perf:sync      # 隔离目录中测量同步期间搜索、保存和文件切换；含 8/64/250 MiB 附件
 npm run desktop        # Electron 开发模式
 npm run desktop:build  # 按当前系统生成 Windows 或 Mac 测试安装包
 npm run desktop:build:win      # Windows NSIS x64
@@ -356,7 +361,7 @@ desktop-build-summary-mac.json
 
 安装包、个人数据库、附件、`.env` 和 `.zcode/` 不会进入 Git。
 
-性能基线只使用临时 SQLite 数据库，不会读取或修改当前工作区数据。报告写入被 Git 忽略的 `perf-results/`，不包含正文、API Key 或本机数据路径；`PERF_STRICT=1 npm run perf:check` 可将目标阈值作为退出条件。
+性能检查只使用临时数据库与目录，不会读取或修改当前工作区数据。`perf:baseline` 和 `perf:check` 报告写入被 Git 忽略的 `perf-results/`；`perf:sync` 输出 JSON，测量后台校验期间的本地 HTTP 搜索、保存及文件切换，并包含实际写入的 8/64/250 MiB 附件。可用 `PERF_DOCS=10000` 运行万条数据，`PERF_STRICT=1` 将目标阈值作为退出条件。报告不包含正文、API Key 或本机数据路径；本地缓存条件下的结果不能代替网络盘、冷磁盘或其他平台实测。
 
 ### 数据目录优先级
 
@@ -392,7 +397,9 @@ desktop-build-summary-mac.json
 - [笔记 HTML 图片与尺寸调整](docs/note-images.md)
 - [知识库按层级置顶](docs/knowledge-pins.md)
 - [本地知识库同步说明](docs/knowledge-folder-sync.md)
+- [本地文件工作区说明](docs/file-workspace.md)
 - [笔记版本历史说明](docs/knowledge-revisions.md)
+- [v1.6.0 发布说明](docs/releases/v1.6.0.md)
 - [v1.5.2 发布说明](docs/releases/v1.5.2.md)
 - [v1.5.1 发布说明](docs/releases/v1.5.1.md)
 - [v1.4.6 发布说明](docs/releases/v1.4.6.md)

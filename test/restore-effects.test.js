@@ -19,18 +19,18 @@ function captureRestoreRoute(register, db) {
   return routes;
 }
 
-function invokeRestore(handler, { mode = 'replace', contentType = 'application/json' } = {}) {
+async function invokeRestore(handler, { mode = 'replace', contentType = 'application/json' } = {}) {
   let status = 200;
   let body;
   const response = {
     status(value) { status = value; return this; },
     json(value) { body = value; return this; },
   };
-  handler({ query: { mode }, body: {}, headers: { 'content-type': contentType } }, response);
+  await handler({ query: { mode }, body: {}, headers: { 'content-type': contentType } }, response);
   return { status, body };
 }
 
-test('legacy and workspace JSON restore share the same desktop cleanup', t => {
+test('legacy and workspace JSON restore share the same desktop cleanup', async t => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'liuxu-restore-effects-'));
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
   const db = {
@@ -44,14 +44,14 @@ test('legacy and workspace JSON restore share the same desktop cleanup', t => {
   const savePosition = () => position.set({ documentId: 'note:1', record: { sourceType: 'note', kind: 'note', position: { editTop: 200 } } });
 
   savePosition();
-  assert.equal(invokeRestore(backupRoute).status, 200);
+  assert.equal((await invokeRestore(backupRoute)).status, 200);
   assert.equal(fs.existsSync(path.join(dataDir, FILE_NAME)), false);
 
   savePosition();
-  assert.equal(invokeRestore(workspaceRoute).status, 200);
+  assert.equal((await invokeRestore(workspaceRoute)).status, 200);
   assert.equal(fs.existsSync(path.join(dataDir, FILE_NAME)), false);
 
   savePosition();
-  assert.equal(invokeRestore(backupRoute, { mode: 'merge' }).status, 200);
+  assert.equal((await invokeRestore(backupRoute, { mode: 'merge' })).status, 200);
   assert.notEqual(position.get({ documentId: 'note:1' }), null);
 });

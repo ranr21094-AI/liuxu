@@ -52,9 +52,17 @@ export async function readingTools({ doc, host, toolbar, signal, current, select
     for (const item of data.entries) {
       const row = document.createElement('article'); row.dataset.readingEntry = item.id;
       row.innerHTML = `<strong>${esc(item.type === 'bookmark' ? '书签' : '摘录')} · ${esc(item.label)}</strong>${item.quote ? `<p class="book-note-quote">${esc(item.quote)}</p>` : ''}${item.note ? `<p>${esc(item.note)}</p>` : ''}`;
-      button(row, item.fingerprint === data.fingerprint ? '返回原文' : '源文件已变化', () => jump(item)).dataset.readerJump = '';
-      button(row, '编辑', event => edit(item, event.currentTarget));
-      button(row, '删除', () => persist(data.entries.filter(x => x.id !== item.id)));
+      const actions = document.createElement('div'); actions.className = 'book-entry-actions'; row.append(actions);
+      for (const [name, label, path, action] of [
+        ['jump', item.fingerprint === data.fingerprint ? '返回原文' : '源文件已变化，无法定位', '<path d="m10 7-5 5 5 5M5 12h10a4 4 0 0 1 4 4"/>', () => jump(item)],
+        ['edit', '编辑', '<path d="m16 3 5 5-12 12-6 1 1-6Z M13 6l5 5"/>', event => edit(item, event.currentTarget)],
+        ['delete', '删除', '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>', () => persist(data.entries.filter(x => x.id !== item.id))],
+      ]) {
+        const control = button(actions, '', action); control.dataset.readerAction = name;
+        control.setAttribute('aria-label', label); control.title = label;
+        control.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+        if (name === 'jump') { control.dataset.readerJump = ''; control.setAttribute('aria-disabled', String(item.fingerprint !== data.fingerprint)); }
+      }
       panel.append(row);
     }
   };
@@ -72,7 +80,7 @@ export async function readingTools({ doc, host, toolbar, signal, current, select
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || '保存失败');
       data = result.readingData;
-      if (!signal.aborted) { redraw(); report('已保存'); }
+      if (!signal.aborted) { redraw(); report('已保存'); window.dispatchEvent(new window.CustomEvent('reading-data-changed', { detail: { documentId: doc.id } })); }
       return true;
     } catch (error) { if (!signal.aborted) report(error.message); return false; }
     finally { busy = false; bookmark.disabled = false; }
@@ -92,7 +100,7 @@ export async function readingTools({ doc, host, toolbar, signal, current, select
       activeDialog = null; dialog.remove();
       if (signal.aborted) return;
       if (isNew) { host.querySelector('.file-preview-stage')?.focus({ preventScroll: true }); return; }
-      const replacement = [...panel.querySelectorAll('[data-reading-entry]')].find(row => row.dataset.readingEntry === item.id)?.querySelector('button:nth-last-child(2)');
+      const replacement = [...panel.querySelectorAll('[data-reading-entry]')].find(row => row.dataset.readingEntry === item.id)?.querySelector('[data-reader-action=edit]');
       if ((source?.isConnected ? source : replacement)?.focus) (source?.isConnected ? source : replacement).focus({ preventScroll: true });
     };
     dialog.addEventListener('close', restore, { once: true });

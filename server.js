@@ -793,6 +793,11 @@ app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
 app.use(remoteAccessMiddleware);
 app.use(localUserMiddleware);
+app.use('/api', (_req, res, next) => {
+  const operation = require('./lib/knowledge/workspace-operation-lock').operationFor(db.dataDir);
+  if (operation) return res.status(409).json({ error: `工作区正在${operation}，请稍后重试` });
+  next();
+});
 registerRemoteAccessRoutes(app);
 
 app.get(['/', '/index.html'], (_req, res) => {
@@ -2729,7 +2734,7 @@ app.get('/api/categories', (req, res) => {
   }
 });
 
-app.post('/api/categories', (req, res) => {
+app.post('/api/categories', async (req, res) => {
   try {
     const { name, parent } = req.body;
     const cleanName = cleanCategorySegment(name);
@@ -2745,6 +2750,11 @@ app.post('/api/categories', (req, res) => {
       }
       parentPath = segments.join('/');
     }
+    const fileKnowledge = knowledgeServiceFor(db).knowledge;
+    if (fileKnowledge.storageMode === 'files') {
+      const result = await fileKnowledge.createDirectory([parentPath, cleanName].filter(Boolean).join('/'));
+      return res.status(result.error ? result.status || 400 : 201).json(result);
+    }
     const result = db.addCategory(cleanName, parentPath || null);
     if (!result) return res.status(400).json({ error: 'Invalid category name' });
     if (result.error === 'Parent category not found') {
@@ -2754,7 +2764,7 @@ app.post('/api/categories', (req, res) => {
       return res.status(409).json({ error: result.error });
     }
     if (result.error) return res.status(400).json({ error: result.error });
-    knowledgeServiceFor(db).knowledge.folderSync.ensureDirectoryTree();
+    await knowledgeServiceFor(db).knowledge.folderSync.ensureDirectoryTree();
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2789,7 +2799,7 @@ app.put('/api/categories/:parent/subcategories/reorder', (req, res) => {
   }
 });
 
-app.put('/api/categories/:oldName/move', (req, res) => {
+app.put('/api/categories/:oldName/move', async (req, res) => {
   try {
     const sourceSegments = String(req.params.oldName || '').split('/').map(cleanCategorySegment);
     const rawParent = typeof req.body?.parent === 'string' ? req.body.parent : '';
@@ -2800,6 +2810,11 @@ app.put('/api/categories/:oldName/move', (req, res) => {
     }
     const oldName = sourceSegments.join('/');
     const parent = parentSegments.join('/');
+    const fileKnowledge = knowledgeServiceFor(db).knowledge;
+    if (fileKnowledge.storageMode === 'files') {
+      const result = await fileKnowledge.moveDirectory(oldName, `${parent}/${sourceSegments.at(-1)}`);
+      return res.status(result.error ? result.status || 400 : 200).json(result);
+    }
     let originalFolder = { sub: db.getAllCategories() };
     for (const segment of sourceSegments) originalFolder = originalFolder?.sub?.find(node => node.name === segment);
     const originalFolderPin = originalFolder?.pinnedAt;
@@ -2814,14 +2829,14 @@ app.put('/api/categories/:oldName/move', (req, res) => {
 
     const knowledge = knowledgeServiceFor(db).knowledge;
     try {
-      knowledge.rewriteCollectionPath(result.oldPath, result.newPath);
+      await knowledge.rewriteCollectionPath(result.oldPath, result.newPath);
     } catch (error) {
       const oldParent = result.oldPath.split('/').slice(0, -1).join('/');
       try { db.moveCategory(result.newPath, oldParent); if (originalFolderPin) db.setCategoryPinned(oldName, true, originalFolderPin); } catch { /* next sync can reconcile the category tree */ }
       throw error;
     }
-    knowledge.folderSync.removeCollectionDirectory(result.oldPath, 'folder-moved');
-    knowledge.folderSync.ensureDirectoryTree();
+    await knowledge.folderSync.removeCollectionDirectory(result.oldPath, 'folder-moved');
+    await knowledge.folderSync.ensureDirectoryTree();
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2842,11 +2857,17 @@ app.patch('/api/categories/:name/calendar-day-visibility', (req, res) => {
   }
 });
 
-app.put('/api/categories/:oldName', (req, res) => {
+app.put('/api/categories/:oldName', async (req, res) => {
   try {
     const oldName = req.params.oldName;
     const newName = cleanCategorySegment(req.body.name);
     if (!newName) return res.status(400).json({ error: 'Invalid category name' });
+    const fileKnowledge = knowledgeServiceFor(db).knowledge;
+    if (fileKnowledge.storageMode === 'files') {
+      const directory = oldName.split('/').slice(0, -1).join('/');
+      const result = await fileKnowledge.moveDirectory(oldName, [directory, newName].filter(Boolean).join('/'));
+      return res.status(result.error ? result.status || 400 : 200).json(result);
+    }
     const result = db.renameCategory(oldName, newName);
     if (result.error) return res.status(400).json(result);
     const categorySeparator = oldName.lastIndexOf('/');
@@ -2854,24 +2875,31 @@ app.put('/api/categories/:oldName', (req, res) => {
       ? `${oldName.slice(0, categorySeparator)}/${newName}`
       : newName;
     const knowledge = knowledgeServiceFor(db).knowledge;
-    knowledge.rewriteCollectionPath(oldName, rewrittenPath);
-    knowledge.folderSync.removeCollectionDirectory(oldName, 'folder-renamed');
-    knowledge.folderSync.ensureDirectoryTree();
+    await knowledge.rewriteCollectionPath(oldName, rewrittenPath);
+    await knowledge.folderSync.removeCollectionDirectory(oldName, 'folder-renamed');
+    await knowledge.folderSync.ensureDirectoryTree();
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/categories/:name', (req, res) => {
+app.delete('/api/categories/:name', async (req, res) => {
   try {
     const name = req.params.name;
+    const fileKnowledge = knowledgeServiceFor(db).knowledge;
+    if (fileKnowledge.storageMode === 'files') {
+      const result = await fileKnowledge.reassignCollectionPath(name, '其他');
+      if (result?.error) return res.status(result.status || 400).json(result);
+      await fileKnowledge.folderSync.removeCollectionDirectory(name, 'folder-deleted');
+      return res.json({ success: true });
+    }
     const ok = db.deleteCategory(name);
     if (!ok) return res.status(404).json({ error: 'Category not found' });
     const knowledge = knowledgeServiceFor(db).knowledge;
-    knowledge.reassignCollectionPath(name, '其他');
-    knowledge.folderSync.removeCollectionDirectory(name, 'folder-deleted');
-    knowledge.folderSync.ensureDirectoryTree();
+    await knowledge.reassignCollectionPath(name, '其他');
+    await knowledge.folderSync.removeCollectionDirectory(name, 'folder-deleted');
+    await knowledge.folderSync.ensureDirectoryTree();
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3648,7 +3676,24 @@ function startRemoteServer(port = 43140, host = '127.0.0.1') {
 }
 
 if (require.main === module) {
-  startServer().catch(err => {
+  startServer().then(server => {
+    let shuttingDown = false;
+    const shutdown = async () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      try {
+        await new Promise(resolve => {
+          // SSE clients can remain connected indefinitely; stop accepting requests
+          // and drain them before flushing the folder manifests.
+          const timeout = setTimeout(() => server.closeAllConnections(), 4000);
+          server.close(() => { clearTimeout(timeout); resolve(); });
+        });
+        await require('./lib/knowledge/routes').shutdownKnowledgeServices();
+      } catch (error) { console.error(error); process.exitCode = 1; }
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+  }).catch(err => {
     console.error(err);
     process.exit(1);
   });

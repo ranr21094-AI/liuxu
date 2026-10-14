@@ -38,6 +38,7 @@ test('reading data preserves handwritten notes, rejects conflicts and survives p
   assert.match(service.getAnnotation(file.id).content, /^我的手写内容/); assert.doesNotMatch(service.getAnnotation(file.id).content, /修改想法/);
   assert.equal(db.restore(backup).success, true);
   assert.equal(service.getReadingData(file.id).entries[0].note, '修改想法');
+  assert.equal(service.getReadingData(file.id).revision, 2);
   assert.match(service.getAnnotation(file.id).content, /修改想法/);
   service.archiveDocument(file.id); state = service.getReadingData(file.id); assert.equal(update([]).status,403);
 });

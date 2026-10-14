@@ -1,0 +1,1542 @@
+{
+  "liuxu-audit-1000": {
+    "count": 1000,
+    "bodyChars": 1032,
+    "metrics": {
+      "coldSearch": {
+        "p50": 256.36,
+        "p95": 256.36,
+        "samples": 1
+      },
+      "warmSearch": {
+        "p50": 1.25,
+        "p95": 1.62,
+        "samples": 12
+      },
+      "allDocuments": {
+        "p50": 6.52,
+        "p95": 8.56,
+        "samples": 12
+      },
+      "listPage60": {
+        "p50": 6.17,
+        "p95": 8.32,
+        "samples": 12
+      },
+      "quickOpen20": {
+        "p50": 6.53,
+        "p95": 9.73,
+        "samples": 12
+      },
+      "searchDocuments20": {
+        "p50": 7.3,
+        "p95": 8.08,
+        "samples": 12
+      },
+      "saveOnly": {
+        "p50": 0.13,
+        "p95": 1.01,
+        "samples": 12
+      },
+      "saveThenSearch": {
+        "p50": 247.52,
+        "p95": 252.98,
+        "samples": 8
+      },
+      "scanFiles": {
+        "p50": 1.93,
+        "p95": 3.12,
+        "samples": 12
+      },
+      "nameOnlyOneFolder": {
+        "p50": 3.28,
+        "p95": 3.98,
+        "samples": 12
+      },
+      "unchangedFolderSync": {
+        "p50": 145.56,
+        "p95": 157.96,
+        "samples": 4
+      },
+      "saveWithFolderSync": {
+        "p50": 10.75,
+        "p95": 11.05,
+        "samples": 8
+      },
+      "sessionRead1000": {
+        "p50": 5.01,
+        "p95": 7.04,
+        "samples": 12
+      },
+      "sessionSave1000": {
+        "p50": 5.09,
+        "p95": 5.55,
+        "samples": 12
+      }
+    },
+    "indexBytes": 3129102,
+    "maxSyncEventLoopLagMs": 27.2,
+    "syncReport": {
+      "reason": "manual",
+      "added": 0,
+      "updated": 0,
+      "moved": 0,
+      "deleted": 0,
+      "errors": []
+    },
+    "unchangedMarkdownReads": {
+      "reads": 2000,
+      "bytes": 4847360
+    },
+    "sessionResponseBytes": 2363704,
+    "rssMb": 358.48
+  },
+  "liuxu-audit-10000": {
+    "count": 10000,
+    "bodyChars": 1032,
+    "metrics": {
+      "coldSearch": {
+        "p50": 2759.32,
+        "p95": 2759.32,
+        "samples": 1
+      },
+      "warmSearch": {
+        "p50": 13.39,
+        "p95": 18.76,
+        "samples": 12
+      },
+      "allDocuments": {
+        "p50": 73.13,
+        "p95": 91.87,
+        "samples": 12
+      },
+      "listPage60": {
+        "p50": 74.41,
+        "p95": 78.98,
+        "samples": 12
+      },
+      "quickOpen20": {
+        "p50": 79.95,
+        "p95": 84,
+        "samples": 12
+      },
+      "searchDocuments20": {
+        "p50": 89.74,
+        "p95": 96.88,
+        "samples": 12
+      },
+      "saveOnly": {
+        "p50": 0.14,
+        "p95": 5.35,
+        "samples": 12
+      },
+      "saveThenSearch": {
+        "p50": 2757.26,
+        "p95": 2803.13,
+        "samples": 8
+      },
+      "scanFiles": {
+        "p50": 18.53,
+        "p95": 19.95,
+        "samples": 12
+      },
+      "nameOnlyOneFolder": {
+        "p50": 37.55,
+        "p95": 45.03,
+        "samples": 12
+      },
+      "unchangedFolderSync": {
+        "p50": 1403.44,
+        "p95": 1469.08,
+        "samples": 4
+      },
+      "saveWithFolderSync": {
+        "p50": 18.02,
+        "p95": 21.33,
+        "samples": 8
+      },
+      "sessionRead1000": {
+        "p50": 5.39,
+        "p95": 7.13,
+        "samples": 12
+      },
+      "sessionSave1000": {
+        "p50": 5.35,
+        "p95": 5.94,
+        "samples": 12
+      }
+    },
+    "indexBytes": 31380111,
+    "maxSyncEventLoopLagMs": 115.68,
+    "syncReport": {
+      "reason": "manual",
+      "added": 0,
+      "updated": 0,
+      "moved": 0,
+      "deleted": 0,
+      "errors": []
+    },
+    "unchangedMarkdownReads": {
+      "reads": 20000,
+      "bytes": 48533366
+    },
+    "sessionResponseBytes": 2363704,
+    "rssMb": 1232.23
+  },
+  "liuxu-tree-audit": [
+    {
+      "documents": 1000,
+      "leafFolders": 20,
+      "totalFolders": 40,
+      "p50Ms": 1.247374999999991,
+      "p95Ms": 6.657458999999996,
+      "responseBytes": 3682
+    },
+    {
+      "documents": 1000,
+      "leafFolders": 1000,
+      "totalFolders": 2000,
+      "p50Ms": 31.89220800000001,
+      "p95Ms": 33.116333999999995,
+      "responseBytes": 182722
+    },
+    {
+      "documents": 10000,
+      "leafFolders": 20,
+      "totalFolders": 40,
+      "p50Ms": 8.118416999999965,
+      "p95Ms": 8.58299999999997,
+      "responseBytes": 3743
+    },
+    {
+      "documents": 10000,
+      "leafFolders": 1000,
+      "totalFolders": 2000,
+      "p50Ms": 315.0035419999999,
+      "p95Ms": 317.8179580000001,
+      "responseBytes": 185723
+    }
+  ],
+  "liuxu-storage-audit": {
+    "databaseBytes": 131837952,
+    "exportResult": "schedule.db is too large",
+    "exportMs": 118.13941699999998,
+    "entryExportResult": "ZIP contains too many entries",
+    "entryExportMs": 73.95116600000006
+  },
+  "liuxu-index-history-audit": {
+    "updates": 600,
+    "indexChanges": 601,
+    "currentVersion": 601,
+    "persistedVersion": 601
+  },
+  "liuxu-other-audit": [
+    {
+      "count": 1000,
+      "memoryRead": {
+        "p50Ms": 0.7518749999999983,
+        "p95Ms": 1.2792920000000052
+      },
+      "memorySingleEditRewrite": {
+        "p50Ms": 3.9493750000000034,
+        "p95Ms": 7.490375
+      }
+    },
+    {
+      "count": 10000,
+      "memoryRead": {
+        "p50Ms": 8.360374999999976,
+        "p95Ms": 12.069084000000004
+      },
+      "memorySingleEditRewrite": {
+        "p50Ms": 35.72408300000001,
+        "p95Ms": 39.19395799999995
+      }
+    },
+    {
+      "todos": 10000,
+      "todoList": {
+        "p50Ms": 0.5295839999999998,
+        "p95Ms": 11.937167000000045
+      },
+      "todoSingleUpdate": {
+        "p50Ms": 0.1520829999999478,
+        "p95Ms": 0.35775000000001
+      }
+    }
+  ],
+  "liuxu-ui-audit-1000": {
+    "count": 1000,
+    "metrics": [
+      {
+        "name": "startup",
+        "ms": 102.82333299999999
+      },
+      {
+        "name": "browseBase60",
+        "ms": 34.19,
+        "nodes": 3171
+      },
+      {
+        "name": "loadMore1",
+        "ms": 32.96,
+        "nodes": 4791
+      },
+      {
+        "name": "loadMore2",
+        "ms": 32.96,
+        "nodes": 6411
+      },
+      {
+        "name": "loadMore3",
+        "ms": 33.01,
+        "nodes": 8031
+      },
+      {
+        "name": "loadMore4",
+        "ms": 41.28,
+        "nodes": 9651
+      },
+      {
+        "name": "loadMore5",
+        "ms": 41.2,
+        "nodes": 11271
+      },
+      {
+        "name": "loadMore6",
+        "ms": 36.35,
+        "nodes": 12891
+      },
+      {
+        "name": "loadMore7",
+        "ms": 54.62,
+        "nodes": 14511
+      },
+      {
+        "name": "loadMore8",
+        "ms": 41.16,
+        "nodes": 16131
+      },
+      {
+        "name": "loadMore9",
+        "ms": 49.69,
+        "nodes": 17751
+      },
+      {
+        "name": "openLongNote",
+        "ms": 87.73,
+        "nodes": 17753
+      },
+      {
+        "name": "longPreview",
+        "ms": 133.96,
+        "nodes": 7177
+      },
+      {
+        "name": "quickSwitchNotes",
+        "ms": 41.4,
+        "nodes": 7182
+      },
+      {
+        "name": "openCSV",
+        "ms": 57.86,
+        "nodes": 9592
+      },
+      {
+        "name": "openSession100",
+        "ms": 131.22,
+        "nodes": 12534
+      },
+      {
+        "name": "openSession1000",
+        "ms": 408.93,
+        "nodes": 39084
+      },
+      {
+        "name": "returnSession100",
+        "ms": 64.66,
+        "nodes": 12534
+      }
+    ],
+    "checks": {
+      "saved": "已保存",
+      "latestNote": "笔记3"
+    },
+    "grid": {
+      "samples": [
+        2.5,
+        9.600000381469727,
+        10.899999618530273,
+        12.900000095367432,
+        13.300000190734863,
+        14.299999713897705,
+        16.200000286102295,
+        11.699999809265137
+      ],
+      "beforeWrites": 8,
+      "afterThreeEncodingChanges": {
+        "ms": 50.799999713897705,
+        "writes": 4
+      },
+      "rows": "1,000 行 · 80 列"
+    },
+    "longTasks": [
+      {
+        "start": 512,
+        "duration": 64
+      },
+      {
+        "start": 631.7999997138977,
+        "duration": 56
+      },
+      {
+        "start": 4102.199999809265,
+        "duration": 199
+      },
+      {
+        "start": 4301.5,
+        "duration": 60
+      },
+      {
+        "start": 4443.099999904633,
+        "duration": 276
+      },
+      {
+        "start": 4719.199999809265,
+        "duration": 112
+      }
+    ],
+    "requests": [
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 3.3000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 4
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 1.6000003814697266
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=60",
+        "ms": 3.4000000953674316
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=120",
+        "ms": 2.799999713897705
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=180",
+        "ms": 2.8000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=240",
+        "ms": 2.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=300",
+        "ms": 2.5999999046325684
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=360",
+        "ms": 3
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=420",
+        "ms": 2.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=480",
+        "ms": 2.5999999046325684
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=540",
+        "ms": 2.8000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1001",
+        "ms": 1.700000286102295
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1001",
+        "ms": 2.299999713897705
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 65.19999980926514
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 6.599999904632568
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 10.900000095367432
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 29.09999990463257
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1001",
+        "ms": 6.700000286102295
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 4.599999904632568
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1",
+        "ms": 1.0999999046325684
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A2",
+        "ms": 0.8999996185302734
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 1.0999999046325684
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 1.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 3.200000286102295
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 4.700000286102295
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 5.799999713897705
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 6.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 22.300000190734863
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 21.90000009536743
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 19.799999713897705
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 3.1999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 3
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 0.6000003814697266
+      },
+      {
+        "url": "/api/knowledge/documents/file%3A1",
+        "ms": 2.1999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents/file%3A1",
+        "ms": 7.700000286102295
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 7.899999618530273
+      },
+      {
+        "url": "/api/knowledge/files/file%3A1/text",
+        "ms": 1.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 8.099999904632568
+      },
+      {
+        "url": "/api/knowledge/files/file%3A1/content",
+        "ms": 8.800000190734863
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 14.699999809265137
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 3.200000286102295
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 0.7999997138977051
+      },
+      {
+        "url": "/api/agent/sessions/0aef06c9-f251-49d6-b6d9-ccac5582957b",
+        "ms": 4.800000190734863
+      },
+      {
+        "url": "/api/agent/sessions/0aef06c9-f251-49d6-b6d9-ccac5582957b",
+        "ms": 6
+      },
+      {
+        "url": "/api/agent/sessions/ef7f8b1d-557c-4c85-9a17-90d93e8acf80",
+        "ms": 4
+      },
+      {
+        "url": "/api/agent/sessions/ef7f8b1d-557c-4c85-9a17-90d93e8acf80",
+        "ms": 6.800000190734863
+      },
+      {
+        "url": "/api/agent/sessions/0aef06c9-f251-49d6-b6d9-ccac5582957b",
+        "ms": 13.099999904632568
+      }
+    ],
+    "rendererMemory": {
+      "usedJSHeapSize": 17756425,
+      "totalJSHeapSize": 88400393
+    }
+  },
+  "liuxu-ui-audit-10000": {
+    "count": 10000,
+    "metrics": [
+      {
+        "name": "startup",
+        "ms": 108.92154100000005
+      },
+      {
+        "name": "browseBase60",
+        "ms": 72.71,
+        "nodes": 3171
+      },
+      {
+        "name": "loadMore1",
+        "ms": 49.76,
+        "nodes": 4791
+      },
+      {
+        "name": "loadMore2",
+        "ms": 49.68,
+        "nodes": 6411
+      },
+      {
+        "name": "loadMore3",
+        "ms": 49.7,
+        "nodes": 8031
+      },
+      {
+        "name": "loadMore4",
+        "ms": 41.77,
+        "nodes": 9651
+      },
+      {
+        "name": "loadMore5",
+        "ms": 57.46,
+        "nodes": 11271
+      },
+      {
+        "name": "loadMore6",
+        "ms": 58.39,
+        "nodes": 12891
+      },
+      {
+        "name": "loadMore7",
+        "ms": 66.01,
+        "nodes": 14511
+      },
+      {
+        "name": "loadMore8",
+        "ms": 58,
+        "nodes": 16131
+      },
+      {
+        "name": "loadMore9",
+        "ms": 69.37,
+        "nodes": 17751
+      },
+      {
+        "name": "openLongNote",
+        "ms": 95.57,
+        "nodes": 17753
+      },
+      {
+        "name": "longPreview",
+        "ms": 154.34,
+        "nodes": 7177
+      },
+      {
+        "name": "quickSwitchNotes",
+        "ms": 99.37,
+        "nodes": 7182
+      },
+      {
+        "name": "openCSV",
+        "ms": 244.42,
+        "nodes": 9592
+      },
+      {
+        "name": "openSession100",
+        "ms": 137.22,
+        "nodes": 12534
+      },
+      {
+        "name": "openSession1000",
+        "ms": 383.01,
+        "nodes": 39084
+      },
+      {
+        "name": "returnSession100",
+        "ms": 57.5,
+        "nodes": 12534
+      }
+    ],
+    "checks": {
+      "saved": "已保存",
+      "latestNote": "笔记3"
+    },
+    "grid": {
+      "samples": [
+        2.5999999046325684,
+        8.700000286102295,
+        9.199999809265137,
+        9.699999809265137,
+        9.400000095367432,
+        10,
+        9.400000095367432,
+        9.5
+      ],
+      "beforeWrites": 8,
+      "afterThreeEncodingChanges": {
+        "ms": 39.40000009536743,
+        "writes": 4
+      },
+      "rows": "10,000 行 · 80 列"
+    },
+    "longTasks": [
+      {
+        "start": 695.3000001907349,
+        "duration": 56
+      },
+      {
+        "start": 822,
+        "duration": 57
+      },
+      {
+        "start": 1245,
+        "duration": 78
+      },
+      {
+        "start": 1699.2000002861023,
+        "duration": 72
+      },
+      {
+        "start": 2153.800000190735,
+        "duration": 74
+      },
+      {
+        "start": 2608.5,
+        "duration": 74
+      },
+      {
+        "start": 3061.9000000953674,
+        "duration": 74
+      },
+      {
+        "start": 4456,
+        "duration": 75
+      },
+      {
+        "start": 4558.300000190735,
+        "duration": 370
+      },
+      {
+        "start": 4929,
+        "duration": 52
+      },
+      {
+        "start": 5076.5,
+        "duration": 256
+      },
+      {
+        "start": 5332.800000190735,
+        "duration": 107
+      }
+    ],
+    "requests": [
+      {
+        "url": "/api/knowledge/revisions/cleanup",
+        "ms": 4.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 21.90000009536743
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 17.899999618530273
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 0.7999997138977051
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=60",
+        "ms": 16.5
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=120",
+        "ms": 17.5
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=180",
+        "ms": 17
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=240",
+        "ms": 16
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=300",
+        "ms": 16
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=360",
+        "ms": 16.40000009536743
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=420",
+        "ms": 16.200000286102295
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=480",
+        "ms": 16.699999809265137
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=540",
+        "ms": 15.900000095367432
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A10001",
+        "ms": 1.8000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A10001",
+        "ms": 2.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 64.19999980926514
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 17
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 16.5
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 7.400000095367432
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A10001",
+        "ms": 13.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 29.5
+      },
+      {
+        "url": "/api/knowledge/sync/status",
+        "ms": 4.099999904632568
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1",
+        "ms": 4.299999713897705
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A2",
+        "ms": 3.8000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 3.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 4.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 34.90000009536743
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 38.90000009536743
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 56
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 59.19999980926514
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 73.5
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 87.69999980926514
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 67.2000002861023
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 51.80000019073486
+      },
+      {
+        "url": "/api/knowledge/documents/file%3A1",
+        "ms": 38.90000009536743
+      },
+      {
+        "url": "/api/knowledge/documents/file%3A1",
+        "ms": 48.69999980926514
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 35.90000009536743
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 41.90000009536743
+      },
+      {
+        "url": "/api/knowledge/files/file%3A1/text",
+        "ms": 31.799999713897705
+      },
+      {
+        "url": "/api/knowledge/files/file%3A1/content",
+        "ms": 31.600000381469727
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 17.09999990463257
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 27
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 17.399999618530273
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 0.9000000953674316
+      },
+      {
+        "url": "/api/agent/sessions/eb17db73-44fc-473d-96b0-2e40209a385c",
+        "ms": 4.400000095367432
+      },
+      {
+        "url": "/api/agent/sessions/eb17db73-44fc-473d-96b0-2e40209a385c",
+        "ms": 2
+      },
+      {
+        "url": "/api/agent/sessions/a161bd09-c937-41dc-9961-54f30dd72254",
+        "ms": 3.700000286102295
+      },
+      {
+        "url": "/api/agent/sessions/a161bd09-c937-41dc-9961-54f30dd72254",
+        "ms": 6.699999809265137
+      },
+      {
+        "url": "/api/agent/sessions/eb17db73-44fc-473d-96b0-2e40209a385c",
+        "ms": 12.399999618530273
+      }
+    ],
+    "rendererMemory": {
+      "usedJSHeapSize": 138838102,
+      "totalJSHeapSize": 195059146
+    }
+  },
+  "liuxu-concurrent-audit-10000": {
+    "count": 10000,
+    "bodyChars": 1032,
+    "metrics": {
+      "coldSearch": {
+        "p50": 2752.12,
+        "p95": 2752.12,
+        "samples": 1
+      },
+      "warmSearch": {
+        "p50": 15.25,
+        "p95": 27.38,
+        "samples": 12
+      },
+      "allDocuments": {
+        "p50": 78.17,
+        "p95": 104.69,
+        "samples": 12
+      },
+      "listPage60": {
+        "p50": 72.72,
+        "p95": 80.66,
+        "samples": 12
+      },
+      "quickOpen20": {
+        "p50": 75.81,
+        "p95": 83.5,
+        "samples": 12
+      },
+      "searchDocuments20": {
+        "p50": 86.71,
+        "p95": 92.04,
+        "samples": 12
+      },
+      "saveOnly": {
+        "p50": 0.13,
+        "p95": 1.2,
+        "samples": 12
+      },
+      "saveThenSearch": {
+        "p50": 2712.56,
+        "p95": 2801.2,
+        "samples": 8
+      },
+      "scanFiles": {
+        "p50": 19.16,
+        "p95": 20.14,
+        "samples": 12
+      },
+      "nameOnlyOneFolder": {
+        "p50": 38.17,
+        "p95": 40.03,
+        "samples": 12
+      },
+      "unchangedFolderSync": {
+        "p50": 1433.5,
+        "p95": 1480.6,
+        "samples": 4
+      },
+      "saveWithFolderSync": {
+        "p50": 17.41,
+        "p95": 18.02,
+        "samples": 8
+      },
+      "sessionRead1000": {
+        "p50": 5.15,
+        "p95": 6.74,
+        "samples": 12
+      },
+      "sessionSave1000": {
+        "p50": 5.21,
+        "p95": 6.2,
+        "samples": 12
+      }
+    },
+    "indexBytes": 31380111,
+    "maxSyncEventLoopLagMs": 114.23,
+    "syncReport": {
+      "reason": "manual",
+      "added": 0,
+      "updated": 0,
+      "moved": 0,
+      "deleted": 0,
+      "errors": []
+    },
+    "unchangedMarkdownReads": {
+      "reads": 20000,
+      "bytes": 48533366
+    },
+    "foregroundEditDuringSync": {
+      "ms": 54.289457999999286,
+      "result": {
+        "error": null,
+        "version": 2
+      },
+      "syncErrors": 0
+    },
+    "sessionResponseBytes": 2363704,
+    "rssMb": 1212.13
+  },
+  "baseline": [
+    {
+      "generatedAt": "2026-10-13T05:19:45.637Z",
+      "docs": 1000,
+      "node": "v24.20.0",
+      "platform": "darwin",
+      "arch": "arm64",
+      "metrics": {
+        "coldSearchMs": 46.72,
+        "searchP50Ms": 0.55,
+        "searchP95Ms": 1.2,
+        "documentUpdateP95Ms": 0.21,
+        "todoUpdateP95Ms": 0.04,
+        "backupMs": 1.39,
+        "backupDocuments": 1000,
+        "rssMb": 142.64
+      }
+    },
+    {
+      "generatedAt": "2026-10-13T05:19:45.831Z",
+      "docs": 10000,
+      "node": "v24.20.0",
+      "platform": "darwin",
+      "arch": "arm64",
+      "metrics": {
+        "coldSearchMs": 458.07,
+        "searchP50Ms": 5.68,
+        "searchP95Ms": 8.49,
+        "documentUpdateP95Ms": 0.14,
+        "todoUpdateP95Ms": 0.04,
+        "backupMs": 11.23,
+        "backupDocuments": 10000,
+        "rssMb": 550.47
+      }
+    }
+  ],
+  "environment": {
+    "date": "2026-10-13",
+    "revision": "9c0d4dd",
+    "node": "v24.20.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "businessCodeModified": false,
+    "regressionTests": {
+      "passed": 58,
+      "failed": 0
+    }
+  },
+  "liuxu-sse-audit-1000": {
+    "count": 1000,
+    "metrics": [
+      {
+        "name": "startup",
+        "ms": 103.75720899999999
+      },
+      {
+        "name": "browseBase60",
+        "ms": 32.04,
+        "nodes": 3171
+      },
+      {
+        "name": "loadMore1",
+        "ms": 32.92,
+        "nodes": 4791
+      },
+      {
+        "name": "loadMore2",
+        "ms": 32.95,
+        "nodes": 6411
+      },
+      {
+        "name": "loadMore3",
+        "ms": 34.79,
+        "nodes": 8031
+      },
+      {
+        "name": "loadMore4",
+        "ms": 41.36,
+        "nodes": 9651
+      },
+      {
+        "name": "loadMore5",
+        "ms": 41.08,
+        "nodes": 11271
+      },
+      {
+        "name": "loadMore6",
+        "ms": 36.33,
+        "nodes": 12891
+      },
+      {
+        "name": "loadMore7",
+        "ms": 54.7,
+        "nodes": 14511
+      },
+      {
+        "name": "loadMore8",
+        "ms": 49.59,
+        "nodes": 16131
+      },
+      {
+        "name": "loadMore9",
+        "ms": 49.59,
+        "nodes": 17751
+      },
+      {
+        "name": "openLongNote",
+        "ms": 86.98,
+        "nodes": 17753
+      },
+      {
+        "name": "longPreview",
+        "ms": 134.95,
+        "nodes": 7177
+      },
+      {
+        "name": "quickSwitchNotes",
+        "ms": 49.35,
+        "nodes": 7182
+      },
+      {
+        "name": "openCSV",
+        "ms": 47.05,
+        "nodes": 9592
+      },
+      {
+        "name": "openSession100",
+        "ms": 129.78,
+        "nodes": 12534
+      },
+      {
+        "name": "openSession1000",
+        "ms": 391.19,
+        "nodes": 39084
+      },
+      {
+        "name": "returnSession100",
+        "ms": 57.52,
+        "nodes": 12534
+      },
+      {
+        "name": "sseOpenRunning",
+        "ms": 379.46,
+        "nodes": 39084
+      },
+      {
+        "name": "sseSwitchAway",
+        "ms": 110.73,
+        "nodes": 12534
+      },
+      {
+        "name": "sseReturnAfterCompletion",
+        "ms": 418.31,
+        "nodes": 39084
+      }
+    ],
+    "checks": {
+      "saved": "已保存",
+      "latestNote": "笔记3",
+      "mockSSE": {
+        "status": "completed",
+        "rounds": 4,
+        "messages": 1005,
+        "visibleOnCachedReturn": false,
+        "visibleAfterReload": true
+      }
+    },
+    "grid": {
+      "samples": [
+        2.4000000953674316,
+        8.700000286102295,
+        9.299999713897705,
+        12.200000286102295,
+        12.099999904632568,
+        12.400000095367432,
+        13.799999713897705,
+        10.400000095367432
+      ],
+      "beforeWrites": 8,
+      "afterThreeEncodingChanges": {
+        "ms": 43.5,
+        "writes": 4
+      },
+      "rows": "1,000 行 · 80 列"
+    },
+    "longTasks": [
+      {
+        "start": 520.5,
+        "duration": 63
+      },
+      {
+        "start": 639.4000000953674,
+        "duration": 56
+      },
+      {
+        "start": 1045.9000000953674,
+        "duration": 70
+      },
+      {
+        "start": 1501,
+        "duration": 70
+      },
+      {
+        "start": 1955,
+        "duration": 75
+      },
+      {
+        "start": 2410.0999999046326,
+        "duration": 75
+      },
+      {
+        "start": 2865.300000190735,
+        "duration": 71
+      },
+      {
+        "start": 4118.400000095367,
+        "duration": 176
+      },
+      {
+        "start": 4295.200000286102,
+        "duration": 61
+      },
+      {
+        "start": 4435.200000286102,
+        "duration": 263
+      },
+      {
+        "start": 4698.599999904633,
+        "duration": 107
+      },
+      {
+        "start": 4913,
+        "duration": 256
+      },
+      {
+        "start": 5169.5,
+        "duration": 106
+      },
+      {
+        "start": 5545.200000286102,
+        "duration": 50
+      },
+      {
+        "start": 6306.599999904633,
+        "duration": 293
+      },
+      {
+        "start": 6600.400000095367,
+        "duration": 104
+      }
+    ],
+    "requests": [
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 3.5
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 4
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 0.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=60",
+        "ms": 3.299999713897705
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=120",
+        "ms": 2.700000286102295
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=180",
+        "ms": 2.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=240",
+        "ms": 2.8000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=300",
+        "ms": 2.5999999046325684
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=360",
+        "ms": 2.8999996185302734
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=420",
+        "ms": 2.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=480",
+        "ms": 2.5999999046325684
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60&cursor=540",
+        "ms": 2.8000001907348633
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1001",
+        "ms": 1.700000286102295
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1001",
+        "ms": 2.3000001907348633
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 64.7000002861023
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 6.600000381469727
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 10.5
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 26.09999990463257
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1001",
+        "ms": 14
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 9.699999809265137
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A1",
+        "ms": 2.9000000953674316
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A2",
+        "ms": 2.5
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 2.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 3
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 5.799999713897705
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 9.300000190734863
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 11.5
+      },
+      {
+        "url": "/api/knowledge/documents/note%3A3",
+        "ms": 14.099999904632568
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 32.200000286102295
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 32.299999713897705
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 25.40000009536743
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 4.300000190734863
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 3.6999998092651367
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 1.6000003814697266
+      },
+      {
+        "url": "/api/knowledge/documents/file%3A1",
+        "ms": 2.4000000953674316
+      },
+      {
+        "url": "/api/knowledge/documents/file%3A1",
+        "ms": 4.099999904632568
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 4.5
+      },
+      {
+        "url": "/api/knowledge/files/file%3A1/text",
+        "ms": 1.700000286102295
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 9
+      },
+      {
+        "url": "/api/knowledge/files/file%3A1/content",
+        "ms": 9.699999809265137
+      },
+      {
+        "url": "/api/knowledge/tree",
+        "ms": 25.59999990463257
+      },
+      {
+        "url": "/api/knowledge/sync/status",
+        "ms": 1.6000003814697266
+      },
+      {
+        "url": "/api/knowledge/documents?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=&limit=60",
+        "ms": 2.9000000953674316
+      },
+      {
+        "url": "/api/knowledge/local-entries?knowledgeBase=%E5%AE%A1%E6%9F%A5&folder=",
+        "ms": 5.599999904632568
+      },
+      {
+        "url": "/api/agent/sessions/cb1b3f67-72ad-4921-a9aa-4097697c1040",
+        "ms": 4.199999809265137
+      },
+      {
+        "url": "/api/agent/sessions/cb1b3f67-72ad-4921-a9aa-4097697c1040",
+        "ms": 6.199999809265137
+      },
+      {
+        "url": "/api/agent/sessions/9ea68ff5-d2cd-4cf1-b41c-41e76fc0ef2a",
+        "ms": 3.6999998092651367
+      },
+      {
+        "url": "/api/agent/sessions/9ea68ff5-d2cd-4cf1-b41c-41e76fc0ef2a",
+        "ms": 6.599999904632568
+      },
+      {
+        "url": "/api/agent/sessions/cb1b3f67-72ad-4921-a9aa-4097697c1040",
+        "ms": 12.299999713897705
+      },
+      {
+        "url": "/api/agent/sessions/9ea68ff5-d2cd-4cf1-b41c-41e76fc0ef2a",
+        "ms": 108.2000002861023
+      },
+      {
+        "url": "/api/agent/sessions/cb1b3f67-72ad-4921-a9aa-4097697c1040",
+        "ms": 13.300000190734863
+      },
+      {
+        "url": "/api/agent/sessions/9ea68ff5-d2cd-4cf1-b41c-41e76fc0ef2a",
+        "ms": 106.80000019073486
+      }
+    ],
+    "rendererMemory": {
+      "usedJSHeapSize": 33599429,
+      "totalJSHeapSize": 96351201
+    }
+  }
+}

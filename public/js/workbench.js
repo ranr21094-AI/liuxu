@@ -1,3 +1,4 @@
+import { splitAnnotation } from './knowledge/annotation-sections.js';
 import { initKnowledgeMove } from './app/knowledge-move.js';
 import { initDocumentPresentation } from './app/document-presentation.js';
 import { renderProviderDirectory } from './app/provider-directory.js';
@@ -39,6 +40,7 @@ import { initSelectControls, syncSelectControls } from './selectControl.js';
 import { mountAgentEmptyHero, renderAgentEmptyHero, unmountAgentEmptyHero } from './agent-empty-hero.js';
 import { initDatePickers, syncDatePickers, closeDatePickers } from './app/date-picker.js';
 import { initKnowledgeOperations } from './app/knowledge-operations.js';
+import { initKnowledgeDragEvents } from './app/knowledge-drag.js';
 import { enhanceKnowledgeRowMenus } from './app/knowledge-row-menu.js';
 import { initKnowledgeNavigation } from './app/knowledge-navigation.js';
 import { initSessionCreateAction } from './app/agent-mode-action.js';
@@ -145,7 +147,6 @@ function syncKnowledgeSearchScope() {
   knowledgeSearchScope = scope;
 }
 
-let knowledgeDragItem = null;
 let suppressKnowledgeClickUntil = 0;
 
 const RENDERED_TERMINAL_RUN_LIMIT = 32;
@@ -483,7 +484,22 @@ function syncMarkdownToc() {
   }
 }
 
+let previewRenderGeneration = 0;
+let previewIdleHandle = null;
+let previewDebounceTimer = null;
+
+function cancelScheduledPreview() {
+  clearTimeout(previewDebounceTimer);
+  previewDebounceTimer = null;
+  if (previewIdleHandle == null) return;
+  if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(previewIdleHandle);
+  else clearTimeout(previewIdleHandle);
+  previewIdleHandle = null;
+}
+
 function renderDocumentPreview() {
+  previewRenderGeneration += 1;
+  cancelScheduledPreview();
   const host = $('#documentPreview');
   if (!host) return;
   const scrollTop = host.scrollTop;
@@ -511,10 +527,25 @@ window.addEventListener('liuxu:markdown-ready', () => {
   if (state.mode === 'agent' && state.activeSession) renderSessionMessages(state.activeSession, { force: true });
 });
 
-const refreshDocumentPreview = debounce(() => {
-  if (state.editorMode === 'edit') syncMarkdownToc();
-  if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
-}, 300);
+function refreshDocumentPreview() {
+  previewRenderGeneration += 1;
+  cancelScheduledPreview();
+  previewDebounceTimer = setTimeout(() => {
+    previewDebounceTimer = null;
+    const generation = previewRenderGeneration;
+    const renderWhenIdle = () => {
+      if (generation !== previewRenderGeneration) return;
+      previewIdleHandle = null;
+      if (state.editorMode === 'edit') syncMarkdownToc();
+      if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      previewIdleHandle = window.requestIdleCallback(renderWhenIdle, { timeout: 1000 });
+    } else {
+      previewIdleHandle = setTimeout(renderWhenIdle, 40);
+    }
+  }, 550);
+}
 
 function formatMessageTime(value) {
   const date = new Date(value || 0);
@@ -2047,6 +2078,7 @@ function renderKnowledgeSyncStatus() {
     warning: '同步完成，但有文件需要处理',
     error: '同步已暂停',
   };
+  if (sync?.storage === 'liuxu-file-workspace') { labels.idle = sync.pendingIndex ? '文件已保存，索引待更新' : '文件工作区已就绪'; labels.syncing = '正在刷新文件…'; labels.error = '文件工作区需要处理'; }
   const label = sync ? (labels[sync.status] || sync.status || '同步状态未知') : '正在读取同步状态…';
   if (sidebar) {
     sidebar.querySelector('span:last-child').textContent = label;
@@ -2067,7 +2099,7 @@ function renderKnowledgeSyncStatus() {
     extensionsInput.value = extensionValue;
     extensionsInput.dataset.savedValue = extensionValue;
   }
-  $('#knowledgeSyncExtensionSettings')?.toggleAttribute('hidden', !bridge);
+  $('#knowledgeSyncExtensionSettings')?.toggleAttribute('hidden', !bridge || sync?.storage === 'liuxu-file-workspace');
   $('#openKnowledgeFolderButton')?.toggleAttribute('hidden', !bridge || !sync?.enabled);
   if ($('#knowledgeFolderDesktopActions')) $('#knowledgeFolderDesktopActions').hidden = !bridge;
   const errorSection = $('#knowledgeSyncErrorSection');
@@ -2168,6 +2200,47 @@ async function saveKnowledgeSyncExtensions() {
   await syncKnowledgeFolder();
 }
 
+async function rebuildKnowledgeIndex() {
+  if (!(await flushPendingSaves())) throw new Error('请先保存当前草稿');
+  const response = await apiFetch('/api/knowledge/index/rebuild', { method: 'POST' });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || '索引重建失败');
+  await loadDocuments();
+  showToast('索引已重建', 'success');
+}
+
+let renameFileTarget = null;
+async function openRenameKnowledgeFile() {
+  if (!(await flushPendingSaves())) throw new Error('请先保存当前草稿');
+  const doc = state.activeDocument;
+  if (!doc || doc.storageMode !== 'files') return;
+  renameFileTarget = { ...doc };
+  $('#renameKnowledgeFileName').value = doc.relativePath.split('/').at(-1);
+  $('#renameKnowledgeFileDialog').showModal();
+  $('#renameKnowledgeFileName').select();
+}
+async function submitRenameKnowledgeFile(event) {
+  event.preventDefault();
+  const target = renameFileTarget;
+  if (!target) return;
+  const name = $('#renameKnowledgeFileName').value.trim();
+  if (!name || /[\\/]/.test(name) || ['.', '..'].includes(name)) throw new Error('请输入有效的文件名');
+  const button = event.submitter;
+  if (button) button.disabled = true;
+  try {
+    const directory = target.relativePath.split('/').slice(0, -1).join('/');
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(target.id)}/rename`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseVersion: target.version, baseFingerprint: target.baseFingerprint, relativePath: [directory, name].filter(Boolean).join('/') }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '重命名失败');
+    $('#renameKnowledgeFileDialog').close(); renameFileTarget = null;
+    if (state.activeDocument?.id === target.id) await renderActiveDocument(data);
+    await loadKnowledgeTree(); await loadDocuments();
+  } finally { if (button) button.disabled = false; }
+}
+
 async function openKnowledgeFolder() {
   const bridge = knowledgeFolderBridge();
   if (!bridge || !state.knowledgeSync?.rootPath) throw new Error('请在桌面版中打开知识库文件夹');
@@ -2175,10 +2248,20 @@ async function openKnowledgeFolder() {
 }
 
 async function chooseKnowledgeFolder() {
+  if (!(await flushPendingSaves())) throw new Error('请先解决当前文件的保存问题');
   const bridge = knowledgeFolderBridge();
   if (!bridge) throw new Error('知识库根目录只能在电脑端修改');
   const picked = await bridge.chooseRoot(state.knowledgeSync?.rootPath || state.knowledgeSync?.defaultRootPath || '');
   if (picked.cancelled || !picked.path) return;
+  const previewResponse = await apiFetch('/api/knowledge/sync/migrate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rootPath: picked.path, preflight: true }),
+  });
+  const preview = await previewResponse.json().catch(() => ({}));
+  if (!previewResponse.ok) throw new Error(preview.error || '迁移预检失败');
+  if (preview.errors?.length) throw new Error(`迁移预检发现 ${preview.errors.length} 个问题：${preview.errors[0].error}`);
+  const confirmed = await confirmAction({ title: '文件工作区迁移预检', confirmText: '备份并迁移',
+    message: `已有 ${preview.documents || 0} 个条目，${preview.missing?.length || 0} 个缺少文件，${preview.divergent?.length || 0} 个正文存在差异。将先创建并校验完整备份；磁盘正文优先，数据库差异另存恢复副本。目标目录：${picked.path}` });
+  if (!confirmed) return;
   const response = await apiFetch('/api/knowledge/sync/migrate', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rootPath: picked.path }),
   });
@@ -3339,15 +3422,26 @@ function sessionMessagesFingerprint(session) {
 }
 
 const SESSION_DETAIL_CACHE_MAX = 32;
+const SESSION_DETAIL_CACHE_MAX_BYTES = 4 * 1024 * 1024;
 
 function cacheSessionDetail(session) {
   if (!session?.id) return;
+  const bytes = (session.messages || []).reduce((sum, message) => sum
+    + (typeof message.content === 'string' ? message.content.length * 2 : 0)
+    + (Array.isArray(message.attachments) ? message.attachments.length * 256 : 0), 0)
+    + (session.runs || []).reduce((sum, run) => sum + 512 + (run.trace?.length || 0) * 160, 0);
+  if (bytes > SESSION_DETAIL_CACHE_MAX_BYTES) {
+    state.sessionDetailCache.delete(session.id);
+    return;
+  }
   state.sessionDetailCache.set(session.id, {
     data: session,
+    bytes,
     fingerprint: sessionMessagesFingerprint(session),
     fetchedAt: Date.now(),
   });
-  while (state.sessionDetailCache.size > SESSION_DETAIL_CACHE_MAX) {
+  const cachedBytes = () => [...state.sessionDetailCache.values()].reduce((sum, item) => sum + (item.bytes || 0), 0);
+  while (state.sessionDetailCache.size > SESSION_DETAIL_CACHE_MAX || cachedBytes() > SESSION_DETAIL_CACHE_MAX_BYTES) {
     const oldest = state.sessionDetailCache.keys().next().value;
     state.sessionDetailCache.delete(oldest);
   }
@@ -3357,9 +3451,9 @@ function getCachedSessionDetail(id) {
   return state.sessionDetailCache.get(id)?.data || null;
 }
 
-function applySessionDetail(session, { force = false, scroll = true } = {}) {
+function applySessionDetail(session, { force = false, scroll = true, preserveScroll = false } = {}) {
   state.activeSession = session;
-  renderSessionMessages(session, { force, scroll });
+  renderSessionMessages(session, { force, preserveScroll });
   updateSessionActiveHighlight(session.id);
   syncSessionRunBadgesFromSummaries();
   const entry = getSessionRunState(session.id);
@@ -3368,10 +3462,11 @@ function applySessionDetail(session, { force = false, scroll = true } = {}) {
   ensureSessionRunSubscriptions();
 }
 
-function renderSessionMessages(session, { force = false } = {}) {
+function renderSessionMessages(session, { force = false, preserveScroll = false } = {}) {
   const list = $('#agentMessageList');
   const changedSession = list.dataset.sessionId !== session.id;
   const previousScroll = list.scrollTop;
+  const previousHeight = list.scrollHeight;
   const fingerprint = sessionMessagesFingerprint(session);
   const local = getSessionRunState(session.id);
   const runActive = (session?.latestRun && ACTIVE_RUN_STATES.has(session.latestRun.status))
@@ -3383,6 +3478,14 @@ function renderSessionMessages(session, { force = false } = {}) {
   list.dataset.sessionId = session.id;
   list.dataset.messageFp = fingerprint;
   list.innerHTML = '';
+  if (session.messagePage?.hasMore && session.messagePage.nextCursor) {
+    const earlier = document.createElement('button');
+    earlier.type = 'button';
+    earlier.className = 'btn btn-secondary';
+    earlier.textContent = '加载更早的消息';
+    earlier.addEventListener('click', () => loadEarlierSessionMessages(session.id));
+    list.appendChild(earlier);
+  }
   const visible = (session.messages || []).filter(message => message.role === 'user' || message.role === 'assistant');
   const deduped = visible.filter((message, index) => {
     const previous = visible[index - 1];
@@ -3397,7 +3500,9 @@ function renderSessionMessages(session, { force = false } = {}) {
   const liveId = session.latestRun && ACTIVE_RUN_STATES.has(session.latestRun.status)
     ? session.latestRun.id
     : '';
-  let runIndex = 0;
+  const runOffset = Number(session.messagePage?.runOffset) || 0;
+  let runIndex = Math.max(0, runOffset);
+  let skipUserRuns = Math.max(0, -runOffset);
   let lastRun = null;
   deduped.forEach(message => {
     if (message.role === 'assistant') {
@@ -3414,10 +3519,14 @@ function renderSessionMessages(session, { force = false } = {}) {
       kind: isAskUserReplyMessage(message) ? 'ask_user_reply' : '',
       question: message.question || '',
     });
+    const skipCurrentRun = message.role === 'user' && !isAskUserReplyMessage(message) && skipUserRuns > 0;
+    if (skipCurrentRun) skipUserRuns -= 1;
     if (message.role === 'user' && !isAskUserReplyMessage(message) && runIndex < runs.length) {
-      lastRun = runs[runIndex];
-      upsertRunTrace(lastRun.id === liveId ? { id: lastRun.id, trace: [] } : lastRun, { live: lastRun.id === liveId });
-      runIndex += 1;
+      if (!skipCurrentRun) {
+        lastRun = runs[runIndex];
+        upsertRunTrace(lastRun.id === liveId ? { id: lastRun.id, trace: [] } : lastRun, { live: lastRun.id === liveId });
+        runIndex += 1;
+      }
     }
   });
   while (runIndex < runs.length) {
@@ -3426,7 +3535,40 @@ function renderSessionMessages(session, { force = false } = {}) {
     runIndex += 1;
   }
   if (!changedSession) list.scrollTop = previousScroll;
-  scrollMessagesToBottom(changedSession);
+  if (preserveScroll && !changedSession) {
+    list.scrollTop = previousScroll + Math.max(0, list.scrollHeight - previousHeight);
+  } else {
+    scrollMessagesToBottom(changedSession);
+  }
+}
+
+async function loadEarlierSessionMessages(sessionId) {
+  const current = state.activeSession;
+  const cursor = current?.id === sessionId ? current.messagePage?.nextCursor : null;
+  if (!cursor) return;
+  const button = $('#agentMessageList button');
+  if (button) { button.disabled = true; button.textContent = '正在加载…'; }
+  try {
+    const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(sessionId)}?limit=200&before=${encodeURIComponent(cursor)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '无法加载更早的消息');
+    if (state.activeSession?.id !== sessionId) return;
+    const latest = state.activeSession;
+    const merged = {
+      ...latest,
+      ...data,
+      messages: [...(data.messages || []), ...(latest.messages || [])],
+      messagePage: data.messagePage,
+      // Keep current run state; the cursor request may race a live response.
+      runs: latest.runs,
+      latestRun: latest.latestRun,
+    };
+    cacheSessionDetail(merged);
+    applySessionDetail(merged, { force: true, preserveScroll: true });
+  } catch (error) {
+    showToast(error.message || '无法加载更早的消息', 'error');
+    if (button) { button.disabled = false; button.textContent = '加载更早的消息'; }
+  }
 }
 
 function showEmptySessionContent() {
@@ -3437,10 +3579,10 @@ async function openSession(id, serial = state.routeSerial) {
   const prevId = state.activeSession?.id;
   const local = getSessionRunState(id);
   updateSessionActiveHighlight(id);
-
   if (prevId === id && state.activeSession?.messages && !local?.needsReload) {
+    // Keep the live composer state while the detail request below refreshes
+    // messages changed by another client or a completed run.
     syncActiveSessionRunUi(state.activeSession);
-    return;
   }
 
   if (prevId && prevId !== id) detachSessionRunUi(prevId);
@@ -3463,7 +3605,7 @@ async function openSession(id, serial = state.routeSerial) {
     showSessionLoadingPlaceholder();
   }
 
-  const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}`);
+  const response = await apiFetch(`/api/agent/sessions/${encodeURIComponent(id)}?limit=200`);
   const data = await response.json().catch(() => ({}));
   if (serial !== state.routeSerial) return;
   if (!response.ok) {
@@ -4741,7 +4883,8 @@ async function toggleKnowledgePin(button) {
   if (button.disabled) return;
   button.disabled = true;
   const kind = button.dataset.knowledgePinKind, target = button.dataset.knowledgePinTarget;
-  const body = { kind, pinned: button.dataset.knowledgePinValue === 'true', ...(kind === 'document' ? { id: target, collectionPath: button.dataset.knowledgePinParent } : { path: target }) };
+  const pinDocument = kind === 'document' ? (state.activeDocument?.id === target ? state.activeDocument : findKnowledgeDocument(target)) : null;
+  const body = { ...(pinDocument ? { baseVersion: pinDocument.version, baseFingerprint: pinDocument.baseFingerprint } : {}), kind, pinned: button.dataset.knowledgePinValue === 'true', ...(kind === 'document' ? { id: target, collectionPath: button.dataset.knowledgePinParent } : { path: target }) };
   try {
     const response = await apiFetch('/api/knowledge/pin', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const result = await response.json().catch(() => ({}));
@@ -4759,16 +4902,16 @@ function renderKnowledgeBaseList() {
     return;
   }
   list.innerHTML = [...state.knowledgeBases].sort(comparePinned).map(base => {
-    const canDeleteBase = base.name !== '其他';
+    const canDeleteBase = !base.displayName && base.name !== '其他';
     return `
       <div class="knowledge-base-row">
         <button class="knowledge-base-select" type="button" data-knowledge-base-open="${escHtml(base.name)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="" aria-label="进入 ${escHtml(base.name)}">
           <span class="tree-folder-mark${base.pinnedAt ? ' is-pinned' : ''}"${base.pinnedAt ? ' title="已置顶"' : ' aria-hidden="true"'}>${base.pinnedAt ? PIN_ICON : KNOWLEDGE_ICONS.base}</span>
-          <strong>${escHtml(base.name)}</strong>
+          <strong>${escHtml(base.displayName || base.name)}</strong>
         </button>
         <span class="tree-actions">
           ${pinActionHtml({ kind: 'knowledgeBase', target: base.name, pinnedAt: base.pinnedAt, escape: escHtml })}
-          <button class="tree-action" type="button" data-tree-rename-base="${escHtml(base.name)}" title="重命名知识库" aria-label="重命名 ${escHtml(base.name)}">${KNOWLEDGE_ICONS.rename}</button>
+          ${!base.displayName ? `<button class="tree-action" type="button" data-tree-rename-base="${escHtml(base.name)}" title="重命名知识库" aria-label="重命名 ${escHtml(base.name)}">${KNOWLEDGE_ICONS.rename}</button>` : ''}
           ${canDeleteBase ? `<button class="tree-action danger" type="button" data-tree-delete-base="${escHtml(base.name)}" title="删除知识库" aria-label="删除 ${escHtml(base.name)}">${KNOWLEDGE_ICONS.delete}</button>` : ''}
         </span>
       </div>`;
@@ -4796,7 +4939,7 @@ function renderKnowledgeBreadcrumb(base) {
   const segments = String(state.selectedFolderPath || '').split('/').filter(Boolean);
   const arrow = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"></path></svg>';
   const item = (name, target, current, folder = '') => `<button type="button" class="knowledge-breadcrumb-link knowledge-directory-button${current ? ' knowledge-breadcrumb-current' : ''}" data-directory-menu="${escHtml(target)}" data-drop-base="${escHtml(base.name)}" data-drop-folder="${escHtml(folder)}" title="${escHtml([base.name, folder].filter(Boolean).join(' / '))}" aria-label="切换同层目录：${escHtml(name)}" aria-haspopup="true" aria-expanded="false"><span>${escHtml(name)}</span>${arrow}</button>`;
-  let crumbs = `<button type="button" class="knowledge-breadcrumb-link knowledge-root-link" data-breadcrumb="parent" title="返回上一级目录" aria-label="返回上一级目录"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10h11M7 10l8-7M7 10l8 7"></path></svg></button><span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(base.name, 'base', !segments.length)}`;
+  let crumbs = `<button type="button" class="knowledge-breadcrumb-link knowledge-root-link" data-breadcrumb="parent" title="返回上一级目录" aria-label="返回上一级目录"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10h11M7 10l8-7M7 10l8 7"></path></svg></button><span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(base.displayName || base.name, 'base', !segments.length)}`;
   let prefix = '';
   segments.forEach((segment, index) => {
     prefix = prefix ? `${prefix}/${segment}` : segment;
@@ -5077,20 +5220,9 @@ function renderDocuments() {
 }
 
 function clearKnowledgeDragUi() {
-  knowledgeDragItem = null;
   document.body.classList.remove('knowledge-dragging');
   document.querySelectorAll('.knowledge-drop-active').forEach(element => element.classList.remove('knowledge-drop-active'));
   $('#knowledgeDropTargets')?.remove();
-}
-
-function knowledgeDropTarget(event) {
-  const element = event.target.closest('[data-drop-base][data-drop-folder]');
-  if (!element || !$('#knowledgeView')?.contains(element)) return null;
-  return {
-    element,
-    knowledgeBase: element.dataset.dropBase || '',
-    folderPath: element.dataset.dropFolder || '',
-  };
 }
 
 function showKnowledgeBaseDropTargets() {
@@ -5104,51 +5236,17 @@ function showKnowledgeBaseDropTargets() {
 }
 
 function bindKnowledgeDragEvents() {
-  const view = $('#knowledgeView');
-  if (!view) return;
-  view.addEventListener('dragstart', event => {
-    if (event.target.closest('button')) { event.preventDefault(); return; }
-    const row = event.target.closest('[data-knowledge-drag-type]');
-    if (!row) return;
-    const type = row.dataset.knowledgeDragType;
-    knowledgeDragItem = type === 'folder'
-      ? { type, path: row.dataset.knowledgeDragPath || '' }
-      : { type, id: row.dataset.knowledgeDragId || '' };
-    if (!(knowledgeDragItem.path || knowledgeDragItem.id)) return clearKnowledgeDragUi();
-    try {
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('application/x-liuxu-knowledge-item', JSON.stringify(knowledgeDragItem));
-      event.dataTransfer.setData('text/plain', type === 'folder' ? knowledgeDragItem.path : knowledgeDragItem.id);
-    } catch { /* native drag still works in engines with restricted custom MIME types */ }
-    document.body.classList.add('knowledge-dragging');
-    showKnowledgeBaseDropTargets();
+  const root = $('#workspaceShell');
+  if (!root) return;
+  initKnowledgeDragEvents({
+    root,
+    doc: document,
+    onDragStart: showKnowledgeBaseDropTargets,
+    onDropStart: () => { suppressKnowledgeClickUntil = Date.now() + 500; },
+    onClear: clearKnowledgeDragUi,
+    onDrop: (item, target) => moveKnowledgeItem(item, target),
+    onError: error => showToast(error.message || '移动失败', 'error'),
   });
-  view.addEventListener('dragover', event => {
-    if (!knowledgeDragItem) return;
-    const target = knowledgeDropTarget(event);
-    if (!target) return;
-    event.preventDefault();
-    try { event.dataTransfer.dropEffect = 'move'; } catch {}
-    document.querySelectorAll('.knowledge-drop-active').forEach(element => {
-      if (element !== target.element) element.classList.remove('knowledge-drop-active');
-    });
-    target.element.classList.add('knowledge-drop-active');
-  });
-  view.addEventListener('dragleave', event => {
-    const target = knowledgeDropTarget(event);
-    if (target && !target.element.contains(event.relatedTarget)) target.element.classList.remove('knowledge-drop-active');
-  });
-  view.addEventListener('drop', event => {
-    const target = knowledgeDropTarget(event);
-    if (!target || !knowledgeDragItem) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const item = knowledgeDragItem;
-    suppressKnowledgeClickUntil = Date.now() + 500;
-    clearKnowledgeDragUi();
-    void moveKnowledgeItem(item, target).catch(error => showToast(error.message || '移动失败', 'error'));
-  });
-  view.addEventListener('dragend', clearKnowledgeDragUi);
 }
 
 async function moveKnowledgeItem(item, target) {
@@ -5166,7 +5264,7 @@ async function moveKnowledgeItem(item, target) {
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(item.id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ knowledgeBase: target.knowledgeBase, folderPath: target.folderPath, baseVersion: current.version }),
+      body: JSON.stringify({ knowledgeBase: target.knowledgeBase, folderPath: target.folderPath, baseVersion: current.version, baseFingerprint: current.baseFingerprint }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '移动文档失败');
@@ -5301,9 +5399,9 @@ function syncDocumentSelectOptions({ knowledgeBase, folderPath } = {}) {
     ? state.knowledgeBases
     : [{ name: '其他', folders: [] }];
   const currentKb = knowledgeBase ?? kbSelect.value ?? state.selectedKnowledgeBase ?? '其他';
-  kbSelect.innerHTML = bases.map(base => `<option value="${escHtml(base.name)}">${escHtml(base.name)}</option>`).join('');
+  kbSelect.innerHTML = bases.map(base => `<option value="${escHtml(base.name)}">${escHtml(base.displayName || base.name)}</option>`).join('');
   const base = bases.find(item => item.name === currentKb) || bases[0];
-  kbSelect.value = base?.name || '其他';
+  kbSelect.value = base?.name || (state.activeDocument?.storageMode === 'files' ? ':root:' : '其他');
 
   const folders = flattenFolderOptions(Array.isArray(base?.folders) ? base.folders : []);
   const currentFolder = folderPath ?? folderSelect.value ?? '';
@@ -5438,6 +5536,8 @@ async function renderActiveDocument(document) {
   };
   $('#noteFindToggleButton').hidden = isFile || isMindmap;
   updateInsertImageButton();
+  const renameFileButton = $('#renameKnowledgeFileButton');
+  if (renameFileButton) renameFileButton.hidden = document.storageMode !== 'files' || document.status === 'archived';
   $('#documentTitle').readOnly = document.status === 'archived';
   setDocumentFormDisabled(document.status === 'archived');
   $('#documentDate').readOnly = document.status === 'archived';
@@ -5567,11 +5667,16 @@ async function loadFileAnnotation(documentId) {
   if (!response.ok) throw new Error(data.error || '批注读取失败');
   if (state.activeDocument?.id !== documentId || state.activeDocument?.sourceType !== 'file') return;
   const annotation = data.annotation;
-  const local = draft || annotation || {};
+  const sections = splitAnnotation(annotation?.content || '');
+  const local = draft || { ...annotation, content: sections.personal };
+  $('#fileExcerptSummary').innerHTML = renderMarkdown(sections.summary || '*暂无摘录*');
+  $('#fileAnnotationContent').disabled = !sections.valid;
+  if (!sections.valid) showToast('自动摘录区标记损坏，已保留全文，请修复后编辑', 'error');
   state.fileAnnotation = {
     documentId,
     id: annotation?.id || '',
-    version: Number(annotation?.version) || 0,
+    version: Number(draft?.version ?? annotation?.version) || 0,
+    baseFingerprint: draft?.baseFingerprint ?? annotation?.baseFingerprint,
     title: String(local.title || ''),
     content: String(local.content || ''),
     dirty: Boolean(draft?.dirty),
@@ -5597,12 +5702,12 @@ async function saveFileAnnotation() {
   try {
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/annotation`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, content, baseVersion: current.id ? current.version : undefined }),
+      body: JSON.stringify({ title, content, personalContent: true, baseVersion: current.id ? current.version : undefined, baseFingerprint: current.baseFingerprint }),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '批注保存失败');
     const annotation = data.annotation || data.document || data;
-    state.fileAnnotation = { documentId: document.id, id: annotation.id || current.id, version: Number(annotation.version) || current.version, title, content, dirty: false };
+    state.fileAnnotation = { documentId: document.id, id: annotation.id || current.id, version: Number(annotation.version) || current.version, baseFingerprint: annotation.baseFingerprint, title, content, dirty: false };
     state.fileAnnotationDrafts.delete(document.id);
     $('#fileAnnotationState').textContent = '已保存';
     showToast('批注已保存', 'success');
@@ -5714,13 +5819,14 @@ function isNoteEditorActive() {
 function currentDocumentPatch() {
   const patch = {
     title: $('#documentTitle').value.trim() || '未命名',
-    knowledgeBase: $('#documentKnowledgeBase').value.trim() || '其他',
+    knowledgeBase: $('#documentKnowledgeBase').value.trim() || (state.activeDocument?.storageMode === 'files' ? '' : '其他'),
     folderPath: $('#documentFolderPath').value.trim(),
     documentDate: $('#documentDate').value || '',
     tags: $('#documentTags').value.split(/[,，]/).map(tag => tag.trim()).filter(Boolean),
     content: $('#documentContent').value,
     documentRole: state.activeDocument?.documentRole || 'normal',
     baseVersion: state.activeDocument?.version,
+    baseFingerprint: state.activeDocument?.baseFingerprint,
   };
   if (state.activeDocument?.sourceType === 'file') {
     delete patch.content;
@@ -5757,6 +5863,10 @@ function updateDocumentSummary(document) {
     documentDate: document.documentDate || '',
     tags: document.tags,
     version: document.version,
+    baseFingerprint: document.baseFingerprint,
+    relativePath: document.relativePath,
+    indexState: document.indexState,
+    storageMode: document.storageMode,
     updatedAt: document.updatedAt,
     snippet: String(document.content || '').replace(/\s+/g, ' ').slice(0, 180),
   };
@@ -5848,6 +5958,8 @@ async function saveDocumentOnce() {
   if (!state.activeDocument || !state.documentDirty || state.documentConflict) return true;
   const id = state.activeDocument.id;
   const patch = currentDocumentPatch();
+  const requestPatch = { ...patch };
+  if (state.activeDocument.storageMode === 'files' && patch.title === state.activeDocument.title) delete requestPatch.title;
   const submittedContent = patch.content;
   state.savingDocument = true;
   setDocumentSaveState('正在保存', 'saving');
@@ -5856,7 +5968,7 @@ async function saveDocumentOnce() {
     response = await apiFetch(patch.rawText ? `/api/knowledge/files/${encodeURIComponent(id)}/text` : `/api/knowledge/documents/${encodeURIComponent(id)}`, {
       method: patch.rawText ? 'PUT' : 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
+      body: JSON.stringify(requestPatch),
     });
   } catch (error) {
     throw error;
@@ -6031,12 +6143,13 @@ async function importKnowledgeFile(file) {
   }
 }
 
-async function applyNoteAssistantEdit({ documentId, find, replace, append, content }) {
+async function applyNoteAssistantEdit({ documentId, find, replace, append, content, baseVersion, baseFingerprint }) {
   const editor = $('#documentContent');
   if (!editor || state.documentConflict || state.activeDocument?.id !== documentId || state.activeDocument?.status === 'archived') throw new Error('文档已切换、归档或存在保存冲突，请重新打开目标文档后应用');
   if (!(await beforeNoteMutation(documentId))) throw new Error('当前草稿保存失败，未应用 AI 提案');
   try {
     if (state.activeDocument?.id !== documentId) throw new Error('笔记已切换，未应用 AI 提案');
+    if (state.activeDocument.storageMode === 'files' && (baseVersion !== state.activeDocument.version || baseFingerprint !== state.activeDocument.baseFingerprint)) throw new Error('笔记已变化，请重新生成提案');
     if (append) {
       const addition = String(content || '');
       const start = editor.value.length;
@@ -6137,7 +6250,7 @@ async function archiveActiveDocument(document = state.activeDocument) {
     confirmText: '归档',
   });
   if (!confirmed) return;
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/archive`, { method: 'POST' });
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseVersion: document.version, baseFingerprint: document.baseFingerprint }) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '归档失败', 'error');
   showToast('文档已归档', 'success');
@@ -6147,7 +6260,7 @@ async function archiveActiveDocument(document = state.activeDocument) {
 
 async function restoreActiveDocument(document = state.activeDocument) {
   if (!document || document.status !== 'archived') return;
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/restore`, { method: 'POST' });
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}/restore`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseVersion: document.version, baseFingerprint: document.baseFingerprint }) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '恢复失败', 'error');
   showToast('文档已恢复', 'success');
@@ -6158,6 +6271,7 @@ async function restoreActiveDocument(document = state.activeDocument) {
 
 function deleteConfirmCopy(document) {
   const title = document.title || '未命名';
+  if (document.storageMode === 'files') return { title: '移入回收站', message: `“${title}”及关联批注将移入文件工作区的回收站。` };
   if (document.sourceType === 'file') {
     return {
       title: '删除知识文件',
@@ -6180,7 +6294,7 @@ async function deleteActiveDocument(document = state.activeDocument) {
     confirmText: '删除',
   });
   if (!confirmed) return;
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}`, { method: 'DELETE' });
+  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(document.id)}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseVersion: document.version, baseFingerprint: document.baseFingerprint }) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return showToast(data.error || '删除失败', 'error');
   showToast('文档已删除', 'success');
@@ -6749,7 +6863,6 @@ function bindEvents() {
     event.preventDefault();
   });
   window.addEventListener('pagehide', () => flushNoteReadingPosition());
-  window.addEventListener('popstate', applyRoute);
   window.addEventListener('hashchange', applyRoute);
   window.addEventListener('focus', () => refreshRemoteForeground().catch(() => {}));
   document.addEventListener('visibilitychange', () => {
@@ -6771,6 +6884,10 @@ function bindEvents() {
   $('#syncKnowledgeFolderSettingsButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#openKnowledgeFolderButton')?.addEventListener('click', () => openKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#openKnowledgeFolderSettingsButton')?.addEventListener('click', () => openKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#rebuildKnowledgeIndexButton')?.addEventListener('click', () => rebuildKnowledgeIndex().catch(error => showToast(error.message, 'error')));
+  $('#renameKnowledgeFileButton')?.addEventListener('click', () => openRenameKnowledgeFile().catch(error => showToast(error.message, 'error')));
+  $('#renameKnowledgeFileForm')?.addEventListener('submit', event => submitRenameKnowledgeFile(event).catch(error => showToast(error.message, 'error')));
+  $('#cancelRenameKnowledgeFile')?.addEventListener('click', () => { $('#renameKnowledgeFileDialog').close(); renameFileTarget = null; });
   $('#chooseKnowledgeFolderButton')?.addEventListener('click', () => chooseKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#knowledgeConflictDrafts')?.addEventListener('click', event => {
     const button = event.target.closest('[data-knowledge-draft]');
@@ -7229,4 +7346,14 @@ async function initialize() {
 initialize().catch(error => {
   console.error(error);
   showToast(`工作台初始化失败：${error.message}`, 'error');
+});
+
+window.addEventListener('reading-data-changed', async event => {
+  const id = event.detail?.documentId;
+  if (state.activeDocument?.id !== id) return;
+  if (!state.fileAnnotation?.dirty) { await loadFileAnnotation(id).catch(error => showToast(error.message, 'error')); return; }
+  try {
+    const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}/annotation`);
+    if (response.ok && state.activeDocument?.id === id) $('#fileExcerptSummary').innerHTML = renderMarkdown(splitAnnotation((await response.json()).annotation?.content || '').summary || '*暂无摘录*');
+  } catch {}
 });
