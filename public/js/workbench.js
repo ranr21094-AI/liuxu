@@ -1,3 +1,4 @@
+import { reconcileRows } from './knowledge/row-reconcile.js';
 import { splitAnnotation } from './knowledge/annotation-sections.js';
 import { initKnowledgeMove } from './app/knowledge-move.js';
 import { initDocumentPresentation } from './app/document-presentation.js';
@@ -109,6 +110,8 @@ const state = {
   annotationDirty: false,
   fileAnnotation: { documentId: '', id: '', version: 0, title: '', content: '', dirty: false },
   fileAnnotationDrafts: new Map(),
+  fileAnnotationSaving: new Set(),
+  fileAnnotationLoadSerial: 0,
   fileAnnotationMode: 'edit',
   documentConflict: false,
   editorMode: 'edit',
@@ -142,7 +145,11 @@ function syncKnowledgeSearchScope() {
   if (knowledgeSearchScope && scope !== knowledgeSearchScope) {
     knowledgeRequests.invalidate();
     sidebarSearchControls?.resetKnowledge();
-    clearKnowledgeDocuments();
+    state.documents = [];
+    state.localNameOnlyEntries = [];
+    state.knowledgeTotal = 0;
+    state.knowledgeNextCursor = null;
+    state.loadedKnowledgeKey = null;
   }
   knowledgeSearchScope = scope;
 }
@@ -485,6 +492,7 @@ function syncMarkdownToc() {
 }
 
 let previewRenderGeneration = 0;
+let previewSnapshot = null;
 let previewIdleHandle = null;
 let previewDebounceTimer = null;
 
@@ -502,6 +510,9 @@ function renderDocumentPreview() {
   cancelScheduledPreview();
   const host = $('#documentPreview');
   if (!host) return;
+  const content = $('#documentContent').value || '*暂无正文*';
+  const context = JSON.stringify([state.activeDocument?.id || '', state.activeDocument?.outgoingLinks || []]);
+  if (previewSnapshot?.content === content && previewSnapshot.context === context) { syncMarkdownToc(); return; }
   const scrollTop = host.scrollTop;
   if (documentPreviewCleanup) documentPreviewCleanup();
   if (knowledgeLinkCleanup) knowledgeLinkCleanup();
@@ -509,10 +520,11 @@ function renderDocumentPreview() {
   clearMarkdownToc(host, tocHost);
   documentPreviewCleanup = null;
   knowledgeLinkCleanup = null;
-  host.innerHTML = renderKnowledgeMarkdown($('#documentContent').value || '*暂无正文*', {
+  host.innerHTML = renderKnowledgeMarkdown(content, {
     outgoingLinks: state.activeDocument?.outgoingLinks || [],
     documentId: state.activeDocument?.id || '',
   });
+  previewSnapshot = { content, context };
   syncMarkdownToc();
   host.scrollTop = scrollTop;
   const cleanupView = enableMarkdownImagePreview(host, '.markdown-preview img');
@@ -522,12 +534,14 @@ function renderDocumentPreview() {
 }
 
 window.addEventListener('liuxu:markdown-ready', () => {
+  previewSnapshot = null;
   if (state.editorMode === 'preview' || state.editorMode === 'split') renderDocumentPreview();
   if (state.activeDocument?.sourceType === 'file' && state.fileAnnotationMode !== 'edit' && !$('#fileAnnotationPane')?.hidden) renderFileAnnotationPreview();
   if (state.mode === 'agent' && state.activeSession) renderSessionMessages(state.activeSession, { force: true });
 });
 
 function refreshDocumentPreview() {
+  if (state.documentComposing) return;
   previewRenderGeneration += 1;
   cancelScheduledPreview();
   previewDebounceTimer = setTimeout(() => {
@@ -1148,19 +1162,23 @@ function knowledgeSwitchTarget() {
 
 async function applyRoute() {
   if (noteMutationLock) { history.replaceState(null, '', routeHash('knowledge', noteMutationLock.id)); return; }
+  const serial = ++state.routeSerial;
+  const current = () => serial === state.routeSerial;
   const route = parseRoute();
-  if (state.mode === 'memory' && route.mode !== 'memory' && !(await confirmMemoryDiscard())) { history.replaceState(null, '', '#memory'); return; }
-  if (state.mode === 'todos' && route.mode !== 'todos' && !(await leaveTodoView())) { history.replaceState(null, '', '#todos'); return; }
+  const previousListKey = state.mode === 'knowledge' ? state.loadedKnowledgeKey : null;
+  if (state.mode === 'memory' && route.mode !== 'memory' && !(await confirmMemoryDiscard())) { if (current()) history.replaceState(null, '', '#memory'); return; }
+  if (state.mode === 'todos' && route.mode !== 'todos' && !(await leaveTodoView())) { if (current()) history.replaceState(null, '', '#todos'); return; }
+  if (!current()) return;
   if (route.legacyTodos) history.replaceState(null, '', '#todos');
   const activeDocumentId = state.activeDocument?.id || '';
   const leavesActiveDocument = state.mode === 'knowledge'
     && activeDocumentId
     && (route.mode !== 'knowledge' || route.id !== activeDocumentId);
   if (leavesActiveDocument && !(await flushPendingSaves())) {
-    history.replaceState(null, '', routeHash('knowledge', activeDocumentId));
+    if (current()) history.replaceState(null, '', routeHash('knowledge', activeDocumentId));
     return;
   }
-  const serial = ++state.routeSerial;
+  if (!current()) return;
   if (route.mode === 'knowledge' && !route.id) {
     state.selectedKnowledgeBase = route.knowledgeBase;
     state.selectedFolderPath = route.folderPath;
@@ -1179,19 +1197,26 @@ async function applyRoute() {
     await loadMemoriesPanel();
   } else if (route.mode === 'todos') {
     await loadTodos();
+    if (!current()) return;
     showTodoView();
   } else if (route.id) {
     await openKnowledgeDocument(route.id, { block: route.block, offset: route.offset, serial });
-    if (state.selectedKnowledgeBase) await loadDocuments();
+    if (!current()) return;
+    if (state.selectedKnowledgeBase && (!previousListKey || state.loadedKnowledgeKey !== previousListKey)) await loadDocuments();
   } else {
     showEmptyDocument();
+    renderKnowledgeTree();
+    setKnowledgeSidebarLevel();
+    renderDocuments();
     if (state.selectedKnowledgeBase || knowledgeFiltersActive()) await loadDocuments();
     else clearKnowledgeDocuments();
+    if (!current()) return;
     if (state.selectedKnowledgeBase) {
       const title = state.selectedFolderPath || state.selectedKnowledgeBase;
       rememberRecentItem({ type: state.selectedFolderPath ? 'folder' : 'knowledgeBase', id: [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join('/'), title, path: [state.selectedKnowledgeBase, state.selectedFolderPath].filter(Boolean).join('/'), knowledgeBase: state.selectedKnowledgeBase, folderPath: state.selectedFolderPath, subtitle: state.selectedFolderPath ? `${state.selectedKnowledgeBase} / 文件夹` : '知识库' });
     }
   }
+  if (!current()) return;
   if (route.mode === 'knowledge') {
     renderKnowledgeBaseList();
     if (state.selectedKnowledgeBase) renderKnowledgeTree();
@@ -2074,11 +2099,16 @@ function renderKnowledgeSyncStatus() {
     disabled: '本地文件夹尚未启用',
     needs_migration: '等待迁移现有知识',
     syncing: '正在同步本地文件…',
+    scanning: '正在核对本地文件…',
     idle: sync?.lastSyncAt ? `已同步 · ${formatSyncTime(sync.lastSyncAt)}` : '本地同步已就绪',
     warning: '同步完成，但有文件需要处理',
     error: '同步已暂停',
   };
   if (sync?.storage === 'liuxu-file-workspace') { labels.idle = sync.pendingIndex ? '文件已保存，索引待更新' : '文件工作区已就绪'; labels.syncing = '正在刷新文件…'; labels.error = '文件工作区需要处理'; }
+  const scanProgress = sync?.scanProgress;
+  if (sync?.storage === 'liuxu-file-workspace' && sync.status === 'scanning' && scanProgress?.total) {
+    labels.scanning = `正在核对本地文件 ${Math.min(scanProgress.visited, scanProgress.total)}/${scanProgress.total}`;
+  }
   const label = sync ? (labels[sync.status] || sync.status || '同步状态未知') : '正在读取同步状态…';
   if (sidebar) {
     sidebar.querySelector('span:last-child').textContent = label;
@@ -2104,7 +2134,9 @@ function renderKnowledgeSyncStatus() {
   if ($('#knowledgeFolderDesktopActions')) $('#knowledgeFolderDesktopActions').hidden = !bridge;
   const errorSection = $('#knowledgeSyncErrorSection');
   const errorHost = $('#knowledgeSyncError');
-  const errors = sync?.report?.errors || [];
+  const errors = [...(sync?.report?.errors || []), ...(sync?.skippedFiles || []).map(path => ({
+    path, error: '文件超过 250 MiB，已跳过；其他文件照常同步',
+  }))];
   if (errorSection) errorSection.hidden = !sync?.error && !errors.length;
   if (errorHost) errorHost.textContent = [sync?.error, ...errors.map(item => `${item.path || item.id || '条目'}：${item.error}`)].filter(Boolean).join('\n');
   const drafts = $('#knowledgeConflictDrafts');
@@ -2117,11 +2149,20 @@ function renderKnowledgeSyncStatus() {
   }
 }
 
-async function reconcileKnowledgeSync(previousGeneration) {
+async function reconcileKnowledgeSync(previous) {
   const sync = state.knowledgeSync;
-  if (!sync || previousGeneration == null || sync.generation === previousGeneration || state.mode !== 'knowledge') return;
+  if (!sync || !previous || state.mode !== 'knowledge') return;
+  const fileChanged = (sync.fileGeneration ?? sync.generation) !== (previous.fileGeneration ?? previous.generation);
+  const directoryChanged = (sync.directoryGeneration ?? sync.generation) !== (previous.directoryGeneration ?? previous.generation);
+  const indexChanged = sync.indexGeneration !== undefined && sync.indexGeneration !== previous.indexGeneration;
+  const metadataChanged = sync.generation !== previous.generation;
+  if (!fileChanged && !directoryChanged && !indexChanged && !metadataChanged) return;
   const id = state.activeDocument?.id;
-  if (id) {
+  if ((fileChanged || metadataChanged) && id) {
+    // A local write can advance the file generation before its HTTP response
+    // arrives. Reconcile against its acknowledged version, not the old draft.
+    if (documentSaveRequests.has(id)) await documentSaveRequests.get(id);
+    if (state.activeDocument?.id !== id || state.mode !== 'knowledge') return;
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
     const current = await response.json().catch(() => ({}));
     if (state.activeDocument?.id !== id || state.mode !== 'knowledge') return;
@@ -2136,7 +2177,7 @@ async function reconcileKnowledgeSync(previousGeneration) {
         showEmptyDocument();
         showToast('本地文件已删除，知识条目已同步移除', 'error');
       }
-    } else if (response.ok && Number(current.version) !== Number(state.activeDocument?.version)) {
+    } else if (response.ok && Number(current.version) > Number(state.activeDocument?.version)) {
       if (state.documentDirty) {
         if (!(await persistConflictDraft(id))) return;
         showToast('本地文件已更新；未保存内容已放入冲突草稿', 'error');
@@ -2146,21 +2187,21 @@ async function reconcileKnowledgeSync(previousGeneration) {
       await renderActiveDocument(current);
     }
   }
-  await loadKnowledgeTree();
-  await loadDocuments({ refreshTree: false });
+  if (directoryChanged || fileChanged || metadataChanged) void loadKnowledgeTree().catch(() => {});
+  if (fileChanged || indexChanged || metadataChanged) await loadDocuments({ refreshTree: false });
 }
 
 async function loadKnowledgeSyncStatus({ reconcile = false } = {}) {
   if (state.knowledgeSyncLoading) return state.knowledgeSync;
   state.knowledgeSyncLoading = true;
-  const previousGeneration = state.knowledgeSync?.generation;
+  const previous = state.knowledgeSync;
   try {
     const response = await apiFetch('/api/knowledge/sync/status');
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '无法读取同步状态');
     state.knowledgeSync = data;
     renderKnowledgeSyncStatus();
-    if (reconcile) await reconcileKnowledgeSync(previousGeneration);
+    if (reconcile) await reconcileKnowledgeSync(previous);
     return data;
   } finally {
     state.knowledgeSyncLoading = false;
@@ -2174,11 +2215,26 @@ async function syncKnowledgeFolder() {
     const response = await apiFetch('/api/knowledge/sync', { method: 'POST' });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '知识库同步失败');
-    const previousGeneration = state.knowledgeSync?.generation;
+    const previous = state.knowledgeSync;
     state.knowledgeSync = data;
     renderKnowledgeSyncStatus();
-    await reconcileKnowledgeSync(previousGeneration);
-    showToast('本地知识库已同步', 'success');
+    await reconcileKnowledgeSync(previous);
+    showToast(data.status === 'scanning' ? '已开始核对本地文件' : '本地文件核对已完成', 'success');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function verifyKnowledgeFiles() {
+  const button = $('#verifyKnowledgeFilesButton');
+  if (button) button.disabled = true;
+  try {
+    const response = await apiFetch('/api/knowledge/sync/verify', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || '完整文件校验无法启动');
+    state.knowledgeSync = data;
+    renderKnowledgeSyncStatus();
+    showToast('完整文件校验已在后台开始', 'success');
   } finally {
     if (button) button.disabled = false;
   }
@@ -2237,7 +2293,7 @@ async function submitRenameKnowledgeFile(event) {
     if (!response.ok) throw new Error(data.error || '重命名失败');
     $('#renameKnowledgeFileDialog').close(); renameFileTarget = null;
     if (state.activeDocument?.id === target.id) await renderActiveDocument(data);
-    await loadKnowledgeTree(); await loadDocuments();
+    await loadKnowledgeTree(); await loadDocuments({ refreshTree: false });
   } finally { if (button) button.disabled = false; }
 }
 
@@ -2270,7 +2326,7 @@ async function chooseKnowledgeFolder() {
   state.knowledgeSync = data.status;
   renderKnowledgeSyncStatus();
   await loadKnowledgeTree();
-  await loadDocuments();
+  await loadDocuments({ refreshTree: false });
   showToast(`已迁移 ${data.report?.documents || 0} 个条目`, 'success');
 }
 
@@ -4898,9 +4954,13 @@ function renderKnowledgeBaseList() {
   const list = $('#knowledgeBaseList');
   if (!list) return;
   if (!state.knowledgeBases.length) {
+    list._baseSignature = null;
     list.innerHTML = '<p class="empty-list">还没有知识库。</p>';
     return;
   }
+  const signature = JSON.stringify(state.knowledgeBases);
+  if (list._baseSignature === signature) return;
+  list._baseSignature = signature;
   list.innerHTML = [...state.knowledgeBases].sort(comparePinned).map(base => {
     const canDeleteBase = !base.displayName && base.name !== '其他';
     return `
@@ -4945,7 +5005,7 @@ function renderKnowledgeBreadcrumb(base) {
     prefix = prefix ? `${prefix}/${segment}` : segment;
     crumbs += `<span class="knowledge-breadcrumb-sep" aria-hidden="true">/</span>${item(segment, prefix, index === segments.length - 1, prefix)}`;
   });
-  nav.innerHTML = crumbs;
+  if (nav._breadcrumbMarkup !== crumbs) { nav.innerHTML = crumbs; nav._breadcrumbMarkup = crumbs; }
 }
 
 function documentListHeadingText() {
@@ -5040,14 +5100,32 @@ function flattenFolderOptions(folders, depth = 0, options = []) {
   return options;
 }
 
-async function loadKnowledgeTree() {
-  const response = await apiFetch('/api/knowledge/tree');
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || '知识库加载失败');
-  state.knowledgeBases = Array.isArray(data.knowledgeBases) ? data.knowledgeBases : [];
-  renderKnowledgeBaseList();
-  if (state.selectedKnowledgeBase) renderKnowledgeTree();
-  syncDocumentSelectOptions();
+let knowledgeTreeRequest = null;
+let knowledgeTreeAgain = false;
+async function loadKnowledgeTree({ invalidate = true } = {}) {
+  if (knowledgeTreeRequest) {
+    if (invalidate) knowledgeTreeAgain = true;
+    return knowledgeTreeRequest;
+  }
+  knowledgeTreeRequest = (async () => {
+    do {
+      knowledgeTreeAgain = false;
+      const response = await apiFetch('/api/knowledge/tree');
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || '知识库加载失败');
+      // A mutation during this read requires a fresh snapshot before commit.
+      if (knowledgeTreeAgain) continue;
+      const bases = Array.isArray(data.knowledgeBases) ? data.knowledgeBases : [];
+      if (JSON.stringify(bases) !== JSON.stringify(state.knowledgeBases)) {
+        state.knowledgeBases = bases;
+        renderKnowledgeBaseList();
+        if (state.selectedKnowledgeBase) renderKnowledgeTree();
+        syncDocumentSelectOptions();
+        if (state.mode === 'knowledge') renderDocuments();
+      }
+    } while (knowledgeTreeAgain);
+  })().finally(() => { knowledgeTreeRequest = null; });
+  return knowledgeTreeRequest;
 }
 
 async function manageKnowledgeTree(action, baseName, folderPath = '') {
@@ -5208,12 +5286,23 @@ function renderDocuments() {
       <span class="document-row-icon" aria-hidden="true">${fileRowIcon}</span>
       <span class="document-row-body"><span class="document-row-title"><strong>${escHtml(entry.name)}</strong><span class="private-mark">未同步</span></span><small>${entry.isDirectory ? '程序包 · 仅显示名称' : '仅显示名称'} · ${escHtml(entry.relativePath)}</small></span>
     </button>`).join('') : '';
+  const loading = Boolean(state.selectedKnowledgeBase && !state.loadedKnowledgeKey);
+  const markup = `${loading}:${Boolean(state.selectedKnowledgeBase && !knowledgeFiltersActive())}:` + (folderRows + docRows + localRows).replace(/class="document-row (?:active)?"/g, 'class="document-row"');
+  if (list._rowsMarkup === markup) {
+    list.querySelectorAll('[data-document-open]').forEach(row => row.classList.toggle('active', row.dataset.documentOpen === state.activeDocument?.id));
+    $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
+    return;
+  }
+  list._rowsMarkup = markup;
   if (!folderRows && !docRows && !localRows) {
-    list.innerHTML = '<p class="empty-list">没有符合条件的知识文档。</p>';
+    const empty = `<p class="empty-list">${loading ? '正在读取当前文件夹…' : '没有符合条件的知识文档。'}</p>`;
+    if (list.innerHTML !== empty) list.innerHTML = empty;
   } else {
-    list.innerHTML = folderRows + docRows + localRows;
+    const desired = document.createElement('div');
+    desired.innerHTML = folderRows + docRows + localRows;
+    if (state.selectedKnowledgeBase && !knowledgeFiltersActive()) arrangeKnowledgeRows(desired);
+    reconcileRows(list, desired);
     list.querySelectorAll('[data-local-entry]').forEach(row => { row.onclick = () => showToast(`未同步：${row.dataset.localEntry}`); });
-    if (state.selectedKnowledgeBase && !knowledgeFiltersActive()) arrangeKnowledgeRows(list);
   }
   $('#knowledgeLoadMore').hidden = !state.knowledgeNextCursor;
   enhanceKnowledgeRowMenus(list);
@@ -5314,54 +5403,72 @@ async function moveKnowledgeItem(item, target) {
 }
 
 async function loadDocuments({ append = false, refreshTree = true } = {}) {
-  const isLatest = knowledgeRequests.begin();
   const key = JSON.stringify([state.mode, state.selectedKnowledgeBase, state.selectedFolderPath, knowledgeSearchQuery().toString(), $('#knowledgeArchivedFilter').checked]);
-  const current = () => isLatest() && key === JSON.stringify([state.mode, state.selectedKnowledgeBase, state.selectedFolderPath, knowledgeSearchQuery().toString(), $('#knowledgeArchivedFilter').checked]);
+  const cursor = append ? state.knowledgeNextCursor : '';
+  const requestKey = JSON.stringify([key, cursor, append]);
   const q = $('#knowledgeSearch').value.trim();
   const archived = $('#knowledgeArchivedFilter').checked;
-  const cursor = append ? state.knowledgeNextCursor : '';
+  if (append && (q && !archived || !cursor || state.loadedKnowledgeKey !== key)) return;
+  if (state.knowledgeListRequest?.key === requestKey && state.knowledgeListRequest.current()) return state.knowledgeListRequest.promise;
+  if (append && state.knowledgeListRequest?.current()) return state.knowledgeListRequest.promise;
+  const isLatest = knowledgeRequests.begin();
+  const current = () => isLatest() && key === JSON.stringify([state.mode, state.selectedKnowledgeBase, state.selectedFolderPath, knowledgeSearchQuery().toString(), $('#knowledgeArchivedFilter').checked]);
   const searchParams = knowledgeSearchQuery();
   const listParams = knowledgeQuery(cursor, { includeSearchText: archived && Boolean(q) });
   const localParams = new URLSearchParams({ knowledgeBase: state.selectedKnowledgeBase, folder: state.selectedFolderPath || '' });
-  const browseLocal = !append && !knowledgeFiltersActive() && state.selectedKnowledgeBase;
-  if (append && (q && !archived || !cursor)) return;
-  try {
-    if (!append && refreshTree) await loadKnowledgeTree();
-    if (!current()) return;
+  const browseLocal = !append && !knowledgeFiltersActive() && state.selectedKnowledgeBase
+    && state.knowledgeSync?.storage !== 'liuxu-file-workspace'
+    && !(typeof isRemoteClient === 'function' && isRemoteClient());
+  const job = { key: requestKey, current, promise: null };
+  state.knowledgeListRequest = job;
+  job.promise = (async () => {
+    // Tree and optional local names are independent of the document page.
+    if (!append && refreshTree) void loadKnowledgeTree({ invalidate: false }).catch(error => { if (current()) showToast(error.message, 'error'); });
     if (isKnowledgeRoot() && !knowledgeFiltersActive()) {
-      clearKnowledgeDocuments();
-      setKnowledgeSidebarLevel();
-      return;
+      clearKnowledgeDocuments(); setKnowledgeSidebarLevel(); return;
     }
-    const searching = q && !archived;
-    const response = await apiFetch(searching ? `/api/knowledge/search?${searchParams}` : `/api/knowledge/documents?${listParams}`);
-    const data = await response.json().catch(() => ({}));
-    if (!current()) return;
-    if (!response.ok) throw new Error(data.error || '知识库加载失败');
-    let localEntries = [];
-    if (browseLocal) {
-      const localResponse = await apiFetch(`/api/knowledge/local-entries?${localParams}`);
-      const localData = await localResponse.json().catch(() => ({}));
+    const localRequest = browseLocal ? apiFetch(`/api/knowledge/local-entries?${localParams}`, { signal: isLatest.signal })
+      .then(async response => response.ok ? (await response.json()).entries || [] : []).catch(() => []) : Promise.resolve([]);
+    try {
+      const searching = q && !archived;
+      const response = await apiFetch(searching ? `/api/knowledge/search?${searchParams}` : `/api/knowledge/documents?${listParams}`, { signal: isLatest.signal });
+      const data = await response.json().catch(() => ({}));
       if (!current()) return;
-      if (localResponse.ok) localEntries = localData.entries || [];
+      if (!response.ok) throw new Error(data.error || '知识库加载失败');
+      const known = new Map(state.documents.filter(item => item.id).map(item => [item.id, item]));
+      if (state.activeDocument?.id) known.set(state.activeDocument.id, state.activeDocument);
+      const page = (data.documents || []).flatMap(item => {
+        const newer = known.get(item.id);
+        if (!newer || Number(newer.version) <= Number(item.version)) return [item];
+        // Never reinstall a stale version or resurrect a row just moved away.
+        if (newer.collectionPath !== item.collectionPath || newer.status !== item.status) return [];
+        return [{ ...item, ...newer }];
+      });
+      state.documents = append ? mergeDocumentPages(state.documents, page) : page;
+      state.knowledgeTotal = Number(data.total) || 0;
+      state.knowledgeNextCursor = searching ? null : data.nextCursor || null;
+      if (!append && state.loadedKnowledgeKey !== key) state.localNameOnlyEntries = [];
+      state.loadedKnowledgeKey = key;
+      renderDocuments(); setKnowledgeSidebarLevel();
+      void localRequest.then(entries => {
+        if (!current() || JSON.stringify(entries) === JSON.stringify(state.localNameOnlyEntries)) return;
+        state.localNameOnlyEntries = entries;
+        renderDocuments();
+      });
+    } catch (error) {
+      if (current() && error.name !== 'AbortError') {
+        if (!append) $('#knowledgeDocumentList')._rowsMarkup = null;
+        if (!append) $('#knowledgeDocumentList').innerHTML = '<p class="empty-list">无法读取知识，请稍后重试。</p><button type="button" class="load-more" data-knowledge-search-retry>重试</button>';
+        throw error;
+      }
     }
-    state.documents = append ? mergeDocumentPages(state.documents, data.documents || []) : (data.documents || []);
-    state.knowledgeTotal = Number(data.total) || 0;
-    state.knowledgeNextCursor = searching ? null : data.nextCursor || null;
-    if (!append) state.localNameOnlyEntries = localEntries;
-    renderDocuments();
-    setKnowledgeSidebarLevel();
-    if (state.mode === 'knowledge' && !state.activeDocument) {
-    }
-  } catch (error) {
-    if (current()) {
-      if (!append) $('#knowledgeDocumentList').innerHTML = '<p class="empty-list">无法读取知识，请稍后重试。</p><button type="button" class="load-more" data-knowledge-search-retry>重试</button>';
-      throw error;
-    }
-  }
+  })().finally(() => { if (state.knowledgeListRequest === job) state.knowledgeListRequest = null; });
+  return job.promise;
 }
 
 function showEmptyDocument() {
+  previewSnapshot = null;
+  cancelScheduledPreview();
   documentPreviewCleanup?.();
   documentPreviewCleanup = null;
   state.mindmapEditor?.destroy();
@@ -5386,7 +5493,6 @@ function showEmptyDocument() {
   } else {
   }
   updateKnowledgeEmptyState();
-  renderDocuments();
   updateInsertImageButton();
 }
 
@@ -5399,16 +5505,18 @@ function syncDocumentSelectOptions({ knowledgeBase, folderPath } = {}) {
     ? state.knowledgeBases
     : [{ name: '其他', folders: [] }];
   const currentKb = knowledgeBase ?? kbSelect.value ?? state.selectedKnowledgeBase ?? '其他';
-  kbSelect.innerHTML = bases.map(base => `<option value="${escHtml(base.name)}">${escHtml(base.displayName || base.name)}</option>`).join('');
+  const baseOptions = bases.map(base => `<option value="${escHtml(base.name)}">${escHtml(base.displayName || base.name)}</option>`).join('');
+  if (kbSelect._optionsMarkup !== baseOptions) { kbSelect.innerHTML = baseOptions; kbSelect._optionsMarkup = baseOptions; }
   const base = bases.find(item => item.name === currentKb) || bases[0];
   kbSelect.value = base?.name || (state.activeDocument?.storageMode === 'files' ? ':root:' : '其他');
 
   const folders = flattenFolderOptions(Array.isArray(base?.folders) ? base.folders : []);
   const currentFolder = folderPath ?? folderSelect.value ?? '';
-  folderSelect.innerHTML = [
+  const folderOptions = [
     '<option value="">根目录</option>',
     ...folders.map(folder => `<option value="${escHtml(folder.path)}">${escHtml(folder.name)}</option>`),
   ].join('');
+  if (folderSelect._optionsMarkup !== folderOptions) { folderSelect.innerHTML = folderOptions; folderSelect._optionsMarkup = folderOptions; }
   const folderExists = !currentFolder || folders.some(item => item.path === currentFolder);
   folderSelect.value = folderExists ? currentFolder : '';
 
@@ -5455,14 +5563,17 @@ function setDocumentFormDisabled(disabled) {
 
 function setDocumentSaveState(text, className = '') {
   const element = $('#documentSaveState');
-  element.textContent = text;
+  if (element.textContent !== text) element.textContent = text;
   const stateClass = className || (text === '已保存' ? 'saved' : '');
-  element.className = `save-state ${stateClass}`.trim();
+  const nextClass = `save-state ${stateClass}`.trim();
+  if (element.className !== nextClass) element.className = nextClass;
   const rawState = $('#fileTextSaveState');
-  if (rawState) { rawState.textContent = text; rawState.className = element.className; }
+  if (rawState) { if (rawState.textContent !== text) rawState.textContent = text; if (rawState.className !== element.className) rawState.className = element.className; }
 }
 
 async function renderActiveDocument(document) {
+  previewSnapshot = null;
+  cancelScheduledPreview();
   const previousFileTab = state.activeDocument?.id === document.id && document.sourceType === 'file'
     ? window.document.querySelector('#fileReaderTabs [aria-selected="true"]')?.dataset.fileReaderTab : null;
   documentPreviewCleanup?.();
@@ -5590,6 +5701,7 @@ function renderFileOriginalPanel(document) {
   $('#fileAnnotationTitle').value = '';
   $('#fileAnnotationContent').value = '';
   state.fileAnnotation = { documentId: document.id, id: '', version: 0, title: '', content: '', dirty: false };
+  $('#saveFileAnnotation').disabled = state.fileAnnotationSaving.has(document.id);
   setFileAnnotationMode('edit');
   setFileReaderTab('preview');
   void renderFilePreview(document, $('#filePreviewHost'));
@@ -5661,11 +5773,13 @@ async function loadTextFileEditor(document, attempt = 0) {
 }
 
 async function loadFileAnnotation(documentId) {
-  const draft = state.fileAnnotationDrafts.get(documentId);
+  const serial = ++state.fileAnnotationLoadSerial;
   const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}/annotation`);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || '批注读取失败');
-  if (state.activeDocument?.id !== documentId || state.activeDocument?.sourceType !== 'file') return;
+  if (state.activeDocument?.id !== documentId || state.activeDocument?.sourceType !== 'file'
+    || serial !== state.fileAnnotationLoadSerial) return;
+  const draft = state.fileAnnotationDrafts.get(documentId);
   const annotation = data.annotation;
   const sections = splitAnnotation(annotation?.content || '');
   const local = draft || { ...annotation, content: sections.personal };
@@ -5691,12 +5805,28 @@ async function saveFileAnnotation() {
   const document = state.activeDocument;
   const current = state.fileAnnotation;
   if (!document || document.sourceType !== 'file' || current.documentId !== document.id) return;
+  if (state.fileAnnotationSaving.has(document.id)) return;
   const title = $('#fileAnnotationTitle').value.trim();
   const content = $('#fileAnnotationContent').value;
+  const isCurrent = () => state.activeDocument?.id === document.id && state.fileAnnotation.documentId === document.id;
+  const latestDraft = () => {
+    const draft = state.fileAnnotationDrafts.get(document.id);
+    if (isCurrent() && (state.fileAnnotation.dirty || (!draft && state.fileAnnotation.id === current.id))) {
+      return { ...state.fileAnnotation, title: $('#fileAnnotationTitle').value.trim(), content: $('#fileAnnotationContent').value };
+    }
+    return draft || { ...current, title, content };
+  };
+  const showDraft = draft => {
+    state.fileAnnotation = draft;
+    if ($('#fileAnnotationTitle').value !== draft.title) $('#fileAnnotationTitle').value = draft.title;
+    if ($('#fileAnnotationContent').value !== draft.content) $('#fileAnnotationContent').value = draft.content;
+  };
   if (!current.id && !title && !content.trim()) {
     $('#fileAnnotationState').textContent = '尚无批注';
     return;
   }
+  state.fileAnnotationSaving.add(document.id);
+  state.fileAnnotationLoadSerial += 1;
   $('#saveFileAnnotation').disabled = true;
   $('#fileAnnotationState').textContent = '正在保存…';
   try {
@@ -5707,24 +5837,43 @@ async function saveFileAnnotation() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || '批注保存失败');
     const annotation = data.annotation || data.document || data;
-    state.fileAnnotation = { documentId: document.id, id: annotation.id || current.id, version: Number(annotation.version) || current.version, baseFingerprint: annotation.baseFingerprint, title, content, dirty: false };
-    state.fileAnnotationDrafts.delete(document.id);
-    $('#fileAnnotationState').textContent = '已保存';
-    showToast('批注已保存', 'success');
+    const latest = latestDraft();
+    const dirty = latest.title !== title || latest.content !== content;
+    const saved = { ...latest, documentId: document.id, id: annotation.id || current.id,
+      version: Number(annotation.version) || current.version, baseFingerprint: annotation.baseFingerprint, dirty };
+    if (dirty) state.fileAnnotationDrafts.set(document.id, saved);
+    else state.fileAnnotationDrafts.delete(document.id);
+    if (isCurrent()) {
+      state.fileAnnotationLoadSerial += 1;
+      showDraft(saved);
+      $('#fileAnnotationState').textContent = dirty ? '有未保存修改' : '已保存';
+      showToast(dirty ? '已保存提交内容，新增修改尚未保存' : '批注已保存', 'success');
+    }
   } catch (error) {
-    state.fileAnnotation = { ...current, title, content, dirty: true };
-    state.fileAnnotationDrafts.set(document.id, state.fileAnnotation);
-    $('#fileAnnotationState').textContent = '保存失败，草稿已保留';
+    const draft = { ...latestDraft(), dirty: true };
+    state.fileAnnotationDrafts.set(document.id, draft);
+    if (isCurrent()) {
+      showDraft(draft);
+      $('#fileAnnotationState').textContent = '保存失败，草稿已保留';
+    }
     showToast(error.message, 'error');
-  } finally { $('#saveFileAnnotation').disabled = false; }
+  } finally {
+    state.fileAnnotationSaving.delete(document.id);
+    if (isCurrent()) $('#saveFileAnnotation').disabled = false;
+  }
 }
 
+let knowledgeDetailController = null;
 async function openKnowledgeDocument(id, { block = '', offset = 0, serial = state.routeSerial } = {}) {
   if (state.activeDocument?.id === id) {
     if (block || offset) locateDocumentPosition(offset, state.activeDocument.content || '');
     return;
   }
-  const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
+  knowledgeDetailController?.abort();
+  knowledgeDetailController = new AbortController();
+  let response;
+  try { response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`, { signal: knowledgeDetailController.signal }); }
+  catch (error) { if (error.name === 'AbortError' || serial !== state.routeSerial) return; throw error; }
   const data = await response.json().catch(() => ({}));
   if (serial !== state.routeSerial) return;
   if (!response.ok) {
@@ -5733,6 +5882,7 @@ async function openKnowledgeDocument(id, { block = '', offset = 0, serial = stat
     return;
   }
   await renderActiveDocument(data);
+  if (serial !== state.routeSerial) return;
   rememberRecentItem({ type: 'document', id: data.id, title: data.title || data.id, path: [data.knowledgeBase, data.folderPath].filter(Boolean).join('/'), knowledgeBase: data.knowledgeBase || '', folderPath: data.folderPath || '', subtitle: [data.knowledgeBase, data.folderPath].filter(Boolean).join(' / ') || '其他' });
   if (block || offset) locateDocumentPosition(offset, data.content || '');
 }
@@ -5797,10 +5947,7 @@ function setEditorMode(mode) {
       }
     });
   }
-  else if (documentPreviewCleanup) {
-    documentPreviewCleanup();
-    documentPreviewCleanup = null;
-  }
+
 }
 
 function cycleEditorMode() {
@@ -5870,8 +6017,8 @@ function updateDocumentSummary(document) {
     updatedAt: document.updatedAt,
     snippet: String(document.content || '').replace(/\s+/g, ' ').slice(0, 180),
   };
-  state.documents.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
-  renderDocuments();
+  state.documents.sort((a, b) => comparePinned(a, b) || String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+  scheduleRender('knowledge-summary', () => { if (state.mode === 'knowledge') renderDocuments(); });
 }
 
 function scheduleDocumentSave() {
@@ -5879,7 +6026,7 @@ function scheduleDocumentSave() {
   state.documentDirty = true;
   setDocumentSaveState('等待保存', 'saving');
   clearTimeout(state.documentSaveTimer);
-  state.documentSaveTimer = setTimeout(() => saveDocument(), 800);
+  if (!state.documentComposing) state.documentSaveTimer = setTimeout(() => saveDocument(), 800);
 }
 
 async function persistConflictDraft(documentId) {
@@ -5938,7 +6085,7 @@ const documentSaveRequests = new Map();
 async function saveDocument() {
   const id = state.activeDocument?.id;
   if (!id) return true;
-  if (state.documentConflict) return false;
+  if (state.documentConflict || state.documentComposing) return false;
   const pending = documentSaveRequests.get(id);
   if (pending) return pending;
   const request = saveDocumentOnce().catch(error => {
@@ -6021,6 +6168,7 @@ async function saveDocumentOnce() {
     scheduleDocumentSave();
   }
   knowledgeEnhancements?.onDocumentSaved?.(data);
+  if (JSON.stringify(previous?.outgoingLinks || []) !== JSON.stringify(data.outgoingLinks || [])) refreshDocumentPreview();
   if (patch.rawText) {
     void renderFilePreview(data, $('#filePreviewHost'));
     $('#fileMeta').textContent = formatBytes(data.fileMeta.bytes);
@@ -6030,9 +6178,8 @@ async function saveDocumentOnce() {
     (previous.knowledgeBase || '其他') !== (data.knowledgeBase || '其他')
     || String(previous.folderPath || '') !== String(data.folderPath || '')
   );
-  await loadKnowledgeTree();
   if (locationChanged && state.mode === 'knowledge') {
-    await loadDocuments({ refreshTree: false });
+    void loadDocuments().catch(error => showToast(error.message, 'error'));
   }
   return true;
 }
@@ -6059,7 +6206,7 @@ async function afterNoteMutation(id, payload = {}) {
       noteBrowserDeleteDocument(id);
       showEmptyDocument();
       await loadKnowledgeTree();
-      await loadDocuments();
+      await loadDocuments({ refreshTree: false });
       return;
     }
     const response = await apiFetch(`/api/knowledge/documents/${encodeURIComponent(id)}`);
@@ -6070,7 +6217,7 @@ async function afterNoteMutation(id, payload = {}) {
     if (document.status === 'archived') showEmptyDocument();
     else await renderActiveDocument(document);
     await loadKnowledgeTree();
-    await loadDocuments();
+    await loadDocuments({ refreshTree: false });
   } finally {
     if (!payload.disconnected && noteMutationLock === lock) {
       for (const [control, disabled] of lock.controls) control.disabled = disabled;
@@ -6377,7 +6524,7 @@ function bindEvents() {
       id = resume.id;
       options = resume.options;
     }
-    if (targetMode === 'knowledge') await loadKnowledgeTree();
+    if (targetMode === 'knowledge') void loadKnowledgeTree({ invalidate: false }).catch(error => showToast(error.message, 'error'));
     navigate(targetMode, id, options);
   });
   initFloatingSidebarButton($('#sidebarOpen'));
@@ -6792,9 +6939,13 @@ function bindEvents() {
   initSelectControls({ ids: DOCUMENT_SELECT_IDS });
   $('#markdownTocToggle').addEventListener('click', () => {
     state.markdownTocOpen = !state.markdownTocOpen;
-    if (state.editorMode !== 'edit') renderDocumentPreview();
-    else syncMarkdownToc();
+    syncMarkdownToc();
   });
+  for (const id of ['documentTitle', 'documentContent', 'documentTags', 'documentDate']) {
+    const field = $(`#${id}`);
+    field.addEventListener('compositionstart', () => { state.documentComposing = true; clearTimeout(state.documentSaveTimer); cancelScheduledPreview(); });
+    field.addEventListener('compositionend', () => { state.documentComposing = false; scheduleDocumentSave(); if (id === 'documentContent') refreshDocumentPreview(); });
+  }
   $('#documentContent').addEventListener('input', refreshDocumentPreview);
   $('#documentContent').addEventListener('scroll', () => scheduleNoteReadingPosition(), { passive: true });
   $('#documentPreview').addEventListener('scroll', () => scheduleNoteReadingPosition(), { passive: true });
@@ -6882,6 +7033,7 @@ function bindEvents() {
   $('#syncKnowledgeFolderButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#saveKnowledgeSyncExtensions')?.addEventListener('click', () => saveKnowledgeSyncExtensions().catch(error => showToast(error.message, 'error')));
   $('#syncKnowledgeFolderSettingsButton')?.addEventListener('click', () => syncKnowledgeFolder().catch(error => showToast(error.message, 'error')));
+  $('#verifyKnowledgeFilesButton')?.addEventListener('click', () => verifyKnowledgeFiles().catch(error => showToast(error.message, 'error')));
   $('#openKnowledgeFolderButton')?.addEventListener('click', () => openKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#openKnowledgeFolderSettingsButton')?.addEventListener('click', () => openKnowledgeFolder().catch(error => showToast(error.message, 'error')));
   $('#rebuildKnowledgeIndexButton')?.addEventListener('click', () => rebuildKnowledgeIndex().catch(error => showToast(error.message, 'error')));
@@ -7204,7 +7356,7 @@ function bindEvents() {
     },
     reloadKnowledge: async () => {
       await loadKnowledgeTree();
-      await loadDocuments();
+      await loadDocuments({ refreshTree: false });
     },
   }).bindBackupEvents();
   $('#btnComputerAllowlistAdd').addEventListener('click', addComputerAllowlistEntry);
@@ -7337,10 +7489,15 @@ async function initialize() {
     if ($('#settingsDialog')?.open && state.settingsPanel === 'remote' && remoteBridge()) loadRemoteAccessSettings().catch(() => {});
   }, 2000);
   window.setInterval(() => {
-    if (state.mode === 'knowledge' || ($('#settingsDialog')?.open && state.settingsPanel === 'knowledge')) {
+    if (document.visibilityState === 'visible' && (state.mode === 'knowledge' || ($('#settingsDialog')?.open && state.settingsPanel === 'knowledge'))) {
       loadKnowledgeSyncStatus({ reconcile: true }).catch(() => {});
     }
   }, 4000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (state.mode === 'knowledge' || ($('#settingsDialog')?.open && state.settingsPanel === 'knowledge'))) {
+      loadKnowledgeSyncStatus({ reconcile: true }).catch(() => {});
+    }
+  });
 }
 
 initialize().catch(error => {

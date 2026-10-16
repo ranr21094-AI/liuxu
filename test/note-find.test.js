@@ -123,6 +123,7 @@ test('search updates on edits, leaves the body unchanged, and clears when switch
     app.editor.value = '中文';
     app.editor.setSelectionRange(2, 2);
     app.editor.dispatchEvent(new app.dom.window.Event('input', { bubbles: true }));
+    await new Promise(resolve => setTimeout(resolve, 120));
     assert.equal(app.document.querySelector('#noteFindCount').textContent, '1 / 1');
     assert.equal(app.editor.value, '中文');
 

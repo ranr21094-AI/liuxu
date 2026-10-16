@@ -132,7 +132,7 @@ test('autosave drains edits made during delayed request and keeps failed input',
   const sent = []; const requests = []; const field = { value: 'first', selectionStart: 0, setSelectionRange() {} };
   const context = { state: { activeDocument: { id: 'note:A', version: 1 }, documentDirty: true }, clearTimeout() {}, setDocumentSaveState() {}, showToast() {}, $: () => field,
     currentDocumentPatch: () => ({ content: field.value, baseVersion: context.state.activeDocument.version }),
-    editorMatchesSubmitted: patch => patch.content === field.value, scheduleDocumentSave() {}, knowledgeEnhancements: null, updateDocumentSummary() {}, loadKnowledgeTree: async () => {}, loadDocuments: async () => {},
+    editorMatchesSubmitted: patch => patch.content === field.value, scheduleDocumentSave() {}, knowledgeEnhancements: null, updateDocumentSummary() {}, loadKnowledgeTree: async () => { assert.fail('body save must not refresh the tree'); }, loadDocuments: async () => { assert.fail('body save must not reload the list'); },
     resolveDocumentConflict: async () => { context.state.documentConflict = true; return false; },
     apiFetch: async (url, options) => { sent.push(JSON.parse(options.body)); return new Promise(resolve => requests.push(resolve)); } };
   vm.createContext(context);

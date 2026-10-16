@@ -37,6 +37,8 @@ export function initNoteFind({
   let matches = [];
   let activeIndex = -1;
   let isOpen = false;
+  let refreshTimer = null;
+  let composing = false;
 
   function syncCount() {
     if (!query) count.textContent = '输入关键词';
@@ -62,6 +64,8 @@ export function initNoteFind({
   }
 
   function refreshFromEditor({ locateFirst = false } = {}) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
     const oldMatchStart = matches[activeIndex]?.start;
     matches = findLiteralMatches(editor.value, query);
     if (!matches.length) {
@@ -114,6 +118,8 @@ export function initNoteFind({
   }
 
   function close({ restoreFocus = true } = {}) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
     isOpen = false;
     panel.hidden = true;
     toggleButton?.setAttribute('aria-expanded', 'false');
@@ -123,6 +129,7 @@ export function initNoteFind({
   }
 
   function move(direction) {
+    if (refreshTimer !== null) refreshFromEditor();
     if (!matches.length) return false;
     const index = activeIndex < 0
       ? (direction > 0 ? 0 : matches.length - 1)
@@ -185,9 +192,16 @@ export function initNoteFind({
     event.preventDefault();
     move(event.shiftKey ? -1 : 1);
   });
-  editor.addEventListener('input', () => {
-    if (isOpen) refreshFromEditor();
-  });
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+    if (isOpen && !composing) refreshTimer = setTimeout(() => {
+      if (isCurrentDocumentSearchable()) refreshFromEditor();
+    }, 100);
+  }
+  editor.addEventListener('compositionstart', () => { composing = true; scheduleRefresh(); });
+  editor.addEventListener('compositionend', () => { composing = false; scheduleRefresh(); });
+  editor.addEventListener('input', scheduleRefresh);
 
   syncCount();
   return {

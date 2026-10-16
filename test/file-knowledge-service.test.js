@@ -14,9 +14,61 @@ async function fixture(t) {
   const root = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'file-root-'));
   const service = createKnowledgeService(db, { fileWorkspaceRoot: root, startFolderSync: false });
   await service.ready;
+  await service.backgroundReady;
   t.after(async () => { await service.folderSync.shutdown(); await fs.rm(root, { recursive: true, force: true }); });
   return { db, dir, root, service };
 }
+test('tree membership never reads cached bodies and preserves root/archive/annotation visibility', async t => {
+  const { service, db } = await fixture(t);
+  const records = [
+    { id: 'note:root', relativePath: 'root.md', status: 'active' },
+    { id: 'note:deep', relativePath: 'Base/a/b/deep.md', status: 'active' },
+    { id: 'note:old', relativePath: '.archive/Base/old.md', status: 'archived' },
+    { id: 'note:deleted', relativePath: 'Base/deleted.md', status: 'deleted' },
+    { id: 'note:annotation', relativePath: 'Base/a/note.md', status: 'active', documentRole: 'annotation' },
+  ];
+  for (const record of records) service.workspace.records.set(record.id, record);
+  const prepare = db.sqlite.prepare;
+  db.sqlite.prepare = () => { throw new Error('tree must not query SQLite bodies'); };
+  try {
+    assert.deepEqual(service.listDocumentTreeLocations(), [
+      { knowledgeBase: ':root:', folderPath: '', collectionPath: ':root:', fileSync: { relativePath: 'root.md' } },
+      { knowledgeBase: 'Base', folderPath: 'a/b', collectionPath: 'Base/a/b', fileSync: { relativePath: 'Base/a/b/deep.md' } },
+    ]);
+  } finally { db.sqlite.prepare = prepare; service.workspace.records.clear(); }
+});
+
+test('directory listing migration uses an index and preserves pinned and stable timestamp ordering', async t => {
+  const { db, service } = await fixture(t);
+  const insert = db.sqlite.prepare('INSERT INTO knowledge_documents(id, body) VALUES (?, ?)');
+  for (const [id, pinnedAt] of [['note:1', ''], ['note:2', '2026-10-01'], ['note:3', '']]) {
+    insert.run(id, JSON.stringify({ id, sourceType: 'note', status: 'active', knowledgeBase: 'Base', folderPath: 'child',
+      collectionPath: 'Base/child', pinnedAt, updatedAt: '2026-10-01T00:00:00Z', content: 'body' }));
+  }
+  const page = service.listDocumentPage({ knowledgeBase: 'Base', folder: 'child' }, { pinSort: true });
+  assert.deepEqual(page.documents.map(document => document.id), ['note:2', 'note:1', 'note:3']);
+  const plan = db.sqlite.prepare(`EXPLAIN QUERY PLAN SELECT body FROM knowledge_documents
+    WHERE COALESCE(NULLIF(json_extract(body, '$.status'), ''), 'active') = ?
+      AND json_extract(body, '$.knowledgeBase') = ? AND COALESCE(json_extract(body, '$.folderPath'), '') = ?
+    ORDER BY COALESCE(json_extract(body, '$.pinnedAt'), '') DESC,
+      COALESCE(json_extract(body, '$.updatedAt'), json_extract(body, '$.createdAt'), '') DESC, rowid ASC LIMIT 60`).all('active', 'Base', 'child');
+  assert.ok(plan.some(row => row.detail.includes('idx_knowledge_documents_directory_list')));
+  assert.ok(plan.every(row => !row.detail.includes('TEMP B-TREE')));
+});
+test('file workspace becomes ready before the first full indexing pass completes', async t => {
+  const { db } = createTempDatabase(t, 'file-startup-ready-');
+  const root = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'file-startup-root-'));
+  for (let index = 0; index < 40; index += 1) await fs.writeFile(path.join(root, `Note-${index}.md`), `startup ${index}`);
+  const service = createKnowledgeService(db, { fileWorkspaceRoot: root, startFolderSync: false });
+  t.after(async () => { await service.folderSync.shutdown(); await fs.rm(root, { recursive: true, force: true }); });
+  let backgroundFinished = false;
+  service.backgroundReady.then(() => { backgroundFinished = true; });
+  await service.ready;
+  assert.equal(backgroundFinished, false);
+  assert.equal(service.workspace.scanStatus, 'scanning');
+  await service.backgroundReady;
+  assert.equal(service.workspace.records.size, 40);
+});
 test('file knowledge service saves disk originals and exposes an index-compatible search', async t => {
   const { service, root } = await fixture(t);
   const created = await service.createNote({ title: 'Hello', content: 'firstalpha', relativePath: 'Hello.md' });
@@ -34,6 +86,14 @@ test('file knowledge service saves disk originals and exposes an index-compatibl
   await service.workspace.flushIndex();
   assert.ok(search.searchDocuments('savedbeta').some(doc => doc.id === current.id));
 });
+test('file observations persist as rebuildable SQLite metadata', async t => {
+  const { db, service } = await fixture(t);
+  const created = (await service.createNote({ title: 'Observed', content: 'cached state', relativePath: 'Observed.md' })).document;
+  const row = db.sqlite.prepare('SELECT relative_path, fingerprint, file_state FROM knowledge_file_observations WHERE document_id = ?').get(created.id);
+  assert.equal(row.relative_path, created.relativePath);
+  assert.equal(row.fingerprint, created.baseFingerprint);
+  assert.equal(JSON.parse(row.file_state).size, Buffer.byteLength('cached state'));
+});
 test('named history reads external content and restores via a guarded file save', async t => {
   const { service, root } = await fixture(t);
   let document = (await service.createNote({ title: 'History', content: 'first' })).document;
@@ -48,7 +108,7 @@ test('named history reads external content and restores via a guarded file save'
 test('migration preserves stable ids and disk content, records divergent database recovery, and is resumable', async t => {
   const { db, dir } = createTempDatabase(t, 'file-migration-');
   const root = await fs.mkdtemp(path.join(require('node:os').tmpdir(), 'file-migrate-root-'));
-  const backup = `${root}-backup`; t.after(async () => { await fs.rm(root, { recursive: true, force: true }); await fs.rm(backup, { recursive: true, force: true }); });
+  const backup = `${root}-backup`;
   const legacy = createKnowledgeService(db, { startFolderSync: false });
   const doc = legacy.createNote({ title: 'Legacy', content: 'database' }).document;
   legacy.cacheFileDocument({ ...doc, fileSync: { relativePath: 'Legacy.md' } });
@@ -59,8 +119,14 @@ test('migration preserves stable ids and disk content, records divergent databas
   assert.equal(await fs.readFile(path.join(root, report.conflicts[0].recoveryPath), 'utf8'), 'database');
   const again = await migrateFileWorkspace(db, { root, backupPath: backup });
   assert.equal(again.completed.length, 1);
-  const service = createKnowledgeService(db, { startFolderSync: false }); t.after(() => service.folderSync.shutdown());
+  const service = createKnowledgeService(db, { startFolderSync: false });
+  t.after(async () => {
+    await service.folderSync.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(backup, { recursive: true, force: true });
+  });
   assert.equal((await service.getDocument(doc.id)).content, 'disk');
+  await service.backgroundReady;
   assert.ok(await fs.stat(path.join(dir, '.knowledge-file-workspace.json')));
 });
 test('migration archives duplicate path identities and repairs a partially migrated sidecar', async t => {
@@ -143,6 +209,7 @@ test('file-workspace ZIP replacement and merge preserve originals without overwr
   assert.equal(await fs.readFile(path.join(root, 'same.md'), 'utf8'), 'original');
   const fresh = require('../lib/knowledge/routes').serviceFor(db).knowledge;
   await fresh.ready;
+  await fresh.backgroundReady;
   assert.equal((await fresh.getReadingData(book.id)).entries[0].id, excerpt.id);
   assert.equal(createReadingPositionStore(dir).get({ documentId: book.id }).position.anchor, 'epubcfi(/6/2!/4)');
   assert.equal(readingTime(db.sqlite, book.id).milliseconds, 90000);
@@ -150,6 +217,7 @@ test('file-workspace ZIP replacement and merge preserve originals without overwr
   await restoreWorkspace(db, archive, 'merge');
   const merged = require('../lib/knowledge/routes').serviceFor(db).knowledge;
   await merged.ready;
+  await merged.backgroundReady;
   assert.equal((await merged.getDocument(doc.id)).content, 'existing');
   const imported = merged.allDocuments().find(item => item.id !== doc.id && item.content === 'original');
   assert.ok(imported); assert.ok(imported.relativePath.startsWith('导入-'));
@@ -247,4 +315,20 @@ test('Agent approval retains the original fingerprint when disk changes while wa
   await fs.writeFile(path.join(root, 'approval.md'), 'external while waiting');
   await runtime.resolveApproval(run.id, waiting.pendingApprovals[0].id, { approved: true });
   assert.equal(await fs.readFile(path.join(root, 'approval.md'), 'utf8'), 'external while waiting');
+});
+
+test('rebuild restores deleted cache rows and survives a service restart', async t => {
+  const { db, root, service } = await fixture(t);
+  const doc = (await service.createNote({ relativePath: 'keep.md', content: 'rebuild-search-token' })).document;
+  await service.workspace.flushIndex();
+  await service.rebuildIndex();
+  assert.equal(service.listDocumentPage({}).total, 1);
+  assert.equal(service.allDocuments().find(item => item.id === doc.id).content, 'rebuild-search-token');
+  await service.folderSync.shutdown();
+  const reopened = createKnowledgeService(db, { fileWorkspaceRoot: root, startFolderSync: false });
+  try {
+    await reopened.backgroundReady;
+    assert.equal(reopened.listDocumentPage({}).total, 1);
+    assert.equal((await reopened.getDocument(doc.id)).content, 'rebuild-search-token');
+  } finally { await reopened.folderSync.shutdown(); }
 });

@@ -34,6 +34,33 @@ test('new notes are ordinary markdown; old unknown headers, BOM and CRLF survive
   assert.equal((await workspace.read(document.id)).relativePath, 'plain.md');
 });
 
+test('first-time discovery publishes document batches before the scan finishes', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'liuxu-file-discovery-'));
+  for (let index = 0; index < 16; index += 1) await fs.writeFile(path.join(root, `note-${index}.md`), `body ${index}`);
+  const workspace = await new FileWorkspace({ root }).open();
+  t.after(async () => { await workspace.close(); await fs.rm(root, { recursive: true, force: true }); });
+  let release;
+  let blocked;
+  const atNextBatch = new Promise(resolve => { blocked = resolve; });
+  const nextBatchGate = new Promise(resolve => { release = resolve; });
+  const persist = workspace.persist.bind(workspace);
+  let writes = 0;
+  workspace.persist = async record => {
+    writes += 1;
+    if (writes === 9) { blocked(); await nextBatchGate; }
+    return persist(record);
+  };
+  const scanning = workspace.scan();
+  await atNextBatch;
+  assert.equal(workspace.scanStatus, 'scanning');
+  assert.ok(workspace.fileGeneration > 0);
+  assert.equal(workspace.records.size, 8);
+  assert.equal(workspace.scanProgress.visited, 8);
+  release();
+  await scanning;
+  assert.equal(workspace.records.size, 16);
+});
+
 test('index failure never rolls back committed content; reopening rebuilds it', async t => {
   let fail = false;
   const { root, workspace } = await fixture(t, { indexDocument: async () => { if (fail) throw new Error('SQLite unavailable'); } });
@@ -168,6 +195,21 @@ test('path notifications update bytes and match renames without walking the root
   assert.equal([...workspace.records.values()].filter(record => record.status === 'active').length, 2);
 });
 
+test('an unchanged workspace scan does not read files, hash content, reindex or bump generations', async t => {
+  const { root, workspace } = await fixture(t);
+  await fs.writeFile(path.join(root, 'note.md'), 'stable body');
+  await workspace.scan(); await workspace.flushIndex();
+  const generation = workspace.generation;
+  let reads = 0, fingerprints = 0, indexes = 0;
+  const readBytes = workspace.readBytes.bind(workspace), fingerprint = workspace.fingerprint.bind(workspace);
+  workspace.readBytes = (...args) => { reads += 1; return readBytes(...args); };
+  workspace.fingerprint = (...args) => { fingerprints += 1; return fingerprint(...args); };
+  workspace.indexDocument = async () => { indexes += 1; };
+  await workspace.scan(); await workspace.flushIndex();
+  assert.deepEqual({ reads, fingerprints, indexes }, { reads: 0, fingerprints: 0, indexes: 0 });
+  assert.equal(workspace.generation, generation);
+});
+
 test('moving a directory retains empty folders, relative assets and document identity', async t => {
   const { root, workspace } = await fixture(t);
   await workspace.createDirectory('source/empty');
@@ -246,4 +288,31 @@ test('native file watching notices external edits without opening the document',
     await new Promise(resolve => setTimeout(resolve, 50));
   }
   assert.equal(workspace.records.get(created.id).fingerprint, digest(Buffer.from('external watched')));
+});
+
+for (const existing of [false, true]) test(`oversized originals do not stop discovery (existing=${existing})`, async t => {
+  const { root, workspace } = await fixture(t);
+  if (existing) await workspace.create({ relativePath: 'existing.md', content: 'existing' });
+  await fs.writeFile(path.join(root, 'new.md'), 'new');
+  const handle = await fs.open(path.join(root, 'large.bin'), 'w');
+  await handle.truncate(251 * 1024 * 1024); await handle.close();
+  await workspace.scan();
+  assert.ok([...workspace.records.values()].some(record => record.relativePath === 'new.md'));
+  assert.deepEqual(workspace.snapshot().skippedFiles, ['large.bin']);
+  await fs.unlink(path.join(root, 'large.bin'));
+  await workspace.scan();
+  assert.equal(workspace.snapshot().skippedFileCount, 0);
+});
+
+test('moving an annotated file and its directory concurrently drains all locks', { timeout: 5000 }, async t => {
+  const { workspace } = await fixture(t);
+  const parent = (await workspace.create({ sourceType: 'file', relativePath: 'folder/book.pdf', bytes: Buffer.from('pdf') })).document;
+  const child = (await workspace.create({ relativePath: 'folder/book.annotation.md', content: 'notes', parentDocumentId: parent.id, documentRole: 'annotation' })).document;
+  await Promise.all([
+    workspace.move(parent.id, { ...base(parent), relativePath: 'folder/new.pdf' }),
+    workspace.moveDirectory('folder', 'renamed'),
+  ]);
+  assert.equal((await workspace.read(parent.id)).relativePath, 'renamed/new.pdf');
+  assert.ok((await workspace.read(child.id)).relativePath.startsWith('renamed/'));
+  assert.equal(workspace.documentTails.size, 0);
 });

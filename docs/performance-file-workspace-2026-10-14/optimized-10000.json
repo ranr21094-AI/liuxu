@@ -1,0 +1,100 @@
+{
+  "date": "2026-10-14T15:37:12.811Z",
+  "documents": 10000,
+  "samples": 30,
+  "platform": "darwin",
+  "arch": "arm64",
+  "node": "v24.20.0",
+  "backgroundScan": true,
+  "startupMs": 3.3231250000000045,
+  "firstListAvailableMs": 157.46987499999994,
+  "listedDocuments": 8,
+  "initialIndexReadyMs": 36650.231125000006,
+  "initialMetrics": {
+    "contentReadCalls": 0,
+    "contentReadBytes": 0,
+    "fullHashCalls": 10000,
+    "fullHashBytes": 31738890,
+    "scanPasses": 1,
+    "scanVisited": 10000,
+    "scanSkipped": 0,
+    "documentQueueWaitMs": 0,
+    "documentQueueWaitCount": 0,
+    "indexedDocuments": 10000
+  },
+  "fullScanMs": 118.80208299999504,
+  "unchangedScanMetrics": {
+    "contentReadCalls": 0,
+    "contentReadBytes": 0,
+    "fullHashCalls": 0,
+    "fullHashBytes": 0,
+    "scanPasses": 1,
+    "scanVisited": 10000,
+    "scanSkipped": 10000,
+    "documentQueueWaitMs": 0,
+    "documentQueueWaitCount": 0,
+    "indexedDocuments": 0
+  },
+  "restartReadyMs": 2434.764750000002,
+  "restartListAvailableMs": 2582.717666000004,
+  "restartListedDocuments": 10000,
+  "restartIndexReadyMs": 2847.5636250000025,
+  "restartMetrics": {
+    "contentReadCalls": 0,
+    "contentReadBytes": 0,
+    "fullHashCalls": 0,
+    "fullHashBytes": 0,
+    "scanPasses": 1,
+    "scanVisited": 10000,
+    "scanSkipped": 10000,
+    "documentQueueWaitMs": 0,
+    "documentQueueWaitCount": 0,
+    "indexedDocuments": 0
+  },
+  "eventLoopP95Ms": 2.793471,
+  "memory": {
+    "afterReady": {
+      "rss": 109,
+      "heapUsed": 17.9,
+      "heapTotal": 45.8,
+      "external": 2.7,
+      "arrayBuffers": 0.5
+    },
+    "afterInitialIndex": {
+      "rss": 284,
+      "heapUsed": 79.1,
+      "heapTotal": 192.3,
+      "external": 3.9,
+      "arrayBuffers": 1.7
+    },
+    "afterSearch": {
+      "rss": 392.8,
+      "heapUsed": 122.5,
+      "heapTotal": 253.7,
+      "external": 2.3,
+      "arrayBuffers": 0.1
+    },
+    "afterRestart": {
+      "rss": 700.2,
+      "heapUsed": 363.8,
+      "heapTotal": 484.1,
+      "external": 4.2,
+      "arrayBuffers": 0.4
+    }
+  },
+  "requests": {
+    "read": {
+      "p50Ms": 2.2497500000026776,
+      "p95Ms": 9.284790999998222
+    },
+    "save": {
+      "p50Ms": 29.131208999999217,
+      "p95Ms": 37.68245799999568
+    },
+    "search": {
+      "p50Ms": 8.404458999997587,
+      "p95Ms": 13.356416999995417
+    }
+  },
+  "limitations": "Temporary local files, warm search and disk cache; one edited file; no Electron GUI or Windows verification; set PERF_BACKGROUND=1 for a scan concurrent with HTTP samples; fullScanMs includes index draining."
+}

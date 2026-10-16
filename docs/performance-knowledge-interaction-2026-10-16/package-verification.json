@@ -1,0 +1,33 @@
+{
+  "version": "1.6.1",
+  "matchedFiles": [
+    "database.js",
+    "lib/agent/custom-api.js",
+    "lib/agent/runtime.js",
+    "lib/computer/files.js",
+    "lib/db/connection.js",
+    "lib/knowledge/file-knowledge-service.js",
+    "lib/knowledge/file-workspace.js",
+    "lib/knowledge/routes.js",
+    "lib/remote/routes.js",
+    "lib/workspace/zip.js",
+    "public/index.html",
+    "public/js/app/knowledge-row-menu.js",
+    "public/js/app/sidebar-search.js",
+    "public/js/knowledge/links-history.js",
+    "public/js/knowledge/note-find.js",
+    "public/js/selectControl.js",
+    "public/js/workbench.js",
+    "lib/db/migrations/009_knowledge_file_observations.sql",
+    "lib/db/migrations/010_knowledge_directory_list.sql",
+    "public/js/knowledge/row-reconcile.js"
+  ],
+  "archive": "LiuXu-1.6.1-mac-arm64.zip",
+  "packagedUi": "passed",
+  "tests": {
+    "total": 697,
+    "passed": 696,
+    "failed": 0,
+    "skipped": 1
+  }
+}

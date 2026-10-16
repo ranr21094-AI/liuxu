@@ -56,9 +56,9 @@ function openSelectControl(control, { focusSelected = false } = {}) {
   const trigger = control.querySelector(TRIGGER_SELECTOR);
   const menu = control.querySelector(MENU_SELECTOR);
   if (!select || select.disabled || !trigger || !menu) return;
-  syncSelectControls({ ids: [control.dataset.selectId] });
   closeSelectControls(control);
   control.classList.add('open');
+  syncSelectControls({ ids: [control.dataset.selectId] });
   trigger.setAttribute('aria-expanded', 'true');
   menu.hidden = false;
   if (focusSelected) {
@@ -80,10 +80,8 @@ export function syncSelectControls({ root, ids } = {}) {
     const menu = control.querySelector(MENU_SELECTOR);
     if (!select || !trigger || !value || !menu) return;
 
-    const options = [...select.options];
     const selected = select.selectedOptions[0]
-      || options.find(option => option.value === select.value)
-      || options[0];
+      || select.options[0];
     const hasValue = Boolean(select.value && select.value !== 'none');
     const disabled = Boolean(select.disabled);
 
@@ -93,6 +91,11 @@ export function syncSelectControls({ root, ids } = {}) {
     trigger.disabled = disabled;
     trigger.setAttribute('aria-disabled', String(disabled));
     trigger.setAttribute('aria-label', `${select.labels?.[0]?.textContent || '选择'}：${selected?.textContent || '未选择'}`);
+    if (!control.classList.contains('open')) return;
+    const options = [...select.options];
+    const signature = JSON.stringify([select.value, disabled, options.map(option => [option.value, option.textContent])]);
+    if (menu._optionSignature === signature) return;
+    menu._optionSignature = signature;
     menu.innerHTML = options.map(option => `
       <button
         class="select-control-option todo-select-option${option.value === select.value ? ' selected' : ''}"

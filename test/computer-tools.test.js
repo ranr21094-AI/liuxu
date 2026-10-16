@@ -303,3 +303,14 @@ test('file.read honors configurable max bytes', async (t) => {
   assert.equal(allowed.ok, true);
   assert.equal(allowed.data.content.length, 5 * 1024 * 1024);
 });
+
+test('file.patch writes replacement control sequences literally', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'literal-patch-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'sample.txt');
+  const replacement = "literal $& $$ $` $'";
+  fs.writeFileSync(file, 'before OLD after');
+  const result = await createFileTools({ allowedDirectories: [dir] }).execute('file.patch', { path: file, find: 'OLD', replace: replacement });
+  assert.equal(result.ok, true);
+  assert.equal(fs.readFileSync(file, 'utf8'), `before ${replacement} after`);
+});

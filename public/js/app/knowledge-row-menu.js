@@ -1,5 +1,6 @@
 let openMenu = null;
 let trigger = null;
+let menuSerial = 0;
 
 function closeMenu(restoreFocus = false) {
   if (!openMenu) return;
@@ -10,10 +11,11 @@ function closeMenu(restoreFocus = false) {
 }
 
 export function enhanceKnowledgeRowMenus(list) {
-  closeMenu();
+  if (openMenu && !openMenu.isConnected) closeMenu();
   list.querySelectorAll('.tree-actions').forEach((menu, index) => {
+    if (menu.classList.contains('knowledge-row-menu')) return;
     menu.classList.add('knowledge-row-menu');
-    menu.id = `knowledgeRowMenu${index}`;
+    menu.id = `knowledgeRowMenu${++menuSerial}`;
     menu.setAttribute('popover', 'manual');
     const button = document.createElement('button');
     button.type = 'button';

@@ -126,3 +126,28 @@ test('pairing response cookies are secure and strict', async (t) => {
   assert.ok(setCookies.some(line => line.startsWith(`${SESSION_COOKIE}=`) && line.includes('HttpOnly')));
   assert.ok(cookieValues(setCookies)[CSRF_COOKIE]);
 });
+
+test('local listener rejects cross-origin form writes while allowing app and native clients', async t => {
+  const app = express();
+  app.use(remoteAccessMiddleware);
+  let writes = 0;
+  app.post('/api/write', (_req, res) => { writes += 1; res.json({ ok: true }); });
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  for (const headers of [
+    { Origin: 'https://evil.example' }, { Origin: 'null' },
+    { Origin: base.replace('127.0.0.1', 'localhost') },
+    { 'Sec-Fetch-Site': 'cross-site' }, { 'Sec-Fetch-Site': 'same-site' },
+    { Host: 'rebound.example', Origin: 'http://rebound.example' },
+  ]) {
+    const form = new FormData(); form.append('file', new Blob(['untrusted']), 'test.txt');
+    const response = await fetch(`${base}/api/write`, { method: 'POST', headers, body: form });
+    assert.equal(response.status, 403, JSON.stringify(headers));
+  }
+  assert.equal(writes, 0);
+  assert.equal((await fetch(`${base}/api/write`, { method: 'POST', headers: { Origin: base, 'Sec-Fetch-Site': 'same-origin' } })).status, 200);
+  assert.equal((await fetch(`${base}/api/write`, { method: 'POST' })).status, 200);
+  assert.equal(writes, 2);
+});

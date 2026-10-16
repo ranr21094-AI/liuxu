@@ -13,6 +13,10 @@ const { createSearchIndex } = require('../lib/knowledge/search');
 const count = Math.max(1, Number(process.env.PERF_DOCS) || 1000);
 const samples = Math.max(5, Number(process.env.PERF_SAMPLES) || 30);
 const percentile = (array, fraction) => [...array].sort((a, b) => a - b)[Math.min(array.length - 1, Math.ceil(array.length * fraction) - 1)];
+const memory = () => {
+  const value = process.memoryUsage();
+  return Object.fromEntries(['rss', 'heapUsed', 'heapTotal', 'external', 'arrayBuffers'].map(key => [key, Math.round(value[key] / 1024 / 1024 * 10) / 10]));
+};
 let db, knowledge, search, http;
 try {
   for (let offset = 0; offset < count; offset += 100) {
@@ -26,7 +30,21 @@ try {
   knowledge = createKnowledgeService(db, { fileWorkspaceRoot: root, startFolderSync: false });
   await knowledge.ready;
   const startupMs = performance.now() - startup;
+  let listedDocuments = knowledge.nativeDocuments().length;
+  if (!listedDocuments) {
+    while (!knowledge.workspace.fileGeneration) {
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    listedDocuments = knowledge.nativeDocuments().length;
+  }
+  const firstListAvailableMs = performance.now() - startup;
+  const memoryAfterReady = memory();
+  await knowledge.backgroundReady;
+  const initialIndexReadyMs = performance.now() - startup;
+  const memoryAfterInitialIndex = memory();
+  const initialMetrics = { ...knowledge.workspace.metrics };
   search = createSearchIndex(knowledge); search.searchDocuments('workspacebenchmark');
+  const memoryAfterSearch = memory();
   const express = require('express'); const app = express(); app.use(express.json());
   const document = knowledge.nativeDocuments()[0];
   app.get('/read', async (_req, res) => { try { res.json(await knowledge.getDocument(document.id)); } catch (error) { res.status(500).json({ error: error.message }); } });
@@ -46,11 +64,29 @@ try {
     ]);
   }
   await background; await knowledge.workspace.flushIndex();
+  const beforeUnchangedScan = { ...knowledge.workspace.metrics };
   const scanBegin = performance.now(); await knowledge.workspace.scan(); await knowledge.workspace.flushIndex(); const scanMs = performance.now() - scanBegin;
+  const unchangedScanMetrics = Object.fromEntries(Object.keys(beforeUnchangedScan).map(key => [key, knowledge.workspace.metrics[key] - beforeUnchangedScan[key]]));
+  await knowledge.folderSync.shutdown(); search.dispose();
+  const restartBegin = performance.now();
+  knowledge = createKnowledgeService(db, { fileWorkspaceRoot: root, startFolderSync: false });
+  await knowledge.ready;
+  const restartReadyMs = performance.now() - restartBegin;
+  const restartListedDocuments = knowledge.nativeDocuments().length;
+  const restartListAvailableMs = performance.now() - restartBegin;
+  await knowledge.backgroundReady;
+  const restartIndexReadyMs = performance.now() - restartBegin;
+  const memoryAfterRestart = memory();
+  const restartMetrics = { ...knowledge.workspace.metrics };
+  search = createSearchIndex(knowledge); search.searchDocuments('workspacebenchmark');
   delays.disable();
   const report = { date: new Date().toISOString(), documents: count, samples, platform: process.platform, arch: process.arch,
-    node: process.version, backgroundScan: Boolean(background), startupMs, fullScanMs: scanMs, eventLoopP95Ms: delays.percentile(95) / 1e6,
-    rssMiB: process.memoryUsage().rss / 1024 / 1024,
+    node: process.version, backgroundScan: Boolean(background), startupMs, firstListAvailableMs, listedDocuments,
+    initialIndexReadyMs, initialMetrics, fullScanMs: scanMs, unchangedScanMetrics,
+    restartReadyMs, restartListAvailableMs, restartListedDocuments, restartIndexReadyMs, restartMetrics,
+    eventLoopP95Ms: delays.percentile(95) / 1e6,
+    memory: { afterReady: memoryAfterReady, afterInitialIndex: memoryAfterInitialIndex,
+      afterSearch: memoryAfterSearch, afterRestart: memoryAfterRestart },
     requests: Object.fromEntries(Object.entries(durations).map(([key, values]) => [key, { p50Ms: percentile(values, .5), p95Ms: percentile(values, .95) }])),
     limitations: 'Temporary local files, warm search and disk cache; one edited file; no Electron GUI or Windows verification; set PERF_BACKGROUND=1 for a scan concurrent with HTTP samples; fullScanMs includes index draining.' };
   if (process.env.PERF_OUTPUT) await fs.writeFile(path.resolve(process.env.PERF_OUTPUT), JSON.stringify(report, null, 2));

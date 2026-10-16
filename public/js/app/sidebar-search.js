@@ -8,9 +8,17 @@ export function filterMemoryItems(items, layer = '', query = '') {
 
 export function createLatestRequest() {
   let generation = 0;
+  let controller;
   return {
-    invalidate() { generation += 1; },
-    begin() { const token = ++generation; return () => token === generation; },
+    invalidate() { generation += 1; controller?.abort(); },
+    begin() {
+      controller?.abort();
+      controller = new AbortController();
+      const token = ++generation;
+      const current = () => token === generation;
+      current.signal = controller.signal;
+      return current;
+    },
   };
 }
 

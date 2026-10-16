@@ -38,6 +38,7 @@ function createContext({ failure = '', draftResponse } = {}) {
   };
   const context = vm.createContext({
     state,
+    documentSaveRequests: new Map(),
     apiFetch,
     clearTimeout() {},
     currentDocumentPatch: () => ({ content: editor.value, baseVersion: state.activeDocument.version }),

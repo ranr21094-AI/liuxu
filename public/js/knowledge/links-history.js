@@ -198,7 +198,14 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     operationPending: false,
   };
 
+  let pickerTimer = null;
+  let pickerController = null;
+  let composing = false;
   const hidePicker = () => {
+    clearTimeout(pickerTimer);
+    pickerController?.abort();
+    view.pickerRequest += 1;
+    if (picker.hidden && !picker.childNodes.length) return;
     picker.hidden = true;
     textarea.setAttribute('aria-expanded', 'false');
     picker.innerHTML = '';
@@ -228,11 +235,14 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     const query = pickerQuery();
     if (!query || !view.document) return hidePicker();
     const request = ++view.pickerRequest;
+    const documentId = view.document.id;
+    pickerController?.abort();
+    pickerController = new AbortController();
     try {
       const params = new URLSearchParams({ q: query.query, limit: '20', excludeId: view.document.id });
-      const response = await apiFetch(`/api/knowledge/link-targets?${params}`);
+      const response = await apiFetch(`/api/knowledge/link-targets?${params}`, { signal: pickerController.signal });
       const data = await response.json().catch(() => ({}));
-      if (request !== view.pickerRequest || !pickerQuery()) return;
+      if (request !== view.pickerRequest || view.document?.id !== documentId || pickerQuery()?.query !== query.query) return;
       view.pickerItems = response.ok && Array.isArray(data.targets) ? data.targets : [];
       view.pickerIndex = 0;
       renderPicker();
@@ -652,7 +662,16 @@ export function initKnowledgeEnhancements({ apiFetch, state, navigate, confirmAc
     }
   }
 
-  textarea.addEventListener('input', () => { refreshPicker(); });
+  function schedulePicker() {
+    clearTimeout(pickerTimer);
+    pickerController?.abort();
+    view.pickerRequest += 1;
+    if (composing || !pickerQuery()) { hidePicker(); return; }
+    pickerTimer = setTimeout(refreshPicker, 120);
+  }
+  textarea.addEventListener('compositionstart', () => { composing = true; hidePicker(); });
+  textarea.addEventListener('compositionend', () => { composing = false; schedulePicker(); });
+  textarea.addEventListener('input', schedulePicker);
   textarea.addEventListener('keydown', event => {
     if (picker.hidden) return;
     if (event.key === 'Escape') { event.preventDefault(); hidePicker(); return; }

@@ -1,0 +1,3386 @@
+{
+  "documents": 1000,
+  "samples": 100,
+  "bodyBytes": 32768,
+  "platform": "darwin",
+  "arch": "arm64",
+  "electron": "43.4.1",
+  "backend": {
+    "tree": {
+      "samples": 100,
+      "p50": 45.94316699999945,
+      "p95": 60.037083000000166
+    },
+    "folder": {
+      "samples": 100,
+      "p50": 24.162874999999985,
+      "p95": 31.848292000000583
+    }
+  },
+  "navigation": {
+    "samples": 100,
+    "p50": 91.6527500000011,
+    "p95": 108.42004199999974
+  },
+  "editing": [
+    {
+      "kind": "short",
+      "mode": "edit",
+      "inputToTwoFrames": {
+        "samples": 100,
+        "p50": 16.699999809265137,
+        "p95": 17.5
+      },
+      "autosave": {
+        "samples": 25,
+        "p50": 917.9785419999971,
+        "p95": 941.3191250000018
+      },
+      "longTasks": []
+    },
+    {
+      "kind": "short",
+      "mode": "split",
+      "inputToTwoFrames": {
+        "samples": 100,
+        "p50": 16.699999809265137,
+        "p95": 16.90000009536743
+      },
+      "autosave": {
+        "samples": 25,
+        "p50": 910.7156250000044,
+        "p95": 936.1460420000003
+      },
+      "longTasks": []
+    },
+    {
+      "kind": "long",
+      "mode": "edit",
+      "inputToTwoFrames": {
+        "samples": 100,
+        "p50": 16.699999809265137,
+        "p95": 17.5
+      },
+      "autosave": {
+        "samples": 25,
+        "p50": 914.2589169999992,
+        "p95": 959.8972090000025
+      },
+      "longTasks": []
+    },
+    {
+      "kind": "long",
+      "mode": "split",
+      "inputToTwoFrames": {
+        "samples": 100,
+        "p50": 16.699999809265137,
+        "p95": 17.699999809265137
+      },
+      "autosave": {
+        "samples": 25,
+        "p50": 912.2277500000055,
+        "p95": 928.5101670000004
+      },
+      "longTasks": [
+        {
+          "start": 93379.40000009537,
+          "duration": 70
+        },
+        {
+          "start": 94286.90000009537,
+          "duration": 71
+        },
+        {
+          "start": 95205.09999990463,
+          "duration": 67
+        },
+        {
+          "start": 96123.40000009537,
+          "duration": 57
+        },
+        {
+          "start": 97019,
+          "duration": 67
+        },
+        {
+          "start": 97933.80000019073,
+          "duration": 69
+        },
+        {
+          "start": 98851,
+          "duration": 70
+        },
+        {
+          "start": 99765.09999990463,
+          "duration": 59
+        },
+        {
+          "start": 100683.40000009537,
+          "duration": 51
+        },
+        {
+          "start": 101595.59999990463,
+          "duration": 63
+        },
+        {
+          "start": 102451.7000002861,
+          "duration": 69
+        },
+        {
+          "start": 103359.7000002861,
+          "duration": 71
+        },
+        {
+          "start": 104261.90000009537,
+          "duration": 64
+        },
+        {
+          "start": 105185.09999990463,
+          "duration": 66
+        },
+        {
+          "start": 106102.2000002861,
+          "duration": 62
+        },
+        {
+          "start": 107057.30000019073,
+          "duration": 64
+        },
+        {
+          "start": 107915.80000019073,
+          "duration": 71
+        },
+        {
+          "start": 109742.40000009537,
+          "duration": 50
+        },
+        {
+          "start": 110641.09999990463,
+          "duration": 51
+        },
+        {
+          "start": 111544.5,
+          "duration": 52
+        },
+        {
+          "start": 115129,
+          "duration": 55
+        }
+      ]
+    }
+  ],
+  "requests": [
+    {
+      "url": "/api/knowledge/tree",
+      "start": 520.3000001907349,
+      "duration": 51.69999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 522.5,
+      "duration": 104
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F0%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 627.3000001907349,
+      "duration": 27.199999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F0%2Fa%2Fb%2Fc%2Fd",
+      "start": 654.8000001907349,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/revisions/cleanup",
+      "start": 656.9000000953674,
+      "duration": 4.599999904632568
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 677.2000002861023,
+      "duration": 49.89999961853027
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F1%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 727.9000000953674,
+      "duration": 30.800000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F1%2Fa%2Fb%2Fc%2Fd",
+      "start": 761.0999999046326,
+      "duration": 4
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 785.5999999046326,
+      "duration": 56.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F2%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 842.7000002861023,
+      "duration": 29
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F2%2Fa%2Fb%2Fc%2Fd",
+      "start": 872,
+      "duration": 6.300000190734863
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 894,
+      "duration": 47.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F3%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 942.2000002861023,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F3%2Fa%2Fb%2Fc%2Fd",
+      "start": 969.4000000953674,
+      "duration": 0.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 985.2000002861023,
+      "duration": 45.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F4%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1031.5,
+      "duration": 26.800000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F4%2Fa%2Fb%2Fc%2Fd",
+      "start": 1058.5,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1075.7000002861023,
+      "duration": 45.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F5%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1121.8000001907349,
+      "duration": 34.299999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F5%2Fa%2Fb%2Fc%2Fd",
+      "start": 1156.3000001907349,
+      "duration": 0.7999997138977051
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1168.7000002861023,
+      "duration": 46.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F6%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1216,
+      "duration": 26.90000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F6%2Fa%2Fb%2Fc%2Fd",
+      "start": 1243.0999999046326,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1260.5,
+      "duration": 46.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F7%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1308.0999999046326,
+      "duration": 29.200000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F7%2Fa%2Fb%2Fc%2Fd",
+      "start": 1337.5999999046326,
+      "duration": 4.600000381469727
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1362.5999999046326,
+      "duration": 47.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F8%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1410.5,
+      "duration": 27.700000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F8%2Fa%2Fb%2Fc%2Fd",
+      "start": 1438.4000000953674,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1451.8000001907349,
+      "duration": 44.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F9%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1496.9000000953674,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F9%2Fa%2Fb%2Fc%2Fd",
+      "start": 1524.3000001907349,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1543.7000002861023,
+      "duration": 46.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F10%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1590.5999999046326,
+      "duration": 27.100000381469727
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F10%2Fa%2Fb%2Fc%2Fd",
+      "start": 1618,
+      "duration": 0.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1635.2000002861023,
+      "duration": 45.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F11%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1681.5999999046326,
+      "duration": 26.800000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F11%2Fa%2Fb%2Fc%2Fd",
+      "start": 1708.5999999046326,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1726.9000000953674,
+      "duration": 46
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F12%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1773.8000001907349,
+      "duration": 28.90000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F12%2Fa%2Fb%2Fc%2Fd",
+      "start": 1803,
+      "duration": 4.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1827.0999999046326,
+      "duration": 46.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F13%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1874.0999999046326,
+      "duration": 27.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F13%2Fa%2Fb%2Fc%2Fd",
+      "start": 1901.8000001907349,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 1918.8000001907349,
+      "duration": 46.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F14%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 1965.9000000953674,
+      "duration": 27
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F14%2Fa%2Fb%2Fc%2Fd",
+      "start": 1993.0999999046326,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2010.3000001907349,
+      "duration": 45
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F15%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2056,
+      "duration": 26.200000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F15%2Fa%2Fb%2Fc%2Fd",
+      "start": 2082.4000000953674,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2101.800000190735,
+      "duration": 46.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F16%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2149.300000190735,
+      "duration": 27.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F16%2Fa%2Fb%2Fc%2Fd",
+      "start": 2176.9000000953674,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2193.4000000953674,
+      "duration": 46.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F17%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2240.9000000953674,
+      "duration": 34.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F17%2Fa%2Fb%2Fc%2Fd",
+      "start": 2275.7000002861023,
+      "duration": 8.599999904632568
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2302.0999999046326,
+      "duration": 51.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F18%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2354.800000190735,
+      "duration": 27.90000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F18%2Fa%2Fb%2Fc%2Fd",
+      "start": 2382.9000000953674,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2393.5999999046326,
+      "duration": 47.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F19%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2442.0999999046326,
+      "duration": 27.600000381469727
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F19%2Fa%2Fb%2Fc%2Fd",
+      "start": 2469.9000000953674,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2485.300000190735,
+      "duration": 44.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F20%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2530.4000000953674,
+      "duration": 26.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F20%2Fa%2Fb%2Fc%2Fd",
+      "start": 2557.2000002861023,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2576.800000190735,
+      "duration": 46.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F21%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2623.9000000953674,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F21%2Fa%2Fb%2Fc%2Fd",
+      "start": 2651.300000190735,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2668.5999999046326,
+      "duration": 45.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F22%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2715,
+      "duration": 27.700000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F22%2Fa%2Fb%2Fc%2Fd",
+      "start": 2743.0999999046326,
+      "duration": 4.400000095367432
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2760.4000000953674,
+      "duration": 47.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F23%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2808.5,
+      "duration": 28.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F23%2Fa%2Fb%2Fc%2Fd",
+      "start": 2836.9000000953674,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2852,
+      "duration": 46.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F24%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2899.0999999046326,
+      "duration": 28.90000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F24%2Fa%2Fb%2Fc%2Fd",
+      "start": 2928.2000002861023,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 2943.800000190735,
+      "duration": 46.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F25%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 2991,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F25%2Fa%2Fb%2Fc%2Fd",
+      "start": 3018.300000190735,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3035.0999999046326,
+      "duration": 46.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F26%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3082.4000000953674,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F26%2Fa%2Fb%2Fc%2Fd",
+      "start": 3109.7000002861023,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3126.800000190735,
+      "duration": 45.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F27%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3173,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F27%2Fa%2Fb%2Fc%2Fd",
+      "start": 3200.5,
+      "duration": 5.200000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3218.5,
+      "duration": 45.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F28%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3264.800000190735,
+      "duration": 28.199999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F28%2Fa%2Fb%2Fc%2Fd",
+      "start": 3293.300000190735,
+      "duration": 0.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3310.5999999046326,
+      "duration": 46.60000038146973
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F29%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3358,
+      "duration": 28.200000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F29%2Fa%2Fb%2Fc%2Fd",
+      "start": 3386.4000000953674,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3402.300000190735,
+      "duration": 46.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F30%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3449.2000002861023,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F30%2Fa%2Fb%2Fc%2Fd",
+      "start": 3476.5,
+      "duration": 0.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3493.5,
+      "duration": 45.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F31%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3539.800000190735,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F31%2Fa%2Fb%2Fc%2Fd",
+      "start": 3567,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3585.2000002861023,
+      "duration": 45.799999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F32%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3631.7000002861023,
+      "duration": 27.199999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F32%2Fa%2Fb%2Fc%2Fd",
+      "start": 3659.300000190735,
+      "duration": 4.199999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3676.9000000953674,
+      "duration": 61.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F33%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3739.5,
+      "duration": 35.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F33%2Fa%2Fb%2Fc%2Fd",
+      "start": 3775.4000000953674,
+      "duration": 1.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3795.5999999046326,
+      "duration": 48.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F34%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3844.5999999046326,
+      "duration": 33.80000019073486
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F34%2Fa%2Fb%2Fc%2Fd",
+      "start": 3879,
+      "duration": 1
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3894.5999999046326,
+      "duration": 46.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F35%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 3941.9000000953674,
+      "duration": 26.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F35%2Fa%2Fb%2Fc%2Fd",
+      "start": 3968.5,
+      "duration": 0.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 3985.0999999046326,
+      "duration": 45.60000038146973
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F36%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4031.300000190735,
+      "duration": 26.199999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F36%2Fa%2Fb%2Fc%2Fd",
+      "start": 4057.7000002861023,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4077,
+      "duration": 56.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F37%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4134.5,
+      "duration": 30.200000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F37%2Fa%2Fb%2Fc%2Fd",
+      "start": 4164.900000095367,
+      "duration": 5.599999904632568
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4185.400000095367,
+      "duration": 49.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F38%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4235.700000286102,
+      "duration": 31.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F38%2Fa%2Fb%2Fc%2Fd",
+      "start": 4267.099999904633,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4285.5,
+      "duration": 48
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F39%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4334.400000095367,
+      "duration": 28.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F39%2Fa%2Fb%2Fc%2Fd",
+      "start": 4363,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4376.900000095367,
+      "duration": 46.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F40%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4424.599999904633,
+      "duration": 27.100000381469727
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F40%2Fa%2Fb%2Fc%2Fd",
+      "start": 4451.900000095367,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4468.900000095367,
+      "duration": 46.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F41%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4516,
+      "duration": 26.800000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F41%2Fa%2Fb%2Fc%2Fd",
+      "start": 4543,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4560.099999904633,
+      "duration": 48
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F42%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4608.900000095367,
+      "duration": 27.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F42%2Fa%2Fb%2Fc%2Fd",
+      "start": 4636.800000190735,
+      "duration": 4.400000095367432
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4660.099999904633,
+      "duration": 44.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F43%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4705.599999904633,
+      "duration": 26
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 4664.900000095367,
+      "duration": 66.69999980926514
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F43%2Fa%2Fb%2Fc%2Fd",
+      "start": 4731.900000095367,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4752.099999904633,
+      "duration": 49.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F44%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4802.400000095367,
+      "duration": 27.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F44%2Fa%2Fb%2Fc%2Fd",
+      "start": 4830.200000286102,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4843.5,
+      "duration": 45.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F45%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4890.099999904633,
+      "duration": 26.800000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F45%2Fa%2Fb%2Fc%2Fd",
+      "start": 4917.099999904633,
+      "duration": 0.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 4935.300000190735,
+      "duration": 45
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F46%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 4980.900000095367,
+      "duration": 25.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F46%2Fa%2Fb%2Fc%2Fd",
+      "start": 5006.700000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5018.200000286102,
+      "duration": 43.89999961853027
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F47%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5062.800000190735,
+      "duration": 26.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F47%2Fa%2Fb%2Fc%2Fd",
+      "start": 5089.800000190735,
+      "duration": 4.699999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5110.200000286102,
+      "duration": 44.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F48%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5155.099999904633,
+      "duration": 25.600000381469727
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F48%2Fa%2Fb%2Fc%2Fd",
+      "start": 5180.900000095367,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5193.5,
+      "duration": 44.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F49%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5238.300000190735,
+      "duration": 27.199999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F49%2Fa%2Fb%2Fc%2Fd",
+      "start": 5265.700000286102,
+      "duration": 0.7999997138977051
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5285.400000095367,
+      "duration": 45.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F50%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5331.400000095367,
+      "duration": 27.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F50%2Fa%2Fb%2Fc%2Fd",
+      "start": 5358.900000095367,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5377,
+      "duration": 46.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F51%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5424.200000286102,
+      "duration": 27.299999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F51%2Fa%2Fb%2Fc%2Fd",
+      "start": 5451.700000286102,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5470.5,
+      "duration": 44.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F52%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5515.400000095367,
+      "duration": 27.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F52%2Fa%2Fb%2Fc%2Fd",
+      "start": 5543,
+      "duration": 3.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5559.900000095367,
+      "duration": 44.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F53%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5604.700000286102,
+      "duration": 25.399999618530273
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F53%2Fa%2Fb%2Fc%2Fd",
+      "start": 5630.300000190735,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5643.300000190735,
+      "duration": 44.799999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F54%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5688.700000286102,
+      "duration": 25.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F54%2Fa%2Fb%2Fc%2Fd",
+      "start": 5714.700000286102,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5726.700000286102,
+      "duration": 44.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F55%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5771.900000095367,
+      "duration": 26.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F55%2Fa%2Fb%2Fc%2Fd",
+      "start": 5798.599999904633,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5818.5,
+      "duration": 46.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F56%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5866,
+      "duration": 27
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F56%2Fa%2Fb%2Fc%2Fd",
+      "start": 5893.200000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 5910.099999904633,
+      "duration": 45.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F57%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 5956,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F57%2Fa%2Fb%2Fc%2Fd",
+      "start": 5983.400000095367,
+      "duration": 3.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6001.599999904633,
+      "duration": 44.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F58%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6046.5,
+      "duration": 25.700000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F58%2Fa%2Fb%2Fc%2Fd",
+      "start": 6072.400000095367,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6086.900000095367,
+      "duration": 43.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F59%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6131.200000286102,
+      "duration": 26.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F59%2Fa%2Fb%2Fc%2Fd",
+      "start": 6158.099999904633,
+      "duration": 0.6000003814697266
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6176.800000190735,
+      "duration": 46.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F60%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6223.800000190735,
+      "duration": 26.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F60%2Fa%2Fb%2Fc%2Fd",
+      "start": 6250.400000095367,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6268,
+      "duration": 47.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F61%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6316.400000095367,
+      "duration": 31
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F61%2Fa%2Fb%2Fc%2Fd",
+      "start": 6347.5,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6367.900000095367,
+      "duration": 47.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F62%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6416.400000095367,
+      "duration": 30
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F62%2Fa%2Fb%2Fc%2Fd",
+      "start": 6446.700000286102,
+      "duration": 3.8999996185302734
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6467.800000190735,
+      "duration": 44
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F63%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6512.5,
+      "duration": 25.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F63%2Fa%2Fb%2Fc%2Fd",
+      "start": 6538.099999904633,
+      "duration": 0.6000003814697266
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6550.900000095367,
+      "duration": 43.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F64%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6595,
+      "duration": 26
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F64%2Fa%2Fb%2Fc%2Fd",
+      "start": 6621.300000190735,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6634.200000286102,
+      "duration": 44.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F65%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6679,
+      "duration": 25.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F65%2Fa%2Fb%2Fc%2Fd",
+      "start": 6704.5,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6717.599999904633,
+      "duration": 45.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F66%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6763.5,
+      "duration": 27
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F66%2Fa%2Fb%2Fc%2Fd",
+      "start": 6790.800000190735,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6809.5,
+      "duration": 45.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F67%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6855.700000286102,
+      "duration": 36.299999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F67%2Fa%2Fb%2Fc%2Fd",
+      "start": 6892.400000095367,
+      "duration": 4.300000190734863
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 6909.5,
+      "duration": 46.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F68%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 6956.800000190735,
+      "duration": 26.299999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F68%2Fa%2Fb%2Fc%2Fd",
+      "start": 6983.300000190735,
+      "duration": 0.7999997138977051
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7000,
+      "duration": 44.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F69%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7044.800000190735,
+      "duration": 26.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F69%2Fa%2Fb%2Fc%2Fd",
+      "start": 7071.599999904633,
+      "duration": 0.6000003814697266
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7084.200000286102,
+      "duration": 44.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F70%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7129,
+      "duration": 25.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F70%2Fa%2Fb%2Fc%2Fd",
+      "start": 7154.700000286102,
+      "duration": 0.39999961853027344
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7167.599999904633,
+      "duration": 44.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F71%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7212.900000095367,
+      "duration": 25.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F71%2Fa%2Fb%2Fc%2Fd",
+      "start": 7238.5,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7250.800000190735,
+      "duration": 45.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F72%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7296.800000190735,
+      "duration": 60.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F72%2Fa%2Fb%2Fc%2Fd",
+      "start": 7357.599999904633,
+      "duration": 1.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7376.300000190735,
+      "duration": 45.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F73%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7422.5,
+      "duration": 27
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F73%2Fa%2Fb%2Fc%2Fd",
+      "start": 7449.700000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7467.599999904633,
+      "duration": 44.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F74%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7512.400000095367,
+      "duration": 26.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F74%2Fa%2Fb%2Fc%2Fd",
+      "start": 7539,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7551,
+      "duration": 43.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F75%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7595.300000190735,
+      "duration": 25.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F75%2Fa%2Fb%2Fc%2Fd",
+      "start": 7621,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7634.200000286102,
+      "duration": 44.89999961853027
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F76%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7679.700000286102,
+      "duration": 25.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F76%2Fa%2Fb%2Fc%2Fd",
+      "start": 7705.400000095367,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7717.599999904633,
+      "duration": 44.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F77%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7762.900000095367,
+      "duration": 28
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F77%2Fa%2Fb%2Fc%2Fd",
+      "start": 7791.099999904633,
+      "duration": 4.700000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7809.599999904633,
+      "duration": 45.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F78%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7856,
+      "duration": 26.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F78%2Fa%2Fb%2Fc%2Fd",
+      "start": 7882.700000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7901.200000286102,
+      "duration": 46.89999961853027
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F79%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 7948.900000095367,
+      "duration": 27.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F79%2Fa%2Fb%2Fc%2Fd",
+      "start": 7976.900000095367,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 7992.700000286102,
+      "duration": 45
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F80%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8038.400000095367,
+      "duration": 26.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F80%2Fa%2Fb%2Fc%2Fd",
+      "start": 8065.300000190735,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8084.300000190735,
+      "duration": 46.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F81%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8131.099999904633,
+      "duration": 27.100000381469727
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F81%2Fa%2Fb%2Fc%2Fd",
+      "start": 8158.300000190735,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8176,
+      "duration": 44.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F82%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8221.700000286102,
+      "duration": 27.399999618530273
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F82%2Fa%2Fb%2Fc%2Fd",
+      "start": 8249.300000190735,
+      "duration": 7.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8276.400000095367,
+      "duration": 46.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F83%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8323.300000190735,
+      "duration": 27.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F83%2Fa%2Fb%2Fc%2Fd",
+      "start": 8351.200000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8368.099999904633,
+      "duration": 46.30000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F84%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8415.099999904633,
+      "duration": 29.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F84%2Fa%2Fb%2Fc%2Fd",
+      "start": 8447.900000095367,
+      "duration": 3.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8467.900000095367,
+      "duration": 44.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F85%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8513.400000095367,
+      "duration": 26.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F85%2Fa%2Fb%2Fc%2Fd",
+      "start": 8540.300000190735,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8559.300000190735,
+      "duration": 45.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F86%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8605.900000095367,
+      "duration": 27.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F86%2Fa%2Fb%2Fc%2Fd",
+      "start": 8635.700000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8651.200000286102,
+      "duration": 45.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F87%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8697.200000286102,
+      "duration": 27.59999990463257
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 8662.5,
+      "duration": 62.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F87%2Fa%2Fb%2Fc%2Fd",
+      "start": 8725.200000286102,
+      "duration": 5.099999904632568
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8742.800000190735,
+      "duration": 47.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F88%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8790.800000190735,
+      "duration": 27.799999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F88%2Fa%2Fb%2Fc%2Fd",
+      "start": 8818.800000190735,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8834.599999904633,
+      "duration": 47.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F89%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8882.599999904633,
+      "duration": 28.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F89%2Fa%2Fb%2Fc%2Fd",
+      "start": 8911.200000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 8926.400000095367,
+      "duration": 46.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F90%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 8973.700000286102,
+      "duration": 27.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F90%2Fa%2Fb%2Fc%2Fd",
+      "start": 9001.5,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9017.700000286102,
+      "duration": 46.39999961853027
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F91%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9064.700000286102,
+      "duration": 25.799999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F91%2Fa%2Fb%2Fc%2Fd",
+      "start": 9090.700000286102,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9109.300000190735,
+      "duration": 44.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F92%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9154.099999904633,
+      "duration": 27.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F92%2Fa%2Fb%2Fc%2Fd",
+      "start": 9181.800000190735,
+      "duration": 4.099999904632568
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9200.900000095367,
+      "duration": 44.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F93%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9245.599999904633,
+      "duration": 26.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F93%2Fa%2Fb%2Fc%2Fd",
+      "start": 9272.099999904633,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9284.400000095367,
+      "duration": 46.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F94%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9331.400000095367,
+      "duration": 27.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F94%2Fa%2Fb%2Fc%2Fd",
+      "start": 9359.300000190735,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9371.900000095367,
+      "duration": 45.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F95%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9418,
+      "duration": 27.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F95%2Fa%2Fb%2Fc%2Fd",
+      "start": 9445.5,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9463.300000190735,
+      "duration": 44.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F96%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9508.400000095367,
+      "duration": 25.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F96%2Fa%2Fb%2Fc%2Fd",
+      "start": 9534.300000190735,
+      "duration": 0.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9546.700000286102,
+      "duration": 46.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F97%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9593.400000095367,
+      "duration": 27
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F97%2Fa%2Fb%2Fc%2Fd",
+      "start": 9620.599999904633,
+      "duration": 4
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9638.900000095367,
+      "duration": 44.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F98%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9684,
+      "duration": 25.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F98%2Fa%2Fb%2Fc%2Fd",
+      "start": 9709.700000286102,
+      "duration": 0.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9722,
+      "duration": 45.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=F99%2Fa%2Fb%2Fc%2Fd&limit=60",
+      "start": 9768.5,
+      "duration": 28
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=F99%2Fa%2Fb%2Fc%2Fd",
+      "start": 9796.700000286102,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 9813.700000286102,
+      "duration": 2.799999713897705
+    },
+    {
+      "url": "/api/knowledge/reading-positions/migrate",
+      "start": 9841.900000095367,
+      "duration": 20.300000190734863
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 9858.700000286102,
+      "duration": 46.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948/reading-position",
+      "start": 9864.5,
+      "duration": 45.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 9910.300000190735,
+      "duration": 26.90000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 9937.400000095367,
+      "duration": 1.1999998092651367
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 12662,
+      "duration": 3.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 13343.300000190735,
+      "duration": 48.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 13403.300000190735,
+      "duration": 63.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 14280.200000286102,
+      "duration": 34.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 14325.200000286102,
+      "duration": 62.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 15136.700000286102,
+      "duration": 36.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 15186.200000286102,
+      "duration": 63.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 16058.599999904633,
+      "duration": 34.30000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 16103.700000286102,
+      "duration": 63.5
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 16662.800000190735,
+      "duration": 2.799999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 16666.300000190735,
+      "duration": 4.099999904632568
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 16671,
+      "duration": 50.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 16721.700000286102,
+      "duration": 1.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 16977.200000286102,
+      "duration": 27.899999618530273
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 17014.300000190735,
+      "duration": 56.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 17879.599999904633,
+      "duration": 35.10000038146973
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 17927.700000286102,
+      "duration": 66.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 18804.5,
+      "duration": 42.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 18856.800000190735,
+      "duration": 83.7999997138977
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 19750.200000286102,
+      "duration": 38
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 19801.099999904633,
+      "duration": 64.5
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 20663,
+      "duration": 2.3000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 20666.300000190735,
+      "duration": 4
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 20670.5,
+      "duration": 42
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 20713.099999904633,
+      "duration": 1.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 20675.5,
+      "duration": 65
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 20747.099999904633,
+      "duration": 57.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 21615.099999904633,
+      "duration": 37.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 21666.400000095367,
+      "duration": 74.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 22482.300000190735,
+      "duration": 33.799999713897705
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 22529.700000286102,
+      "duration": 66.7999997138977
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 23405.599999904633,
+      "duration": 26.200000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 23438.5,
+      "duration": 59.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 24307.400000095367,
+      "duration": 29.699999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 24345.700000286102,
+      "duration": 55.59999990463257
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 24661.800000190735,
+      "duration": 3.1999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 24666.300000190735,
+      "duration": 3.1999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 24669.800000190735,
+      "duration": 50.799999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 24720.900000095367,
+      "duration": 1.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 25209.900000095367,
+      "duration": 28.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 25246.900000095367,
+      "duration": 57.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 26114.400000095367,
+      "duration": 46.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 26176.300000190735,
+      "duration": 73.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 27049.200000286102,
+      "duration": 29.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 27088.700000286102,
+      "duration": 70.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 27970.200000286102,
+      "duration": 38
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 28020.900000095367,
+      "duration": 61.40000009536743
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 28662.200000286102,
+      "duration": 3.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 28666.300000190735,
+      "duration": 2.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 28669.599999904633,
+      "duration": 45.700000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 28715.400000095367,
+      "duration": 0.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 28892.900000095367,
+      "duration": 28.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 28933.900000095367,
+      "duration": 60.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 29802.700000286102,
+      "duration": 24.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 29833.599999904633,
+      "duration": 57.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 30700.900000095367,
+      "duration": 22.199999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 30728.599999904633,
+      "duration": 50.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 31586.300000190735,
+      "duration": 24.299999713897705
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 31619.5,
+      "duration": 76.2000002861023
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 32505.400000095367,
+      "duration": 35.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 32556,
+      "duration": 64.30000019073486
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 32662.5,
+      "duration": 1.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 32664.599999904633,
+      "duration": 1.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 32666.5,
+      "duration": 32.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 32698.700000286102,
+      "duration": 1.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 33432.2000002861,
+      "duration": 34.69999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 33484.5,
+      "duration": 66.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 34360.90000009537,
+      "duration": 32.59999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 34404.2000002861,
+      "duration": 59
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 35273,
+      "duration": 34.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 35319.300000190735,
+      "duration": 59.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 36188.2000002861,
+      "duration": 33.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 36235.09999990463,
+      "duration": 65.90000009536743
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 36662.300000190735,
+      "duration": 3.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 36666.2000002861,
+      "duration": 4
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 36670.5,
+      "duration": 52.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 36723.2000002861,
+      "duration": 0.8999996185302734
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 39759.40000009537,
+      "duration": 32.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 39802.2000002861,
+      "duration": 63.09999990463257
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 40661.90000009537,
+      "duration": 3.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 40666.300000190735,
+      "duration": 4.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 40671.09999990463,
+      "duration": 51.80000019073486
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 40723.2000002861,
+      "duration": 1.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 40675.40000009537,
+      "duration": 72.69999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 40754.90000009537,
+      "duration": 54.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 41619.800000190735,
+      "duration": 32.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 41670.09999990463,
+      "duration": 65.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 42545.40000009537,
+      "duration": 34.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 42595,
+      "duration": 64.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 43469,
+      "duration": 32.80000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 43509.90000009537,
+      "duration": 70.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 44389.40000009537,
+      "duration": 32.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 44433.800000190735,
+      "duration": 58.799999713897705
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 44662.59999990463,
+      "duration": 2
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 44665,
+      "duration": 2.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 44667.90000009537,
+      "duration": 39.69999980926514
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 44707.800000190735,
+      "duration": 0.7999997138977051
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 45300.40000009537,
+      "duration": 34.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 45350.40000009537,
+      "duration": 61.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 46220.59999990463,
+      "duration": 40
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 46277.5,
+      "duration": 72.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 47161,
+      "duration": 29.59999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 47199.09999990463,
+      "duration": 59.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 48068.2000002861,
+      "duration": 33.89999961853027
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 48111.40000009537,
+      "duration": 57
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 48661.800000190735,
+      "duration": 3.1999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 48665.59999990463,
+      "duration": 3.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 48669.2000002861,
+      "duration": 42.799999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 48712.2000002861,
+      "duration": 1.1999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 48978.40000009537,
+      "duration": 27.40000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 49015.7000002861,
+      "duration": 56.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 49881.5,
+      "duration": 26.59999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 49916.2000002861,
+      "duration": 58.799999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 50726.300000190735,
+      "duration": 33.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 50772.40000009537,
+      "duration": 60.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 51643.800000190735,
+      "duration": 26.199999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 51678.2000002861,
+      "duration": 55.89999961853027
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 52544,
+      "duration": 30.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 52590.40000009537,
+      "duration": 66
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 52664.59999990463,
+      "duration": 1.3000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 52666.2000002861,
+      "duration": 1.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 52667.7000002861,
+      "duration": 28.699999809265137
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 52696.59999990463,
+      "duration": 0.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 53404.5,
+      "duration": 27.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 53440,
+      "duration": 53.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 54302,
+      "duration": 32.700000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 54350.7000002861,
+      "duration": 67.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 55227.40000009537,
+      "duration": 23
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 55256.59999990463,
+      "duration": 49.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 56114.5,
+      "duration": 28.800000190734863
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 56152.5,
+      "duration": 58
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 56663,
+      "duration": 2.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 56666.2000002861,
+      "duration": 3
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 56669.40000009537,
+      "duration": 38.30000019073486
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 56707.90000009537,
+      "duration": 0.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 57019.09999990463,
+      "duration": 33.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 57062.40000009537,
+      "duration": 55.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 57926.5,
+      "duration": 34
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 57976.300000190735,
+      "duration": 64.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 58848.90000009537,
+      "duration": 32.30000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 58895.90000009537,
+      "duration": 66.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 59710.59999990463,
+      "duration": 24.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 59743,
+      "duration": 51.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 60605.09999990463,
+      "duration": 30.600000381469727
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 60644.90000009537,
+      "duration": 58.19999980926514
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 60661.59999990463,
+      "duration": 50.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 60711.90000009537,
+      "duration": 2.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 60714.800000190735,
+      "duration": 28.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 60743.59999990463,
+      "duration": 1.700000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 61512.40000009537,
+      "duration": 38
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 61564.800000190735,
+      "duration": 64.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Abfe3106d17734677a640fa931e68e948",
+      "start": 62438.300000190735,
+      "duration": 34.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 62490.40000009537,
+      "duration": 64
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 62564.300000190735,
+      "duration": 2.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed/reading-position",
+      "start": 62610.09999990463,
+      "duration": 7.800000190734863
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 62610.2000002861,
+      "duration": 51.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 62667.40000009537,
+      "duration": 26.5
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 62694,
+      "duration": 0.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 64662.800000190735,
+      "duration": 1.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 64664.300000190735,
+      "duration": 1.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 64666.09999990463,
+      "duration": 43.200000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 64709.5,
+      "duration": 1.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 66119.2000002861,
+      "duration": 38.299999713897705
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 66169.2000002861,
+      "duration": 65.89999961853027
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 67048.7000002861,
+      "duration": 27.299999713897705
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 67081.90000009537,
+      "duration": 49.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 67941.30000019073,
+      "duration": 37.40000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 67991.40000009537,
+      "duration": 61.30000019073486
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 68662.5,
+      "duration": 3.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 68666.2000002861,
+      "duration": 3.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 68670.09999990463,
+      "duration": 49.40000009536743
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 68719.90000009537,
+      "duration": 1
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 68867.7000002861,
+      "duration": 29.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 68905.90000009537,
+      "duration": 54.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 69771.40000009537,
+      "duration": 26.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 69806.40000009537,
+      "duration": 51.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 70670.80000019073,
+      "duration": 34.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 70713.90000009537,
+      "duration": 63.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 71590.40000009537,
+      "duration": 33.69999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 71636.80000019073,
+      "duration": 63
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 72517.90000009537,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 72555.80000019073,
+      "duration": 51.90000009536743
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 72662.80000019073,
+      "duration": 1.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 72664.30000019073,
+      "duration": 1.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 72665.90000009537,
+      "duration": 26.59999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 72692.59999990463,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 73422.7000002861,
+      "duration": 39.299999713897705
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 73470.09999990463,
+      "duration": 71.60000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 74352.2000002861,
+      "duration": 45
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 74405.5,
+      "duration": 94.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 75312.40000009537,
+      "duration": 38.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 75363.90000009537,
+      "duration": 61.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 76237.30000019073,
+      "duration": 31.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 76278.09999990463,
+      "duration": 68.2000002861023
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 76662.09999990463,
+      "duration": 4.800000190734863
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 76667.5,
+      "duration": 2.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 76670.59999990463,
+      "duration": 35.30000019073486
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 76706,
+      "duration": 1
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 77157.2000002861,
+      "duration": 37.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 77210.5,
+      "duration": 64.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 78090.7000002861,
+      "duration": 30.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 78129.5,
+      "duration": 58.200000286102295
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 78998.30000019073,
+      "duration": 28.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 79033.2000002861,
+      "duration": 59.59999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 79902.40000009537,
+      "duration": 25.699999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 79935.90000009537,
+      "duration": 70.09999990463257
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 80662.5,
+      "duration": 1.0999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 80663.80000019073,
+      "duration": 1.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 80665.7000002861,
+      "duration": 28.399999618530273
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 80694.2000002861,
+      "duration": 0.6999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 80818.80000019073,
+      "duration": 26.199999809265137
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 80851.09999990463,
+      "duration": 47.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 81708.59999990463,
+      "duration": 29.700000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 81746.59999990463,
+      "duration": 63.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 82622,
+      "duration": 29
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 82658.90000009537,
+      "duration": 63.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 83536.7000002861,
+      "duration": 84
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 83635.5,
+      "duration": 74.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 84522.5,
+      "duration": 26.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 84556.7000002861,
+      "duration": 66.69999980926514
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 84662.90000009537,
+      "duration": 1.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 84664.7000002861,
+      "duration": 2.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 84667.40000009537,
+      "duration": 27.300000190734863
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 84694.90000009537,
+      "duration": 0.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 85434.09999990463,
+      "duration": 34.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 85481.09999990463,
+      "duration": 58.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 86352.7000002861,
+      "duration": 37.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 86406.30000019073,
+      "duration": 65
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 87283,
+      "duration": 33.80000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 87330.7000002861,
+      "duration": 61
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 88201.30000019073,
+      "duration": 31.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 88239.59999990463,
+      "duration": 81.90000009536743
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 88662.09999990463,
+      "duration": 1.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 88664.59999990463,
+      "duration": 2.1000003814697266
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 88667,
+      "duration": 33.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 88700.2000002861,
+      "duration": 1
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 89053,
+      "duration": 36.200000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 89095.2000002861,
+      "duration": 52.799999713897705
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 92662.59999990463,
+      "duration": 2
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 92665.2000002861,
+      "duration": 2.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 92668.09999990463,
+      "duration": 54.700000286102295
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 92723.2000002861,
+      "duration": 1.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 92715.5,
+      "duration": 31.40000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 92754.80000019073,
+      "duration": 62.19999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 93629.40000009537,
+      "duration": 27.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 93666,
+      "duration": 58.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 94536.5,
+      "duration": 33.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 94581.30000019073,
+      "duration": 59.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 95455.09999990463,
+      "duration": 34.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 95501.09999990463,
+      "duration": 63.60000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 96373.2000002861,
+      "duration": 27.09999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 96407.5,
+      "duration": 50.80000019073486
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 96663.2000002861,
+      "duration": 1.8999996185302734
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 96666.09999990463,
+      "duration": 2.5
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 96669.09999990463,
+      "duration": 38.10000038146973
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 96707.30000019073,
+      "duration": 0.9000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 97269.59999990463,
+      "duration": 34.30000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 97315,
+      "duration": 58.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 98184.7000002861,
+      "duration": 35
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 98231.09999990463,
+      "duration": 57.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 99100,
+      "duration": 32
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 99142.09999990463,
+      "duration": 60.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 100016.09999990463,
+      "duration": 36.30000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 100064.09999990463,
+      "duration": 59
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 100662.90000009537,
+      "duration": 3.3000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 100668,
+      "duration": 3.5999999046325684
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 100672.2000002861,
+      "duration": 67.39999961853027
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 100740.40000009537,
+      "duration": 1.3000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 100932.7000002861,
+      "duration": 33.19999980926514
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 100977.09999990463,
+      "duration": 56.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 101846.09999990463,
+      "duration": 30
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 101886,
+      "duration": 59.09999990463257
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 102702,
+      "duration": 29
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 102741.09999990463,
+      "duration": 57.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 103610.09999990463,
+      "duration": 28.200000286102295
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 103645.80000019073,
+      "duration": 54.90000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 104512.80000019073,
+      "duration": 36.59999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 104561.59999990463,
+      "duration": 61.40000009536743
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 104662.30000019073,
+      "duration": 1.299999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 104664.09999990463,
+      "duration": 1.8000001907348633
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 104666.2000002861,
+      "duration": 28.799999713897705
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 104695.09999990463,
+      "duration": 0.7000002861022949
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 105435.09999990463,
+      "duration": 35.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 105483.09999990463,
+      "duration": 58.10000038146973
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 106352.09999990463,
+      "duration": 46.30000019073486
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 106406.80000019073,
+      "duration": 88
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 107307.7000002861,
+      "duration": 31
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 107348.5,
+      "duration": 78.80000019073486
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 108165.90000009537,
+      "duration": 33.59999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 108210.40000009537,
+      "duration": 59.90000009536743
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 108662.90000009537,
+      "duration": 5.800000190734863
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 108669.59999990463,
+      "duration": 3.4000000953674316
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 108673.5,
+      "duration": 43.09999990463257
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 108716.90000009537,
+      "duration": 1.1999998092651367
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 109084,
+      "duration": 32.90000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 109123.7000002861,
+      "duration": 56.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 109992.40000009537,
+      "duration": 27.300000190734863
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 110026.40000009537,
+      "duration": 52.69999980926514
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 110891.30000019073,
+      "duration": 28.5
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 110927.80000019073,
+      "duration": 55.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 111795.09999990463,
+      "duration": 25
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 111827.5,
+      "duration": 63.700000286102295
+    },
+    {
+      "url": "/api/knowledge/sync/status",
+      "start": 112662.2000002861,
+      "duration": 1.799999713897705
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 112644.59999990463,
+      "duration": 29.600000381469727
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 112666.40000009537,
+      "duration": 29
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 112682.5,
+      "duration": 54
+    },
+    {
+      "url": "/api/knowledge/documents?knowledgeBase=Bench&folder=&limit=60",
+      "start": 112695.7000002861,
+      "duration": 74.7999997138977
+    },
+    {
+      "url": "/api/knowledge/local-entries?knowledgeBase=Bench&folder=",
+      "start": 112770.80000019073,
+      "duration": 7.400000095367432
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 113549.30000019073,
+      "duration": 28.40000009536743
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 113585.30000019073,
+      "duration": 55.5
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 114452.90000009537,
+      "duration": 28.59999990463257
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 114490,
+      "duration": 78.40000009536743
+    },
+    {
+      "url": "/api/knowledge/documents/note%3Af489b7ed4f5c4234b6a1f9a91fc8a3ed",
+      "start": 115378.7000002861,
+      "duration": 28.799999713897705
+    },
+    {
+      "url": "/api/knowledge/tree",
+      "start": 115414.90000009537,
+      "duration": 54.30000019073486
+    }
+  ],
+  "listRemovals": 668,
+  "longTasks": [
+    {
+      "start": 89174.90000009537,
+      "duration": 68
+    },
+    {
+      "start": 93379.40000009537,
+      "duration": 70
+    },
+    {
+      "start": 94286.90000009537,
+      "duration": 71
+    },
+    {
+      "start": 95205.09999990463,
+      "duration": 67
+    },
+    {
+      "start": 96123.40000009537,
+      "duration": 57
+    },
+    {
+      "start": 97019,
+      "duration": 67
+    },
+    {
+      "start": 97933.80000019073,
+      "duration": 69
+    },
+    {
+      "start": 98851,
+      "duration": 70
+    },
+    {
+      "start": 99765.09999990463,
+      "duration": 59
+    },
+    {
+      "start": 100683.40000009537,
+      "duration": 51
+    },
+    {
+      "start": 101595.59999990463,
+      "duration": 63
+    },
+    {
+      "start": 102451.7000002861,
+      "duration": 69
+    },
+    {
+      "start": 103359.7000002861,
+      "duration": 71
+    },
+    {
+      "start": 104261.90000009537,
+      "duration": 64
+    },
+    {
+      "start": 105185.09999990463,
+      "duration": 66
+    },
+    {
+      "start": 106102.2000002861,
+      "duration": 62
+    },
+    {
+      "start": 107057.30000019073,
+      "duration": 64
+    },
+    {
+      "start": 107915.80000019073,
+      "duration": 71
+    },
+    {
+      "start": 109742.40000009537,
+      "duration": 50
+    },
+    {
+      "start": 110641.09999990463,
+      "duration": 51
+    },
+    {
+      "start": 111544.5,
+      "duration": 52
+    },
+    {
+      "start": 115129,
+      "duration": 55
+    }
+  ],
+  "limitations": "Warm isolated files; synthetic input events, two-frame presentation proxy, hidden Electron window. Not hardware keyboard latency or packaged cold startup. Autosave includes the intentional 800ms delay."
+}

@@ -2399,7 +2399,5 @@ return {
 
 const defaultDatabase = createDatabase();
 
-module.exports = {
-  ...defaultDatabase,
-  createDatabase,
-};
+// Preserve the live sqlite getter when reopen() replaces the connection.
+module.exports = Object.assign(defaultDatabase, { createDatabase });

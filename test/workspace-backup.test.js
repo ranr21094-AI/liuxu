@@ -274,3 +274,74 @@ test('ZIP replace rebuilds the agent store on the new database connection', asyn
   const titles = runtimeFor(restored).store.listSessions().map(item => item.title);
   assert.equal(titles.includes('导出会话'), true);
 });
+
+test('legacy ZIP replacement exits file mode instead of replaying newer originals', async t => {
+  const { db } = createTempDatabase(t, 'legacy-replace-files-');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-replace-root-'));
+  const backup = `${root}-migration-backup`;
+  const legacy = createKnowledgeService(db, { startFolderSync: false });
+  const note = legacy.createNote({ title: 'Original', content: 'backup text' }).document;
+  const archive = await exportWorkspace(db);
+  await legacy.folderSync.stop();
+  await require('../lib/knowledge/file-workspace-migration').migrateFileWorkspace(db, { root, backupPath: backup });
+  const routes = require('../lib/knowledge/routes');
+  let service = routes.serviceFor(db).knowledge;
+  t.after(async () => {
+    await routes.shutdownKnowledgeServices();
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(backup, { recursive: true, force: true });
+  });
+  await service.backgroundReady;
+  const current = await service.getDocument(note.id);
+  await service.updateDocument(note.id, { baseVersion: current.version, baseFingerprint: current.baseFingerprint, content: 'newer text' });
+  const extra = (await service.createNote({ title: 'Extra', content: 'not in backup' })).document;
+  await service.workspace.flushIndex();
+  const restored = await restoreWorkspace(db, archive, 'replace');
+  assert.equal(restored.success, true);
+  service = routes.serviceFor(db).knowledge;
+  assert.notEqual(service.storageMode, 'files');
+  assert.equal((await service.getDocument(note.id)).content, 'backup text');
+  assert.equal(await service.getDocument(extra.id), null);
+  assert.equal(fs.existsSync(path.join(db.dataDir, '.knowledge-file-workspace.json')), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(db.dataDir, '.knowledge-folder.json'))).enabled, false);
+});
+
+test('the default database export remains usable after HTTP ZIP replacement', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'default-http-restore-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const script = `
+    const assert = require('node:assert/strict');
+    const db = require('./database');
+    const { startServer } = require('./server');
+    (async () => {
+      const server = await startServer(0, '127.0.0.1');
+      const origin = 'http://127.0.0.1:' + server.address().port;
+      try {
+        const created = await fetch(origin + '/api/knowledge/documents', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Original', content: 'backup text' }) });
+        assert.equal(created.status, 201);
+        const exported = await fetch(origin + '/api/workspace/export');
+        assert.equal(exported.status, 200);
+        const form = new FormData(); form.append('archive', await exported.blob(), 'backup.zip');
+        const oldConnection = db.sqlite;
+        const restored = await fetch(origin + '/api/workspace/restore?mode=replace', { method: 'POST', headers: { Origin: origin }, body: form });
+        assert.equal(restored.status, 200, await restored.text());
+        assert.equal(oldConnection.open, false);
+        assert.equal(db.sqlite.open, true);
+        assert.notEqual(db.sqlite, oldConnection);
+        const list = await fetch(origin + '/api/knowledge/documents');
+        assert.equal(list.status, 200);
+        assert.equal((await list.json()).total, 1);
+        const exportedAgain = await fetch(origin + '/api/workspace/export');
+        assert.equal(exportedAgain.status, 200); await exportedAgain.arrayBuffer();
+      } finally {
+        await require('./lib/knowledge/routes').shutdownKnowledgeServices();
+        await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); db.close();
+      }
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+  `;
+  require('node:child_process').execFileSync(process.execPath, ['-e', script], {
+    cwd: path.join(__dirname, '..'), timeout: 30000,
+    env: { ...process.env, DATA_DIR: path.join(temp, 'data'), AI_SECRETS_KEY_FILE: path.join(temp, 'key') },
+    stdio: 'pipe',
+  });
+});

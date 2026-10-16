@@ -462,3 +462,9 @@ test('public HTTPS provider URLs that resolve to private addresses are rejected'
   const ulaOnly = await validateProviderBaseUrl('https://evil.example/v1', ulaOnlyLookup);
   assert.match(ulaOnly.error, /private or local/);
 });
+
+test('Anthropic vision requests include the base64 source discriminator', () => {
+  const request = buildCustomProviderRequest({ options: { baseUrl: 'https://api.anthropic.com/v1', model: 'vision', apiKey: 'test', apiFormat: 'anthropic' },
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'describe' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,aGVsbG8=' } }] }] });
+  assert.deepEqual(request.body.messages[0].content[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aGVsbG8=' } });
+});

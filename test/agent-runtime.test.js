@@ -2637,3 +2637,145 @@ test('agent and note-assist runs keep their own model clients', async (t) => {
   assert.equal(agentDone.finalText, 'agent-reply');
   assert.equal(noteDone.finalText, 'note-reply');
 });
+
+for (const childWait of ['question', 'approval']) test(`delegate preserves parent approvals through child ${childWait}`, async t => {
+  const db = tempDb(t), store = createAgentStore(db), memory = createMemoryService(store);
+  let parentRounds = 0, childRounds = 0;
+  const runtime = createRuntime({ db, store, memory, modelClient: { async complete({ goal }) {
+    if (goal === 'child') {
+      if (++childRounds === 1) return { toolCalls: [childWait === 'question'
+        ? { name: 'ask_user', arguments: { question: 'Continue?' } }
+        : { name: 'task.create', arguments: { title: 'child task' } }] };
+      return { text: 'child done' };
+    }
+    return ++parentRounds === 1 ? { toolCalls: [
+      { name: 'agent.delegate', arguments: { prompt: 'child' } },
+      { name: 'task.create', arguments: { title: 'parent followup' } },
+    ] } : { text: 'parent done' };
+  } } });
+  const run = await runtime.start({ session: store.createSession('parent'), userMessage: 'delegate then task' });
+  let current = await waitForRun(store, run.id);
+  await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  current = store.getRun(run.id);
+  if (childWait === 'question') await runtime.resumeUserInput(run.id, 'yes');
+  else await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  current = store.getRun(run.id);
+  assert.equal(current.status, 'waiting_approval');
+  assert.equal(current.pendingApprovals[0].call.arguments.title, 'parent followup');
+  assert.equal(parentRounds, 1);
+  await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  assert.equal(store.getRun(run.id).status, 'completed');
+  assert.ok(db.getAllTodos().some(todo => todo.title === 'parent followup'));
+});
+
+test('browser waits serialize and preserve the entire model tool batch before completion', async t => {
+  const db = tempDb(t), store = createAgentStore(db), memory = createMemoryService(store);
+  let rounds = 0;
+  const calls = ['browser.scan', 'browser.screenshot', 'task.list', 'memory.list', 'memory.search'].map(name => ({ name, arguments: name === 'memory.search' ? { query: 'test' } : {} }));
+  const runtime = createRuntime({ db, store, memory,
+    chrome: { request(name, args) { return { clientTool: true, request: { name, args } }; } },
+    modelClient: { async complete() { return ++rounds === 1 ? { toolCalls: calls } : { text: 'done' }; } },
+  });
+  const run = await runtime.start({ session: store.createSession('browser batch'), userMessage: 'read browser' });
+  let current = await waitForRun(store, run.id);
+  assert.equal(current.pendingClientTool.call.name, 'browser.scan');
+  assert.equal(current.events.filter(event => event.type === 'client_tool.requested').length, 1);
+  const firstId = current.pendingClientTool.id;
+  const first = await runtime.clientToolResult(run.id, firstId, { ok: true, summary: 'scan result' });
+  assert.equal(first.error, undefined);
+  current = store.getRun(run.id);
+  assert.equal(current.pendingClientTool.call.name, 'browser.screenshot');
+  assert.equal(rounds, 1);
+  await runtime.clientToolResult(run.id, current.pendingClientTool.id, { ok: true, summary: 'screenshot result' });
+  current = store.getRun(run.id);
+  assert.equal(current.status, 'completed');
+  assert.deepEqual(current.events.filter(event => event.type === 'tool.completed').map(event => event.payload.call.name).sort(), calls.map(call => call.name).sort());
+  assert.equal(current.toolCalls, calls.length);
+  assert.equal(current.queuedAutoCalls.length, 0);
+  assert.equal((await runtime.clientToolResult(run.id, firstId, { ok: true })).error, undefined);
+});
+
+test('user wait continuation survives runtime recreation and retains later approvals', async t => {
+  const db = tempDb(t), store = createAgentStore(db), memory = createMemoryService(store);
+  let rounds = 0;
+  const modelClient = { async complete() {
+    return ++rounds === 1 ? { toolCalls: [
+      { name: 'ask_user', arguments: { question: 'First?' } },
+      { name: 'ask_user', arguments: { question: 'Second?' } },
+      { name: 'memory.list', arguments: {} },
+      { name: 'task.create', arguments: { title: 'after answers' } },
+    ] } : { text: 'done' };
+  } };
+  let runtime = createRuntime({ db, store, memory, modelClient });
+  const run = await runtime.start({ session: store.createSession('two questions'), userMessage: 'ask then create' });
+  let current = await waitForRun(store, run.id);
+  assert.equal(current.pendingQuestion, 'First?');
+  runtime = createRuntime({ db, store, memory, modelClient });
+  await runtime.resumeUserInput(run.id, 'one');
+  current = store.getRun(run.id);
+  assert.equal(current.pendingQuestion, 'Second?');
+  assert.equal(current.status, 'waiting_user');
+  assert.equal(rounds, 1);
+  await runtime.resumeUserInput(run.id, 'two');
+  current = store.getRun(run.id);
+  assert.equal(current.status, 'waiting_approval');
+  assert.ok(current.events.some(event => event.type === 'tool.completed' && event.payload.call.name === 'memory.list'));
+  await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  assert.equal(store.getRun(run.id).status, 'completed');
+  assert.equal(db.getAllTodos().filter(todo => todo.title === 'after answers').length, 1);
+});
+
+test('delegated browser continuation drains reads before child and parent approvals', async t => {
+  const db = tempDb(t), store = createAgentStore(db), memory = createMemoryService(store);
+  const rounds = { parent: 0, child: 0 };
+  const runtime = createRuntime({ db, store, memory,
+    chrome: { request(name, args) { return { clientTool: true, request: { name, args } }; } },
+    modelClient: { async complete({ goal }) {
+      const child = goal === 'child';
+      if (++rounds[child ? 'child' : 'parent'] > 1) return { text: 'done' };
+      return { toolCalls: child ? [
+        { name: 'browser.scan', arguments: {} }, { name: 'memory.list', arguments: {} },
+        { name: 'task.create', arguments: { title: 'child queued task' } },
+      ] : [
+        { name: 'agent.delegate', arguments: { prompt: 'child' } },
+        { name: 'task.create', arguments: { title: 'parent queued task' } },
+      ] };
+    } },
+  });
+  const run = await runtime.start({ session: store.createSession('delegated browser'), userMessage: 'parent' });
+  let current = await waitForRun(store, run.id);
+  await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  current = store.getRun(run.id);
+  await runtime.clientToolResult(run.id, current.pendingClientTool.id, { ok: true, summary: 'read' });
+  current = store.getRun(run.id);
+  assert.equal(current.status, 'waiting_approval');
+  assert.equal(current.pendingApprovals[0].call.arguments.title, 'child queued task');
+  assert.ok(current.events.some(event => event.type === 'tool.completed' && event.payload.call.name === 'memory.list'));
+  await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  current = store.getRun(run.id);
+  assert.equal(current.pendingApprovals[0].call.arguments.title, 'parent queued task');
+  await runtime.resolveApproval(run.id, current.pendingApprovals[0].id, { approved: true });
+  assert.equal(store.getRun(run.id).status, 'completed');
+  assert.equal(db.getAllTodos().length, 2);
+});
+
+test('resumed tool batches still respect the consecutive failure guard', async t => {
+  const db = tempDb(t), store = createAgentStore(db), memory = createMemoryService(store);
+  db.saveAiSettings({ ...db.getAiSettings(), agentMaxToolFailures: 2 });
+  let rounds = 0;
+  const runtime = createRuntime({ db, store, memory,
+    chrome: { request(name, args) { return { clientTool: true, request: { name, args } }; } },
+    modelClient: { async complete() { rounds += 1; return { toolCalls: [
+      { name: 'browser.scan', arguments: {} },
+      { name: 'task.read', arguments: { id: 999 } }, { name: 'task.read', arguments: { id: 998 } },
+    ] }; } },
+  });
+  const run = await runtime.start({ session: store.createSession('guard'), userMessage: 'read' });
+  let current = await waitForRun(store, run.id);
+  await runtime.clientToolResult(run.id, current.pendingClientTool.id, { ok: true, summary: 'read' });
+  current = store.getRun(run.id);
+  assert.equal(current.status, 'waiting_user');
+  assert.match(current.pendingQuestion, /连续工具调用失败/);
+  assert.equal(rounds, 1);
+  runtime.cancel(run.id);
+});
